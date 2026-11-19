@@ -151,19 +151,15 @@ class StartSessionOperatorAuthorizationClientTest {
       var credentialsCaptor = ArgumentCaptor.forClass(CallCredentials.class);
       verify(stub, times(2)).withCallCredentials(credentialsCaptor.capture());
       assertThat(credentialsCaptor.getAllValues())
-          .allSatisfy(
-              credentials ->
-                  assertThat(credentials)
-                      .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class));
+          .allSatisfy(credentials ->
+              assertThat(credentials).isInstanceOf(GrpcServerPeerIdentityCallCredentials.class));
       var interceptorCaptor = ArgumentCaptor.forClass(ClientInterceptor[].class);
       verify(stub, times(2)).withInterceptors(interceptorCaptor.capture());
       assertThat(interceptorCaptor.getAllValues())
-          .allSatisfy(
-              interceptors -> {
-                assertThat(interceptors).hasSize(1);
-                assertThat(interceptors[0])
-                    .isInstanceOf(GrpcServerPeerIdentityClientInterceptor.class);
-              });
+          .allSatisfy(interceptors -> {
+            assertThat(interceptors).hasSize(1);
+            assertThat(interceptors[0]).isInstanceOf(GrpcServerPeerIdentityClientInterceptor.class);
+          });
       assertThat(StartSessionOperatorAuthorizationClient.accountServerUri("world-runtime"))
           .isEqualTo("spiffe://firemud/ns/world-runtime/sa/account-service");
     }
@@ -362,10 +358,8 @@ class StartSessionOperatorAuthorizationClientTest {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("client-invalid-request");
 
     try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
-      assertThatThrownBy(
-              () ->
-                  client.issueHuman(
-                      tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 0L, CLAIM_OWNER, 1L))
+      assertThatThrownBy(() ->
+              client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 0L, CLAIM_OWNER, 1L))
           .isInstanceOf(IllegalArgumentException.class);
       assertThatThrownBy(
               () -> client.issueHuman(tuple, "bad token\n", RESERVATION_OWNER, 1L, CLAIM_OWNER, 1L))
@@ -401,10 +395,8 @@ class StartSessionOperatorAuthorizationClientTest {
     for (CommonGrpcClientProperties invalidTls :
         List.of(plaintext, missing, classpath, directoryInsteadOfCertificate, incomplete)) {
       try (TestClient client = new TestClient(stub, invalidTls)) {
-        assertThatThrownBy(
-                () ->
-                    client.issueHuman(
-                        tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+        assertThatThrownBy(() ->
+                client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
             .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
             .isInstanceOf(IllegalStateException.class);
@@ -427,10 +419,8 @@ class StartSessionOperatorAuthorizationClientTest {
 
     try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       Throwable failure =
-          catchThrowable(
-              () ->
-                  client.issueHuman(
-                      tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L));
+          catchThrowable(() ->
+              client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L));
       assertThat(failure).isInstanceOf(StatusRuntimeException.class);
       assertThat(((StatusRuntimeException) failure).getStatus().getCode())
           .isEqualTo(Status.Code.UNAVAILABLE);
@@ -449,10 +439,8 @@ class StartSessionOperatorAuthorizationClientTest {
     try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
       TransactionSynchronizationManager.setActualTransactionActive(true);
       try {
-        assertThatThrownBy(
-                () ->
-                    client.issueHuman(
-                        tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+        assertThatThrownBy(() ->
+                client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("no ambient SQL or synchronization");
       } finally {
@@ -537,10 +525,8 @@ class StartSessionOperatorAuthorizationClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.issueHumanOperatorAuthorizationReference(any())).thenReturn(response);
     try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
-      assertThatThrownBy(
-              () ->
-                  client.issueHuman(
-                      tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+      assertThatThrownBy(() ->
+              client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
           .isInstanceOf(IllegalStateException.class);
     }
   }

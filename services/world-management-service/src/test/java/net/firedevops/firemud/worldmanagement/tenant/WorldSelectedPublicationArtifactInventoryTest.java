@@ -40,10 +40,9 @@ class WorldSelectedPublicationArtifactInventoryTest {
       assertThat(projected.entityVersionId()).isEqualTo(VERSION);
       assertThat(projected.entityTemplateId()).isEqualTo(row.entityReference().templateId());
       assertThat(projected.spawnCount()).isEqualTo(2);
-      assertThatCode(
-              () ->
-                  WorldSelectedPublicationArtifactInventory.requireSupportedRequiredness(
-                      TENANT, VERSION, List.of(), 0, List.of(projected)))
+      assertThatCode(() ->
+              WorldSelectedPublicationArtifactInventory.requireSupportedRequiredness(
+                  TENANT, VERSION, List.of(), 0, List.of(projected)))
           .doesNotThrowAnyException();
     }
   }
@@ -161,10 +160,9 @@ class WorldSelectedPublicationArtifactInventoryTest {
             2,
             30);
 
-    assertThatCode(
-            () ->
-                WorldSelectedPublicationArtifactInventory.requireSupportedRequiredness(
-                    TENANT, VERSION, List.of(region), 0, List.of(spawn)))
+    assertThatCode(() ->
+            WorldSelectedPublicationArtifactInventory.requireSupportedRequiredness(
+                TENANT, VERSION, List.of(region), 0, List.of(spawn)))
         .doesNotThrowAnyException();
   }
 
@@ -261,19 +259,17 @@ class WorldSelectedPublicationArtifactInventoryTest {
         canonicalJson.replace(
             "\"versionStateEpoch\":\"9223372036854775807\"",
             "\"versionStateEpoch\":\"09223372036854775807\"");
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventory.decodeCanonicalEnvelope(
-                    zeroPaddedEpoch.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventory.decodeCanonicalEnvelope(
+                zeroPaddedEpoch.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     String floatingEpoch =
         canonicalJson.replace(
             "\"versionStateEpoch\":\"9223372036854775807\"",
             "\"versionStateEpoch\":9223372036854775807.0");
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventory.decodeCanonicalEnvelope(
-                    floatingEpoch.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventory.decodeCanonicalEnvelope(
+                floatingEpoch.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
   }
 
@@ -388,12 +384,11 @@ class WorldSelectedPublicationArtifactInventoryTest {
                 envelope.checkpoint().appliedCommitId(), envelope.checkpoint().contentDigest(), 3),
             envelope.sourceModel(),
             envelope.artifactDecisions());
-    assertThatThrownBy(
-            () ->
-                new WorldSelectedPublicationArtifactInventory(
-                        wrongCheckpoint,
-                        WorldSelectedPublicationArtifactInventory.encode(wrongCheckpoint))
-                    .publicEvidence())
+    assertThatThrownBy(() ->
+            new WorldSelectedPublicationArtifactInventory(
+                    wrongCheckpoint,
+                    WorldSelectedPublicationArtifactInventory.encode(wrongCheckpoint))
+                .publicEvidence())
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("participant digest schema");
   }

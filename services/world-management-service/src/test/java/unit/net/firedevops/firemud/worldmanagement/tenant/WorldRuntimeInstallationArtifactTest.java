@@ -204,35 +204,30 @@ class WorldRuntimeInstallationArtifactTest {
 
   @Test
   void rejectsUnsortedMembersAndDuplicateCrossReferences() {
-    refuses(
-        root -> {
-          owner(root).put("containerKind", "INIT");
-          owner(root).put("containerName", "z-last");
-        });
+    refuses(root -> {
+      owner(root).put("containerKind", "INIT");
+      owner(root).put("containerName", "z-last");
+    });
     refuses(root -> members(root).set(1, owner(root).deepCopy()));
-    refuses(
-        root -> {
-          ArrayNode sources = (ArrayNode) owner(root).get("catalogSources");
-          sources.add(source(root).deepCopy());
-        });
-    refuses(
-        root -> {
-          ArrayNode families = (ArrayNode) owner(root).get("families");
-          families.add(family(root).deepCopy());
-        });
-    refuses(
-        root -> {
-          ObjectNode second = (ObjectNode) members(root).get(1);
-          second.put("ownerId", "world-management-service");
-          second.put("ownership", "RUNTIME_OWNER");
-          second.set("catalogSources", owner(root).get("catalogSources").deepCopy());
-          second.set("families", owner(root).get("families").deepCopy());
-        });
-    refuses(
-        root -> {
-          ArrayNode bindings = (ArrayNode) root.get("inputBindings").get("secretContracts");
-          bindings.add(bindings.get(0).deepCopy());
-        });
+    refuses(root -> {
+      ArrayNode sources = (ArrayNode) owner(root).get("catalogSources");
+      sources.add(source(root).deepCopy());
+    });
+    refuses(root -> {
+      ArrayNode families = (ArrayNode) owner(root).get("families");
+      families.add(family(root).deepCopy());
+    });
+    refuses(root -> {
+      ObjectNode second = (ObjectNode) members(root).get(1);
+      second.put("ownerId", "world-management-service");
+      second.put("ownership", "RUNTIME_OWNER");
+      second.set("catalogSources", owner(root).get("catalogSources").deepCopy());
+      second.set("families", owner(root).get("families").deepCopy());
+    });
+    refuses(root -> {
+      ArrayNode bindings = (ArrayNode) root.get("inputBindings").get("secretContracts");
+      bindings.add(bindings.get(0).deepCopy());
+    });
   }
 
   @Test
@@ -245,13 +240,12 @@ class WorldRuntimeInstallationArtifactTest {
 
     var noOwner =
         WorldRuntimeInstallationArtifact.parse(
-            changed(
-                root -> {
-                  owner(root).put("ownership", "NO_INSTANCE_STATE");
-                  owner(root).put("ownerId", "");
-                  owner(root).putArray("catalogSources");
-                  owner(root).putArray("families");
-                }));
+            changed(root -> {
+              owner(root).put("ownership", "NO_INSTANCE_STATE");
+              owner(root).put("ownerId", "");
+              owner(root).putArray("catalogSources");
+              owner(root).putArray("families");
+            }));
     assertThatIllegalArgumentException().isThrownBy(noOwner::requireResolved);
     var empty = WorldRuntimeInstallationArtifact.parse(changed(root -> root.putArray("members")));
     assertThatIllegalArgumentException().isThrownBy(empty::requireResolved);

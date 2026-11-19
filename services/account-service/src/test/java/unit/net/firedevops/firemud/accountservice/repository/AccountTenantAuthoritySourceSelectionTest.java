@@ -212,16 +212,15 @@ class AccountTenantAuthoritySourceSelectionTest {
       billing.put("payload", payload);
       DSLContext dsl = mock(DSLContext.class);
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0);
-                if (sql.contains("account_tenant_authority_source_records")) return row(head);
-                if (sql.contains("account_tenant_entitlement_outbox_events")) return row(billing);
-                if (sql.contains("subscription_lifecycle_receipts")) {
-                  return row(Map.of("receipt_payload", hostingReceipt));
-                }
-                throw new AssertionError(sql);
-              });
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            if (sql.contains("account_tenant_authority_source_records")) return row(head);
+            if (sql.contains("account_tenant_entitlement_outbox_events")) return row(billing);
+            if (sql.contains("subscription_lifecycle_receipts")) {
+              return row(Map.of("receipt_payload", hostingReceipt));
+            }
+            throw new AssertionError(sql);
+          });
       AccountAuthorityGenerationRepository generations =
           mock(AccountAuthorityGenerationRepository.class);
       when(generations.read(AccountAuthorityGenerationRepository.AuthorityScope.tenant(TENANT)))

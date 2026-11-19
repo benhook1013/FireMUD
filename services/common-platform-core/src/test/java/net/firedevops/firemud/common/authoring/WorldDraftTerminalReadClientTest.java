@@ -30,10 +30,9 @@ class WorldDraftTerminalReadClientTest {
     CommonGrpcClientProperties tls = tls(directory);
     tls.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new WorldDraftTerminalReadClient(
-                    new ServiceEndpointsProperties(), tls, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new WorldDraftTerminalReadClient(
+                new ServiceEndpointsProperties(), tls, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
     verifyNoInteractions(channelFactory);

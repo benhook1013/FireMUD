@@ -44,10 +44,9 @@ class GameDesignReviewedBaseEvidenceTest {
         .isNotEqualTo(
             GameDesignReviewedBaseEvidence.genesis(
                 genesis(target, receipt, "11", UUID.randomUUID())));
-    assertThatThrownBy(
-            () ->
-                GameDesignReviewedBaseEvidence.genesis(
-                    new GameDesignSourceRepository.Genesis(genesis.policy(), genesis.command())))
+    assertThatThrownBy(() ->
+            GameDesignReviewedBaseEvidence.genesis(
+                new GameDesignSourceRepository.Genesis(genesis.policy(), genesis.command())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("GAME_DESIGN_SOURCE_ASSET_GENESIS_UNAVAILABLE");
     byte[] returned = evidence.canonicalBytes();
@@ -63,9 +62,8 @@ class GameDesignReviewedBaseEvidenceTest {
             bytes, DraftAuthorizationFenceBinding.digest(bytes));
     bytes[bytes.length - 1] ^= 1;
     assertThat(retained.canonicalBytes()).isNotEqualTo(bytes);
-    assertThatThrownBy(
-            () ->
-                new GameDesignReviewedBaseRepository.ReviewedBaseReadback(bytes, retained.digest()))
+    assertThatThrownBy(() ->
+            new GameDesignReviewedBaseRepository.ReviewedBaseReadback(bytes, retained.digest()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -78,10 +76,8 @@ class GameDesignReviewedBaseEvidenceTest {
             historical, historicalDigest, GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA);
     assertThat(retainedHistorical.schema())
         .isEqualTo(GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA);
-    assertThatThrownBy(
-            () ->
-                new GameDesignReviewedBaseRepository.ReviewedBaseReadback(
-                    historical, historicalDigest))
+    assertThatThrownBy(() ->
+            new GameDesignReviewedBaseRepository.ReviewedBaseReadback(historical, historicalDigest))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("REVIEWED_BASE_STORED_SCHEMA_CONFLICT");
 
@@ -95,20 +91,18 @@ class GameDesignReviewedBaseEvidenceTest {
                     current, currentDigest, GameDesignReviewedBaseEvidence.SCHEMA)
                 .canonicalBytes())
         .containsExactly(current);
-    assertThatThrownBy(
-            () ->
-                new GameDesignReviewedBaseRepository.ReviewedBaseReadback(
-                    current, currentDigest, GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA))
+    assertThatThrownBy(() ->
+            new GameDesignReviewedBaseRepository.ReviewedBaseReadback(
+                current, currentDigest, GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("REVIEWED_BASE_STORED_SCHEMA_CONFLICT");
 
     byte[] truncated = {0, 0, 0};
-    assertThatThrownBy(
-            () ->
-                new GameDesignReviewedBaseRepository.ReviewedBaseReadback(
-                    truncated,
-                    DraftAuthorizationFenceBinding.digest(truncated),
-                    GameDesignReviewedBaseEvidence.SCHEMA))
+    assertThatThrownBy(() ->
+            new GameDesignReviewedBaseRepository.ReviewedBaseReadback(
+                truncated,
+                DraftAuthorizationFenceBinding.digest(truncated),
+                GameDesignReviewedBaseEvidence.SCHEMA))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Truncated immutable source frame");
   }

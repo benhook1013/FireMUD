@@ -122,11 +122,10 @@ class AutomationScriptingGrpcServiceTest {
       SessionContext.setContext(
           null, List.of(), Map.of(), true, "game-design-service", "test-instance");
 
-      runAsGameDesign(
-          () ->
-              assertEquals(
-                  "PERMISSION_DENIED",
-                  invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+      runAsGameDesign(() ->
+          assertEquals(
+              "PERMISSION_DENIED",
+              invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
     }
 
     AutomationScriptingGrpcService service =
@@ -142,11 +141,10 @@ class AutomationScriptingGrpcServiceTest {
             null);
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    runAsGameDesign(
-        () ->
-            assertEquals(
-                "PERMISSION_DENIED",
-                invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
+    runAsGameDesign(() ->
+        assertEquals(
+            "PERMISSION_DENIED",
+            invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode()));
   }
 
   @Test
@@ -171,22 +169,21 @@ class AutomationScriptingGrpcServiceTest {
             TEST_NAMESPACE);
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest("1", "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
+    runAsGameDesign(() ->
+        service.getDraftDesignDigest(
+            fullDigestRequest("1", "7"),
+            new StreamObserver<>() {
+              @Override
+              public void onNext(GetDraftDesignDigestResponse value) {
+                ref.set(value);
+              }
 
-                  @Override
-                  public void onError(Throwable t) {}
+              @Override
+              public void onError(Throwable t) {}
 
-                  @Override
-                  public void onCompleted() {}
-                }));
+              @Override
+              public void onCompleted() {}
+            }));
 
     assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
   }
@@ -213,22 +210,21 @@ class AutomationScriptingGrpcServiceTest {
             TEST_NAMESPACE);
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                patchDigestRequest("1", "7", "patch:é:1"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
+    runAsGameDesign(() ->
+        service.getDraftDesignDigest(
+            patchDigestRequest("1", "7", "patch:é:1"),
+            new StreamObserver<>() {
+              @Override
+              public void onNext(GetDraftDesignDigestResponse value) {
+                ref.set(value);
+              }
 
-                  @Override
-                  public void onError(Throwable t) {}
+              @Override
+              public void onError(Throwable t) {}
 
-                  @Override
-                  public void onCompleted() {}
-                }));
+              @Override
+              public void onCompleted() {}
+            }));
 
     assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
   }
@@ -328,14 +324,13 @@ class AutomationScriptingGrpcServiceTest {
         () ->
             assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
 
-    runAsGameDesign(
-        () -> {
-          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
-          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
-          SessionContext.setContext(
-              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
-          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
-        });
+    runAsGameDesign(() -> {
+      SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+      assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+      SessionContext.setContext(
+          "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+      assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+    });
   }
 
   @Test
@@ -354,14 +349,11 @@ class AutomationScriptingGrpcServiceTest {
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            ref.set(
-                invokeDigest(
-                    service,
-                    fullDigestRequest("1", "7").toBuilder()
-                        .setRequestDigest("0".repeat(64))
-                        .build())));
+    runAsGameDesign(() ->
+        ref.set(
+            invokeDigest(
+                service,
+                fullDigestRequest("1", "7").toBuilder().setRequestDigest("0".repeat(64)).build())));
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }

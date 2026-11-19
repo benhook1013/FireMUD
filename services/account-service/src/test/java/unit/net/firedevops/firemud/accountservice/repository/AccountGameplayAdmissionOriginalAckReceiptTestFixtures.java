@@ -77,13 +77,12 @@ final class AccountGameplayAdmissionOriginalAckReceiptTestFixtures {
                 "membership/" + account + "/" + tenant,
                 "tenant/" + tenant)
             .stream()
-            .map(
-                suffix ->
-                    Map.of(
-                        "outboxStreamKey",
-                        "account:auth-authority:v1:" + suffix,
-                        "outboxSequence",
-                        suffix.startsWith("account/") || suffix.startsWith("issuer/") ? "0" : "1"))
+            .map(suffix ->
+                Map.of(
+                    "outboxStreamKey",
+                    "account:auth-authority:v1:" + suffix,
+                    "outboxSequence",
+                    suffix.startsWith("account/") || suffix.startsWith("issuer/") ? "0" : "1"))
             .toList());
     Map<String, Object> token = new LinkedHashMap<>();
     token.put("accountId", account);

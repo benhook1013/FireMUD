@@ -88,10 +88,9 @@ public class GameSessionPrivateFreshTargetRepository {
         preparations
             .readExactForPrivateCatalogTarget(
                 request.preparationRequestId(), request.playtestLifecycleId())
-            .orElseThrow(
-                () ->
-                    new PreparationUnavailableException(
-                        "Exact retained FRESH preparation and lifecycle are unavailable"));
+            .orElseThrow(() ->
+                new PreparationUnavailableException(
+                    "Exact retained FRESH preparation and lifecycle are unavailable"));
     Preparation preparation = snapshot.preparation();
     CanonicalRealmCatalogSnapshot sourceCatalog = readExactSourceCatalog(preparation);
     IntakeReceipt intake = sourceCatalog.sourceIntakeReceipt();
@@ -728,15 +727,14 @@ public class GameSessionPrivateFreshTargetRepository {
       throw new IllegalStateException(
           "Private FRESH target allocation requires a writable owner transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE) {
-            throw new IllegalStateException(
-                "Private FRESH target allocation requires its owner SERIALIZABLE transaction");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE) {
+        throw new IllegalStateException(
+            "Private FRESH target allocation requires its owner SERIALIZABLE transaction");
+      }
+      return null;
+    });
     Record isolationRow = dsl.fetchOne("SHOW transaction_isolation");
     if (isolationRow == null
         || !"serializable".equalsIgnoreCase(isolationRow.get(0, String.class).trim())) {

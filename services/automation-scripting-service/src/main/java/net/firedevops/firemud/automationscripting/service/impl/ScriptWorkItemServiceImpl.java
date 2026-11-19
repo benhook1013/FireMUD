@@ -302,11 +302,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     List<ScriptWorkItem> items =
         workItemRepository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
             STATUS_PENDING_EVALUATION, now, PageRequest.of(0, maxItems));
-    items.forEach(
-        item -> {
-          item.setStatus(STATUS_EVALUATING);
-          item.setUpdatedAt(now);
-        });
+    items.forEach(item -> {
+      item.setStatus(STATUS_EVALUATING);
+      item.setUpdatedAt(now);
+    });
     List<ScriptWorkItem> saved = List.copyOf(workItemRepository.saveAll(items));
     saved.forEach(rolloutProjectionService::refreshForWorkItem);
     return saved;
@@ -328,11 +327,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             STATUS_PENDING_EVALUATION,
             now,
             PageRequest.of(0, maxItems));
-    items.forEach(
-        item -> {
-          item.setStatus(STATUS_EVALUATING);
-          item.setUpdatedAt(now);
-        });
+    items.forEach(item -> {
+      item.setStatus(STATUS_EVALUATING);
+      item.setUpdatedAt(now);
+    });
     List<ScriptWorkItem> saved = List.copyOf(workItemRepository.saveAll(items));
     saved.forEach(rolloutProjectionService::refreshForWorkItem);
     return saved;
@@ -391,16 +389,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(scriptPatchVersion, "script_patch_version");
     return readinessProjectionService
         .getProjection(tenantId, scriptPatchVersion)
-        .map(
-            readiness -> {
-              PublicationMetadata metadata =
-                  publicationMetadata(tenantId, readiness.baseVersionId(), scriptPatchVersion);
-              return PatchStatusSummary.fromProjection(
-                  readiness,
-                  metadata.baseVersionId(),
-                  metadata.abilitySchemaDigest(),
-                  metadata.publication());
-            });
+        .map(readiness -> {
+          PublicationMetadata metadata =
+              publicationMetadata(tenantId, readiness.baseVersionId(), scriptPatchVersion);
+          return PatchStatusSummary.fromProjection(
+              readiness,
+              metadata.baseVersionId(),
+              metadata.abilitySchemaDigest(),
+              metadata.publication());
+        });
   }
 
   @Override
@@ -410,21 +407,19 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(tenantId, "tenant_id");
     PublicationMetadataCache publicationMetadataCache = new PublicationMetadataCache();
     return readinessProjectionService.listProjections(tenantId).stream()
-        .map(
-            readiness -> {
-              PublicationMetadata metadata =
-                  publicationMetadataCache.get(
-                      tenantId, readiness.baseVersionId(), readiness.scriptPatchVersion());
-              return PatchStatusSummary.fromProjection(
-                  readiness,
-                  metadata.baseVersionId(),
-                  metadata.abilitySchemaDigest(),
-                  metadata.publication());
-            })
-        .filter(
-            summary ->
-                status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED
-                    || summary.status() == status)
+        .map(readiness -> {
+          PublicationMetadata metadata =
+              publicationMetadataCache.get(
+                  tenantId, readiness.baseVersionId(), readiness.scriptPatchVersion());
+          return PatchStatusSummary.fromProjection(
+              readiness,
+              metadata.baseVersionId(),
+              metadata.abilitySchemaDigest(),
+              metadata.publication());
+        })
+        .filter(summary ->
+            status == ScriptPatchStatus.SCRIPT_PATCH_STATUS_UNSPECIFIED
+                || summary.status() == status)
         .filter(summary -> changedAfterMs <= 0 || summary.lastChangedAtMs() > changedAfterMs)
         .filter(summary -> changedBeforeMs <= 0 || summary.lastChangedAtMs() < changedBeforeMs)
         .sorted(Comparator.comparingLong(PatchStatusSummary::lastChangedAtMs).reversed())
@@ -446,22 +441,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             normalizedTenantId, normalizedGameInstanceId, normalizedRegionId);
     boolean statePresent = admissionStateLookup.isPresent();
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
-        admissionStateLookup.orElseGet(
-            () ->
-                new AutomationAdmissionStateService.AdmissionStateSummary(
-                    normalizedTenantId,
-                    normalizedGameInstanceId,
-                    normalizedRegionId,
-                    "NORMAL",
-                    0L,
-                    "",
-                    "",
-                    "",
-                    0L,
-                    "",
-                    AutomationAdmissionStateService.OUTCOME_NOT_FOUND,
-                    "",
-                    0L));
+        admissionStateLookup.orElseGet(() ->
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                normalizedTenantId,
+                normalizedGameInstanceId,
+                normalizedRegionId,
+                "NORMAL",
+                0L,
+                "",
+                "",
+                "",
+                0L,
+                "",
+                AutomationAdmissionStateService.OUTCOME_NOT_FOUND,
+                "",
+                0L));
     List<ScriptWorkItem> scopedWorkItems =
         workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             normalizedTenantId,
@@ -748,16 +742,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
     Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> completedPreflightResults = priorResults;
     ReplayTransactionOutcome transactionOutcome =
-        replayTransactionBoundary.inTransaction(
-            () ->
-                replayDeadLettersInTransaction(
-                    command,
-                    normalizedTenantId,
-                    now,
-                    reason,
-                    fingerprint,
-                    completedPreflightResults,
-                    preflights));
+        replayTransactionBoundary.inTransaction(() ->
+            replayDeadLettersInTransaction(
+                command,
+                normalizedTenantId,
+                now,
+                reason,
+                fingerprint,
+                completedPreflightResults,
+                preflights));
     for (ScriptWorkItem claimedItem : transactionOutcome.claimedItems()) {
       // This refresh can consult Game Session when its local pin projection is stale. Keep that
       // authority read outside the durable replay transaction. Projection reads retry the refresh
@@ -822,19 +815,18 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     command.workItemIds().stream()
         .map(ScriptWorkItemServiceImpl::parseWorkItemId)
         .sorted()
-        .forEach(
-            requestedLongId -> {
-              if (existingResults.containsKey(requestedLongId)) {
-                return;
-              }
-              ReplayPreflight preflight = preflights.get(requestedLongId);
-              if (preflight == null || preflight.snapshot() == null) {
-                return;
-              }
-              workItemRepository
-                  .findByTenantIdAndIdForUpdate(normalizedTenantId, requestedLongId)
-                  .ifPresent(item -> lockedById.put(requestedLongId, item));
-            });
+        .forEach(requestedLongId -> {
+          if (existingResults.containsKey(requestedLongId)) {
+            return;
+          }
+          ReplayPreflight preflight = preflights.get(requestedLongId);
+          if (preflight == null || preflight.snapshot() == null) {
+            return;
+          }
+          workItemRepository
+              .findByTenantIdAndIdForUpdate(normalizedTenantId, requestedLongId)
+              .ifPresent(item -> lockedById.put(requestedLongId, item));
+        });
 
     // Emit and persist outcomes in caller order, while using only the already locked current rows.
     List<ReplayItemResult> results = new ArrayList<>();
@@ -1600,19 +1592,18 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     String workItemReason = blankToEmpty(item.getCancelReason());
     return auditRepository
         .findByWorkItemId(item.getId())
-        .map(
-            audit -> {
-              String auditReason = blankToEmpty(audit.getFinalReason());
-              boolean consistent =
-                  auditReason.isBlank()
-                      || workItemReason.isBlank()
-                      || auditReason.equals(workItemReason);
-              return new OriginalFailureEvidence(
-                  blankToEmpty(audit.getFinalStage()),
-                  auditReason,
-                  blankToEmpty(audit.getFinalOutcome()),
-                  consistent);
-            })
+        .map(audit -> {
+          String auditReason = blankToEmpty(audit.getFinalReason());
+          boolean consistent =
+              auditReason.isBlank()
+                  || workItemReason.isBlank()
+                  || auditReason.equals(workItemReason);
+          return new OriginalFailureEvidence(
+              blankToEmpty(audit.getFinalStage()),
+              auditReason,
+              blankToEmpty(audit.getFinalOutcome()),
+              consistent);
+        })
         .orElse(new OriginalFailureEvidence("", workItemReason, "", true));
   }
 
@@ -1622,14 +1613,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> persisted) {
     List<ReplayItemResult> results =
         command.workItemIds().stream()
-            .map(
-                id -> {
-                  ScriptDeadLetterReplayRepository.ReplayItem result =
-                      persisted.get(parseWorkItemId(id));
-                  return result == null
-                      ? new ReplayItemResult(id, "rejected", "replay_result_missing", 0L)
-                      : toReplayItemResult(id, result);
-                })
+            .map(id -> {
+              ScriptDeadLetterReplayRepository.ReplayItem result =
+                  persisted.get(parseWorkItemId(id));
+              return result == null
+                  ? new ReplayItemResult(id, "rejected", "replay_result_missing", 0L)
+                  : toReplayItemResult(id, result);
+            })
             .toList();
     ReplayCounts counts = replayCounts(results);
     return new ReplayResult(
@@ -1639,10 +1629,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static ReplayCounts replayCounts(List<ReplayItemResult> results) {
     long replayed =
         results.stream()
-            .filter(
-                result ->
-                    "retried_evaluation".equals(result.outcome())
-                        || "resumed_dispatch".equals(result.outcome()))
+            .filter(result ->
+                "retried_evaluation".equals(result.outcome())
+                    || "resumed_dispatch".equals(result.outcome()))
             .count();
     long rejected = results.stream().filter(result -> "rejected".equals(result.outcome())).count();
     return new ReplayCounts(replayed, rejected);
@@ -1696,12 +1685,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         .filter(item -> "onLoad".equals(item.getEventType()))
         .map(item -> item.getTenantId() + "\u0000" + item.getScriptPatchVersion())
         .collect(Collectors.toSet())
-        .forEach(
-            key -> {
-              int delimiter = key.indexOf('\u0000');
-              readinessProjectionService.refreshFromOnLoadWorkItems(
-                  key.substring(0, delimiter), key.substring(delimiter + 1));
-            });
+        .forEach(key -> {
+          int delimiter = key.indexOf('\u0000');
+          readinessProjectionService.refreshFromOnLoadWorkItems(
+              key.substring(0, delimiter), key.substring(delimiter + 1));
+        });
   }
 
   private void cancel(ScriptWorkItem item, String reason, Instant now) {
@@ -1710,14 +1698,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     item.setUpdatedAt(now);
     auditRepository
         .findByWorkItemId(item.getId())
-        .ifPresent(
-            audit -> {
-              audit.setFinalStage("ADMISSION");
-              audit.setFinalOutcome("canceled");
-              audit.setFinalReason(reason);
-              audit.setUpdatedAt(now);
-              auditRepository.save(audit);
-            });
+        .ifPresent(audit -> {
+          audit.setFinalStage("ADMISSION");
+          audit.setFinalOutcome("canceled");
+          audit.setFinalReason(reason);
+          audit.setUpdatedAt(now);
+          auditRepository.save(audit);
+        });
   }
 
   record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}

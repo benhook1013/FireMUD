@@ -97,15 +97,14 @@ public final class WorldPrivatePreparationBuildAssembly {
         request.contentDigest(),
         request.digestSchemaVersion(),
         request.worldAffectedTuples().stream()
-            .map(
-                tuple ->
-                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
-                        tuple.owner(),
-                        tuple.aggregateType(),
-                        tuple.aggregateId(),
-                        tuple.scopeType(),
-                        tuple.scopeId(),
-                        tuple.expectedEpoch()))
+            .map(tuple ->
+                new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                    tuple.owner(),
+                    tuple.aggregateType(),
+                    tuple.aggregateId(),
+                    tuple.scopeType(),
+                    tuple.scopeId(),
+                    tuple.expectedEpoch()))
             .toList());
   }
 

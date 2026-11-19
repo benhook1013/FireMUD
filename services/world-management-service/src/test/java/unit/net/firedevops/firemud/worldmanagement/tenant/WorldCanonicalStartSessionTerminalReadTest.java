@@ -189,10 +189,8 @@ class WorldCanonicalStartSessionTerminalReadTest {
     WorldCanonicalInstanceExecutionIdentity identity =
         mock(WorldCanonicalInstanceExecutionIdentity.class);
 
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInstancePreparationService(repository)
-                    .recoverExactTerminal(identity))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInstancePreparationService(repository).recoverExactTerminal(identity))
         .isInstanceOf(PreparationDeniedException.class)
         .hasMessageContaining("no authenticated original-operation verifier");
     verifyNoInteractions(repository);

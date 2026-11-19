@@ -438,34 +438,32 @@ public final class StartSessionAuthorityEvidenceBundle {
     if (cutoffs.size() > 1) {
       throw denied("StartSession bundle must not widen tenant billing scope");
     }
-    cutoffs.forEach(
-        (tenantId, raw) -> {
-          uuid(tenantId, "tenantBillingCutoff tenant ID");
-          Map<String, Object> cutoff = object(raw, "tenantBillingCutoff entry");
-          requireFields(
-              cutoff,
-              Set.of(
-                  "tenantAuthorityGeneration",
-                  "tenantBillingSequence",
-                  "outboxStreamKey",
-                  "outboxSequence"),
-              "tenantBillingCutoff entry");
-          positiveNumber(cutoff.get("tenantAuthorityGeneration"), "tenantAuthorityGeneration");
-          positiveNumber(cutoff.get("tenantBillingSequence"), "tenantBillingSequence");
-          boundedText(cutoff.get("outboxStreamKey"), "outboxStreamKey", 256);
-          positiveNumber(cutoff.get("outboxSequence"), "outboxSequence");
-        });
+    cutoffs.forEach((tenantId, raw) -> {
+      uuid(tenantId, "tenantBillingCutoff tenant ID");
+      Map<String, Object> cutoff = object(raw, "tenantBillingCutoff entry");
+      requireFields(
+          cutoff,
+          Set.of(
+              "tenantAuthorityGeneration",
+              "tenantBillingSequence",
+              "outboxStreamKey",
+              "outboxSequence"),
+          "tenantBillingCutoff entry");
+      positiveNumber(cutoff.get("tenantAuthorityGeneration"), "tenantAuthorityGeneration");
+      positiveNumber(cutoff.get("tenantBillingSequence"), "tenantBillingSequence");
+      boundedText(cutoff.get("outboxStreamKey"), "outboxStreamKey", 256);
+      positiveNumber(cutoff.get("outboxSequence"), "outboxSequence");
+    });
   }
 
   private static void validateMembershipVersion(Map<String, Object> membership) {
     if (membership.size() > 1) {
       throw denied("StartSession bundle must not widen membership scope");
     }
-    membership.forEach(
-        (tenantId, version) -> {
-          uuid(tenantId, "membershipVersion tenant ID");
-          positiveNumber(version, "membershipVersion");
-        });
+    membership.forEach((tenantId, version) -> {
+      uuid(tenantId, "membershipVersion tenant ID");
+      positiveNumber(version, "membershipVersion");
+    });
   }
 
   private static void validateTenantHumanEvidence(Map<String, Object> evidence) {
@@ -499,11 +497,10 @@ public final class StartSessionAuthorityEvidenceBundle {
     if (values.size() > 1) {
       throw denied(field + " must be limited to the selected tenant");
     }
-    values.forEach(
-        (key, value) -> {
-          uuid(key, field + " tenant ID");
-          positiveNumber(value, field);
-        });
+    values.forEach((key, value) -> {
+      uuid(key, field + " tenant ID");
+      positiveNumber(value, field);
+    });
   }
 
   private static long positiveNumber(Object value, String field) {
@@ -612,13 +609,12 @@ public final class StartSessionAuthorityEvidenceBundle {
   private static Object immutableValue(Object value) {
     if (value instanceof Map<?, ?> map) {
       Map<String, Object> copy = new LinkedHashMap<>();
-      map.forEach(
-          (key, nested) -> {
-            if (!(key instanceof String text)) {
-              throw denied("Object keys must be strings");
-            }
-            copy.put(text, immutableValue(nested));
-          });
+      map.forEach((key, nested) -> {
+        if (!(key instanceof String text)) {
+          throw denied("Object keys must be strings");
+        }
+        copy.put(text, immutableValue(nested));
+      });
       return Map.copyOf(copy);
     }
     if (value instanceof List<?> list) {

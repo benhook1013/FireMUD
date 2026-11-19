@@ -166,56 +166,53 @@ class GameplayAdmissionPointerRepositoryTest {
     new ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(JooqAutoConfiguration.class))
         .withBean(DriverManagerDataSource.class, () -> dataSource)
-        .run(
-            context -> {
-              DSLContext dsl = context.getBean(DSLContext.class);
-              createSchema(dsl);
-              GameplayAdmissionPointerRepository repository =
-                  new GameplayAdmissionPointerRepository(dsl);
-              repository.save(pointer(7L, 44L, "SHARED", "production"));
+        .run(context -> {
+          DSLContext dsl = context.getBean(DSLContext.class);
+          createSchema(dsl);
+          GameplayAdmissionPointerRepository repository =
+              new GameplayAdmissionPointerRepository(dsl);
+          repository.save(pointer(7L, 44L, "SHARED", "production"));
 
-              AdmissionPointerConflictException saveConflict =
-                  assertThrows(
-                      AdmissionPointerConflictException.class,
-                      () -> repository.save(pointer(7L, 45L, "SHARED", "production")));
-              DataIntegrityViolationException translatedSaveFailure =
-                  assertInstanceOf(DataIntegrityViolationException.class, saveConflict.getCause());
-              assertEquals("23505", sqlState(translatedSaveFailure));
-              assertNotNull(translatedSaveFailure.getCause());
+          AdmissionPointerConflictException saveConflict =
+              assertThrows(
+                  AdmissionPointerConflictException.class,
+                  () -> repository.save(pointer(7L, 45L, "SHARED", "production")));
+          DataIntegrityViolationException translatedSaveFailure =
+              assertInstanceOf(DataIntegrityViolationException.class, saveConflict.getCause());
+          assertEquals("23505", sqlState(translatedSaveFailure));
+          assertNotNull(translatedSaveFailure.getCause());
 
-              GameplayAdmissionPointer seasonal =
-                  repository.save(pointer(7L, 45L, "SHARED", "seasonal"));
-              seasonal.setRealmSlug("production");
-              seasonal.setCatalogRevision(2L);
-              AdmissionPointerConflictException updateConflict =
-                  assertThrows(
-                      AdmissionPointerConflictException.class,
-                      () -> repository.updateExisting(seasonal, 1L, 1L));
-              DataIntegrityViolationException translatedUpdateFailure =
-                  assertInstanceOf(
-                      DataIntegrityViolationException.class, updateConflict.getCause());
-              assertEquals("23505", sqlState(translatedUpdateFailure));
-              assertNotNull(translatedUpdateFailure.getCause());
-              assertEquals(
-                  "seasonal",
-                  repository
-                      .findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "seasonal")
-                      .orElseThrow()
-                      .getRealmSlug());
+          GameplayAdmissionPointer seasonal =
+              repository.save(pointer(7L, 45L, "SHARED", "seasonal"));
+          seasonal.setRealmSlug("production");
+          seasonal.setCatalogRevision(2L);
+          AdmissionPointerConflictException updateConflict =
+              assertThrows(
+                  AdmissionPointerConflictException.class,
+                  () -> repository.updateExisting(seasonal, 1L, 1L));
+          DataIntegrityViolationException translatedUpdateFailure =
+              assertInstanceOf(DataIntegrityViolationException.class, updateConflict.getCause());
+          assertEquals("23505", sqlState(translatedUpdateFailure));
+          assertNotNull(translatedUpdateFailure.getCause());
+          assertEquals(
+              "seasonal",
+              repository
+                  .findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "seasonal")
+                  .orElseThrow()
+                  .getRealmSlug());
 
-              GameplayAdmissionPointer invalid = pointer(8L, 55L, "SHARED", "production");
-              invalid.setCatalogRevision(0L);
-              IllegalStateException checkViolation =
-                  assertThrows(IllegalStateException.class, () -> repository.save(invalid));
-              assertFalse(checkViolation instanceof AdmissionPointerConflictException);
-              DataIntegrityViolationException translatedCheckFailure =
-                  assertInstanceOf(
-                      DataIntegrityViolationException.class, checkViolation.getCause());
-              String checkViolationSqlState = sqlState(translatedCheckFailure);
-              assertNotNull(checkViolationSqlState);
-              assertNotEquals("23505", checkViolationSqlState);
-              assertNotNull(translatedCheckFailure.getCause());
-            });
+          GameplayAdmissionPointer invalid = pointer(8L, 55L, "SHARED", "production");
+          invalid.setCatalogRevision(0L);
+          IllegalStateException checkViolation =
+              assertThrows(IllegalStateException.class, () -> repository.save(invalid));
+          assertFalse(checkViolation instanceof AdmissionPointerConflictException);
+          DataIntegrityViolationException translatedCheckFailure =
+              assertInstanceOf(DataIntegrityViolationException.class, checkViolation.getCause());
+          String checkViolationSqlState = sqlState(translatedCheckFailure);
+          assertNotNull(checkViolationSqlState);
+          assertNotEquals("23505", checkViolationSqlState);
+          assertNotNull(translatedCheckFailure.getCause());
+        });
   }
 
   @Test

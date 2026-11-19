@@ -44,11 +44,10 @@ class RedisSessionContextServiceTest {
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     when(redisTemplate.execute(Mockito.any(SessionCallback.class)))
-        .thenAnswer(
-            invocation -> {
-              SessionCallback<?> callback = invocation.getArgument(0);
-              return callback.execute((RedisOperations<String, Object>) redisTemplate);
-            });
+        .thenAnswer(invocation -> {
+          SessionCallback<?> callback = invocation.getArgument(0);
+          return callback.execute((RedisOperations<String, Object>) redisTemplate);
+        });
     when(redisTemplate.exec()).thenReturn(List.of(1L));
     service = new RedisSessionContextService(redisTemplate, TTL.toMillis());
   }
@@ -267,9 +266,8 @@ class RedisSessionContextServiceTest {
     verify(redisTemplate).delete("sessionctx:10:identity:42:name:aliasold:context");
     verify(redisTemplate, Mockito.atLeastOnce())
         .watch(
-            Mockito.argThat(
-                (Collection<String> keys) ->
-                    keys.contains("sessionctx:10:identity:42:32:context")));
+            Mockito.argThat((Collection<String> keys) ->
+                keys.contains("sessionctx:10:identity:42:32:context")));
     verify(valueOperations).set("sessionctx:10:1:context", incoming.withoutJwt(), TTL);
     verify(valueOperations).set("sessionctx:session:1:context", incoming.withoutJwt(), TTL);
   }

@@ -257,12 +257,11 @@ public final class AccountStartSessionAdmissionProtectionEvidence {
     }
     List<SourceEvidence> sources =
         sourceEvidenceVector.stream()
-            .map(
-                source -> {
-                  Objects.requireNonNull(source, "sourceEvidenceVector child is required");
-                  byte[] exactBytes = source.canonicalBytes();
-                  return SourceEvidence.fromStored(exactBytes);
-                })
+            .map(source -> {
+              Objects.requireNonNull(source, "sourceEvidenceVector child is required");
+              byte[] exactBytes = source.canonicalBytes();
+              return SourceEvidence.fromStored(exactBytes);
+            })
             .sorted(Comparator.comparing(SourceEvidence::key))
             .toList();
     if (sources.stream().map(SourceEvidence::key).distinct().count() != sources.size()) {

@@ -87,12 +87,11 @@ public final class EntityPlayerCreatedRuntimeReferenceService {
     requireSelector(request, terminal, action);
 
     EntityPlayerCreatedRuntimeReference retained =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext tx = DSL.using(configuration);
-              tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              return projectionRepository.read(tx, terminal, action);
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return projectionRepository.read(tx, terminal, action);
+        });
     return CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(
         request, response(request, retained));
   }

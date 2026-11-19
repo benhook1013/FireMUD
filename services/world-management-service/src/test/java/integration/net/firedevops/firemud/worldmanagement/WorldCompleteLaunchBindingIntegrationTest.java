@@ -192,19 +192,17 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 .get("name", String.class))
         .isEqualTo(retainedName);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE world_complete_launch_binding SET world_slug = ? "
-                        + "WHERE binding_operation_id = ?",
-                    "changed-world",
-                    first.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE world_complete_launch_binding SET world_slug = ? "
+                    + "WHERE binding_operation_id = ?",
+                "changed-world",
+                first.operationId()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_complete_launch_binding WHERE binding_operation_id = ?",
-                    first.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_complete_launch_binding WHERE binding_operation_id = ?",
+                first.operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> dsl.execute("TRUNCATE world_complete_launch_binding"))
         .isInstanceOf(DataAccessException.class);
@@ -279,17 +277,15 @@ class WorldCompleteLaunchBindingIntegrationTest {
     AuthoredWorldLaunchDescriptorClient secondClient =
         mock(AuthoredWorldLaunchDescriptorClient.class);
     when(firstClient.getComplete(any()))
-        .thenAnswer(
-            invocation -> {
-              awaitFetchBarrier(bothFetched);
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          awaitFetchBarrier(bothFetched);
+          return evidence;
+        });
     when(secondClient.getComplete(any()))
-        .thenAnswer(
-            invocation -> {
-              awaitFetchBarrier(bothFetched);
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          awaitFetchBarrier(bothFetched);
+          return evidence;
+        });
     WorldCompleteLaunchBindingService firstService = service(firstClient, transactionManager);
     WorldCompleteLaunchBindingService secondService = service(secondClient, transactionManager);
     GetRequest firstRequest = request(evidence);
@@ -337,17 +333,15 @@ class WorldCompleteLaunchBindingIntegrationTest {
     AuthoredWorldLaunchDescriptorClient changedClient =
         mock(AuthoredWorldLaunchDescriptorClient.class);
     when(originalClient.getComplete(any()))
-        .thenAnswer(
-            invocation -> {
-              awaitFetchBarrier(bothFetched);
-              return original;
-            });
+        .thenAnswer(invocation -> {
+          awaitFetchBarrier(bothFetched);
+          return original;
+        });
     when(changedClient.getComplete(any()))
-        .thenAnswer(
-            invocation -> {
-              awaitFetchBarrier(bothFetched);
-              return changed;
-            });
+        .thenAnswer(invocation -> {
+          awaitFetchBarrier(bothFetched);
+          return changed;
+        });
     WorldCompleteLaunchBindingService originalService = service(originalClient, transactionManager);
     WorldCompleteLaunchBindingService changedService = service(changedClient, transactionManager);
     GetRequest originalRequest = request(original);
@@ -425,25 +419,24 @@ class WorldCompleteLaunchBindingIntegrationTest {
     UUID firstReadId = UUID.randomUUID();
     UUID retiredReadId = UUID.randomUUID();
     when(versionStateClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request currentRequest = invocation.getArgument(0);
-              if (currentRequest.readRequestId().equals(firstReadId)) {
-                return currentVersionState(
-                    currentRequest,
-                    source,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                    evidence.descriptor().versionStateEpoch());
-              }
-              if (currentRequest.readRequestId().equals(retiredReadId)) {
-                return currentVersionState(
-                    currentRequest,
-                    source,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE,
-                    evidence.descriptor().versionStateEpoch() + 1);
-              }
-              throw new IllegalArgumentException("Unexpected synthetic current-read request");
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request currentRequest = invocation.getArgument(0);
+          if (currentRequest.readRequestId().equals(firstReadId)) {
+            return currentVersionState(
+                currentRequest,
+                source,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                evidence.descriptor().versionStateEpoch());
+          }
+          if (currentRequest.readRequestId().equals(retiredReadId)) {
+            return currentVersionState(
+                currentRequest,
+                source,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE,
+                evidence.descriptor().versionStateEpoch() + 1);
+          }
+          throw new IllegalArgumentException("Unexpected synthetic current-read request");
+        });
     WorldCompleteLaunchBindingService service =
         service(descriptorClient, versionStateClient, transactionManager);
 
@@ -471,10 +464,8 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 evidence.descriptor().controlPlaneRequestId()))
         .isEqualTo(ownerRowsBeforeRead);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(bindingRequest, retiredReadId)))
+    assertThatThrownBy(() ->
+            withGameSession(() -> service.readCurrentVersionState(bindingRequest, retiredReadId)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("epoch differs");
     assertThat(
@@ -557,23 +548,22 @@ class WorldCompleteLaunchBindingIntegrationTest {
     changedSelectorEvidence.requireValid();
     changedCanonicalVersionEvidence.requireValid();
     when(versionStateClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request currentRequest = invocation.getArgument(0);
-              if (currentRequest.readRequestId().equals(mixedReadId)) {
-                return mixedEvidence;
-              }
-              if (currentRequest.readRequestId().equals(changedSelectorReadId)) {
-                return changedSelectorEvidence;
-              }
-              if (currentRequest.readRequestId().equals(changedCanonicalVersionReadId)) {
-                return changedCanonicalVersionEvidence;
-              }
-              if (currentRequest.readRequestId().equals(unavailableReadId)) {
-                throw new IllegalStateException("Synthetic current-version source is unavailable");
-              }
-              throw new IllegalArgumentException("Unexpected synthetic current-read request");
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request currentRequest = invocation.getArgument(0);
+          if (currentRequest.readRequestId().equals(mixedReadId)) {
+            return mixedEvidence;
+          }
+          if (currentRequest.readRequestId().equals(changedSelectorReadId)) {
+            return changedSelectorEvidence;
+          }
+          if (currentRequest.readRequestId().equals(changedCanonicalVersionReadId)) {
+            return changedCanonicalVersionEvidence;
+          }
+          if (currentRequest.readRequestId().equals(unavailableReadId)) {
+            throw new IllegalStateException("Synthetic current-version source is unavailable");
+          }
+          throw new IllegalArgumentException("Unexpected synthetic current-read request");
+        });
     WorldCompleteLaunchBindingService service =
         service(descriptorClient, versionStateClient, transactionManager);
     WorldCompleteLaunchBindingReceipt committed =
@@ -615,9 +605,8 @@ class WorldCompleteLaunchBindingIntegrationTest {
     assertThat(changedCanonicalVersionEvidence.canonicalVersionId())
         .isNotEqualTo(bindingEvidence.releaseAttestation().canonicalVersionId());
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(() -> service.readCurrentVersionState(bindingRequest, mixedReadId)))
+    assertThatThrownBy(() ->
+            withGameSession(() -> service.readCurrentVersionState(bindingRequest, mixedReadId)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("exact committed World source");
     assertThat(
@@ -635,10 +624,9 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 otherControlPlaneRequestId))
         .isEqualTo(otherSourceRowsBeforeRead);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(bindingRequest, changedSelectorReadId)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(bindingRequest, changedSelectorReadId)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("exact committed World source");
     assertThat(
@@ -649,12 +637,9 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 bindingEvidence.descriptor().controlPlaneRequestId()))
         .isEqualTo(committedRowsBeforeRead);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () ->
-                        service.readCurrentVersionState(
-                            bindingRequest, changedCanonicalVersionReadId)))
+    assertThatThrownBy(() ->
+            withGameSession(() ->
+                service.readCurrentVersionState(bindingRequest, changedCanonicalVersionReadId)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("canonical version UUID differs");
     assertThat(
@@ -681,10 +666,9 @@ class WorldCompleteLaunchBindingIntegrationTest {
     assertThat(committed.evidence()).isEqualTo(bindingEvidence);
     assertThat(committed.sourceIntakeReceipt()).isEqualTo(boundSourceReceipt);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(bindingRequest, unavailableReadId)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(bindingRequest, unavailableReadId)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("unavailable or invalid");
     assertThat(
@@ -695,12 +679,9 @@ class WorldCompleteLaunchBindingIntegrationTest {
                 bindingEvidence.descriptor().controlPlaneRequestId()))
         .isEqualTo(committedRowsBeforeRead);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () ->
-                        service.readCurrentVersionState(
-                            missingBindingRequest, missingBindingReadId)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(missingBindingRequest, missingBindingReadId)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("requires a committed launch binding");
     assertThat(
@@ -1075,14 +1056,13 @@ class WorldCompleteLaunchBindingIntegrationTest {
   }
 
   private static Object attempt(WorldCompleteLaunchBindingService service, GetRequest request) {
-    return withGameSession(
-        () -> {
-          try {
-            return service.bind(request);
-          } catch (RegistrationConflictException exception) {
-            return exception;
-          }
-        });
+    return withGameSession(() -> {
+      try {
+        return service.bind(request);
+      } catch (RegistrationConflictException exception) {
+        return exception;
+      }
+    });
   }
 
   private static void migrateFixture(String schema, MigrationVersion target) {

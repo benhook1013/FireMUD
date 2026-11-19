@@ -67,10 +67,9 @@ class AccountOperatorAuthorizationReferenceFingerprintTest {
   void rejectsMissingOrUnsupportedKeyMaterialAndInvalidKeyIds() {
     assertThatThrownBy(() -> new AccountOperatorAuthorizationReferenceFingerprint(KEY_ID, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountOperatorAuthorizationReferenceFingerprint(
-                    KEY_ID, new SecretKeySpec(KEY_BYTES, "AES")))
+    assertThatThrownBy(() ->
+            new AccountOperatorAuthorizationReferenceFingerprint(
+                KEY_ID, new SecretKeySpec(KEY_BYTES, "AES")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> calculator("")).isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> calculator("bad/key")).isInstanceOf(IllegalArgumentException.class);

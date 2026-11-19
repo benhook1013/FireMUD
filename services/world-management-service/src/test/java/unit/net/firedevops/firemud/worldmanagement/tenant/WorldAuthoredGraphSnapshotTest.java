@@ -77,9 +77,8 @@ class WorldAuthoredGraphSnapshotTest {
     assertThatThrownBy(
             () -> new OwnedAffectedTuple("GAME_DESIGN", "ROOM", "1", "ZONE_SUBTREE", "2", "3"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new OwnedAffectedTuple("WORLD_MANAGEMENT", "ROOM", "1", "ZONE_SUBTREE", "2", "03"))
+    assertThatThrownBy(() ->
+            new OwnedAffectedTuple("WORLD_MANAGEMENT", "ROOM", "1", "ZONE_SUBTREE", "2", "03"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> new OwnedAffectedTuple("WORLD_MANAGEMENT", "ROOM", "1", "ZONE_SUBTREE", "", "3"))
@@ -88,75 +87,73 @@ class WorldAuthoredGraphSnapshotTest {
 
   @Test
   void sourceAndReceiptDigestsRetainTheirRequiredPrefix() {
-    assertThatThrownBy(
-            () ->
-                new WorldAuthoredGraphSnapshot(
-                    UUID.randomUUID(),
-                    "firemud",
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    "world-one",
-                    1L,
-                    2L,
-                    3L,
-                    (short) 1,
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    "sha256:" + DIGEST,
-                    UUID.randomUUID(),
-                    DIGEST,
-                    "sha256:" + DIGEST,
-                    UUID.randomUUID(),
-                    "publish-request-1",
-                    DIGEST,
-                    1L,
-                    "publish:tenant:publish-request:publish-request-1",
-                    "commit-1",
-                    DIGEST,
-                    2,
-                    DIGEST,
-                    "[]",
-                    "[]",
-                    "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    DIGEST,
-                    WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED))
+    assertThatThrownBy(() ->
+            new WorldAuthoredGraphSnapshot(
+                UUID.randomUUID(),
+                "firemud",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "world-one",
+                1L,
+                2L,
+                3L,
+                (short) 1,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "sha256:" + DIGEST,
+                UUID.randomUUID(),
+                DIGEST,
+                "sha256:" + DIGEST,
+                UUID.randomUUID(),
+                "publish-request-1",
+                DIGEST,
+                1L,
+                "publish:tenant:publish-request:publish-request-1",
+                "commit-1",
+                DIGEST,
+                2,
+                DIGEST,
+                "[]",
+                "[]",
+                "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                DIGEST,
+                WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("sourceEvidenceDigest");
 
-    assertThatThrownBy(
-            () ->
-                new WorldAuthoredGraphSnapshot(
-                    UUID.randomUUID(),
-                    "firemud",
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    "world-one",
-                    1L,
-                    2L,
-                    3L,
-                    (short) 1,
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    "sha256:" + DIGEST,
-                    UUID.randomUUID(),
-                    "sha256:" + DIGEST,
-                    DIGEST,
-                    UUID.randomUUID(),
-                    "publish-request-1",
-                    DIGEST,
-                    1L,
-                    "publish:tenant:publish-request:publish-request-1",
-                    "commit-1",
-                    DIGEST,
-                    2,
-                    DIGEST,
-                    "[]",
-                    "[]",
-                    "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    DIGEST,
-                    WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED))
+    assertThatThrownBy(() ->
+            new WorldAuthoredGraphSnapshot(
+                UUID.randomUUID(),
+                "firemud",
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "world-one",
+                1L,
+                2L,
+                3L,
+                (short) 1,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "sha256:" + DIGEST,
+                UUID.randomUUID(),
+                "sha256:" + DIGEST,
+                DIGEST,
+                UUID.randomUUID(),
+                "publish-request-1",
+                DIGEST,
+                1L,
+                "publish:tenant:publish-request:publish-request-1",
+                "commit-1",
+                DIGEST,
+                2,
+                DIGEST,
+                "[]",
+                "[]",
+                "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                DIGEST,
+                WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("intakeReceiptDigest");
   }

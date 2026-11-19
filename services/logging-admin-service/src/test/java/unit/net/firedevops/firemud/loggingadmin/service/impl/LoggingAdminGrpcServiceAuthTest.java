@@ -86,31 +86,28 @@ class LoggingAdminGrpcServiceAuthTest {
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.grpc.public-methods[0]=logging_admin.v1.LoggingAdminService/Ping",
             "firemud.auth.grpc.public-methods[1]=logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence")
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
-              GrpcAuthProperties properties = context.getBean(GrpcAuthProperties.class);
-              assertThat(properties.getPublicMethods())
-                  .containsExactly(
-                      "logging_admin.v1.LoggingAdminService/Ping",
-                      "logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence");
-              AuthTokenInterceptor interceptor = context.getBean(AuthTokenInterceptor.class);
-              assertTrue(
-                  passesWithoutBearer(
-                      interceptor, "logging_admin.v1.LoggingAdminService/CreateLogEvent"));
-              assertTrue(
-                  passesWithoutBearer(
-                      interceptor, "logging_admin.v1.LoggingAdminService/ReadLogEventReceipt"));
-              assertTrue(
-                  passesWithoutBearer(interceptor, "logging_admin.v1.LoggingAdminService/Ping"));
-              assertTrue(
-                  passesWithoutBearer(
-                      interceptor,
-                      "logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence"));
-              assertFalse(
-                  passesWithoutBearer(
-                      interceptor, "logging_admin.v1.LoggingAdminService/QueryLogs"));
-            });
+        .run(context -> {
+          assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
+          GrpcAuthProperties properties = context.getBean(GrpcAuthProperties.class);
+          assertThat(properties.getPublicMethods())
+              .containsExactly(
+                  "logging_admin.v1.LoggingAdminService/Ping",
+                  "logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence");
+          AuthTokenInterceptor interceptor = context.getBean(AuthTokenInterceptor.class);
+          assertTrue(
+              passesWithoutBearer(
+                  interceptor, "logging_admin.v1.LoggingAdminService/CreateLogEvent"));
+          assertTrue(
+              passesWithoutBearer(
+                  interceptor, "logging_admin.v1.LoggingAdminService/ReadLogEventReceipt"));
+          assertTrue(passesWithoutBearer(interceptor, "logging_admin.v1.LoggingAdminService/Ping"));
+          assertTrue(
+              passesWithoutBearer(
+                  interceptor,
+                  "logging_admin.v1.StartSessionReservationEvidenceService/ReadCurrentClaimEvidence"));
+          assertFalse(
+              passesWithoutBearer(interceptor, "logging_admin.v1.LoggingAdminService/QueryLogs"));
+        });
   }
 
   @Test

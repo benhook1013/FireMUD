@@ -37,10 +37,9 @@ public class GatewayController {
   public Mono<ResponseEntity<ApiResponse<String>>> remove(@PathVariable String routeId) {
     return routeService
         .remove(routeId)
-        .map(
-            removed ->
-                removed
-                    ? ResponseEntity.ok(ApiResponse.success("removed"))
-                    : ResponseEntity.ok(ApiResponse.success("notFound")));
+        .map(removed ->
+            removed
+                ? ResponseEntity.ok(ApiResponse.success("removed"))
+                : ResponseEntity.ok(ApiResponse.success("notFound")));
   }
 }

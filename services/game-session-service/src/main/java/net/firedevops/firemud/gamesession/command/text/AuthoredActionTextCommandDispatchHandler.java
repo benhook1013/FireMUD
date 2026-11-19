@@ -32,16 +32,15 @@ final class AuthoredActionTextCommandDispatchHandler implements TextCommandDispa
     SessionContext context = request.sessionContext().orElseThrow();
     return admittedRegistryResolver
         .resolveAdmission(context, request.command().commandId())
-        .map(
-            admission ->
-                handler.handle(
-                    context,
-                    request.command(),
-                    commandService.enqueue(
-                        request.sessionId(),
-                        request.command().rawLine(),
-                        request.requiresSoloTick(),
-                        admission)))
+        .map(admission ->
+            handler.handle(
+                context,
+                request.command(),
+                commandService.enqueue(
+                    request.sessionId(),
+                    request.command().rawLine(),
+                    request.requiresSoloTick(),
+                    admission)))
         .orElseGet(() -> handler.handle(context, request.command()));
   }
 }

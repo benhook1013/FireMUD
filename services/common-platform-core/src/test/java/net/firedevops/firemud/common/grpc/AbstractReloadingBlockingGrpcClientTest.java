@@ -135,13 +135,12 @@ class AbstractReloadingBlockingGrpcClientTest {
       client.init();
       Files.writeString(certificate, "certificate-2");
 
-      awaitCondition(
-          () -> {
-            Health health = TlsCertificateWatcher.health();
-            return "OUT_OF_SERVICE".equals(health.getStatus().getCode())
-                && ((Number) health.getDetails().get("unhealthyWatchers")).intValue()
-                    >= unhealthyWatchersBefore + 1;
-          });
+      awaitCondition(() -> {
+        Health health = TlsCertificateWatcher.health();
+        return "OUT_OF_SERVICE".equals(health.getStatus().getCode())
+            && ((Number) health.getDetails().get("unhealthyWatchers")).intValue()
+                >= unhealthyWatchersBefore + 1;
+      });
 
       Health health = TlsCertificateWatcher.health();
       assertThat(health.getStatus().getCode()).isEqualTo("OUT_OF_SERVICE");

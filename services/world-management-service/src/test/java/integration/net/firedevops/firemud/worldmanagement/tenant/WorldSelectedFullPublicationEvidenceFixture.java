@@ -310,10 +310,9 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
         org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     var intake =
         Objects.requireNonNull(
-            write.execute(
-                status ->
-                    intakeRepository.acceptFresh(
-                        namespace, originalIntakeRequestId, controlledWorldSource)));
+            write.execute(status ->
+                intakeRepository.acceptFresh(
+                    namespace, originalIntakeRequestId, controlledWorldSource)));
     var versionStateRequest =
         new AuthoredWorldVersionStateEvidence.Request(
             1,
@@ -460,15 +459,14 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
       WorldDesignPublicationFenceEvidence.FrozenAttempt attempt) {
     List<WorldAuthoredGraphSnapshot.OwnedAffectedTuple> tuples =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     return new WorldAuthoredGraphSnapshot.CaptureRequest(
         freeze.targetNamespace(),
@@ -501,15 +499,14 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var freeze = source.frozenTopology().request().freeze();
     var tuples =
         freeze.suppliedOwnedAffectedTuples().stream()
-            .map(
-                tuple ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        tuple.owner(),
-                        tuple.aggregateType(),
-                        tuple.aggregateId(),
-                        tuple.scopeType(),
-                        tuple.scopeId(),
-                        tuple.expectedEpoch()))
+            .map(tuple ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    tuple.owner(),
+                    tuple.aggregateType(),
+                    tuple.aggregateId(),
+                    tuple.scopeType(),
+                    tuple.scopeId(),
+                    tuple.expectedEpoch()))
             .toList();
     var request =
         new WorldPublishedStartLocationEvidence.Request(

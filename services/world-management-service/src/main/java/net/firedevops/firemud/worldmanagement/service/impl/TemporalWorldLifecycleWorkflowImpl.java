@@ -33,11 +33,10 @@ public class TemporalWorldLifecycleWorkflowImpl implements TemporalWorldLifecycl
   public WorldInstanceLifecycleSnapshotDto run(PreparedWorldInstanceRequest request) {
     currentSnapshot = activities.prepareWorldInstance(request);
     while (!completed) {
-      Workflow.await(
-          () ->
-              pendingActivateEpoch != null
-                  || pendingFailEpoch != null
-                  || pendingTerminateEpoch != null);
+      Workflow.await(() ->
+          pendingActivateEpoch != null
+              || pendingFailEpoch != null
+              || pendingTerminateEpoch != null);
       if (pendingActivateEpoch != null) {
         currentSnapshot =
             activities.activatePreparedWorldInstance(

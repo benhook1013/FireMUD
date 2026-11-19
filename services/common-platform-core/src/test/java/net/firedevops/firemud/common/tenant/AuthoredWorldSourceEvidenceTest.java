@@ -233,40 +233,38 @@ class AuthoredWorldSourceEvidenceTest {
   @Test
   void rejectsChangedRequestReceiptSourceBoundsAndUnknownProvenance() {
     AuthoredWorldSourceEvidence valid = evidence(PROVENANCE);
-    assertThatThrownBy(
-            () ->
-                new AuthoredWorldSourceEvidence(
-                    valid.schemaVersion(),
-                    valid.targetNamespace(),
-                    valid.registrationRequestId(),
-                    valid.operationId(),
-                    "sha256:" + "0".repeat(64),
-                    valid.canonicalTenantId(),
-                    valid.tenantSlug(),
-                    valid.worldSlug(),
-                    valid.worldDisplayName(),
-                    valid.sourceGameRowId(),
-                    valid.sourceGameTenantKey(),
-                    valid.provenanceKind(),
-                    valid.evidenceDigest()))
+    assertThatThrownBy(() ->
+            new AuthoredWorldSourceEvidence(
+                valid.schemaVersion(),
+                valid.targetNamespace(),
+                valid.registrationRequestId(),
+                valid.operationId(),
+                "sha256:" + "0".repeat(64),
+                valid.canonicalTenantId(),
+                valid.tenantSlug(),
+                valid.worldSlug(),
+                valid.worldDisplayName(),
+                valid.sourceGameRowId(),
+                valid.sourceGameTenantKey(),
+                valid.provenanceKind(),
+                valid.evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Request digest");
-    assertThatThrownBy(
-            () ->
-                new AuthoredWorldSourceEvidence(
-                    valid.schemaVersion(),
-                    valid.targetNamespace(),
-                    valid.registrationRequestId(),
-                    valid.operationId(),
-                    valid.requestDigest(),
-                    valid.canonicalTenantId(),
-                    valid.tenantSlug(),
-                    valid.worldSlug(),
-                    valid.worldDisplayName(),
-                    valid.sourceGameRowId(),
-                    valid.sourceGameTenantKey(),
-                    valid.provenanceKind(),
-                    "sha256:" + "0".repeat(64)))
+    assertThatThrownBy(() ->
+            new AuthoredWorldSourceEvidence(
+                valid.schemaVersion(),
+                valid.targetNamespace(),
+                valid.registrationRequestId(),
+                valid.operationId(),
+                valid.requestDigest(),
+                valid.canonicalTenantId(),
+                valid.tenantSlug(),
+                valid.worldSlug(),
+                valid.worldDisplayName(),
+                valid.sourceGameRowId(),
+                valid.sourceGameTenantKey(),
+                valid.provenanceKind(),
+                "sha256:" + "0".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Evidence digest");
     assertInvalid(

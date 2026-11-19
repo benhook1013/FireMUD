@@ -10,14 +10,13 @@ import org.junit.jupiter.api.Test;
 class WorldPublicationTerminalReadEvidenceTest {
   @Test
   void rejectsAnOversizedOriginalOperationBeforeParsingTheTerminal() {
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1,
-                    "test",
-                    UUID.randomUUID(),
-                    new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1],
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1,
+                "test",
+                UUID.randomUUID(),
+                new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1],
+                new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Complete bounded original publication operation required")
         .hasNoCause();
@@ -32,18 +31,16 @@ class WorldPublicationTerminalReadEvidenceTest {
             - operationBytes;
     byte[] operation = new byte[operationBytes];
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1, "test", UUID.randomUUID(), operation, new byte[terminalAtBoundary]))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1, "test", UUID.randomUUID(), operation, new byte[terminalAtBoundary]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Canonical complete publication operation and terminal evidence required")
         .hasCauseInstanceOf(RuntimeException.class);
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1, "test", UUID.randomUUID(), operation, new byte[terminalAtBoundary + 1]))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1, "test", UUID.randomUUID(), operation, new byte[terminalAtBoundary + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("World publication terminal read exceeds the 32 MiB wire budget")
         .hasNoCause();
@@ -58,12 +55,9 @@ class WorldPublicationTerminalReadEvidenceTest {
             "test", operation.canonicalBytes(), terminal.canonicalBytes());
 
     for (byte[] malformed : new byte[][] {new byte[] {1}, null}) {
-      assertThatThrownBy(
-              () ->
-                  WorldPublicationTerminalReadEvidence.fromOwnerRead(
-                      request,
-                      WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED,
-                      malformed))
+      assertThatThrownBy(() ->
+              WorldPublicationTerminalReadEvidence.fromOwnerRead(
+                  request, WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED, malformed))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Canonical complete publication operation and terminal evidence required")
           .hasCauseInstanceOf(RuntimeException.class);
@@ -110,57 +104,47 @@ class WorldPublicationTerminalReadEvidenceTest {
         WorldPublicationTerminalReadEvidence.Request.create(
             "test", operation.canonicalBytes(), terminal.canonicalBytes());
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    2,
-                    "test",
-                    UUID.randomUUID(),
-                    operation.canonicalBytes(),
-                    terminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                2,
+                "test",
+                UUID.randomUUID(),
+                operation.canonicalBytes(),
+                terminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1,
-                    "Test",
-                    UUID.randomUUID(),
-                    operation.canonicalBytes(),
-                    terminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1,
+                "Test",
+                UUID.randomUUID(),
+                operation.canonicalBytes(),
+                terminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1,
-                    "test",
-                    new UUID(0L, 0L),
-                    operation.canonicalBytes(),
-                    terminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1, "test", new UUID(0L, 0L), operation.canonicalBytes(), terminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1, "test", UUID.randomUUID(), new byte[] {1}, terminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1, "test", UUID.randomUUID(), new byte[] {1}, terminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var changedOperation = WorldPublicationTerminalTestFixtures.operation();
     var changedTerminal =
         WorldPublicationTerminalTestFixtures.terminal(changedOperation, Outcome.NO_PUBLICATION);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadEvidence.Request(
-                    1,
-                    "test",
-                    UUID.randomUUID(),
-                    operation.canonicalBytes(),
-                    changedTerminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadEvidence.Request(
+                1,
+                "test",
+                UUID.randomUUID(),
+                operation.canonicalBytes(),
+                changedTerminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublicationTerminalReadEvidence.fromOwnerRead(
-                    request,
-                    WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED,
-                    terminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            WorldPublicationTerminalReadEvidence.fromOwnerRead(
+                request,
+                WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED,
+                terminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

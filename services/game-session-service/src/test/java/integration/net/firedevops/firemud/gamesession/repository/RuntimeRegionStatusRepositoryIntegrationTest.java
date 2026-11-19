@@ -76,14 +76,11 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<RuntimeRegionStatus> first =
-          executor.submit(
-              () ->
-                  saveAfterBarrier(runtimeStatus("region-first", "instance-first"), ready, start));
+          executor.submit(() ->
+              saveAfterBarrier(runtimeStatus("region-first", "instance-first"), ready, start));
       Future<RuntimeRegionStatus> second =
-          executor.submit(
-              () ->
-                  saveAfterBarrier(
-                      runtimeStatus("region-second", "instance-second"), ready, start));
+          executor.submit(() ->
+              saveAfterBarrier(runtimeStatus("region-second", "instance-second"), ready, start));
 
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
@@ -128,12 +125,11 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     assertThat(updated.getExecutorFence()).isEqualTo("fence-pause");
     assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
         .get()
-        .satisfies(
-            committed -> {
-              assertThat(committed.getRegionEpoch()).isEqualTo(2L);
-              assertThat(committed.isPaused()).isTrue();
-              assertThat(committed.getExecutorFence()).isEqualTo("fence-pause");
-            });
+        .satisfies(committed -> {
+          assertThat(committed.getRegionEpoch()).isEqualTo(2L);
+          assertThat(committed.isPaused()).isTrue();
+          assertThat(committed.getExecutorFence()).isEqualTo("fence-pause");
+        });
   }
 
   @Test
@@ -163,31 +159,28 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<Optional<RuntimeRegionStatus>> baseline =
-          executor.submit(
-              () -> {
-                RuntimeRegionStatus baselineStatus =
-                    repository.ensureBaseline(
-                        runtimeStatus("region-baseline", "instance-baseline"));
-                baselineRead.countDown();
-                assertThat(pauseCommitted.await(5, TimeUnit.SECONDS)).isTrue();
-                return repository.claimObservedOwnership(
-                    baselineStatus,
-                    "game-session-service",
-                    "instance-baseline",
-                    baselineStatus.getExecutorFence(),
-                    Instant.parse("2026-07-23T00:00:01Z"));
-              });
+          executor.submit(() -> {
+            RuntimeRegionStatus baselineStatus =
+                repository.ensureBaseline(runtimeStatus("region-baseline", "instance-baseline"));
+            baselineRead.countDown();
+            assertThat(pauseCommitted.await(5, TimeUnit.SECONDS)).isTrue();
+            return repository.claimObservedOwnership(
+                baselineStatus,
+                "game-session-service",
+                "instance-baseline",
+                baselineStatus.getExecutorFence(),
+                Instant.parse("2026-07-23T00:00:01Z"));
+          });
       Future<RuntimeRegionStatus> pause =
-          executor.submit(
-              () -> {
-                assertThat(baselineRead.await(5, TimeUnit.SECONDS)).isTrue();
-                RuntimeRegionStatus pauseStatus = runtimeStatus("region-pause", "instance-pause");
-                pauseStatus.setPaused(true);
-                pauseStatus.setExecutorFence("fence-pause");
-                RuntimeRegionStatus paused = repository.advanceOwnershipEpoch(pauseStatus);
-                pauseCommitted.countDown();
-                return paused;
-              });
+          executor.submit(() -> {
+            assertThat(baselineRead.await(5, TimeUnit.SECONDS)).isTrue();
+            RuntimeRegionStatus pauseStatus = runtimeStatus("region-pause", "instance-pause");
+            pauseStatus.setPaused(true);
+            pauseStatus.setExecutorFence("fence-pause");
+            RuntimeRegionStatus paused = repository.advanceOwnershipEpoch(pauseStatus);
+            pauseCommitted.countDown();
+            return paused;
+          });
 
       RuntimeRegionStatus pauseResult = pause.get(10, TimeUnit.SECONDS);
       assertThat(baseline.get(10, TimeUnit.SECONDS)).isEmpty();
@@ -232,13 +225,12 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     assertThat(repository.commitDrainedBatch(stale, "stale-batch")).isEmpty();
     assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
         .get()
-        .satisfies(
-            committed -> {
-              assertThat(committed.getRegionEpoch()).isEqualTo(handedOff.getRegionEpoch());
-              assertThat(committed.getExecutorFence()).isEqualTo(handedOff.getExecutorFence());
-              assertThat(committed.getOwnerService()).isEqualTo(handedOff.getOwnerService());
-              assertThat(committed.getOwnerInstanceId()).isEqualTo(handedOff.getOwnerInstanceId());
-            });
+        .satisfies(committed -> {
+          assertThat(committed.getRegionEpoch()).isEqualTo(handedOff.getRegionEpoch());
+          assertThat(committed.getExecutorFence()).isEqualTo(handedOff.getExecutorFence());
+          assertThat(committed.getOwnerService()).isEqualTo(handedOff.getOwnerService());
+          assertThat(committed.getOwnerInstanceId()).isEqualTo(handedOff.getOwnerInstanceId());
+        });
   }
 
   @Test
@@ -254,12 +246,11 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     assertThat(repository.advanceLastCommittedTickId(staleWriter)).isEmpty();
     assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
         .get()
-        .satisfies(
-            committed -> {
-              assertThat(committed.isPaused()).isTrue();
-              assertThat(committed.getRegionEpoch()).isEqualTo(paused.getRegionEpoch());
-              assertThat(committed.getLastCommittedTickId()).isEqualTo(0L);
-            });
+        .satisfies(committed -> {
+          assertThat(committed.isPaused()).isTrue();
+          assertThat(committed.getRegionEpoch()).isEqualTo(paused.getRegionEpoch());
+          assertThat(committed.getLastCommittedTickId()).isEqualTo(0L);
+        });
   }
 
   @Test
@@ -275,12 +266,11 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
     assertThat(repository.commitDrainedBatch(staleWriter, "batch-stale")).isEmpty();
     assertThat(repository.findByTenantIdAndGameInstanceId(1L, 2L))
         .get()
-        .satisfies(
-            committed -> {
-              assertThat(committed.isPaused()).isTrue();
-              assertThat(committed.getRegionEpoch()).isEqualTo(paused.getRegionEpoch());
-              assertThat(committed.getLastCommittedTickBatchId()).isNull();
-            });
+        .satisfies(committed -> {
+          assertThat(committed.isPaused()).isTrue();
+          assertThat(committed.getRegionEpoch()).isEqualTo(paused.getRegionEpoch());
+          assertThat(committed.getLastCommittedTickBatchId()).isNull();
+        });
   }
 
   private RuntimeRegionStatus saveAfterBarrier(

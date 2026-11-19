@@ -102,15 +102,12 @@ class DemoTenantEntitlementCodecTest {
             "\"eventType\":\"TENANT_ENTITLEMENT_CHANGED\"",
             "\"eventType\":\"TENANT_ENTITLEMENT_CHANGED\",\"eventType\":\"TENANT_ENTITLEMENT_CHANGED\"");
 
-    assertThatThrownBy(
-            () ->
-                DemoTenantEntitlementEventV1Codec.verify(
-                    duplicateKey.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            DemoTenantEntitlementEventV1Codec.verify(duplicateKey.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                DemoTenantEntitlementEventV1Codec.verify(
-                    (canonical + " {}").getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            DemoTenantEntitlementEventV1Codec.verify(
+                (canonical + " {}").getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

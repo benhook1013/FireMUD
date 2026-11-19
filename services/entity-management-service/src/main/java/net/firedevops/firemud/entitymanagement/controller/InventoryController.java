@@ -31,20 +31,15 @@ public class InventoryController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          Page<InventoryEntryDto> list =
-              inventoryService.listInventory(
-                  scope.tenantId(),
-                  scope.characterId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  pageable);
-          return ResponseEntity.ok(ApiResponse.success(list));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      Page<InventoryEntryDto> list =
+          inventoryService.listInventory(
+              scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, pageable);
+      return ResponseEntity.ok(ApiResponse.success(list));
+    });
   }
 
   @PostMapping
@@ -54,21 +49,20 @@ public class InventoryController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody AddInventoryItemRequest request) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          InventoryEntryDto dto =
-              inventoryService.addItem(
-                  scope.tenantId(),
-                  scope.characterId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  request.itemId(),
-                  request.quantity());
-          return ResponseEntity.ok(ApiResponse.success(dto));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      InventoryEntryDto dto =
+          inventoryService.addItem(
+              scope.tenantId(),
+              scope.characterId(),
+              gameInstanceId,
+              playableStateScope,
+              request.itemId(),
+              request.quantity());
+      return ResponseEntity.ok(ApiResponse.success(dto));
+    });
   }
 
   @DeleteMapping("/{itemId}")
@@ -78,20 +72,14 @@ public class InventoryController {
       @PathVariable String itemId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          long parsedItemId =
-              EntityManagementRequestReaders.requirePositivePathId(itemId, "itemId");
-          SessionContext.requireTenantAccess(scope.tenantId());
-          inventoryService.removeItem(
-              scope.tenantId(),
-              scope.characterId(),
-              gameInstanceId,
-              playableStateScope,
-              parsedItemId);
-          return ResponseEntity.ok(ApiResponse.success(null));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      long parsedItemId = EntityManagementRequestReaders.requirePositivePathId(itemId, "itemId");
+      SessionContext.requireTenantAccess(scope.tenantId());
+      inventoryService.removeItem(
+          scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, parsedItemId);
+      return ResponseEntity.ok(ApiResponse.success(null));
+    });
   }
 }

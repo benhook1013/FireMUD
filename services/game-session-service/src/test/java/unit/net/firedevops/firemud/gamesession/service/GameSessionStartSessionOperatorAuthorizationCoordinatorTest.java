@@ -81,36 +81,32 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
     List<String> order = new ArrayList<>();
 
     when(repository.reserve(tuple))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              order.add("reserve");
-              return new ReservationResult(
-                  ReservationDisposition.CLAIM_CREATED, reserved, Optional.of(claim));
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          order.add("reserve");
+          return new ReservationResult(
+              ReservationDisposition.CLAIM_CREATED, reserved, Optional.of(claim));
+        });
     when(redemptionClient.redeem(tuple, OPAQUE_REFERENCE, claim))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(transactions.commitCount).isEqualTo(1);
-              order.add("account");
-              return new StartSessionOperatorRedemptionClient.RedemptionResult(
-                  claim, projection, false);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(transactions.commitCount).isEqualTo(1);
+          order.add("account");
+          return new StartSessionOperatorRedemptionClient.RedemptionResult(
+              claim, projection, false);
+        });
     when(repository.validateCurrentClaim(claim))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              order.add("validate");
-              return reserved;
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          order.add("validate");
+          return reserved;
+        });
     when(repository.attachAccountRedemptionProjection(claim, projection))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              order.add("attach");
-              return attached;
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          order.add("attach");
+          return attached;
+        });
 
     GameSessionStartSessionOperatorAuthorizationCoordinator.AuthorizationResult result =
         withPeer(peer(WORKLOAD), () -> coordinator.authorize(tuple, OPAQUE_REFERENCE));
@@ -120,14 +116,13 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
     assertThat(transactions.rollbackCount).isZero();
     assertThat(transactions.definitions)
         .hasSize(2)
-        .allSatisfy(
-            definition -> {
-              assertThat(definition.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(definition.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(definition.isReadOnly()).isFalse();
-            });
+        .allSatisfy(definition -> {
+          assertThat(definition.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          assertThat(definition.isReadOnly()).isFalse();
+        });
     assertThat(result.progress())
         .isEqualTo(
             GameSessionStartSessionOperatorAuthorizationCoordinator.Progress
@@ -174,17 +169,15 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
     RecordingTransactionManager transactions = new RecordingTransactionManager();
     var coordinator = coordinator(repository, redemptionClient, transactions);
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("spiffe://firemud/ns/world-runtime/sa/account-service"),
-                    () -> coordinator.authorize(tuple, OPAQUE_REFERENCE)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("spiffe://firemud/ns/world-runtime/sa/account-service"),
+                () -> coordinator.authorize(tuple, OPAQUE_REFERENCE)))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("spiffe://firemud/ns/other-runtime/sa/logging-admin-service"),
-                    () -> coordinator.authorize(tuple, OPAQUE_REFERENCE)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("spiffe://firemud/ns/other-runtime/sa/logging-admin-service"),
+                () -> coordinator.authorize(tuple, OPAQUE_REFERENCE)))
         .isInstanceOf(SecurityException.class);
 
     assertThat(transactions.definitions).isEmpty();
@@ -202,13 +195,12 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
             new GameSessionStartSessionOperatorAttemptRepository
                 .StartSessionOperatorAttemptConflictException("different immutable tuple"));
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(WORKLOAD),
-                    () ->
-                        coordinator(repository, redemptionClient, transactions)
-                            .authorize(tuple, OPAQUE_REFERENCE)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(WORKLOAD),
+                () ->
+                    coordinator(repository, redemptionClient, transactions)
+                        .authorize(tuple, OPAQUE_REFERENCE)))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StartSessionOperatorAttemptConflictException.class);
@@ -251,13 +243,12 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
         assertThat(result.claim()).contains(claim);
         assertThat(result.toString()).doesNotContain(OPAQUE_REFERENCE);
       } else {
-        assertThatThrownBy(
-                () ->
-                    withPeer(
-                        peer(WORKLOAD),
-                        () ->
-                            coordinator(repository, redemptionClient, transactions)
-                                .authorize(tuple, OPAQUE_REFERENCE)))
+        assertThatThrownBy(() ->
+                withPeer(
+                    peer(WORKLOAD),
+                    () ->
+                        coordinator(repository, redemptionClient, transactions)
+                            .authorize(tuple, OPAQUE_REFERENCE)))
             .as("status %s", code)
             .isSameAs(failure);
       }
@@ -299,13 +290,12 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
             new GameSessionStartSessionOperatorAttemptRepository
                 .StaleStartSessionOperatorAttemptClaimException("claim expired before attachment"));
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(WORKLOAD),
-                    () ->
-                        coordinator(repository, redemptionClient, transactions)
-                            .authorize(tuple, OPAQUE_REFERENCE)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(WORKLOAD),
+                () ->
+                    coordinator(repository, redemptionClient, transactions)
+                        .authorize(tuple, OPAQUE_REFERENCE)))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StaleStartSessionOperatorAttemptClaimException.class);
@@ -323,13 +313,12 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
     StartSessionOperatorRedemptionClient redemptionClient = mockRedemptionClient();
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(WORKLOAD),
-                    () ->
-                        coordinator(repository, redemptionClient, new RecordingTransactionManager())
-                            .authorize(tuple, OPAQUE_REFERENCE)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(WORKLOAD),
+                () ->
+                    coordinator(repository, redemptionClient, new RecordingTransactionManager())
+                        .authorize(tuple, OPAQUE_REFERENCE)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ambient owner transaction");
 

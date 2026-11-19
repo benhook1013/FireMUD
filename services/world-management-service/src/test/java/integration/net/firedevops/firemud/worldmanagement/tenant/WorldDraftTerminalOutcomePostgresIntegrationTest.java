@@ -338,14 +338,12 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     WorldDraftTerminalOutcomeService service = terminalService();
     assertThat(service.readDefinitiveAbort(operation)).isEmpty();
 
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status -> {
-                          terminalRepository().recordDefinitiveAbort(operation);
-                          throw new IllegalStateException("rollback fixture");
-                        }))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status -> {
+                  terminalRepository().recordDefinitiveAbort(operation);
+                  throw new IllegalStateException("rollback fixture");
+                }))
         .hasMessageContaining("rollback fixture");
     assertThat(service.readDefinitiveAbort(operation)).isEmpty();
 
@@ -463,10 +461,9 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
           WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, changedAccount);
       assertThatThrownBy(() -> client.read(changedBindingRequest))
           .isInstanceOf(RuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
       freeze(f);
       var postFreeze = client.read(request);
@@ -486,19 +483,17 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<Boolean> commitFuture =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return succeeded(commit);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return succeeded(commit);
+          });
       Future<Boolean> abortFuture =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return succeeded(abort);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return succeeded(abort);
+          });
       await(ready);
       start.countDown();
       return new Race(
@@ -534,18 +529,16 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     }
     String ownerJson = mapper.writeValueAsString(application.plan().ownerBinding());
     String executionJson = mapper.writeValueAsString(executionRevisions);
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status ->
-                            dsl.resultQuery(
-                                    "SELECT world_store_guarded_uuid_topology("
-                                        + "?::jsonb, ?::jsonb, ?::jsonb)",
-                                    ownerJson,
-                                    application.operation().binding().canonicalJson(),
-                                    executionJson)
-                                .fetch()))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status ->
+                    dsl.resultQuery(
+                            "SELECT world_store_guarded_uuid_topology("
+                                + "?::jsonb, ?::jsonb, ?::jsonb)",
+                            ownerJson,
+                            application.operation().binding().canonicalJson(),
+                            executionJson)
+                        .fetch()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("definitive no-commit");
   }
@@ -568,30 +561,29 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         "controlled retained World result history fixture"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8);
     ownerTransaction()
-        .execute(
-            status ->
-                dsl.execute(
-                    "INSERT INTO "
-                        + table
-                        + " (request_id,commit_id,version_identity_operation_id,target_namespace,"
-                        + "canonical_tenant_id,canonical_version_id,local_tenant_key,local_version_key,"
-                        + "owner_binding_json,binding_json,binding_digest,graph_bytes,graph_sha256,"
-                        + "result_bytes,storage_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    application.operation().requestId(),
-                    application.operation().commitId(),
-                    application.operation().ownerBinding().versionIdentityOperationId(),
-                    application.operation().ownerBinding().targetNamespace(),
-                    application.operation().canonicalTenantId(),
-                    application.operation().canonicalVersionId(),
-                    fixture.intake().localTenantKey(),
-                    fixture.version().localVersionKey(),
-                    mapper.writeValueAsString(application.operation().ownerBinding()),
-                    application.operation().binding().canonicalJson(),
-                    application.operation().binding().digest(),
-                    retainedGraphBytes,
-                    digest(retainedGraphBytes).substring("sha256:".length()),
-                    retainedResultBytes,
-                    "STORED_PERMISSION_UNVERIFIED"));
+        .execute(status ->
+            dsl.execute(
+                "INSERT INTO "
+                    + table
+                    + " (request_id,commit_id,version_identity_operation_id,target_namespace,"
+                    + "canonical_tenant_id,canonical_version_id,local_tenant_key,local_version_key,"
+                    + "owner_binding_json,binding_json,binding_digest,graph_bytes,graph_sha256,"
+                    + "result_bytes,storage_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                application.operation().requestId(),
+                application.operation().commitId(),
+                application.operation().ownerBinding().versionIdentityOperationId(),
+                application.operation().ownerBinding().targetNamespace(),
+                application.operation().canonicalTenantId(),
+                application.operation().canonicalVersionId(),
+                fixture.intake().localTenantKey(),
+                fixture.version().localVersionKey(),
+                mapper.writeValueAsString(application.operation().ownerBinding()),
+                application.operation().binding().canonicalJson(),
+                application.operation().binding().digest(),
+                retainedGraphBytes,
+                digest(retainedGraphBytes).substring("sha256:".length()),
+                retainedResultBytes,
+                "STORED_PERMISSION_UNVERIFIED"));
   }
 
   private Fixture fixture() {
@@ -640,44 +632,43 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         intakeRepository.read(NAMESPACE, intakeRequest).orElseThrow();
     Fixture created =
         ownerTransaction()
-            .execute(
-                status -> {
-                  UUID versionId = UUID.randomUUID();
-                  AuthoredWorldVersionStateEvidence.Request stateRequest =
-                      new AuthoredWorldVersionStateEvidence.Request(
-                          1,
-                          NAMESPACE,
-                          UUID.randomUUID(),
-                          tenant,
-                          worldSlug,
-                          sourceOperation,
-                          sourceDigest,
-                          GAME_DESIGN_VERSION);
-                  WorldAuthoredVersionIdentityReceipt version =
-                      new WorldAuthoredVersionIdentityRepository(dsl)
-                          .acceptFresh(
-                              intake,
-                              AuthoredWorldVersionStateEvidence.create(
-                                  stateRequest,
-                                  source,
-                                  versionId,
-                                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                                  1));
-                  OwnerBinding owner =
-                      new OwnerBinding(
-                          NAMESPACE,
-                          tenant,
-                          versionId,
-                          version.operationId(),
-                          GAME_DESIGN_VERSION,
-                          intakeRequest,
-                          intake.operationId(),
-                          intake.requestDigest(),
-                          sourceOperation,
-                          sourceDigest,
-                          intake.receiptDigest());
-                  return new Fixture(intake, version, owner);
-                });
+            .execute(status -> {
+              UUID versionId = UUID.randomUUID();
+              AuthoredWorldVersionStateEvidence.Request stateRequest =
+                  new AuthoredWorldVersionStateEvidence.Request(
+                      1,
+                      NAMESPACE,
+                      UUID.randomUUID(),
+                      tenant,
+                      worldSlug,
+                      sourceOperation,
+                      sourceDigest,
+                      GAME_DESIGN_VERSION);
+              WorldAuthoredVersionIdentityReceipt version =
+                  new WorldAuthoredVersionIdentityRepository(dsl)
+                      .acceptFresh(
+                          intake,
+                          AuthoredWorldVersionStateEvidence.create(
+                              stateRequest,
+                              source,
+                              versionId,
+                              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                              1));
+              OwnerBinding owner =
+                  new OwnerBinding(
+                      NAMESPACE,
+                      tenant,
+                      versionId,
+                      version.operationId(),
+                      GAME_DESIGN_VERSION,
+                      intakeRequest,
+                      intake.operationId(),
+                      intake.requestDigest(),
+                      sourceOperation,
+                      sourceDigest,
+                      intake.receiptDigest());
+              return new Fixture(intake, version, owner);
+            });
     return created;
   }
 
@@ -1006,10 +997,9 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
             1,
             "publish:" + owner.canonicalTenantId() + ":publish-request:" + request);
     ownerTransaction()
-        .execute(
-            status ->
-                fence.claimFreeze(
-                    evidence, () -> new Checkpoint("synthetic-checkpoint", "b".repeat(64), 3)));
+        .execute(status ->
+            fence.claimFreeze(
+                evidence, () -> new Checkpoint("synthetic-checkpoint", "b".repeat(64), 3)));
   }
 
   private long count(String table, UUID requestId) {

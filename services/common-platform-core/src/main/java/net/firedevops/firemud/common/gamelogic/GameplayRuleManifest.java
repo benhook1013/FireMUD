@@ -855,14 +855,13 @@ public record GameplayRuleManifest(Map<Family, List<Definition>> families) {
     Objects.requireNonNull(families, "Explicit complete family inventory required");
     if (!families.keySet().equals(Set.of(Family.values()))) fail("Missing/unknown rule family");
     EnumMap<Family, List<Definition>> retained = new EnumMap<>(Family.class);
-    families.forEach(
-        (family, definitions) -> {
-          List<Definition> values = copy(definitions);
-          unique(values.stream().map(Definition::key).toList());
-          for (Definition definition : values)
-            if (definition.family() != family) fail("Definition belongs to another family");
-          retained.put(family, values);
-        });
+    families.forEach((family, definitions) -> {
+      List<Definition> values = copy(definitions);
+      unique(values.stream().map(Definition::key).toList());
+      for (Definition definition : values)
+        if (definition.family() != family) fail("Definition belongs to another family");
+      retained.put(family, values);
+    });
     families = java.util.Collections.unmodifiableMap(retained);
     validateReferences(families);
   }
@@ -939,9 +938,8 @@ public record GameplayRuleManifest(Map<Family, List<Definition>> families) {
 
   private static void validateReferences(Map<Family, List<Definition>> families) {
     Map<Family, Set<String>> keys = new EnumMap<>(Family.class);
-    families.forEach(
-        (family, values) ->
-            keys.put(family, Set.copyOf(values.stream().map(Definition::key).toList())));
+    families.forEach((family, values) ->
+        keys.put(family, Set.copyOf(values.stream().map(Definition::key).toList())));
     Set<String> stats = new HashSet<>(keys.get(Family.STATS));
     for (String resource : keys.get(Family.RESOURCES))
       if (!stats.add(resource)) fail("Resource/stat key collision");

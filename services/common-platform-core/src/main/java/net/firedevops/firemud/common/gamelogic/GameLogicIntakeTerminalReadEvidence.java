@@ -13,14 +13,12 @@ public record GameLogicIntakeTerminalReadEvidence(
   public GameLogicIntakeTerminalReadEvidence {
     Objects.requireNonNull(request);
     Objects.requireNonNull(terminal);
-    terminal.ifPresent(
-        value -> {
-          var expected =
-              new GameLogicGameplayRuleIntakeOperation(
-                  request.targetNamespace(), request.binding());
-          if (!Arrays.equals(expected.canonicalBytes(), value.operation().canonicalBytes()))
-            throw new IllegalArgumentException("Terminal differs from exact original intake");
-        });
+    terminal.ifPresent(value -> {
+      var expected =
+          new GameLogicGameplayRuleIntakeOperation(request.targetNamespace(), request.binding());
+      if (!Arrays.equals(expected.canonicalBytes(), value.operation().canonicalBytes()))
+        throw new IllegalArgumentException("Terminal differs from exact original intake");
+    });
   }
 
   public record Request(

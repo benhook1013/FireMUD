@@ -81,14 +81,13 @@ class LettuceAccountCoordinationPinnedConnectionProviderTest {
     CountDownLatch connectStarted = new CountDownLatch(1);
     CountDownLatch finishConnect = new CountDownLatch(1);
     when(client.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            ignored -> {
-              connectStarted.countDown();
-              if (!finishConnect.await(5, TimeUnit.SECONDS)) {
-                throw new AssertionError("test connection was not released");
-              }
-              return connection;
-            });
+        .thenAnswer(ignored -> {
+          connectStarted.countDown();
+          if (!finishConnect.await(5, TimeUnit.SECONDS)) {
+            throw new AssertionError("test connection was not released");
+          }
+          return connection;
+        });
     ExecutorService executor = Executors.newSingleThreadExecutor();
     try (MockedStatic<RedisClient> redisClientFactory = mockStatic(RedisClient.class)) {
       redisClientFactory.when(() -> RedisClient.create(uri)).thenReturn(client);

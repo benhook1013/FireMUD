@@ -227,12 +227,11 @@ class AccountRuntimeEntitlementNoWriteIntegrationTest {
     Map<String, TableImage> before = emptyCapacityImages();
     ManagedChannel channel = channel(null);
     try {
-      assertThatThrownBy(
-              () ->
-                  AccountServiceGrpc.newBlockingStub(channel)
-                      .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(fakePeer()))
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .getTenantEntitlementsForRuntime(REQUEST))
+      assertThatThrownBy(() ->
+              AccountServiceGrpc.newBlockingStub(channel)
+                  .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(fakePeer()))
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .getTenantEntitlementsForRuntime(REQUEST))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
@@ -275,11 +274,10 @@ class AccountRuntimeEntitlementNoWriteIntegrationTest {
   private Map<String, TableImage> emptyCapacityImages() throws Exception {
     Map<String, TableImage> images = capacityImages();
     assertThat(images).hasSize(5);
-    images.forEach(
-        (table, image) -> {
-          assertThat(image.count()).as(table).isZero();
-          assertThat(image.rows()).as(table).isEmpty();
-        });
+    images.forEach((table, image) -> {
+      assertThat(image.count()).as(table).isZero();
+      assertThat(image.rows()).as(table).isEmpty();
+    });
     return images;
   }
 

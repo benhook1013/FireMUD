@@ -98,26 +98,20 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                     stream, "request-1", "event-1", "canonical-digest-1", new byte[] {1, 2}));
     assertThat(exactReplay).isEqualTo(first);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () ->
-                        repository.append(
-                            stream, "request-1", "event-1", "different-digest", new byte[] {1, 2})))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () ->
+                    repository.append(
+                        stream, "request-1", "event-1", "different-digest", new byte[] {1, 2})))
         .isInstanceOf(IdempotencyConflictException.class);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () ->
-                        repository.append(
-                            stream,
-                            "request-1",
-                            "event-1",
-                            "canonical-digest-1",
-                            new byte[] {1, 9})))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () ->
+                    repository.append(
+                        stream, "request-1", "event-1", "canonical-digest-1", new byte[] {1, 9})))
         .isInstanceOf(IdempotencyConflictException.class);
 
     Event second =
@@ -236,76 +230,73 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
             tenantSource.evidenceDigest());
 
     Long canonicalMembershipId =
-        transaction.execute(
-            status -> {
-              AccountTenantMembership pendingMembership =
-                  memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
-              long membershipId = Objects.requireNonNull(pendingMembership.getId());
-              assertThat(
-                      roleSnapshots.findForCanonicalUpdate(
-                          account.getAccountUuid(),
-                          tenantUuid,
-                          provenance,
-                          membershipId,
-                          pendingMembership.getMembershipVersion()))
-                  .isEmpty();
-
-              AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot written =
-                  roleSnapshots.replaceCanonical(
-                      pendingMembership,
+        transaction.execute(status -> {
+          AccountTenantMembership pendingMembership =
+              memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
+          long membershipId = Objects.requireNonNull(pendingMembership.getId());
+          assertThat(
+                  roleSnapshots.findForCanonicalUpdate(
                       account.getAccountUuid(),
                       tenantUuid,
                       provenance,
-                      pendingMembership.getMembershipVersion(),
-                      List.of());
-              assertThat(written.roles()).isEmpty();
-              assertThat(written.accountUuid()).isEqualTo(account.getAccountUuid());
-              assertThat(written.tenantUuid()).isEqualTo(tenantUuid);
-              assertThat(written.tenantId()).isNull();
-              assertThat(written.tenantProvenance()).isEqualTo(provenance);
+                      membershipId,
+                      pendingMembership.getMembershipVersion()))
+              .isEmpty();
 
-              VerifiedTenantProvenance changedProvenance =
-                  new VerifiedTenantProvenance(
-                      null,
-                      TenantProvenanceKind.FRESH_GAME_DESIGN,
-                      UUID.randomUUID(),
-                      tenantSource.evidenceDigest());
-              assertThatThrownBy(
-                      () ->
-                          roleSnapshots.findForCanonicalUpdate(
-                              account.getAccountUuid(),
-                              tenantUuid,
-                              changedProvenance,
-                              membershipId,
-                              pendingMembership.getMembershipVersion()))
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("differs from exact UUID identity or stored provenance");
-              assertThatThrownBy(
-                      () ->
-                          roleSnapshots.findForCanonicalUpdate(
-                              account.getAccountUuid(),
-                              tenantUuid,
-                              provenance,
-                              membershipId,
-                              pendingMembership.getMembershipVersion() + 1L))
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("membership version is missing or mismatched");
-              assertThat(
-                      roleSnapshots.findForCanonicalUpdate(
-                          account.getAccountUuid(),
-                          tenantUuid,
-                          provenance,
-                          membershipId,
-                          pendingMembership.getMembershipVersion()))
-                  .contains(written);
+          AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot written =
+              roleSnapshots.replaceCanonical(
+                  pendingMembership,
+                  account.getAccountUuid(),
+                  tenantUuid,
+                  provenance,
+                  pendingMembership.getMembershipVersion(),
+                  List.of());
+          assertThat(written.roles()).isEmpty();
+          assertThat(written.accountUuid()).isEqualTo(account.getAccountUuid());
+          assertThat(written.tenantUuid()).isEqualTo(tenantUuid);
+          assertThat(written.tenantId()).isNull();
+          assertThat(written.tenantProvenance()).isEqualTo(provenance);
 
-              assertThatThrownBy(
-                      () -> memberships.findFreshMembership(account.getAccountUuid(), tenantUuid))
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("no positive authority event");
-              status.setRollbackOnly();
-              return membershipId;
-            });
+          VerifiedTenantProvenance changedProvenance =
+              new VerifiedTenantProvenance(
+                  null,
+                  TenantProvenanceKind.FRESH_GAME_DESIGN,
+                  UUID.randomUUID(),
+                  tenantSource.evidenceDigest());
+          assertThatThrownBy(() ->
+                  roleSnapshots.findForCanonicalUpdate(
+                      account.getAccountUuid(),
+                      tenantUuid,
+                      changedProvenance,
+                      membershipId,
+                      pendingMembership.getMembershipVersion()))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("differs from exact UUID identity or stored provenance");
+          assertThatThrownBy(() ->
+                  roleSnapshots.findForCanonicalUpdate(
+                      account.getAccountUuid(),
+                      tenantUuid,
+                      provenance,
+                      membershipId,
+                      pendingMembership.getMembershipVersion() + 1L))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("membership version is missing or mismatched");
+          assertThat(
+                  roleSnapshots.findForCanonicalUpdate(
+                      account.getAccountUuid(),
+                      tenantUuid,
+                      provenance,
+                      membershipId,
+                      pendingMembership.getMembershipVersion()))
+              .contains(written);
+
+          assertThatThrownBy(
+                  () -> memberships.findFreshMembership(account.getAccountUuid(), tenantUuid))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("no positive authority event");
+          status.setRollbackOnly();
+          return membershipId;
+        });
 
     assertThat(
             dsl.resultQuery(
@@ -405,17 +396,16 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                     "retained-digest",
                     retainedPayload));
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () -> {
-                      dsl.execute(
-                          "DELETE FROM account_authority_outbox_streams "
-                              + "WHERE outbox_stream_key = ?",
-                          stream);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () -> {
+                  dsl.execute(
+                      "DELETE FROM account_authority_outbox_streams "
+                          + "WHERE outbox_stream_key = ?",
+                      stream);
+                  return null;
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Account authority outbox stream history cannot be deleted");
 
@@ -480,25 +470,23 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 1L))).contains(first);
     assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 2L))).contains(second);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () -> {
-                      dsl.execute("TRUNCATE TABLE account_authority_outbox_events CASCADE");
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () -> {
+                  dsl.execute("TRUNCATE TABLE account_authority_outbox_events CASCADE");
+                  return null;
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Account authority outbox history cannot be truncated");
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () -> {
-                      dsl.execute("TRUNCATE TABLE account_authority_outbox_streams CASCADE");
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () -> {
+                  dsl.execute("TRUNCATE TABLE account_authority_outbox_streams CASCADE");
+                  return null;
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Account authority outbox history cannot be truncated");
 
@@ -536,13 +524,12 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     TransactionTemplate transaction = context.transaction();
     String rollbackStream = "account:auth-authority:v1:account/" + UUID.randomUUID();
 
-    transaction.execute(
-        status -> {
-          repository.append(
-              rollbackStream, "rollback-request", "rollback-event", "digest", new byte[] {9});
-          status.setRollbackOnly();
-          return null;
-        });
+    transaction.execute(status -> {
+      repository.append(
+          rollbackStream, "rollback-request", "rollback-event", "digest", new byte[] {9});
+      status.setRollbackOnly();
+      return null;
+    });
     assertThat(inTransaction(transaction, () -> repository.readCheckpoint(rollbackStream)))
         .isEmpty();
 
@@ -583,18 +570,17 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     TransactionTemplate transaction = context.transaction();
     String stream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () ->
-                        repository.append(
-                            stream,
-                            "factory-failure-request",
-                            sequence -> {
-                              assertThat(sequence).isEqualTo(1L);
-                              throw new IllegalStateException("producer failed");
-                            })))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () ->
+                    repository.append(
+                        stream,
+                        "factory-failure-request",
+                        sequence -> {
+                          assertThat(sequence).isEqualTo(1L);
+                          throw new IllegalStateException("producer failed");
+                        })))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("producer failed");
 
@@ -661,21 +647,20 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
     assertThat(inTransaction(transaction, () -> repository.findEvent(stream, Long.MAX_VALUE)))
         .contains(originalEvent);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    transaction,
-                    () -> {
-                      dsl.execute(
-                          "UPDATE authority_overflow_sentinel SET value = value + 1 "
-                              + "WHERE sentinel_id = 1");
-                      return repository.append(
-                          stream,
-                          "exhaustion-attempt-request",
-                          "exhaustion-attempt-event",
-                          "exhaustion-attempt-digest",
-                          new byte[] {1, 2, 3});
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                transaction,
+                () -> {
+                  dsl.execute(
+                      "UPDATE authority_overflow_sentinel SET value = value + 1 "
+                          + "WHERE sentinel_id = 1");
+                  return repository.append(
+                      stream,
+                      "exhaustion-attempt-request",
+                      "exhaustion-attempt-event",
+                      "exhaustion-attempt-digest",
+                      new byte[] {1, 2, 3});
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Account authority outbox sequence is exhausted");
 

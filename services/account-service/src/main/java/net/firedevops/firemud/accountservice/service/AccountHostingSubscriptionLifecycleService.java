@@ -56,14 +56,13 @@ public final class AccountHostingSubscriptionLifecycleService {
     requireNoAmbientTransaction();
     var prepared =
         Objects.requireNonNull(
-            transaction.execute(
-                s ->
-                    repository.prepare(
-                        requestId,
-                        creationRequestId,
-                        expectedRowVersion,
-                        providerSubscriptionId,
-                        provisioningAttemptId)));
+            transaction.execute(s ->
+                repository.prepare(
+                    requestId,
+                    creationRequestId,
+                    expectedRowVersion,
+                    providerSubscriptionId,
+                    provisioningAttemptId)));
     if (prepared.outcome() != Outcome.READY) {
       return prepared.result();
     }
@@ -96,10 +95,9 @@ public final class AccountHostingSubscriptionLifecycleService {
       requireNoAmbientTransaction();
       var actualSdkResult = observer.observe(fence.binding());
       return Objects.requireNonNull(
-          transaction.execute(
-              s ->
-                  Objects.requireNonNull(
-                      capture.apply(repository.readCurrent(fence, actualSdkResult)))));
+          transaction.execute(s ->
+              Objects.requireNonNull(
+                  capture.apply(repository.readCurrent(fence, actualSdkResult)))));
     } catch (RuntimeException unavailable) {
       throw new EntitlementUnavailableException(unavailable);
     }

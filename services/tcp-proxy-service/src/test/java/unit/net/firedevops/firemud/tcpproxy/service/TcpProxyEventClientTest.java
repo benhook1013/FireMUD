@@ -128,33 +128,31 @@ class TcpProxyEventClientTest {
     java.util.concurrent.atomic.AtomicInteger buildCount =
         new java.util.concurrent.atomic.AtomicInteger();
     when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
-        .thenAnswer(
-            ignored -> {
-              int currentBuild = buildCount.incrementAndGet();
-              if (currentBuild == 1) {
-                initialBuildStarted.countDown();
-                if (!releaseInitialBuild.await(5, TimeUnit.SECONDS)) {
-                  throw new AssertionError("timed out waiting to release initial channel build");
-                }
-              } else if (currentBuild == 2) {
-                reloadBuildStarted.countDown();
-              }
-              return mock(io.grpc.ManagedChannel.class);
-            });
+        .thenAnswer(ignored -> {
+          int currentBuild = buildCount.incrementAndGet();
+          if (currentBuild == 1) {
+            initialBuildStarted.countDown();
+            if (!releaseInitialBuild.await(5, TimeUnit.SECONDS)) {
+              throw new AssertionError("timed out waiting to release initial channel build");
+            }
+          } else if (currentBuild == 2) {
+            reloadBuildStarted.countDown();
+          }
+          return mock(io.grpc.ManagedChannel.class);
+        });
 
     TcpProxyEventClient client =
         new TcpProxyEventClient(
             endpoints, tlsProps, channelFactory, resolver, BlockingGrpcStubCustomizer.noop());
     AtomicReference<Throwable> initFailure = new AtomicReference<>();
     Thread initThread =
-        new Thread(
-            () -> {
-              try {
-                client.init();
-              } catch (Throwable failure) {
-                initFailure.set(failure);
-              }
-            });
+        new Thread(() -> {
+          try {
+            client.init();
+          } catch (Throwable failure) {
+            initFailure.set(failure);
+          }
+        });
     initThread.start();
     try {
       org.junit.jupiter.api.Assertions.assertTrue(
@@ -292,14 +290,13 @@ class TcpProxyEventClientTest {
     CountDownLatch buildStarted = new CountDownLatch(1);
     CountDownLatch releaseBuild = new CountDownLatch(1);
     when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
-        .thenAnswer(
-            ignored -> {
-              buildStarted.countDown();
-              if (!releaseBuild.await(5, TimeUnit.SECONDS)) {
-                throw new AssertionError("timed out waiting to release replacement build");
-              }
-              return replacementChannel;
-            });
+        .thenAnswer(ignored -> {
+          buildStarted.countDown();
+          if (!releaseBuild.await(5, TimeUnit.SECONDS)) {
+            throw new AssertionError("timed out waiting to release replacement build");
+          }
+          return replacementChannel;
+        });
     GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
     when(resolver.resolve(tlsProps)).thenReturn(null);
     TcpProxyEventClient client =
@@ -310,14 +307,13 @@ class TcpProxyEventClientTest {
     AtomicReference<Throwable> reloadFailure = new AtomicReference<>();
 
     Thread reloadThread =
-        new Thread(
-            () -> {
-              try {
-                invokeReloadChannel(client);
-              } catch (Throwable e) {
-                reloadFailure.set(e);
-              }
-            });
+        new Thread(() -> {
+          try {
+            invokeReloadChannel(client);
+          } catch (Throwable e) {
+            reloadFailure.set(e);
+          }
+        });
     reloadThread.start();
     try {
       org.junit.jupiter.api.Assertions.assertTrue(buildStarted.await(5, TimeUnit.SECONDS));

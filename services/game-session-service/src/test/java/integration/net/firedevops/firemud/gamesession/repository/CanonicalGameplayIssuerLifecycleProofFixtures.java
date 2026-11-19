@@ -526,11 +526,9 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
 
   protected static long capacityFieldCount(byte[] fieldSet) {
     return decodeFields(fieldSet).keySet().stream()
-        .filter(
-            field ->
-                field.startsWith(
-                    CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
-                        .RESERVATION_FIELD_PREFIX))
+        .filter(field ->
+            field.startsWith(
+                CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.RESERVATION_FIELD_PREFIX))
         .count();
   }
 

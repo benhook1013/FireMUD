@@ -42,10 +42,9 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
     assertThat(
             Arrays.stream(AccountGameplayAdmissionLeaseRepository.class.getDeclaredMethods())
                 .filter(method -> !method.isSynthetic())
-                .anyMatch(
-                    method ->
-                        Modifier.isPublic(method.getModifiers())
-                            || Modifier.isProtected(method.getModifiers())))
+                .anyMatch(method ->
+                    Modifier.isPublic(method.getModifiers())
+                        || Modifier.isProtected(method.getModifiers())))
         .isFalse();
   }
 
@@ -75,12 +74,11 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
   void rejectsNonV4AccountIdentityBeforeAnyStorageAccess() {
     DSLContext dsl = mock(DSLContext.class);
     var repository = new AccountGameplayAdmissionLeaseRepository(dsl);
-    assertThatThrownBy(
-            () ->
-                repository.allocate(
-                    UUID.fromString("11111111-1111-1111-8111-111111111111"),
-                    UUID.randomUUID(),
-                    UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            repository.allocate(
+                UUID.fromString("11111111-1111-1111-8111-111111111111"),
+                UUID.randomUUID(),
+                UUID.randomUUID()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("UUIDv4");
     verifyNoInteractions(dsl);
@@ -115,10 +113,9 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
   @Test
   void missingInsertedAllocationReadbackIsNotReturnedAsAnInMemoryIdentity() {
     DSLContext dsl = allocationDsl(null, 1);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseRepository(dsl)
-                    .allocate(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseRepository(dsl)
+                .allocate(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()))
         .hasMessage("Account admission lease allocation readback unavailable");
   }
 
@@ -126,10 +123,9 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
   @ValueSource(ints = {0, 2})
   void allocationInsertRequiresExactlyOneStoredRow(int insertCount) {
     DSLContext dsl = allocationDsl(null, insertCount);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseRepository(dsl)
-                    .allocate(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseRepository(dsl)
+                .allocate(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()))
         .hasMessage("Account admission lease allocation insert unavailable");
   }
 
@@ -143,9 +139,8 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
     if (field.equals("lease_fence")) when(row.get(field, Long.class)).thenReturn(2L);
     else when(row.get(field, UUID.class)).thenReturn(UUID.randomUUID());
     DSLContext dsl = allocationDsl(row, 1);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseRepository(dsl).allocate(account, request, lease))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseRepository(dsl).allocate(account, request, lease))
         .hasMessageContaining("identity conflict");
   }
 
@@ -199,13 +194,12 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
     Record row = mock(Record.class);
     when(row.get("evidence_json", String.class)).thenReturn("{}");
     DSLContext dsl = recoveryDsl(row);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseRepository(dsl)
-                    .findByRequest(
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        "spiffe://firemud/ns/test/sa/game-session-service"))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseRepository(dsl)
+                .findByRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "spiffe://firemud/ns/test/sa/game-session-service"))
         .isInstanceOf(IllegalArgumentException.class);
     verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
@@ -226,15 +220,13 @@ class AccountGameplayAdmissionLeaseRepositoryTest {
     assertThatThrownBy(
             () -> new AccountGameplayAdmissionLeaseOperation(evidence, State.COMMITTED, null, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseOperation(
-                    evidence, State.ABORTED, new UUID(0, 0), cleanup))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseOperation(
+                evidence, State.ABORTED, new UUID(0, 0), cleanup))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseOperation(
-                    evidence, State.ABORTED, null, new UUID(0, 0)))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseOperation(
+                evidence, State.ABORTED, null, new UUID(0, 0)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

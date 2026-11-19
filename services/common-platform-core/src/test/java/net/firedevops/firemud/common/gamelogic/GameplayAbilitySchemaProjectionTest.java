@@ -208,17 +208,13 @@ class GameplayAbilitySchemaProjectionTest {
     assertThatThrownBy(
             () -> GameplayAbilitySchemaProjection.digest(new GameplayRuleManifest(unresolved)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.fromStored(
-                    roots()
-                        .canonicalJson()
-                        .replace("\"families\":", "\"unknown\":0,\"families\":")))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.fromStored(
+                roots().canonicalJson().replace("\"families\":", "\"unknown\":0,\"families\":")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.fromStored(
-                    roots().canonicalJson().replace("gameplay-rule-manifest/v1", "unsupported/v1")))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.fromStored(
+                roots().canonicalJson().replace("gameplay-rule-manifest/v1", "unsupported/v1")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -279,14 +279,13 @@ class CanonicalGameplayLoginAccountClientTest {
       try (var expired =
           io.grpc.Context.current()
               .withDeadline(Deadline.after(-1, TimeUnit.NANOSECONDS), scheduler)) {
-        expired.run(
-            () ->
-                assertThatThrownBy(() -> client.authenticate(request(), () -> true))
-                    .isInstanceOfSatisfying(
-                        StatusRuntimeException.class,
-                        error ->
-                            assertThat(error.getStatus().getCode())
-                                .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+        expired.run(() ->
+            assertThatThrownBy(() -> client.authenticate(request(), () -> true))
+                .isInstanceOfSatisfying(
+                    StatusRuntimeException.class,
+                    error ->
+                        assertThat(error.getStatus().getCode())
+                            .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
       } finally {
         scheduler.shutdownNow();
       }
@@ -311,17 +310,16 @@ class CanonicalGameplayLoginAccountClientTest {
   void constructorRequiresMutualTlsAndExplicitInitialization() throws Exception {
     var tls = pki.clientProperties(temporaryDirectory);
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLoginAccountClient(
-                    new ServiceEndpointsProperties(),
-                    tls,
-                    new GrpcChannelFactory(),
-                    BlockingGrpcStubCustomizer.noop(),
-                    "test",
-                    Clock.systemUTC(),
-                    Duration.ofSeconds(5),
-                    mock(AccountAsymmetricJwtVerifier.class)))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLoginAccountClient(
+                new ServiceEndpointsProperties(),
+                tls,
+                new GrpcChannelFactory(),
+                BlockingGrpcStubCustomizer.noop(),
+                "test",
+                Clock.systemUTC(),
+                Duration.ofSeconds(5),
+                mock(AccountAsymmetricJwtVerifier.class)))
         .isInstanceOf(IllegalArgumentException.class);
     var factory = mock(GrpcChannelFactory.class);
     try (var uninitialized =
@@ -516,36 +514,32 @@ class CanonicalGameplayLoginAccountClientTest {
     var verifier = mock(AccountAsymmetricJwtVerifier.class);
     try (var client = client(server, Duration.ofSeconds(5), verifier)) {
       client.initialize();
-      assertThatThrownBy(
-              () ->
-                  client.retireInitialGameplayLogin(
-                      disposalRequest().toBuilder().clearCallerContextId().build()))
+      assertThatThrownBy(() ->
+              client.retireInitialGameplayLogin(
+                  disposalRequest().toBuilder().clearCallerContextId().build()))
           .isInstanceOf(InitialGameplayLoginDisposalResult.InvalidResultException.class);
       var scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
       try (var expired =
           io.grpc.Context.current()
               .withDeadline(Deadline.after(-1, TimeUnit.NANOSECONDS), scheduler)) {
-        expired.run(
-            () ->
-                assertThatThrownBy(() -> client.retireInitialGameplayLogin(disposalRequest()))
-                    .isInstanceOfSatisfying(
-                        StatusRuntimeException.class,
-                        error ->
-                            assertThat(error.getStatus().getCode())
-                                .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+        expired.run(() ->
+            assertThatThrownBy(() -> client.retireInitialGameplayLogin(disposalRequest()))
+                .isInstanceOfSatisfying(
+                    StatusRuntimeException.class,
+                    error ->
+                        assertThat(error.getStatus().getCode())
+                            .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
       } finally {
         scheduler.shutdownNow();
       }
       try (var cancelled = io.grpc.Context.current().withCancellation()) {
         cancelled.cancel(null);
-        cancelled.run(
-            () ->
-                assertThatThrownBy(() -> client.retireInitialGameplayLogin(disposalRequest()))
-                    .isInstanceOfSatisfying(
-                        StatusRuntimeException.class,
-                        error ->
-                            assertThat(error.getStatus().getCode())
-                                .isEqualTo(Status.Code.CANCELLED)));
+        cancelled.run(() ->
+            assertThatThrownBy(() -> client.retireInitialGameplayLogin(disposalRequest()))
+                .isInstanceOfSatisfying(
+                    StatusRuntimeException.class,
+                    error ->
+                        assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.CANCELLED)));
       }
       assertThat(starts.get()).isZero();
       assertThat(requests).isEmpty();

@@ -34,24 +34,23 @@ class AutomationScriptingTemporalHostingTest {
 
   @Test
   void automationScriptingModuleUsesSharedTemporalHostingPattern() {
-    contextRunner.run(
-        context -> {
-          TemporalTaskQueueResolver taskQueues = context.getBean(TemporalTaskQueueResolver.class);
-          WorkerFactory workerFactory = context.getBean(WorkerFactory.class);
-          Worker worker = context.getBean(Worker.class);
-          String taskQueue = taskQueues.forWorkflowFamily("script-patch-readiness");
+    contextRunner.run(context -> {
+      TemporalTaskQueueResolver taskQueues = context.getBean(TemporalTaskQueueResolver.class);
+      WorkerFactory workerFactory = context.getBean(WorkerFactory.class);
+      Worker worker = context.getBean(Worker.class);
+      String taskQueue = taskQueues.forWorkflowFamily("script-patch-readiness");
 
-          assertThat(taskQueue)
-              .isEqualTo("firemud:automation-scripting-service:script-patch-readiness");
-          assertThat(
-                  FiremudWorkflowIds.workflowId(
-                      "script-patch-readiness", "tenant-1", "script-patch-version", "patch-1"))
-              .isEqualTo("script-patch-readiness:tenant-1:script-patch-version:patch-1");
+      assertThat(taskQueue)
+          .isEqualTo("firemud:automation-scripting-service:script-patch-readiness");
+      assertThat(
+              FiremudWorkflowIds.workflowId(
+                  "script-patch-readiness", "tenant-1", "script-patch-version", "patch-1"))
+          .isEqualTo("script-patch-readiness:tenant-1:script-patch-version:patch-1");
 
-          verify(workerFactory).newWorker(taskQueue);
-          verify(worker).registerWorkflowImplementationTypes(HostProbeWorkflowImpl.class);
-          verify(workerFactory).start();
-        });
+      verify(workerFactory).newWorker(taskQueue);
+      verify(worker).registerWorkflowImplementationTypes(HostProbeWorkflowImpl.class);
+      verify(workerFactory).start();
+    });
   }
 
   @Configuration(proxyBeanMethods = false)

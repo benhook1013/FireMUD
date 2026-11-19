@@ -104,16 +104,14 @@ class WorldOriginalDraftGraphApplyGrpcCodecTest {
             () -> new WorldOriginalDraftGraphApplyEvidence.Request(2, "test", binding(true)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> request("INVALID")).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldOriginalDraftGraphApplyEvidence.Request.create(
-                    "test", new byte[WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES + 1]))
+    assertThatThrownBy(() ->
+            WorldOriginalDraftGraphApplyEvidence.Request.create(
+                "test", new byte[WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
     var wire = WorldOriginalDraftGraphApplyGrpcCodec.toRequest(request("test"));
-    assertThatThrownBy(
-            () ->
-                WorldOriginalDraftGraphApplyGrpcCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown()).build()))
+    assertThatThrownBy(() ->
+            WorldOriginalDraftGraphApplyGrpcCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown()).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -139,25 +137,23 @@ class WorldOriginalDraftGraphApplyGrpcCodecTest {
   void rejectsAbortOtherOwnerFullBindingAndAppliedEpochSubstitution() throws Exception {
     var request = request("test");
     var committed = committed(request);
-    assertThatThrownBy(
-            () ->
-                WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
-                    request,
-                    changed(
-                        committed,
-                        DraftAuthorizationFenceBinding.Owner.WORLD,
-                        DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED,
-                        committed.result())))
+    assertThatThrownBy(() ->
+            WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
+                request,
+                changed(
+                    committed,
+                    DraftAuthorizationFenceBinding.Owner.WORLD,
+                    DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED,
+                    committed.result())))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
-                    request,
-                    changed(
-                        committed,
-                        DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
-                        DraftAuthorizationFenceBinding.Outcome.COMMITTED,
-                        committed.result())))
+    assertThatThrownBy(() ->
+            WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
+                request,
+                changed(
+                    committed,
+                    DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                    committed.result())))
         .isInstanceOf(IllegalArgumentException.class);
     var alternate = request("other");
     assertThatThrownBy(() -> WorldOriginalDraftGraphApplyGrpcCodec.toResponse(alternate, committed))
@@ -167,11 +163,9 @@ class WorldOriginalDraftGraphApplyGrpcCodecTest {
         .put("resultingEpoch", "9");
     var wrongEpoch =
         net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(json.toString());
-    assertThatThrownBy(
-            () ->
-                WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
-                    request,
-                    changed(committed, committed.owner(), committed.outcome(), wrongEpoch)))
+    assertThatThrownBy(() ->
+            WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
+                request, changed(committed, committed.owner(), committed.outcome(), wrongEpoch)))
         .isInstanceOf(IllegalArgumentException.class);
     var otherBinding = request.accountBinding();
     var differentAccount =
@@ -189,12 +183,11 @@ class WorldOriginalDraftGraphApplyGrpcCodecTest {
             otherBinding.normalizedInput(),
             otherBinding.inputDigest(),
             otherBinding.sources());
-    assertThatThrownBy(
-            () ->
-                WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
-                    WorldOriginalDraftGraphApplyEvidence.Request.create(
-                        "test", differentAccount.canonicalBytes()),
-                    committed))
+    assertThatThrownBy(() ->
+            WorldOriginalDraftGraphApplyGrpcCodec.toResponse(
+                WorldOriginalDraftGraphApplyEvidence.Request.create(
+                    "test", differentAccount.canonicalBytes()),
+                committed))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

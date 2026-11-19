@@ -122,19 +122,18 @@ class GatewayGameplayReadinessProbeTest {
     AtomicInteger invocationCount = new AtomicInteger();
     CopyOnWriteArrayList<CompletableFuture<Boolean>> retryFutures = new CopyOnWriteArrayList<>();
     when(client.isReadyAsync())
-        .thenAnswer(
-            invocation -> {
-              int invocationNumber = invocationCount.incrementAndGet();
-              if (invocationNumber == 1) {
-                return healthy;
-              }
-              if (invocationNumber == 2) {
-                return stalled;
-              }
-              CompletableFuture<Boolean> freshRetry = new CompletableFuture<>();
-              retryFutures.add(freshRetry);
-              return freshRetry;
-            });
+        .thenAnswer(invocation -> {
+          int invocationNumber = invocationCount.incrementAndGet();
+          if (invocationNumber == 1) {
+            return healthy;
+          }
+          if (invocationNumber == 2) {
+            return stalled;
+          }
+          CompletableFuture<Boolean> freshRetry = new CompletableFuture<>();
+          retryFutures.add(freshRetry);
+          return freshRetry;
+        });
     try (GatewayGameplayReadinessProbe probe =
         startedProbe(client, Duration.ofMillis(20), Duration.ofMillis(100))) {
       verify(client, timeout(1000)).isReadyAsync();

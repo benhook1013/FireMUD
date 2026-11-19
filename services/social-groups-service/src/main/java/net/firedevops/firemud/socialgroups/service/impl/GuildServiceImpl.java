@@ -57,10 +57,8 @@ public class GuildServiceImpl implements GuildService {
     guild.setName(request.name());
     guild.setCreatedAt(Instant.now());
     Guild saved = guildRepository.save(guild);
-    runAfterCommit(
-        () ->
-            logLifecycle(
-                request.tenantId(), saved.getId(), request.ownerAccountId(), "CREATE", null));
+    runAfterCommit(() ->
+        logLifecycle(request.tenantId(), saved.getId(), request.ownerAccountId(), "CREATE", null));
     return guildMapper.toDto(saved);
   }
 
@@ -102,14 +100,13 @@ public class GuildServiceImpl implements GuildService {
     member.setRole(request.role());
     GuildMember saved = guildMemberRepository.save(member);
     member.setId(saved.getId());
-    runAfterCommit(
-        () ->
-            logLifecycle(
-                request.tenantId(),
-                request.guildId(),
-                request.accountId(),
-                "ADD_MEMBER",
-                request.role()));
+    runAfterCommit(() ->
+        logLifecycle(
+            request.tenantId(),
+            request.guildId(),
+            request.accountId(),
+            "ADD_MEMBER",
+            request.role()));
     return guildMemberMapper.toDto(member);
   }
 
@@ -129,14 +126,13 @@ public class GuildServiceImpl implements GuildService {
             .orElseThrow();
     member.setRole(request.role());
     guildMemberRepository.save(member);
-    runAfterCommit(
-        () ->
-            logLifecycle(
-                request.tenantId(),
-                request.guildId(),
-                request.accountId(),
-                "UPDATE_MEMBER_ROLE",
-                request.role()));
+    runAfterCommit(() ->
+        logLifecycle(
+            request.tenantId(),
+            request.guildId(),
+            request.accountId(),
+            "UPDATE_MEMBER_ROLE",
+            request.role()));
     return guildMemberMapper.toDto(member);
   }
 

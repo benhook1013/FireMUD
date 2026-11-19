@@ -56,13 +56,9 @@ class AccountAuthorityGenerationRepositoryTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> AuthorityScope.account(null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new ScopeState(
-                    AuthorityScope.account(accountId),
-                    0L,
-                    1L,
-                    new IssuanceFence(accountId, 1L, 1L)))
+    assertThatThrownBy(() ->
+            new ScopeState(
+                AuthorityScope.account(accountId), 0L, 1L, new IssuanceFence(accountId, 1L, 1L)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new IssuanceFence(accountId, 0L, 1L))
         .isInstanceOf(IllegalArgumentException.class);
@@ -166,17 +162,15 @@ class AccountAuthorityGenerationRepositoryTest {
   void snapshotRequiresEveryExplicitScopeWithoutFillingInMissingAuthority() {
     UUID accountId = UUID.fromString("11111111-1111-4111-8111-111111111111");
 
-    assertThatThrownBy(
-            () ->
-                repository.readCompositeSnapshot("issuer-A", accountId, null, java.util.List.of()))
+    assertThatThrownBy(() ->
+            repository.readCompositeSnapshot("issuer-A", accountId, null, java.util.List.of()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readCompositeSnapshot(
-                    "issuer-A",
-                    accountId,
-                    java.util.List.of(),
-                    java.util.Arrays.asList(accountId, null)))
+    assertThatThrownBy(() ->
+            repository.readCompositeSnapshot(
+                "issuer-A",
+                accountId,
+                java.util.List.of(),
+                java.util.Arrays.asList(accountId, null)))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(dsl);
@@ -197,10 +191,9 @@ class AccountAuthorityGenerationRepositoryTest {
         .when(dsl)
         .fetchOne(anyString(), eq(accountId));
 
-    assertThatThrownBy(
-            () ->
-                repository.readCompositeSnapshot(
-                    "firemud-account-service", accountId, java.util.List.of(), java.util.List.of()))
+    assertThatThrownBy(() ->
+            repository.readCompositeSnapshot(
+                "firemud-account-service", accountId, java.util.List.of(), java.util.List.of()))
         .isSameAs(stopAtFirstRead);
     assertThat(firstSql.get()).contains("FROM accounts").contains("FOR SHARE");
     assertThat(firstBinding.get()).isEqualTo(accountId);
@@ -264,10 +257,9 @@ class AccountAuthorityGenerationRepositoryTest {
         .when(dsl)
         .fetchOne(anyString(), eq("ISSUER"), eq("firemud-account-service"), isNull(), isNull());
 
-    assertThatThrownBy(
-            () ->
-                repository.readCompositeSnapshot(
-                    "firemud-account-service", accountId, java.util.List.of(), java.util.List.of()))
+    assertThatThrownBy(() ->
+            repository.readCompositeSnapshot(
+                "firemud-account-service", accountId, java.util.List.of(), java.util.List.of()))
         .isSameAs(stopAtIssuerRead);
 
     assertThat(issuerSql.get()).contains("FOR SHARE").doesNotContain("FOR UPDATE");

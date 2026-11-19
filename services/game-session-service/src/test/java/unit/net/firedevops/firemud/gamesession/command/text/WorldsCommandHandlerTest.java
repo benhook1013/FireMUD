@@ -138,11 +138,10 @@ class WorldsCommandHandlerTest {
         TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties).visibleWorlds();
     AtomicInteger reads = new AtomicInteger();
     var catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              reads.incrementAndGet();
-              return original;
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          reads.incrementAndGet();
+          return original;
+        });
     var localHandler = new WorldsCommandHandler(catalog);
     var actor = GameplayCommandTestFixtures.worldBrowseDemo();
 
@@ -183,11 +182,10 @@ class WorldsCommandHandlerTest {
   void numericCharacterBrowseSelectorStillRequiresCanonicalAccountIdentity() {
     AtomicInteger reads = new AtomicInteger();
     var catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              reads.incrementAndGet();
-              return List.of(new GameplayWorldCatalog.WorldView("123", "Numeric World", List.of()));
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          reads.incrementAndGet();
+          return List.of(new GameplayWorldCatalog.WorldView("123", "Numeric World", List.of()));
+        });
     var invalidAccountContext =
         new net.firedevops.firemud.gamesession.service.SessionContext(
             1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt");

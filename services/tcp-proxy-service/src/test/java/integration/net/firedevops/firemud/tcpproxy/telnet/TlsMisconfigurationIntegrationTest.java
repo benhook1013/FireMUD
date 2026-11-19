@@ -19,19 +19,18 @@ class TlsMisconfigurationIntegrationTest {
 
   @Test
   void tlsMisconfigurationFailsFastWithClearMessage() {
-    assertThatThrownBy(
-            () ->
-                new SpringApplicationBuilder(TestConfig.class)
-                    .web(WebApplicationType.NONE)
-                    .properties(
-                        "TCP_PROXY_PORT=0",
-                        "TCP_PROXY_TLS_ENABLED=true",
-                        "GATEWAY_WS_URL=ws://localhost/ws/game",
-                        "TCP_PROXY_TLS_CERT=/nonexistent/cert.pem",
-                        "TCP_PROXY_TLS_KEY=/nonexistent/key.pem",
-                        "spring.flyway.enabled=false",
-                        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration")
-                    .run())
+    assertThatThrownBy(() ->
+            new SpringApplicationBuilder(TestConfig.class)
+                .web(WebApplicationType.NONE)
+                .properties(
+                    "TCP_PROXY_PORT=0",
+                    "TCP_PROXY_TLS_ENABLED=true",
+                    "GATEWAY_WS_URL=ws://localhost/ws/game",
+                    "TCP_PROXY_TLS_CERT=/nonexistent/cert.pem",
+                    "TCP_PROXY_TLS_KEY=/nonexistent/key.pem",
+                    "spring.flyway.enabled=false",
+                    "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration")
+                .run())
         .hasRootCauseInstanceOf(IllegalStateException.class)
         .hasRootCauseMessage(
             "TCP proxy TLS configuration invalid: certificate or key file does not exist or is unreadable");

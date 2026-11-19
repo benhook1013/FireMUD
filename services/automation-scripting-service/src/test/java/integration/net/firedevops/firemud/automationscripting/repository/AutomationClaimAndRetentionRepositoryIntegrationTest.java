@@ -310,13 +310,12 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         new ArrayList<>();
     for (int i = 0; i < 2; i++) {
       futures.add(
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return new ScriptEventIngressAuditRepository(dsl)
-                    .insertIfAbsentByIdentity(pinnedIngressClaim());
-              }));
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return new ScriptEventIngressAuditRepository(dsl)
+                .insertIfAbsentByIdentity(pinnedIngressClaim());
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -358,13 +357,12 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         new ArrayList<>();
     for (int i = 0; i < 2; i++) {
       futures.add(
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return new ScriptEventIngressAuditRepository(dsl)
-                    .insertIfAbsentByIdentity(preInstanceIngressClaim());
-              }));
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return new ScriptEventIngressAuditRepository(dsl)
+                .insertIfAbsentByIdentity(preInstanceIngressClaim());
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -387,13 +385,12 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     List<Future<ScriptWorkItemRepository.IdempotentInsertResult>> futures = new ArrayList<>();
     for (int i = 0; i < 2; i++) {
       futures.add(
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return new ScriptWorkItemRepository(dsl)
-                    .insertIfAbsentByTriggerIdentity(pinnedWorkItem());
-              }));
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return new ScriptWorkItemRepository(dsl)
+                .insertIfAbsentByTriggerIdentity(pinnedWorkItem());
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -413,13 +410,12 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     List<Future<ScriptWorkItemRepository.IdempotentInsertResult>> futures = new ArrayList<>();
     for (int i = 0; i < 2; i++) {
       futures.add(
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return new ScriptWorkItemRepository(dsl)
-                    .insertIfAbsentByTriggerIdentity(unpinnedWorkItem());
-              }));
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return new ScriptWorkItemRepository(dsl)
+                .insertIfAbsentByTriggerIdentity(unpinnedWorkItem());
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -509,11 +505,10 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                 .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
                     "tenant-script-only", null, null, List.of("PENDING_EVALUATION")))
         .singleElement()
-        .satisfies(
-            item -> {
-              assertThat(item.getPluginId()).isEmpty();
-              assertThat(item.getPluginVersionId()).isEmpty();
-            });
+        .satisfies(item -> {
+          assertThat(item.getPluginId()).isEmpty();
+          assertThat(item.getPluginVersionId()).isEmpty();
+        });
   }
 
   @Test
@@ -562,20 +557,19 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     assertThat(replayRepository.findResults("tenant-replay-a", tenantA.id()))
         .singleElement()
-        .satisfies(
-            result -> {
-              assertThat(result.requestedWorkItemId()).isEqualTo(9001L);
-              assertThat(result.workItemId()).isNull();
-              assertThat(result.outcome()).isEqualTo("rejected");
-              assertThat(result.rejectionReason()).isEqualTo("not_found_or_not_owned");
-              assertThat(result.failureReason()).isEmpty();
-              assertThat(result.scriptPinEpoch()).isEqualTo(2L);
-              assertThat(result.pluginActivationEpoch()).isEqualTo(4L);
-              assertThat(result.lifecycleRevision()).isEqualTo(5L);
-              assertThat(result.failureGeneration()).isEqualTo(3L);
-              assertThat(result.originalFailureStage()).isEqualTo("DSL_EVAL");
-              assertThat(result.originalFailureReason()).isEqualTo("sandbox_error");
-            });
+        .satisfies(result -> {
+          assertThat(result.requestedWorkItemId()).isEqualTo(9001L);
+          assertThat(result.workItemId()).isNull();
+          assertThat(result.outcome()).isEqualTo("rejected");
+          assertThat(result.rejectionReason()).isEqualTo("not_found_or_not_owned");
+          assertThat(result.failureReason()).isEmpty();
+          assertThat(result.scriptPinEpoch()).isEqualTo(2L);
+          assertThat(result.pluginActivationEpoch()).isEqualTo(4L);
+          assertThat(result.lifecycleRevision()).isEqualTo(5L);
+          assertThat(result.failureGeneration()).isEqualTo(3L);
+          assertThat(result.originalFailureStage()).isEqualTo("DSL_EVAL");
+          assertThat(result.originalFailureReason()).isEqualTo("sandbox_error");
+        });
     assertThat(replayRepository.findResults("tenant-replay-b", tenantB.id())).isEmpty();
     assertThat(
             dsl.fetchValue(
@@ -690,11 +684,10 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     assertThat(saved.getLastObservedControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(pinProjectionRepository.findByTenantIdAndGameInstanceId("tenant-1", "instance-1"))
         .get()
-        .satisfies(
-            found -> {
-              assertThat(found.getScriptPinEpoch()).isEqualTo(2L);
-              assertThat(found.getObservedPinnedScriptPatchVersion()).isEqualTo("patch-1");
-            });
+        .satisfies(found -> {
+          assertThat(found.getScriptPinEpoch()).isEqualTo(2L);
+          assertThat(found.getObservedPinnedScriptPatchVersion()).isEqualTo("patch-1");
+        });
   }
 
   @Test
@@ -734,15 +727,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     List<Future<AdmissionStateSummary>> futures = new ArrayList<>();
     for (int i = 0; i < 2; i++) {
       futures.add(
-          executor.submit(
-              () -> {
-                DSLContext transactionRoot =
-                    newDsl("automation-admission-retry-" + System.nanoTime());
-                ready.countDown();
-                await(start);
-                return transactionRoot.transactionResult(
-                    configuration -> admissionService(configuration.dsl()).setMode(command));
-              }));
+          executor.submit(() -> {
+            DSLContext transactionRoot = newDsl("automation-admission-retry-" + System.nanoTime());
+            ready.countDown();
+            await(start);
+            return transactionRoot.transactionResult(
+                configuration -> admissionService(configuration.dsl()).setMode(command));
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -782,20 +773,19 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     List<Future<MutationAttempt>> futures = new ArrayList<>();
     for (SetAdmissionModeCommand command : commands) {
       futures.add(
-          executor.submit(
-              () -> {
-                DSLContext transactionRoot =
-                    newDsl("automation-admission-conflict-" + System.nanoTime());
-                ready.countDown();
-                await(start);
-                try {
-                  return MutationAttempt.success(
-                      transactionRoot.transactionResult(
-                          configuration -> admissionService(configuration.dsl()).setMode(command)));
-                } catch (RuntimeException exception) {
-                  return MutationAttempt.failure(exception);
-                }
-              }));
+          executor.submit(() -> {
+            DSLContext transactionRoot =
+                newDsl("automation-admission-conflict-" + System.nanoTime());
+            ready.countDown();
+            await(start);
+            try {
+              return MutationAttempt.success(
+                  transactionRoot.transactionResult(
+                      configuration -> admissionService(configuration.dsl()).setMode(command)));
+            } catch (RuntimeException exception) {
+              return MutationAttempt.failure(exception);
+            }
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -832,15 +822,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     List<Future<AdmissionStateSummary>> futures = new ArrayList<>();
     for (SetAdmissionModeCommand command : commands) {
       futures.add(
-          executor.submit(
-              () -> {
-                DSLContext transactionRoot =
-                    newDsl("automation-admission-distinct-" + System.nanoTime());
-                ready.countDown();
-                await(start);
-                return transactionRoot.transactionResult(
-                    configuration -> admissionService(configuration.dsl()).setMode(command));
-              }));
+          executor.submit(() -> {
+            DSLContext transactionRoot =
+                newDsl("automation-admission-distinct-" + System.nanoTime());
+            ready.countDown();
+            await(start);
+            return transactionRoot.transactionResult(
+                configuration -> admissionService(configuration.dsl()).setMode(command));
+          }));
     }
 
     assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -854,18 +843,16 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo(1);
     assertThat(
             summaries.stream()
-                .filter(
-                    s ->
-                        AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED.equals(s.outcome()))
+                .filter(s ->
+                    AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED.equals(s.outcome()))
                 .count())
         .isEqualTo(1);
     assertThat(summaries)
-        .allSatisfy(
-            summary -> {
-              assertThat(summary.targetMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
-              assertThat(summary.admissionEpoch()).isEqualTo(2L);
-              assertThat(summary.requestFingerprint()).matches("[0-9a-f]{64}");
-            });
+        .allSatisfy(summary -> {
+          assertThat(summary.targetMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
+          assertThat(summary.admissionEpoch()).isEqualTo(2L);
+          assertThat(summary.requestFingerprint()).matches("[0-9a-f]{64}");
+        });
 
     assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isEqualTo(1);
     assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isEqualTo(2);
@@ -882,16 +869,15 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
             .fetch();
     assertThat(historyRows)
         .hasSize(2)
-        .allSatisfy(
-            row -> {
-              assertThat(row.getMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
-              assertThat(row.getAdmissionEpoch()).isEqualTo(2L);
-              assertThat(row.getRequestFingerprint()).matches("[0-9a-f]{64}");
-              assertThat(row.getOutcome())
-                  .isIn(
-                      AutomationAdmissionStateService.OUTCOME_APPLIED,
-                      AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
-            });
+        .allSatisfy(row -> {
+          assertThat(row.getMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
+          assertThat(row.getAdmissionEpoch()).isEqualTo(2L);
+          assertThat(row.getRequestFingerprint()).matches("[0-9a-f]{64}");
+          assertThat(row.getOutcome())
+              .isIn(
+                  AutomationAdmissionStateService.OUTCOME_APPLIED,
+                  AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
+        });
     assertThat(historyRows)
         .extracting(row -> row.getControlPlaneRequestId())
         .containsExactlyInAnyOrder(
@@ -906,22 +892,16 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @Test
   void workflowRequestIdCanSpanModeKeysAndReadbackReturnsTheCurrentResult() {
     AdmissionStateSummary pause =
-        dsl.transactionResult(
-            configuration ->
-                admissionService(configuration.dsl())
-                    .setMode(
-                        admissionCommand(
-                            "PAUSED_FOR_ROLLBACK",
-                            "workflow-admission-modes",
-                            "actor-1",
-                            "pause")));
+        dsl.transactionResult(configuration ->
+            admissionService(configuration.dsl())
+                .setMode(
+                    admissionCommand(
+                        "PAUSED_FOR_ROLLBACK", "workflow-admission-modes", "actor-1", "pause")));
     AdmissionStateSummary normal =
-        dsl.transactionResult(
-            configuration ->
-                admissionService(configuration.dsl())
-                    .setMode(
-                        admissionCommand(
-                            "NORMAL", "workflow-admission-modes", "actor-1", "resume")));
+        dsl.transactionResult(configuration ->
+            admissionService(configuration.dsl())
+                .setMode(
+                    admissionCommand("NORMAL", "workflow-admission-modes", "actor-1", "resume")));
 
     assertThat(pause.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
     assertThat(pause.admissionEpoch()).isEqualTo(2L);
@@ -944,10 +924,9 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .containsExactlyInAnyOrder("NORMAL", "PAUSED_FOR_ROLLBACK");
 
     Optional<AdmissionStateSummary> readback =
-        dsl.transactionResult(
-            configuration ->
-                admissionService(configuration.dsl())
-                    .findState("tenant-admission", "instance-admission", "region-admission"));
+        dsl.transactionResult(configuration ->
+            admissionService(configuration.dsl())
+                .findState("tenant-admission", "instance-admission", "region-admission"));
     assertThat(readback).isPresent();
     assertThat(readback.orElseThrow()).isEqualTo(normal);
   }
@@ -1008,10 +987,9 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @Test
   void missingAdmissionReadOnlyLookupDoesNotCreateStateOrHistory() {
     Optional<AdmissionStateSummary> missing =
-        dsl.transactionResult(
-            configuration ->
-                admissionService(configuration.dsl())
-                    .findState("tenant-admission", "instance-admission", "region-admission"));
+        dsl.transactionResult(configuration ->
+            admissionService(configuration.dsl())
+                .findState("tenant-admission", "instance-admission", "region-admission"));
 
     assertThat(missing).isEmpty();
     assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isZero();
@@ -1020,44 +998,35 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
   @Test
   void databaseEnforcesAdmissionRequestIdentityPair() {
-    assertThatThrownBy(
-            () ->
-                dsl.insertInto(AUTOMATION_ADMISSION_STATES)
-                    .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-fingerprint")
-                    .set(
-                        AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID,
-                        "instance-invalid-fingerprint")
-                    .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-fingerprint")
-                    .set(
-                        AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT,
-                        REQUEST_DIGEST)
-                    .execute())
+    assertThatThrownBy(() ->
+            dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-fingerprint")
+                .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-invalid-fingerprint")
+                .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-fingerprint")
+                .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_automation_admission_state_request_identity");
 
-    assertThatThrownBy(
-            () ->
-                dsl.insertInto(AUTOMATION_ADMISSION_STATES)
-                    .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-request")
-                    .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-invalid-request")
-                    .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-request")
-                    .set(
-                        AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID,
-                        "request-without-fingerprint")
-                    .execute())
+    assertThatThrownBy(() ->
+            dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-request")
+                .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-invalid-request")
+                .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-request")
+                .set(
+                    AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID,
+                    "request-without-fingerprint")
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_automation_admission_state_request_identity");
 
-    assertThatThrownBy(
-            () ->
-                dsl.insertInto(AUTOMATION_ADMISSION_STATES)
-                    .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-blank-request")
-                    .set(
-                        AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID,
-                        "instance-invalid-blank-request")
-                    .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-blank-request")
-                    .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID, "   ")
-                    .execute())
+    assertThatThrownBy(() ->
+            dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-blank-request")
+                .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-invalid-blank-request")
+                .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-blank-request")
+                .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID, "   ")
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_automation_admission_state_request_identity");
 
@@ -1080,45 +1049,41 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                 .execute())
         .isEqualTo(1);
 
-    assertThatThrownBy(
-            () ->
-                dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-empty")
-                    .set(
-                        AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID,
-                        "instance-history-empty")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-empty")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
-                    .set(
-                        AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
-                        AutomationAdmissionStateService.OUTCOME_APPLIED)
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
-                    .execute())
+    assertThatThrownBy(() ->
+            dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-empty")
+                .set(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID, "instance-history-empty")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-empty")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
+                .set(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
+                    AutomationAdmissionStateService.OUTCOME_APPLIED)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_automation_admission_request_history_fingerprint");
 
-    assertThatThrownBy(
-            () ->
-                dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-space")
-                    .set(
-                        AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID,
-                        "instance-history-space")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-space")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "   ")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
-                    .set(
-                        AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
-                        AutomationAdmissionStateService.OUTCOME_APPLIED)
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
-                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
-                    .execute())
+    assertThatThrownBy(() ->
+            dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-space")
+                .set(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID, "instance-history-space")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-space")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "   ")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
+                .set(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
+                    AutomationAdmissionStateService.OUTCOME_APPLIED)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_automation_admission_request_history_fingerprint");
 
@@ -1157,33 +1122,28 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     DSLContext ownerDsl = newDsl(ownerApplicationName);
     DSLContext reclaimDsl = newDsl("automation-claim-reclaim-" + System.nanoTime());
     Future<Boolean> renewal =
-        executor.submit(
-            () ->
-                ownerDsl.transactionResult(
-                    configuration -> {
-                      boolean renewed =
-                          new ScriptEventIngressAuditRepository(configuration.dsl())
-                              .renewClaimIfCurrent(ownerClaim, RENEWED_AT);
-                      ownerLockHeld.countDown();
-                      await(releaseOwner);
-                      return renewed;
-                    }));
+        executor.submit(() ->
+            ownerDsl.transactionResult(configuration -> {
+              boolean renewed =
+                  new ScriptEventIngressAuditRepository(configuration.dsl())
+                      .renewClaimIfCurrent(ownerClaim, RENEWED_AT);
+              ownerLockHeld.countDown();
+              await(releaseOwner);
+              return renewed;
+            }));
     assertThat(ownerLockHeld.await(5, TimeUnit.SECONDS)).isTrue();
 
     AtomicLong reclaimBackendPid = new AtomicLong();
     CountDownLatch reclaimStarted = new CountDownLatch(1);
     Future<Optional<ScriptEventIngressAudit>> reclaim =
-        executor.submit(
-            () ->
-                reclaimDsl.transactionResult(
-                    configuration -> {
-                      DSLContext transactionDsl = configuration.dsl();
-                      reclaimBackendPid.set(currentBackendPid(transactionDsl));
-                      reclaimStarted.countDown();
-                      return new ScriptEventIngressAuditRepository(transactionDsl)
-                          .reclaimStaleInProgress(
-                              ownerClaim, STALE_BEFORE, RENEWED_AT.plusSeconds(1));
-                    }));
+        executor.submit(() ->
+            reclaimDsl.transactionResult(configuration -> {
+              DSLContext transactionDsl = configuration.dsl();
+              reclaimBackendPid.set(currentBackendPid(transactionDsl));
+              reclaimStarted.countDown();
+              return new ScriptEventIngressAuditRepository(transactionDsl)
+                  .reclaimStaleInProgress(ownerClaim, STALE_BEFORE, RENEWED_AT.plusSeconds(1));
+            }));
     assertThat(reclaimStarted.await(5, TimeUnit.SECONDS)).isTrue();
     awaitPostgresLockWait(reclaimBackendPid.get());
     releaseOwner.countDown();
@@ -1220,35 +1180,31 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     DSLContext lockDsl = newDsl(lockApplicationName);
     DSLContext cleanupDsl = newDsl("automation-retention-cleanup-" + System.nanoTime());
     Future<Void> lock =
-        executor.submit(
-            () ->
-                lockDsl.transactionResult(
-                    configuration -> {
-                      configuration
-                          .dsl()
-                          .selectFrom(SCRIPT_WORK_ITEMS)
-                          .where(SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))
-                          .forUpdate()
-                          .fetchOne();
-                      parentLockHeld.countDown();
-                      await(releaseParent);
-                      return null;
-                    }));
+        executor.submit(() ->
+            lockDsl.transactionResult(configuration -> {
+              configuration
+                  .dsl()
+                  .selectFrom(SCRIPT_WORK_ITEMS)
+                  .where(SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))
+                  .forUpdate()
+                  .fetchOne();
+              parentLockHeld.countDown();
+              await(releaseParent);
+              return null;
+            }));
     assertThat(parentLockHeld.await(5, TimeUnit.SECONDS)).isTrue();
 
     AtomicLong cleanupBackendPid = new AtomicLong();
     CountDownLatch cleanupStarted = new CountDownLatch(1);
     Future<Long> cleanup =
-        executor.submit(
-            () ->
-                cleanupDsl.transactionResult(
-                    configuration -> {
-                      DSLContext transactionDsl = configuration.dsl();
-                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
-                      cleanupStarted.countDown();
-                      return new ScriptWorkItemRepository(transactionDsl)
-                          .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now());
-                    }));
+        executor.submit(() ->
+            cleanupDsl.transactionResult(configuration -> {
+              DSLContext transactionDsl = configuration.dsl();
+              cleanupBackendPid.set(currentBackendPid(transactionDsl));
+              cleanupStarted.countDown();
+              return new ScriptWorkItemRepository(transactionDsl)
+                  .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now());
+            }));
     assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
     awaitPostgresLockWait(cleanupBackendPid.get());
     releaseParent.countDown();
@@ -1277,25 +1233,21 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     CountDownLatch start = new CountDownLatch(1);
     try {
       Future<Long> parentCleanup =
-          executor.submit(
-              () ->
-                  parentCleanupDsl.transactionResult(
-                      configuration -> {
-                        ready.countDown();
-                        await(start);
-                        return new ScriptWorkItemRepository(configuration.dsl())
-                            .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", now);
-                      }));
+          executor.submit(() ->
+              parentCleanupDsl.transactionResult(configuration -> {
+                ready.countDown();
+                await(start);
+                return new ScriptWorkItemRepository(configuration.dsl())
+                    .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", now);
+              }));
       Future<Long> handoffCleanup =
-          executor.submit(
-              () ->
-                  handoffCleanupDsl.transactionResult(
-                      configuration -> {
-                        ready.countDown();
-                        await(start);
-                        return new ScriptHandoffEventRepository(configuration.dsl())
-                            .deleteExpiredRetentionEvidence(cutoff, now);
-                      }));
+          executor.submit(() ->
+              handoffCleanupDsl.transactionResult(configuration -> {
+                ready.countDown();
+                await(start);
+                return new ScriptHandoffEventRepository(configuration.dsl())
+                    .deleteExpiredRetentionEvidence(cutoff, now);
+              }));
 
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
@@ -1326,38 +1278,34 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     CountDownLatch releaseHold = new CountDownLatch(1);
     DSLContext holdDsl = newDsl("automation-retention-sibling-hold-" + System.nanoTime());
     Future<Void> hold =
-        executor.submit(
-            () ->
-                holdDsl.transactionResult(
-                    configuration -> {
-                      configuration
-                          .dsl()
-                          .update(SCRIPT_HANDOFF_EVENTS)
-                          .set(
-                              SCRIPT_HANDOFF_EVENTS.RETENTION_HOLD_UNTIL,
-                              now.plusSeconds(60).atOffset(ZoneOffset.UTC))
-                          .where(SCRIPT_HANDOFF_EVENTS.ID.eq(siblingId))
-                          .execute();
-                      holdStarted.countDown();
-                      await(releaseHold);
-                      return null;
-                    }));
+        executor.submit(() ->
+            holdDsl.transactionResult(configuration -> {
+              configuration
+                  .dsl()
+                  .update(SCRIPT_HANDOFF_EVENTS)
+                  .set(
+                      SCRIPT_HANDOFF_EVENTS.RETENTION_HOLD_UNTIL,
+                      now.plusSeconds(60).atOffset(ZoneOffset.UTC))
+                  .where(SCRIPT_HANDOFF_EVENTS.ID.eq(siblingId))
+                  .execute();
+              holdStarted.countDown();
+              await(releaseHold);
+              return null;
+            }));
     assertThat(holdStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
     AtomicLong cleanupBackendPid = new AtomicLong();
     CountDownLatch cleanupStarted = new CountDownLatch(1);
     DSLContext cleanupDsl = newDsl("automation-retention-sibling-cleanup-" + System.nanoTime());
     Future<Long> cleanup =
-        executor.submit(
-            () ->
-                cleanupDsl.transactionResult(
-                    configuration -> {
-                      DSLContext transactionDsl = configuration.dsl();
-                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
-                      cleanupStarted.countDown();
-                      return new ScriptHandoffEventRepository(transactionDsl)
-                          .deleteExpiredRetentionEvidence(cutoff, now);
-                    }));
+        executor.submit(() ->
+            cleanupDsl.transactionResult(configuration -> {
+              DSLContext transactionDsl = configuration.dsl();
+              cleanupBackendPid.set(currentBackendPid(transactionDsl));
+              cleanupStarted.countDown();
+              return new ScriptHandoffEventRepository(transactionDsl)
+                  .deleteExpiredRetentionEvidence(cutoff, now);
+            }));
     assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
     awaitPostgresLockWait(cleanupBackendPid.get());
     releaseHold.countDown();
@@ -1388,44 +1336,40 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     CountDownLatch releaseReceipt = new CountDownLatch(1);
     DSLContext receiptDsl = newDsl("automation-retention-receipt-" + System.nanoTime());
     Future<Void> receipt =
-        executor.submit(
-            () ->
-                receiptDsl.transactionResult(
-                    configuration -> {
-                      new ScriptDeadLetterReplayRepository(configuration.dsl())
-                          .saveResult(
-                              "tenant-1",
-                              request.id(),
-                              parent.getId(),
-                              parent.getId(),
-                              "rejected",
-                              "retention-race",
-                              "",
-                              2L,
-                              0L,
-                              0L,
-                              1L,
-                              now);
-                      receiptStarted.countDown();
-                      await(releaseReceipt);
-                      return null;
-                    }));
+        executor.submit(() ->
+            receiptDsl.transactionResult(configuration -> {
+              new ScriptDeadLetterReplayRepository(configuration.dsl())
+                  .saveResult(
+                      "tenant-1",
+                      request.id(),
+                      parent.getId(),
+                      parent.getId(),
+                      "rejected",
+                      "retention-race",
+                      "",
+                      2L,
+                      0L,
+                      0L,
+                      1L,
+                      now);
+              receiptStarted.countDown();
+              await(releaseReceipt);
+              return null;
+            }));
     assertThat(receiptStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
     AtomicLong cleanupBackendPid = new AtomicLong();
     CountDownLatch cleanupStarted = new CountDownLatch(1);
     DSLContext cleanupDsl = newDsl("automation-retention-receipt-cleanup-" + System.nanoTime());
     Future<Long> cleanup =
-        executor.submit(
-            () ->
-                cleanupDsl.transactionResult(
-                    configuration -> {
-                      DSLContext transactionDsl = configuration.dsl();
-                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
-                      cleanupStarted.countDown();
-                      return new ScriptHandoffEventRepository(transactionDsl)
-                          .deleteExpiredRetentionEvidence(cutoff, now);
-                    }));
+        executor.submit(() ->
+            cleanupDsl.transactionResult(configuration -> {
+              DSLContext transactionDsl = configuration.dsl();
+              cleanupBackendPid.set(currentBackendPid(transactionDsl));
+              cleanupStarted.countDown();
+              return new ScriptHandoffEventRepository(transactionDsl)
+                  .deleteExpiredRetentionEvidence(cutoff, now);
+            }));
     assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
     awaitPostgresLockWait(cleanupBackendPid.get());
     releaseReceipt.countDown();
@@ -1453,36 +1397,32 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     CountDownLatch releaseStatus = new CountDownLatch(1);
     DSLContext statusDsl = newDsl("automation-retention-parent-status-" + System.nanoTime());
     Future<Void> status =
-        executor.submit(
-            () ->
-                statusDsl.transactionResult(
-                    configuration -> {
-                      configuration
-                          .dsl()
-                          .update(SCRIPT_WORK_ITEMS)
-                          .set(SCRIPT_WORK_ITEMS.STATUS, "DEAD_LETTERED")
-                          .where(SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))
-                          .execute();
-                      statusStarted.countDown();
-                      await(releaseStatus);
-                      return null;
-                    }));
+        executor.submit(() ->
+            statusDsl.transactionResult(configuration -> {
+              configuration
+                  .dsl()
+                  .update(SCRIPT_WORK_ITEMS)
+                  .set(SCRIPT_WORK_ITEMS.STATUS, "DEAD_LETTERED")
+                  .where(SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))
+                  .execute();
+              statusStarted.countDown();
+              await(releaseStatus);
+              return null;
+            }));
     assertThat(statusStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
     AtomicLong cleanupBackendPid = new AtomicLong();
     CountDownLatch cleanupStarted = new CountDownLatch(1);
     DSLContext cleanupDsl = newDsl("automation-retention-status-cleanup-" + System.nanoTime());
     Future<Long> cleanup =
-        executor.submit(
-            () ->
-                cleanupDsl.transactionResult(
-                    configuration -> {
-                      DSLContext transactionDsl = configuration.dsl();
-                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
-                      cleanupStarted.countDown();
-                      return new ScriptHandoffEventRepository(transactionDsl)
-                          .deleteExpiredRetentionEvidence(cutoff, now);
-                    }));
+        executor.submit(() ->
+            cleanupDsl.transactionResult(configuration -> {
+              DSLContext transactionDsl = configuration.dsl();
+              cleanupBackendPid.set(currentBackendPid(transactionDsl));
+              cleanupStarted.countDown();
+              return new ScriptHandoffEventRepository(transactionDsl)
+                  .deleteExpiredRetentionEvidence(cutoff, now);
+            }));
     assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
     awaitPostgresLockWait(cleanupBackendPid.get());
     releaseStatus.countDown();

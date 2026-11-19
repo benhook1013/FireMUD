@@ -128,12 +128,11 @@ class StartSessionAuthorizationCoordinatorTest {
             eq(1L),
             any(UUID.class),
             eq(1L)))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
 
     Result first = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
@@ -242,10 +241,8 @@ class StartSessionAuthorizationCoordinatorTest {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-ambient-sql");
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertThatThrownBy(
-              () ->
-                  coordinator.begin(
-                      tuple.controlPlaneRequestId(), tuple.action(), CONTROL_UI_TOKEN))
+      assertThatThrownBy(() ->
+              coordinator.begin(tuple.controlPlaneRequestId(), tuple.action(), CONTROL_UI_TOKEN))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("no ambient SQL or synchronization");
     } finally {
@@ -276,21 +273,20 @@ class StartSessionAuthorizationCoordinatorTest {
               anyLong(),
               any(UUID.class),
               anyLong()))
-          .thenAnswer(
-              invocation -> {
-                AuthorizationReference response =
-                    authorizationReference(
-                        tuple,
-                        (UUID) invocation.getArgument(2),
-                        ((Number) invocation.getArgument(3)).longValue());
-                if (caseName.equals("null-reference")) {
-                  when(response.operatorAuthorizationReference()).thenReturn(null);
-                } else {
-                  when(response.authenticatedLoggingWorkloadIdentity())
-                      .thenReturn("spiffe://firemud/ns/other/sa/logging-admin-service");
-                }
-                return response;
-              });
+          .thenAnswer(invocation -> {
+            AuthorizationReference response =
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue());
+            if (caseName.equals("null-reference")) {
+              when(response.operatorAuthorizationReference()).thenReturn(null);
+            } else {
+              when(response.authenticatedLoggingWorkloadIdentity())
+                  .thenReturn("spiffe://firemud/ns/other/sa/logging-admin-service");
+            }
+            return response;
+          });
       Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
       assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
       assertThat(result.pendingReason())
@@ -354,19 +350,16 @@ class StartSessionAuthorizationCoordinatorTest {
             action.mutation(),
             action.auditReason());
 
-    assertThatThrownBy(
-            () ->
-                coordinator.begin(
-                    tuple.controlPlaneRequestId(), wrongNamespaceAction, CONTROL_UI_TOKEN))
+    assertThatThrownBy(() ->
+            coordinator.begin(
+                tuple.controlPlaneRequestId(), wrongNamespaceAction, CONTROL_UI_TOKEN))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("configured workload namespace");
     assertThatThrownBy(() -> coordinator.begin(tuple.controlPlaneRequestId(), action, "not-a-jwt"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("JWT envelope is malformed");
-    assertThatThrownBy(
-            () ->
-                coordinator.begin(
-                    tuple.controlPlaneRequestId(), action, CONTROL_UI_TOKEN + ".extra"))
+    assertThatThrownBy(() ->
+            coordinator.begin(tuple.controlPlaneRequestId(), action, CONTROL_UI_TOKEN + ".extra"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("JWT envelope is malformed");
 
@@ -458,12 +451,11 @@ class StartSessionAuthorizationCoordinatorTest {
     stubInitialReservation(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     when(repository.findAuthorizedExact(eq(tuple))).thenReturn(Optional.empty());
 
@@ -486,37 +478,35 @@ class StartSessionAuthorizationCoordinatorTest {
     stubInitialReservation(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     when(repository.findAuthorizedExact(eq(tuple)))
-        .thenAnswer(
-            invocation -> {
-              AuthorizedSnapshot exact = exactReadback.get();
-              Snapshot snapshot = exact.reservationSnapshot();
-              Snapshot substituted =
-                  new Snapshot(
-                      snapshot.tuple(),
-                      snapshot.mutationDigest(),
-                      snapshot.phase(),
-                      snapshot.state(),
-                      snapshot.reservationClaimFence(),
-                      snapshot.claimFence(),
-                      snapshot.claimExpiresAtEpochMillis() + 1L,
-                      snapshot.claimState(),
-                      snapshot.claimPurpose());
-              return Optional.of(
-                  new AuthorizedSnapshot(
-                      substituted,
-                      exact.postAuthorizationTuple(),
-                      exact.reservationOwnerId(),
-                      exact.currentClaimOwnerId(),
-                      exact.handoff()));
-            });
+        .thenAnswer(invocation -> {
+          AuthorizedSnapshot exact = exactReadback.get();
+          Snapshot snapshot = exact.reservationSnapshot();
+          Snapshot substituted =
+              new Snapshot(
+                  snapshot.tuple(),
+                  snapshot.mutationDigest(),
+                  snapshot.phase(),
+                  snapshot.state(),
+                  snapshot.reservationClaimFence(),
+                  snapshot.claimFence(),
+                  snapshot.claimExpiresAtEpochMillis() + 1L,
+                  snapshot.claimState(),
+                  snapshot.claimPurpose());
+          return Optional.of(
+              new AuthorizedSnapshot(
+                  substituted,
+                  exact.postAuthorizationTuple(),
+                  exact.reservationOwnerId(),
+                  exact.currentClaimOwnerId(),
+                  exact.handoff()));
+        });
 
     Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
 
@@ -542,12 +532,11 @@ class StartSessionAuthorizationCoordinatorTest {
                     pending, ORIGINAL_OWNER)));
     when(accountClient.recover(
             eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(1),
-                    ((Number) invocation.getArgument(2)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(1),
+                ((Number) invocation.getArgument(2)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
 
     Result result = coordinator.recover(tuple);
@@ -604,12 +593,11 @@ class StartSessionAuthorizationCoordinatorTest {
             eq(1L),
             any(UUID.class),
             eq(1L)))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
@@ -685,12 +673,11 @@ class StartSessionAuthorizationCoordinatorTest {
                     pending, ORIGINAL_OWNER)));
     when(accountClient.recover(
             eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(1),
-                    ((Number) invocation.getArgument(2)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(1),
+                ((Number) invocation.getArgument(2)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
@@ -785,12 +772,11 @@ class StartSessionAuthorizationCoordinatorTest {
                 alreadyPending, true));
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), eq(1L), any(UUID.class), eq(1L)))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     io.grpc.StatusRuntimeException ambiguous = Status.UNAVAILABLE.asRuntimeException();
@@ -816,12 +802,11 @@ class StartSessionAuthorizationCoordinatorTest {
     stubInitialReservation(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, false);
 
     Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
@@ -851,12 +836,11 @@ class StartSessionAuthorizationCoordinatorTest {
     stubInitialReservation(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    tuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                tuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     when(repository.beginOwnerExecution(
             eq(tuple),
@@ -956,12 +940,11 @@ class StartSessionAuthorizationCoordinatorTest {
     stubInitialReservation(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    substituted,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                substituted,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
 
     Result invalidAccountResult = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
 
@@ -984,12 +967,11 @@ class StartSessionAuthorizationCoordinatorTest {
             anyLong(),
             any(UUID.class),
             anyLong()))
-        .thenAnswer(
-            invocation ->
-                authorizationReference(
-                    staleTuple,
-                    (UUID) invocation.getArgument(2),
-                    ((Number) invocation.getArgument(3)).longValue()));
+        .thenAnswer(invocation ->
+            authorizationReference(
+                staleTuple,
+                (UUID) invocation.getArgument(2),
+                ((Number) invocation.getArgument(3)).longValue()));
     when(repository.completeAuthorization(
             eq(staleTuple),
             eq(staleTuple.mutationDigest()),
@@ -1039,13 +1021,12 @@ class StartSessionAuthorizationCoordinatorTest {
               anyLong(),
               any(UUID.class),
               anyLong()))
-          .thenAnswer(
-              invocation ->
-                  authorizationReference(
-                      tuple,
-                      (UUID) invocation.getArgument(2),
-                      ((Number) invocation.getArgument(3)).longValue(),
-                      alteredReference));
+          .thenAnswer(invocation ->
+              authorizationReference(
+                  tuple,
+                  (UUID) invocation.getArgument(2),
+                  ((Number) invocation.getArgument(3)).longValue(),
+                  alteredReference));
 
       Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
 
@@ -1108,36 +1089,34 @@ class StartSessionAuthorizationCoordinatorTest {
             anyLong(),
             anyString(),
             eq(NOW_MILLIS)))
-        .thenAnswer(
-            invocation -> {
-              UUID reservationOwner = invocation.getArgument(2);
-              long reservationFence = invocation.getArgument(3);
-              UUID currentOwner = invocation.getArgument(4);
-              long currentFence = invocation.getArgument(5);
-              String exactPostTupleJson = invocation.getArgument(6);
-              StartSessionPostAuthorizationExecutionTuple postTuple =
-                  StartSessionPostAuthorizationExecutionTuple.decode(
-                      exactPostTupleJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-              Snapshot authorized =
-                  new Snapshot(
-                      tuple,
-                      tuple.mutationDigest(),
-                      Phase.ACCOUNT_AUTHORIZATION,
-                      State.AUTHORIZED,
-                      reservationFence,
-                      currentFence,
-                      NOW_MILLIS + 30_000L,
-                      ClaimState.ACTIVE,
-                      currentOwner.equals(reservationOwner) && currentFence == reservationFence
-                          ? ClaimPurpose.ORIGINAL
-                          : ClaimPurpose.AUTHORIZATION_RECOVERY);
-              AuthorizedSnapshot authorizedSnapshot =
-                  new AuthorizedSnapshot(
-                      authorized, postTuple, reservationOwner, currentOwner, null);
-              exactReadback.set(authorizedSnapshot);
-              return new StartSessionPreAuthorizationReservationRepository
-                  .AuthorizationTransitionResult(authorizedSnapshot, transitioned);
-            });
+        .thenAnswer(invocation -> {
+          UUID reservationOwner = invocation.getArgument(2);
+          long reservationFence = invocation.getArgument(3);
+          UUID currentOwner = invocation.getArgument(4);
+          long currentFence = invocation.getArgument(5);
+          String exactPostTupleJson = invocation.getArgument(6);
+          StartSessionPostAuthorizationExecutionTuple postTuple =
+              StartSessionPostAuthorizationExecutionTuple.decode(
+                  exactPostTupleJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          Snapshot authorized =
+              new Snapshot(
+                  tuple,
+                  tuple.mutationDigest(),
+                  Phase.ACCOUNT_AUTHORIZATION,
+                  State.AUTHORIZED,
+                  reservationFence,
+                  currentFence,
+                  NOW_MILLIS + 30_000L,
+                  ClaimState.ACTIVE,
+                  currentOwner.equals(reservationOwner) && currentFence == reservationFence
+                      ? ClaimPurpose.ORIGINAL
+                      : ClaimPurpose.AUTHORIZATION_RECOVERY);
+          AuthorizedSnapshot authorizedSnapshot =
+              new AuthorizedSnapshot(authorized, postTuple, reservationOwner, currentOwner, null);
+          exactReadback.set(authorizedSnapshot);
+          return new StartSessionPreAuthorizationReservationRepository
+              .AuthorizationTransitionResult(authorizedSnapshot, transitioned);
+        });
     when(repository.findAuthorizedExact(eq(tuple)))
         .thenAnswer(invocation -> Optional.ofNullable(exactReadback.get()));
     when(repository.beginOwnerExecution(
@@ -1150,41 +1129,40 @@ class StartSessionAuthorizationCoordinatorTest {
             anyString(),
             any(UUID.class),
             eq(NOW_MILLIS)))
-        .thenAnswer(
-            invocation -> {
-              UUID reservationOwner = invocation.getArgument(2);
-              long reservationFence = invocation.getArgument(3);
-              UUID currentOwner = invocation.getArgument(4);
-              long currentFence = invocation.getArgument(5);
-              String exactPostTupleJson = invocation.getArgument(6);
-              UUID handoffId = invocation.getArgument(7);
-              StartSessionPostAuthorizationExecutionTuple postTuple =
-                  StartSessionPostAuthorizationExecutionTuple.decode(
-                      exactPostTupleJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-              Snapshot ownerPending =
-                  new Snapshot(
-                      tuple,
-                      tuple.mutationDigest(),
-                      Phase.OWNER_EXECUTION,
-                      State.OWNER_EXECUTION_PENDING,
-                      reservationFence,
-                      currentFence,
-                      NOW_MILLIS + 30_000L,
-                      ClaimState.ACTIVE,
-                      currentOwner.equals(reservationOwner) && currentFence == reservationFence
-                          ? ClaimPurpose.ORIGINAL
-                          : ClaimPurpose.AUTHORIZATION_RECOVERY);
-              AuthorizedSnapshot ownerPendingSnapshot =
-                  new AuthorizedSnapshot(
-                      ownerPending,
-                      postTuple,
-                      reservationOwner,
-                      currentOwner,
-                      new OwnerExecutionHandoff(handoffId));
-              exactReadback.set(ownerPendingSnapshot);
-              return new StartSessionPreAuthorizationReservationRepository
-                  .OwnerExecutionTransitionResult(ownerPendingSnapshot, mayDispatch);
-            });
+        .thenAnswer(invocation -> {
+          UUID reservationOwner = invocation.getArgument(2);
+          long reservationFence = invocation.getArgument(3);
+          UUID currentOwner = invocation.getArgument(4);
+          long currentFence = invocation.getArgument(5);
+          String exactPostTupleJson = invocation.getArgument(6);
+          UUID handoffId = invocation.getArgument(7);
+          StartSessionPostAuthorizationExecutionTuple postTuple =
+              StartSessionPostAuthorizationExecutionTuple.decode(
+                  exactPostTupleJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          Snapshot ownerPending =
+              new Snapshot(
+                  tuple,
+                  tuple.mutationDigest(),
+                  Phase.OWNER_EXECUTION,
+                  State.OWNER_EXECUTION_PENDING,
+                  reservationFence,
+                  currentFence,
+                  NOW_MILLIS + 30_000L,
+                  ClaimState.ACTIVE,
+                  currentOwner.equals(reservationOwner) && currentFence == reservationFence
+                      ? ClaimPurpose.ORIGINAL
+                      : ClaimPurpose.AUTHORIZATION_RECOVERY);
+          AuthorizedSnapshot ownerPendingSnapshot =
+              new AuthorizedSnapshot(
+                  ownerPending,
+                  postTuple,
+                  reservationOwner,
+                  currentOwner,
+                  new OwnerExecutionHandoff(handoffId));
+          exactReadback.set(ownerPendingSnapshot);
+          return new StartSessionPreAuthorizationReservationRepository
+              .OwnerExecutionTransitionResult(ownerPendingSnapshot, mayDispatch);
+        });
   }
 
   private static AuthorizationReference authorizationReference(

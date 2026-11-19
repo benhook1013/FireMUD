@@ -130,10 +130,9 @@ public final class EntitySelectedSourceIntakeTerminalReadFixtures {
     var mutations = TemplateConfigSourceValues.mutations(authored);
     var declarations =
         mutations.stream()
-            .filter(
-                mutation ->
-                    mutation.operation()
-                        == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .filter(mutation ->
+                mutation.operation()
+                    == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
             .map(TemplateConfigSourceValues.Mutation::ownerInventoryDeclaration)
             .sorted(java.util.Comparator.comparing(declaration -> declaration.owner().name()))
             .toList();
@@ -380,15 +379,14 @@ public final class EntitySelectedSourceIntakeTerminalReadFixtures {
             0,
             0,
             selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList(),
             emptyInboundClosure());
     return new PublicEvidence(
@@ -485,20 +483,19 @@ public final class EntitySelectedSourceIntakeTerminalReadFixtures {
             "NPC_TEMPLATE_ROOTS",
             "OTHER_ACTOR_TEMPLATE_ROOTS");
     return families.stream()
-        .map(
-            family ->
-                new EntityEmptySelectedSourceIntakeReceipt.FamilyCensus(
-                    family,
-                    EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY,
-                    v1CensusFamily(family)
-                        ? EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind.V1_SOURCE_CENSUS
-                        : EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind
-                            .EMPTY_ONLY_OWNER_PROVIDER,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0))
+        .map(family ->
+            new EntityEmptySelectedSourceIntakeReceipt.FamilyCensus(
+                family,
+                EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY,
+                v1CensusFamily(family)
+                    ? EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind.V1_SOURCE_CENSUS
+                    : EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind
+                        .EMPTY_ONLY_OWNER_PROVIDER,
+                0,
+                0,
+                0,
+                0,
+                0))
         .toList();
   }
 

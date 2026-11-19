@@ -208,35 +208,24 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
             new CanonicalHumanRuntimeCompletionRepository(independentDsl, "canonical-intent-it");
         harness
             .transactions()
-            .executeWithoutResult(
-                status -> {
-                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                      .isTrue();
-                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                      .isFalse();
-                  assertThat(
-                          harness
-                              .dsl()
-                              .fetchSingle("SHOW transaction_isolation")
-                              .get(0, String.class))
-                      .isEqualTo("read committed");
-                  assertThat(
-                          independentDsl
-                              .fetchSingle("SELECT pg_backend_pid()")
-                              .get(0, Integer.class))
-                      .isNotEqualTo(
-                          harness
-                              .dsl()
-                              .fetchSingle("SELECT pg_backend_pid()")
-                              .get(0, Integer.class));
-                  assertThatThrownBy(
-                          () ->
-                              completion.completeProtected(
-                                  prepared.request(), prepared.protection(), prepared.worldProof()))
-                      .isInstanceOf(IllegalStateException.class)
-                      .hasMessage(
-                          "Human runtime completion requires a writable READ COMMITTED transaction");
-                });
+            .executeWithoutResult(status -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
+              assertThat(
+                      harness.dsl().fetchSingle("SHOW transaction_isolation").get(0, String.class))
+                  .isEqualTo("read committed");
+              assertThat(
+                      independentDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
+                  .isNotEqualTo(
+                      harness.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+              assertThatThrownBy(() ->
+                      completion.completeProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof()))
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessage(
+                      "Human runtime completion requires a writable READ COMMITTED transaction");
+            });
       }
       assertThat(
               harness
@@ -267,20 +256,17 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       var completion =
           new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       Record before = runtime(harness, prepared);
-      assertThatThrownBy(
-              () ->
-                  completion.completeProtected(
-                      prepared.request(), prepared.protection(), prepared.worldProof()))
+      assertThatThrownBy(() ->
+              completion.completeProtected(
+                  prepared.request(), prepared.protection(), prepared.worldProof()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("writable READ COMMITTED transaction");
       var readOnly = new TransactionTemplate(harness.transactionManager());
       readOnly.setReadOnly(true);
-      assertThatThrownBy(
-              () ->
-                  readOnly.executeWithoutResult(
-                      status ->
-                          completion.completeProtected(
-                              prepared.request(), prepared.protection(), prepared.worldProof())))
+      assertThatThrownBy(() ->
+              readOnly.executeWithoutResult(status ->
+                  completion.completeProtected(
+                      prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("writable READ COMMITTED transaction");
       for (int isolation :
@@ -289,12 +275,10 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
               TransactionDefinition.ISOLATION_SERIALIZABLE)) {
         var transaction = new TransactionTemplate(harness.transactionManager());
         transaction.setIsolationLevel(isolation);
-        assertThatThrownBy(
-                () ->
-                    transaction.executeWithoutResult(
-                        status ->
-                            completion.completeProtected(
-                                prepared.request(), prepared.protection(), prepared.worldProof())))
+        assertThatThrownBy(() ->
+                transaction.executeWithoutResult(status ->
+                    completion.completeProtected(
+                        prepared.request(), prepared.protection(), prepared.worldProof())))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("writable READ COMMITTED transaction");
       }
@@ -480,10 +464,8 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
           .isEqualTo(aborted);
       assertThat(acquisitionCalls).hasValue(1);
       assertThat(retryAcquisitionCalls).hasValue(0);
-      assertThatThrownBy(
-              () ->
-                  abortCoordinator.abort(
-                      prepared.request(), accountRequest, "different abort reason"))
+      assertThatThrownBy(() ->
+              abortCoordinator.abort(prepared.request(), accountRequest, "different abort reason"))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class);
       assertThat(acquisitionCalls).hasValue(1);
@@ -685,16 +667,12 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
         Thread.sleep(10L);
       }
 
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              completion.completeProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      completion.completeProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Account protection original owner lease is no longer live");
       assertThat(runtime(harness, prepared).formatJSON()).isEqualTo(before.formatJSON());
@@ -732,14 +710,12 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
               prepared.protection().accountProtectionId(),
               2L,
               prepared.original());
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              completion.completeProtected(
-                                  prepared.request(), changedFence, prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      completion.completeProtected(
+                          prepared.request(), changedFence, prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("different Account protection");
       var changedEpochProof =
@@ -762,14 +738,12 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
               prepared.request().holdId(),
               prepared.request().holdFence(),
               prepared.request().holdBindingDigest());
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              completion.completeProtected(
-                                  prepared.request(), prepared.protection(), changedEpochProof)))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      completion.completeProtected(
+                          prepared.request(), prepared.protection(), changedEpochProof)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("does not match");
       assertThat(runtime(harness, prepared).formatJSON()).isEqualTo(before.formatJSON());
@@ -778,10 +752,9 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
           Objects.requireNonNull(
               harness
                   .transactions()
-                  .execute(
-                      status ->
-                          completion.completeProtected(
-                              prepared.request(), prepared.protection(), prepared.worldProof())));
+                  .execute(status ->
+                      completion.completeProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())));
 
       Record running = runtime(harness, prepared);
       assertThat(running.get("status", String.class)).isEqualTo("RUNNING");
@@ -798,19 +771,17 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
           Objects.requireNonNull(
               harness
                   .transactions()
-                  .execute(
-                      status ->
-                          completion.completeProtected(
-                              prepared.request(), prepared.protection(), prepared.worldProof())));
+                  .execute(status ->
+                      completion.completeProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())));
       assertThat(replay).isEqualTo(result);
       assertNoAdmissionEffects(harness, prepared.request());
 
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  admission.commitProtected(
-                      prepared.request(), prepared.protection(), prepared.worldProof()));
+          .executeWithoutResult(status ->
+              admission.commitProtected(
+                  prepared.request(), prepared.protection(), prepared.worldProof()));
       assertThat(attemptStatus(harness, prepared.request())).isEqualTo("COMMITTED");
       assertThat(ownerCount(harness, "gameplay_admission_pointer", prepared.request())).isOne();
       assertThat(ownerCount(harness, "gameplay_admission_pointer_event", prepared.request()))
@@ -837,40 +808,32 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       var abortPid = new AtomicInteger();
 
       var completing =
-          executor.submit(
-              () ->
-                  captureFailure(
-                      () ->
-                          harness
-                              .transactions()
-                              .executeWithoutResult(
-                                  status -> {
-                                    completionPid.set(postgresPid(harness));
-                                    lockTarget(harness, prepared.request());
-                                    completionLocked.countDown();
-                                    await(releaseCompletion);
-                                    completion.completeProtected(
-                                        prepared.request(),
-                                        prepared.protection(),
-                                        prepared.worldProof());
-                                  })));
+          executor.submit(() ->
+              captureFailure(() ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(status -> {
+                        completionPid.set(postgresPid(harness));
+                        lockTarget(harness, prepared.request());
+                        completionLocked.countDown();
+                        await(releaseCompletion);
+                        completion.completeProtected(
+                            prepared.request(), prepared.protection(), prepared.worldProof());
+                      })));
       assertThat(completionLocked.await(10, TimeUnit.SECONDS)).isTrue();
       var aborting =
-          executor.submit(
-              () ->
-                  captureFailure(
-                      () ->
-                          harness
-                              .transactions()
-                              .executeWithoutResult(
-                                  status -> {
-                                    abortPid.set(postgresPid(harness));
-                                    abortEntered.countDown();
-                                    admission.abortProtected(
-                                        prepared.request(),
-                                        prepared.protection(),
-                                        "serialized after runtime completion");
-                                  })));
+          executor.submit(() ->
+              captureFailure(() ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(status -> {
+                        abortPid.set(postgresPid(harness));
+                        abortEntered.countDown();
+                        admission.abortProtected(
+                            prepared.request(),
+                            prepared.protection(),
+                            "serialized after runtime completion");
+                      })));
       assertThat(abortEntered.await(10, TimeUnit.SECONDS)).isTrue();
       awaitBlocked(harness, abortPid.get(), completionPid.get());
       releaseCompletion.countDown();
@@ -899,23 +862,16 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       reserveProtection(harness, admission, prepared);
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  admission.abortProtected(
-                      prepared.request(),
-                      prepared.protection(),
-                      "controlled pre-completion abort"));
+          .executeWithoutResult(status ->
+              admission.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled pre-completion abort"));
 
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              completion.completeProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      completion.completeProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("nonterminal protected reservation");
       assertThat(runtime(harness, prepared).get("status", String.class)).isEqualTo("STARTING");
@@ -943,10 +899,9 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
           new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  completion.completeProtected(
-                      prepared.request(), prepared.protection(), prepared.worldProof()));
+          .executeWithoutResult(status ->
+              completion.completeProtected(
+                  prepared.request(), prepared.protection(), prepared.worldProof()));
       assertThat(runtime(harness, prepared).get("status", String.class)).isEqualTo("RUNNING");
       assertThat(attemptStatus(harness, prepared.request())).isEqualTo("PENDING");
       assertNoAdmissionEffects(harness, prepared.request());
@@ -978,10 +933,9 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
               harness.dsl(), target);
 
       // V1044 required equality with the immutable completion and refused this real owner save.
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
-                      harness.dsl(), target, candidate))
+      assertThatThrownBy(() ->
+              CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
+                  harness.dsl(), target, candidate))
           .hasMessageContaining("exact current RUNNING launch row and candidate identity");
       harness.migrateLatest();
 
@@ -997,13 +951,12 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
                   .get("status", String.class))
           .isEqualTo("PROVISIONAL");
       assertThat(completionImage(harness)).isEqualTo(originalCompletion);
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_human_runtime_completion"
-                              + " SET completed_running_row_version = completed_running_row_version + 1"))
+      assertThatThrownBy(() ->
+              harness
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_human_runtime_completion"
+                          + " SET completed_running_row_version = completed_running_row_version + 1"))
           .hasMessageContaining("Canonical Human runtime completion evidence is immutable");
       assertThat(completionImage(harness)).isEqualTo(originalCompletion);
     } finally {
@@ -1041,10 +994,9 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
             CanonicalGameplayBindingRuntimeTestFixtures.seedCandidateAndPreparedTransition(
                 harness.dsl(), target);
 
-        assertThatThrownBy(
-                () ->
-                    CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
-                        harness.dsl(), target, candidate))
+        assertThatThrownBy(() ->
+                CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
+                    harness.dsl(), target, candidate))
             .as("Human runtime source mismatch %s", mismatch)
             .hasMessageContaining("exact current RUNNING launch row and candidate identity");
 
@@ -1159,11 +1111,10 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
             holdRequest, uuid(idBase), uuid(idBase + 1));
     harness
         .transactions()
-        .executeWithoutResult(
-            status ->
-                target
-                    .intents()
-                    .reserveHumanStarting(holdRequest, target.lifecycleRequest(uuid(idBase + 2))));
+        .executeWithoutResult(status ->
+            target
+                .intents()
+                .reserveHumanStarting(holdRequest, target.lifecycleRequest(uuid(idBase + 2))));
     harness
         .transactions()
         .executeWithoutResult(status -> target.intents().attachHumanStarting(holdRequest, hold));
@@ -1179,10 +1130,9 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       Prepared prepared) {
     harness
         .transactions()
-        .executeWithoutResult(
-            status ->
-                admission.reserveProtectedStartingForRuntimeCompletion(
-                    prepared.request(), prepared.protection()));
+        .executeWithoutResult(status ->
+            admission.reserveProtectedStartingForRuntimeCompletion(
+                prepared.request(), prepared.protection()));
   }
 
   private static Original original(

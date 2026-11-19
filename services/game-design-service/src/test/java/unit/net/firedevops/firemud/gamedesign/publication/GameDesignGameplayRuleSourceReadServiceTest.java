@@ -41,14 +41,13 @@ class GameDesignGameplayRuleSourceReadServiceTest {
 
     assertThatThrownBy(() -> asAccount(() -> owner.read(accountScopeRequest())))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error -> {
-              var status = Status.fromThrowable(error);
-              assertThat(status.getCode()).isEqualTo(expectedCode);
-              assertThat(status.getDescription()).isNull();
-              assertThat(error.getCause()).isNull();
-              assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
-            });
+        .satisfies(error -> {
+          var status = Status.fromThrowable(error);
+          assertThat(status.getCode()).isEqualTo(expectedCode);
+          assertThat(status.getDescription()).isNull();
+          assertThat(error.getCause()).isNull();
+          assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+        });
     org.mockito.Mockito.verifyNoInteractions(transactions, repository);
   }
 
@@ -59,10 +58,9 @@ class GameDesignGameplayRuleSourceReadServiceTest {
     when(transactions.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
     var permissions =
         mock(net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadClient.class);
-    org.mockito.Mockito.doAnswer(
-            invocation ->
-                new net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence(
-                    invocation.getArgument(0)))
+    org.mockito.Mockito.doAnswer(invocation ->
+            new net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence(
+                invocation.getArgument(0)))
         .when(permissions)
         .read(any());
     var owner =
@@ -124,10 +122,9 @@ class GameDesignGameplayRuleSourceReadServiceTest {
     assertThatThrownBy(() -> asAccount(() -> owner.read(request)))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
     org.mockito.Mockito.verifyNoInteractions(transactions, repository);
-    org.mockito.Mockito.doAnswer(
-            invocation ->
-                new net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence(
-                    invocation.getArgument(0)))
+    org.mockito.Mockito.doAnswer(invocation ->
+            new net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence(
+                invocation.getArgument(0)))
         .when(permissions)
         .read(any());
 
@@ -153,10 +150,9 @@ class GameDesignGameplayRuleSourceReadServiceTest {
                     new byte[] {1})));
     var finalizedRequest =
         GameplayRuleSourceReadEvidence.Request.forFinalizedIntake("test", finalAuthorization);
-    asGameLogic(
-        () ->
-            assertThat(owner.read(finalizedRequest).source().canonicalBytes())
-                .containsExactly(snapshot.canonicalBytes()));
+    asGameLogic(() ->
+        assertThat(owner.read(finalizedRequest).source().canonicalBytes())
+            .containsExactly(snapshot.canonicalBytes()));
     org.mockito.Mockito.clearInvocations(permissions, transactions, repository);
     assertThatThrownBy(() -> asAccount(() -> owner.read(finalizedRequest)))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
@@ -193,10 +189,9 @@ class GameDesignGameplayRuleSourceReadServiceTest {
     assertThatThrownBy(() -> asAccount(() -> owner.read(request)))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
     org.mockito.Mockito.verifyNoInteractions(transactions, repository);
-    org.mockito.Mockito.doAnswer(
-            invocation ->
-                new net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence(
-                    invocation.getArgument(0)))
+    org.mockito.Mockito.doAnswer(invocation ->
+            new net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence(
+                invocation.getArgument(0)))
         .when(permissions)
         .read(any());
 

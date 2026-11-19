@@ -152,12 +152,10 @@ class AccountGameLogicIntakeAuthorizationRecoveryTest {
             new AccountGameLogicIntakeSourceReadRecovery(
                 scope, AccountGameLogicIntakeSourceReadRecovery.State.RESERVED, Optional.empty()));
     when(sourceClient.read(any(GameplayRuleSourceReadEvidence.Request.class)))
-        .thenAnswer(
-            call -> {
-              events.add("source-read");
-              return new GameplayRuleSourceReadEvidence(
-                  call.getArgument(0), authorization.source());
-            });
+        .thenAnswer(call -> {
+          events.add("source-read");
+          return new GameplayRuleSourceReadEvidence(call.getArgument(0), authorization.source());
+        });
     var actorCalls = new AtomicInteger();
     doAnswer(
             call -> {
@@ -183,20 +181,19 @@ class AccountGameLogicIntakeAuthorizationRecoveryTest {
                     .orElseThrow());
     var prior = context.attach();
     try {
-      assertThatThrownBy(
-              () ->
-                  service.authorizeWithEnvironmentCapture(
-                      CREDENTIAL,
-                      intakeRequestId,
-                      selected,
-                      () -> {
-                        if (environmentCaptures.incrementAndGet() == 1) {
-                          events.add("capture-reservation");
-                          return initialEnvironment;
-                        }
-                        events.add("capture-finalization");
-                        throw currentnessUnavailable;
-                      }))
+      assertThatThrownBy(() ->
+              service.authorizeWithEnvironmentCapture(
+                  CREDENTIAL,
+                  intakeRequestId,
+                  selected,
+                  () -> {
+                    if (environmentCaptures.incrementAndGet() == 1) {
+                      events.add("capture-reservation");
+                      return initialEnvironment;
+                    }
+                    events.add("capture-finalization");
+                    throw currentnessUnavailable;
+                  }))
           .isSameAs(currentnessUnavailable);
     } finally {
       context.detach(prior);

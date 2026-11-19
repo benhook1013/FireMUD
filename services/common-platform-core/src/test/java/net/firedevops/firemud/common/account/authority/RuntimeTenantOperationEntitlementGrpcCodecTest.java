@@ -60,10 +60,9 @@ class RuntimeTenantOperationEntitlementGrpcCodecTest {
     byte[] duplicate = new byte[bytes.length * 2];
     System.arraycopy(bytes, 0, duplicate, 0, bytes.length);
     System.arraycopy(bytes, 0, duplicate, bytes.length, bytes.length);
-    assertThatThrownBy(
-            () ->
-                RuntimeTenantOperationEntitlementGrpcCodec.parseRequest(
-                    ReadTenantOperationEntitlementRequest.parseFrom(duplicate)))
+    assertThatThrownBy(() ->
+            RuntimeTenantOperationEntitlementGrpcCodec.parseRequest(
+                ReadTenantOperationEntitlementRequest.parseFrom(duplicate)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -105,9 +104,8 @@ class RuntimeTenantOperationEntitlementGrpcCodecTest {
           wire.toBuilder()
               .setRequest(0, RuntimeTenantOperationEntitlementGrpcCodec.toRequest(changed))
               .build();
-      assertThatThrownBy(
-              () ->
-                  RuntimeTenantOperationEntitlementGrpcCodec.requireResponse(changed, substituted))
+      assertThatThrownBy(() ->
+              RuntimeTenantOperationEntitlementGrpcCodec.requireResponse(changed, substituted))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

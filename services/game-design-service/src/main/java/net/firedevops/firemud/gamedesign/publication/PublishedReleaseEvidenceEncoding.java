@@ -73,30 +73,28 @@ final class PublishedReleaseEvidenceEncoding {
     }
     List<GameDesignPublicationTerminalEvidence.Participant> participants =
         dto.participantDigests().stream()
-            .map(
-                value ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        value.participantKey(),
-                        value.scopeValue(),
-                        value.baseVersionId(),
-                        value.appliedCommitId(),
-                        value.contentDigest(),
-                        Objects.requireNonNull(value.digestSchemaVersion()),
-                        value.abilitySchemaDigest(),
-                        value.errorCode(),
-                        value.errorMessage()))
+            .map(value ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    value.participantKey(),
+                    value.scopeValue(),
+                    value.baseVersionId(),
+                    value.appliedCommitId(),
+                    value.contentDigest(),
+                    Objects.requireNonNull(value.digestSchemaVersion()),
+                    value.abilitySchemaDigest(),
+                    value.errorCode(),
+                    value.errorMessage()))
             .toList();
     List<AuthoredWorldReleaseAttestationEvidence.Artifact> artifacts =
         dto.artifactDigests().stream()
-            .map(
-                value ->
-                    new AuthoredWorldReleaseAttestationEvidence.Artifact(
-                        value.usageKey(),
-                        value.artifactKind(),
-                        value.immutableObjectKey(),
-                        value.contentDigest(),
-                        value.contentType(),
-                        value.artifactSchemaVersion()))
+            .map(value ->
+                new AuthoredWorldReleaseAttestationEvidence.Artifact(
+                    value.usageKey(),
+                    value.artifactKind(),
+                    value.immutableObjectKey(),
+                    value.contentDigest(),
+                    value.contentType(),
+                    value.artifactSchemaVersion()))
             .toList();
     return new GameDesignPublicationTerminalEvidence.ReleaseContent(
         dto.canonicalTenantId(),

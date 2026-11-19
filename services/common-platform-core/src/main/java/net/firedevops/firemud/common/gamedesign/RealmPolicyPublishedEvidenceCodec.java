@@ -169,17 +169,16 @@ public final class RealmPolicyPublishedEvidenceCodec {
             "sourceProvenanceKind", target.sourceProvenanceKind());
     var policies =
         evidence.policies().stream()
-            .map(
-                policy ->
-                    map(
-                        "policyId", policy.policyId().toString(),
-                        "source",
-                            map(
-                                "commitId", policy.source().commitId().toString(),
-                                "revisionId", policy.source().revisionId().toString(),
-                                "logicalRevisionId", policy.source().logicalRevisionId(),
-                                "canonicalPolicyJson", policy.source().policy().canonicalJson()),
-                        "policyDigest", policy.policyDigest()))
+            .map(policy ->
+                map(
+                    "policyId", policy.policyId().toString(),
+                    "source",
+                        map(
+                            "commitId", policy.source().commitId().toString(),
+                            "revisionId", policy.source().revisionId().toString(),
+                            "logicalRevisionId", policy.source().logicalRevisionId(),
+                            "canonicalPolicyJson", policy.source().policy().canonicalJson()),
+                    "policyDigest", policy.policyDigest()))
             .toList();
     return RealmPolicySource.canonical(
         map(

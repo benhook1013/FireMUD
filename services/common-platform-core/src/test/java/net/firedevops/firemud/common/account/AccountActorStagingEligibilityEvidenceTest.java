@@ -57,60 +57,58 @@ class AccountActorStagingEligibilityEvidenceTest {
   void rejectsTamperedAuthorityAndNonpositiveMembershipVersion() {
     AccountActorStagingEligibilityEvidence evidence = seal("ACTIVE", "ACTIVE", true, REQUEST_ID);
 
-    assertThatThrownBy(
-            () ->
-                new AccountActorStagingEligibilityEvidence(
-                    evidence.schemaVersion(),
-                    evidence.targetNamespace(),
-                    evidence.requestId(),
-                    evidence.canonicalAccountId(),
-                    evidence.canonicalTenantId(),
-                    evidence.purpose(),
-                    evidence.currentness(),
-                    evidence.observedAt(),
-                    evidence.decision(),
-                    evidence.accountUuidProvenance(),
-                    evidence.accountLifecycleState(),
-                    evidence.membershipLifecycleState(),
-                    evidence.gameplayAdmissionAllowed(),
-                    evidence.membershipAuthorityProvenance(),
-                    evidence.membershipVersion() + 1L,
-                    evidence.membershipAuthorityGeneration(),
-                    evidence.tenantProvenanceKind(),
-                    evidence.tenantSourceOperationId(),
-                    evidence.tenantProvenanceDigest(),
-                    evidence.membershipEventSequence(),
-                    evidence.membershipEventId(),
-                    evidence.membershipEventDigest(),
-                    evidence.lastTransitionInvalidated(),
-                    evidence.eligibilityDecisionDigest(),
-                    evidence.authoritySnapshotDigest()))
+    assertThatThrownBy(() ->
+            new AccountActorStagingEligibilityEvidence(
+                evidence.schemaVersion(),
+                evidence.targetNamespace(),
+                evidence.requestId(),
+                evidence.canonicalAccountId(),
+                evidence.canonicalTenantId(),
+                evidence.purpose(),
+                evidence.currentness(),
+                evidence.observedAt(),
+                evidence.decision(),
+                evidence.accountUuidProvenance(),
+                evidence.accountLifecycleState(),
+                evidence.membershipLifecycleState(),
+                evidence.gameplayAdmissionAllowed(),
+                evidence.membershipAuthorityProvenance(),
+                evidence.membershipVersion() + 1L,
+                evidence.membershipAuthorityGeneration(),
+                evidence.tenantProvenanceKind(),
+                evidence.tenantSourceOperationId(),
+                evidence.tenantProvenanceDigest(),
+                evidence.membershipEventSequence(),
+                evidence.membershipEventId(),
+                evidence.membershipEventDigest(),
+                evidence.lastTransitionInvalidated(),
+                evidence.eligibilityDecisionDigest(),
+                evidence.authoritySnapshotDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Authority snapshot digest does not match its fields");
 
-    assertThatThrownBy(
-            () ->
-                AccountActorStagingEligibilityEvidence.seal(
-                    NAMESPACE,
-                    REQUEST_ID,
-                    ACCOUNT_ID,
-                    TENANT_ID,
-                    AccountActorStagingEligibilityEvidence.Purpose.PUBLIC_PRODUCTION_STAGING_ONLY,
-                    OBSERVED_AT,
-                    "ACCOUNT_V29_MIGRATION",
-                    "ACTIVE",
-                    "ACTIVE",
-                    true,
-                    "EXPLICIT_JOIN",
-                    0L,
-                    1L,
-                    "FRESH_GAME_DESIGN",
-                    TENANT_OPERATION_ID,
-                    "sha256:" + "a".repeat(64),
-                    1L,
-                    MEMBERSHIP_EVENT_ID,
-                    "sha256:" + "b".repeat(64),
-                    false))
+    assertThatThrownBy(() ->
+            AccountActorStagingEligibilityEvidence.seal(
+                NAMESPACE,
+                REQUEST_ID,
+                ACCOUNT_ID,
+                TENANT_ID,
+                AccountActorStagingEligibilityEvidence.Purpose.PUBLIC_PRODUCTION_STAGING_ONLY,
+                OBSERVED_AT,
+                "ACCOUNT_V29_MIGRATION",
+                "ACTIVE",
+                "ACTIVE",
+                true,
+                "EXPLICIT_JOIN",
+                0L,
+                1L,
+                "FRESH_GAME_DESIGN",
+                TENANT_OPERATION_ID,
+                "sha256:" + "a".repeat(64),
+                1L,
+                MEMBERSHIP_EVENT_ID,
+                "sha256:" + "b".repeat(64),
+                false))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Positive membership authority counters are required");
   }

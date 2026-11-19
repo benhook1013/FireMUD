@@ -53,10 +53,8 @@ class EntityPlayerCreatedRosterServiceTest {
         new EntityPlayerCreatedRosterService(
             "gameplay", source, owner, snapshots, retention, transactions);
 
-    assertThatThrownBy(
-            () ->
-                service.selected(
-                    CanonicalSelectedPlayerCreatedCharacterRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            service.selected(CanonicalSelectedPlayerCreatedCharacterRequest.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(source, owner, snapshots, retention, transactions);

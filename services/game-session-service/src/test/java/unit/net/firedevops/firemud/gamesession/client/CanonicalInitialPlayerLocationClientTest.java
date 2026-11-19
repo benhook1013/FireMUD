@@ -558,32 +558,28 @@ class CanonicalInitialPlayerLocationClientTest {
   void constructorRejectsPlaintextMissingTlsAndInvalidNamespace() {
     var plaintext = tls.copy();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialPlayerLocationClient(
-                    new ServiceEndpointsProperties(), plaintext, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalInitialPlayerLocationClient(
+                new ServiceEndpointsProperties(), plaintext, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
     var classpath = tls.copy();
     classpath.setCertChain("classpath:client.crt");
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialPlayerLocationClient(
-                    new ServiceEndpointsProperties(), classpath, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalInitialPlayerLocationClient(
+                new ServiceEndpointsProperties(), classpath, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
     var missing = tls.copy();
     missing.setCaCert(directory.resolve("missing-ca.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialPlayerLocationClient(
-                    new ServiceEndpointsProperties(), missing, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalInitialPlayerLocationClient(
+                new ServiceEndpointsProperties(), missing, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialPlayerLocationClient(
-                    new ServiceEndpointsProperties(), tls, channels, "bad/namespace"))
+    assertThatThrownBy(() ->
+            new CanonicalInitialPlayerLocationClient(
+                new ServiceEndpointsProperties(), tls, channels, "bad/namespace"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

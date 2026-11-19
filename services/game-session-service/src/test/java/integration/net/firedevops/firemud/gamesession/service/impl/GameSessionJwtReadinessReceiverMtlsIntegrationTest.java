@@ -315,15 +315,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(responseHadNoApplicationAuthContext).isTrue();
     assertThat(ownerHandlerAuthContexts)
         .hasSize(2)
-        .allSatisfy(
-            context -> {
-              assertThat(context.accountId()).isNull();
-              assertThat(context.globalRoles()).isEmpty();
-              assertThat(context.scopedRoles()).isEmpty();
-              assertThat(context.internalService()).isFalse();
-              assertThat(context.serviceName()).isNull();
-              assertThat(context.serviceInstanceId()).isNull();
-            });
+        .allSatisfy(context -> {
+          assertThat(context.accountId()).isNull();
+          assertThat(context.globalRoles()).isEmpty();
+          assertThat(context.scopedRoles()).isEmpty();
+          assertThat(context.internalService()).isFalse();
+          assertThat(context.serviceName()).isNull();
+          assertThat(context.serviceInstanceId()).isNull();
+        });
     // JUnit-thread cleanup checks only; server-context proof is captured above.
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
@@ -395,16 +394,13 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
   private void assertWarmSnapshotBindingDenied() {
     assertThatThrownBy(() -> receive(pki.account(), validRequest))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
-              assertThat(Status.fromThrowable(failure).getDescription())
-                  .doesNotContain(
-                      validCompactJwt,
-                      fixturePublicJwksSha256,
-                      jwksSourceIdentity.apiServerOrigin());
-            });
+        .satisfies(failure -> {
+          assertThat(Status.fromThrowable(failure).getCode())
+              .isEqualTo(Status.Code.FAILED_PRECONDITION);
+          assertThat(Status.fromThrowable(failure).getDescription())
+              .doesNotContain(
+                  validCompactJwt, fixturePublicJwksSha256, jwksSourceIdentity.apiServerOrigin());
+        });
     assertThat(ownerReadCalls).hasValue(1);
     assertThat(jwksLoads).hasValue(1);
     assertThat(lastOwnerRequest.get().getProtectedLocalIdentity())
@@ -433,15 +429,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(metadataSawPeerUri).hasValue(GAME_SESSION_URI);
     assertThat(metadataHandlerAuthContexts)
         .hasSize(1)
-        .allSatisfy(
-            context -> {
-              assertThat(context.accountId()).isNull();
-              assertThat(context.globalRoles()).isEmpty();
-              assertThat(context.scopedRoles()).isEmpty();
-              assertThat(context.internalService()).isFalse();
-              assertThat(context.serviceName()).isNull();
-              assertThat(context.serviceInstanceId()).isNull();
-            });
+        .allSatisfy(context -> {
+          assertThat(context.accountId()).isNull();
+          assertThat(context.globalRoles()).isEmpty();
+          assertThat(context.scopedRoles()).isEmpty();
+          assertThat(context.internalService()).isFalse();
+          assertThat(context.serviceName()).isNull();
+          assertThat(context.serviceInstanceId()).isNull();
+        });
     // JUnit-thread cleanup checks only; the Account handler values are captured above.
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
@@ -455,14 +450,13 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     accountOwnerServer = null;
 
     assertUnavailable(validRequest);
-    assertThatThrownBy(
-            () ->
-                ownerClient.readCurrent(
-                    GetCurrentReadinessReceiverMetadataRequest.newBuilder()
-                        .setSchemaVersion(1)
-                        .setProjectedPodUid(POD_UID)
-                        .setServerLeafSpkiSha256(spkiSha256(pki.gameSession().certificate()))
-                        .build()))
+    assertThatThrownBy(() ->
+            ownerClient.readCurrent(
+                GetCurrentReadinessReceiverMetadataRequest.newBuilder()
+                    .setSchemaVersion(1)
+                    .setProjectedPodUid(POD_UID)
+                    .setServerLeafSpkiSha256(spkiSha256(pki.gameSession().certificate()))
+                    .build()))
         .isInstanceOf(GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
     assertThat(ownerReadCalls).hasValue(0);
     assertThat(metadataReadCalls).hasValue(0);
@@ -478,18 +472,16 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
           new GameSessionJwtReadinessProbeOwnerClient(
               endpoints, clientProperties(gameSessionFiles), new GrpcChannelFactory(), NAMESPACE);
 
-      assertThatThrownBy(
-              () ->
-                  wrongPeerClient.readCurrent(
-                      GetCurrentReadinessProbeOwnerRequest.newBuilder()
-                          .setExpectedCoordinates(validRequest.getCoordinates())
-                          .build()))
+      assertThatThrownBy(() ->
+              wrongPeerClient.readCurrent(
+                  GetCurrentReadinessProbeOwnerRequest.newBuilder()
+                      .setExpectedCoordinates(validRequest.getCoordinates())
+                      .build()))
           .isInstanceOf(
               GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
-      assertThatThrownBy(
-              () ->
-                  wrongPeerClient.readCurrent(
-                      GetCurrentReadinessReceiverMetadataRequest.newBuilder().build()))
+      assertThatThrownBy(() ->
+              wrongPeerClient.readCurrent(
+                  GetCurrentReadinessReceiverMetadataRequest.newBuilder().build()))
           .isInstanceOf(
               GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
     } finally {
@@ -503,16 +495,13 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
         TransactionSynchronizationManager.isActualTransactionActive();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertThatThrownBy(
-              () ->
-                  ownerClient.readCurrent(
-                      GetCurrentReadinessProbeOwnerRequest.newBuilder().build()))
+      assertThatThrownBy(() ->
+              ownerClient.readCurrent(GetCurrentReadinessProbeOwnerRequest.newBuilder().build()))
           .isInstanceOf(
               GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
-      assertThatThrownBy(
-              () ->
-                  ownerClient.readCurrent(
-                      GetCurrentReadinessReceiverMetadataRequest.newBuilder().build()))
+      assertThatThrownBy(() ->
+              ownerClient.readCurrent(
+                  GetCurrentReadinessReceiverMetadataRequest.newBuilder().build()))
           .isInstanceOf(
               GameSessionJwtReadinessProbeOwnerClient.OwnerReadUnavailableException.class);
       assertThat(ownerReadCalls).hasValue(0);
@@ -527,10 +516,9 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     for (TestCertificate caller : List.of(pki.wrongWorkload(), pki.missingWorkloadUri())) {
       assertThatThrownBy(() -> receive(caller, validRequest))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       assertThat(ownerReadCalls).hasValue(0);
     }
   }
@@ -611,10 +599,9 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     ReceiveReadinessProbeRequest wrongKeyRequest = request(validCompactJwt, wrongKeyCoordinates);
     assertThatThrownBy(() -> receive(pki.account(), wrongKeyRequest))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
     assertThat(ownerReadCalls).hasValue(1);
 
     ownerReadCalls.set(0);
@@ -623,20 +610,17 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
         request(tamperedJwt, validRequest.getCoordinates());
     assertThatThrownBy(() -> receive(pki.account(), tamperedRequest))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
     assertThat(ownerReadCalls).hasValue(1);
   }
 
   private void assertUnavailable(ReceiveReadinessProbeRequest request) throws Exception {
     assertThatThrownBy(() -> receive(pki.account(), request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
   }
 
   private ReceiveReadinessProbeResponse receive(

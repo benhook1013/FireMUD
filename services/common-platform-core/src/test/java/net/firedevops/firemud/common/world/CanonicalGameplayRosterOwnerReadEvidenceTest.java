@@ -89,13 +89,12 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
     assertThat(policyOperation.world().request().targetNamespace())
         .isNotEqualTo(wrongNamespaceRequest.targetNamespace());
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterOwnerReadEvidence(
-                    wrongNamespaceRequest,
-                    evidence.admissionPointerSnapshotDigest(),
-                    wrongNamespaceProof,
-                    evidence.publishedPolicySetEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterOwnerReadEvidence(
+                wrongNamespaceRequest,
+                evidence.admissionPointerSnapshotDigest(),
+                wrongNamespaceProof,
+                evidence.publishedPolicySetEvidence()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("target namespace");
   }
@@ -104,10 +103,9 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
   void rejectsNoncommittedStaleOrChangedRouteAndPolicyEvidence() throws Exception {
     var good = fixture();
     var pending = pendingProof(good.gameSessionOwnerProof().holdIdentity());
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterOwnerReadEvidence(
-                    good.request(), "1".repeat(64), pending, good.publishedPolicySetEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterOwnerReadEvidence(
+                good.request(), "1".repeat(64), pending, good.publishedPolicySetEvidence()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var staleRequest =
@@ -126,13 +124,12 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
             71L,
             74L,
             82L);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterOwnerReadEvidence(
-                    staleRequest,
-                    good.admissionPointerSnapshotDigest(),
-                    good.gameSessionOwnerProof(),
-                    good.publishedPolicySetEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterOwnerReadEvidence(
+                staleRequest,
+                good.admissionPointerSnapshotDigest(),
+                good.gameSessionOwnerProof(),
+                good.publishedPolicySetEvidence()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var wrongRealm =
@@ -151,22 +148,20 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
             71L,
             73L,
             82L);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterOwnerReadEvidence(
-                    wrongRealm,
-                    good.admissionPointerSnapshotDigest(),
-                    good.gameSessionOwnerProof(),
-                    good.publishedPolicySetEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterOwnerReadEvidence(
+                wrongRealm,
+                good.admissionPointerSnapshotDigest(),
+                good.gameSessionOwnerProof(),
+                good.publishedPolicySetEvidence()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterOwnerReadEvidence(
-                    good.request(),
-                    "A".repeat(64),
-                    good.gameSessionOwnerProof(),
-                    good.publishedPolicySetEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterOwnerReadEvidence(
+                good.request(),
+                "A".repeat(64),
+                good.gameSessionOwnerProof(),
+                good.publishedPolicySetEvidence()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -195,75 +190,63 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
             .build();
     assertThatThrownBy(() -> CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(unknownRequest))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(
-                    wireRequest.toBuilder().setCanonicalAccountUuid("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(
+                wireRequest.toBuilder().setCanonicalAccountUuid("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(
-                    wireRequest.toBuilder()
-                        .setExpectedPointerVersion(Long.MAX_VALUE * -1L)
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(
+                wireRequest.toBuilder().setExpectedPointerVersion(Long.MAX_VALUE * -1L).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(
-                    wireRequest.toBuilder().setWorldSlug("x".repeat(3000)).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromRequest(
+                wireRequest.toBuilder().setWorldSlug("x".repeat(3000)).build()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request, GetCanonicalGameplayRosterOwnerReadResponse.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
+                request, GetCanonicalGameplayRosterOwnerReadResponse.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            wireRequest.toBuilder()
-                                .setCanonicalAccountUuid(
-                                    uuid("99999999-9999-4999-8999-999999999999").toString())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        wireRequest.toBuilder()
+                            .setCanonicalAccountUuid(
+                                uuid("99999999-9999-4999-8999-999999999999").toString())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    101, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(101, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request, response.toBuilder().clearPublishedPolicySetEvidence().build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
+                request, response.toBuilder().clearPublishedPolicySetEvidence().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder().setAdmissionPointerSnapshotDigest("A".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder().setAdmissionPointerSnapshotDigest("A".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setPublishedPolicySetEvidence(
-                            ByteString.copyFrom(
-                                new byte
-                                    [CanonicalGameplayRosterOwnerReadEvidence.MAX_POLICY_SET_BYTES
-                                        + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setPublishedPolicySetEvidence(
+                        ByteString.copyFrom(
+                            new byte
+                                [CanonicalGameplayRosterOwnerReadEvidence.MAX_POLICY_SET_BYTES
+                                    + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var pending = pendingProof(evidence.gameSessionOwnerProof().holdIdentity());
@@ -277,10 +260,8 @@ class CanonicalGameplayRosterOwnerReadEvidenceTest {
                 ByteString.copyFrom(evidence.publishedPolicySetEvidence().canonicalBytes()))
             .setAdmissionPointerSnapshotDigest(evidence.admissionPointerSnapshotDigest())
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
-                    request, nonCommittedResponse))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(request, nonCommittedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(
             "Game Session proof is not the exact current committed roster target");

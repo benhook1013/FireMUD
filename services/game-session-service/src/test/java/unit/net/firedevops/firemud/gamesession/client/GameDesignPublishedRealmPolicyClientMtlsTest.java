@@ -134,11 +134,9 @@ class GameDesignPublishedRealmPolicyClientMtlsTest {
             .isEqualTo("spiffe://firemud/ns/test/sa/game-session-service");
         assertThat(observedRequest.get().getTargetNamespace()).isEqualTo("test");
       } else {
-        assertThatThrownBy(
-                () ->
-                    client.listPublishedRealmEntryPolicies(
-                        evidence.target().canonicalTenantId(),
-                        evidence.target().canonicalVersionId()))
+        assertThatThrownBy(() ->
+                client.listPublishedRealmEntryPolicies(
+                    evidence.target().canonicalTenantId(), evidence.target().canonicalVersionId()))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

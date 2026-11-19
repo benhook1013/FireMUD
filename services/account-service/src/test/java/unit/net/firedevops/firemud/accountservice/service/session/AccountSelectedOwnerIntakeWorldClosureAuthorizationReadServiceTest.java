@@ -55,14 +55,13 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadServiceTest {
     var definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
     verify(transactions, times(2)).getTransaction(definitions.capture());
     assertThat(definitions.getAllValues())
-        .allSatisfy(
-            definition -> {
-              assertThat(definition.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(definition.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(definition.isReadOnly()).isFalse();
-            });
+        .allSatisfy(definition -> {
+          assertThat(definition.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          assertThat(definition.isReadOnly()).isFalse();
+        });
   }
 
   @Test

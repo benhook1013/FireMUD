@@ -696,12 +696,11 @@ public final class AccountPlatformRestrictionOperationRepository {
         throw new IllegalArgumentException(
             "Positive Account identity and matching predecessor fence are required");
       }
-      receipt.ifPresent(
-          committed -> {
-            if (committed.event().outboxSequence() != committed.sourceState().generation() - 1L) {
-              throw new RestrictionSourceUnavailableException();
-            }
-          });
+      receipt.ifPresent(committed -> {
+        if (committed.event().outboxSequence() != committed.sourceState().generation() - 1L) {
+          throw new RestrictionSourceUnavailableException();
+        }
+      });
     }
   }
 

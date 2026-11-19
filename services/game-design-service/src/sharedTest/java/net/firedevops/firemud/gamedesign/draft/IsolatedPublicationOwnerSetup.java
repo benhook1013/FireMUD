@@ -241,15 +241,14 @@ public final class IsolatedPublicationOwnerSetup {
     coordinator.claimApplicationSlot(draft);
     var epochs =
         draft.affectedUnits().stream()
-            .map(
-                unit ->
-                    new DraftCommitCoordinatorRepository.AppliedEpoch(
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch(),
-                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .map(unit ->
+                new DraftCommitCoordinatorRepository.AppliedEpoch(
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch(),
+                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
             .toList();
     var outcome =
         new DraftCommitCoordinatorRepository.OwnerOutcome(

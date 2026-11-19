@@ -92,10 +92,9 @@ class RuntimeAccountIdentityGrpcServiceTest {
 
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () ->
-                inactiveService.resolveRuntimeAccountIdentity(
-                    request(ACCOUNT_ID.toString(), REQUEST_ID.toString()), observer));
+        .run(() ->
+            inactiveService.resolveRuntimeAccountIdentity(
+                request(ACCOUNT_ID.toString(), REQUEST_ID.toString()), observer));
 
     assertThat(status(observer)).isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(repository);

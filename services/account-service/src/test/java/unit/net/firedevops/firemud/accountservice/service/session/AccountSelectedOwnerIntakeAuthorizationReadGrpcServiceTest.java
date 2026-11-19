@@ -74,9 +74,8 @@ class AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest {
 
     var allowedPeerMalformed = new Collector();
     peer("test", "entity-management-service")
-        .run(
-            () ->
-                service.readHeldSelectedOwnerIntakeAuthorization(malformed, allowedPeerMalformed));
+        .run(() ->
+            service.readHeldSelectedOwnerIntakeAuthorization(malformed, allowedPeerMalformed));
     assertThat(allowedPeerMalformed.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(owner);
   }
@@ -160,10 +159,9 @@ class AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest {
 
     var wrongNamespace = new Collector();
     peer("test", "entity-management-service")
-        .run(
-            () ->
-                service.readHeldSelectedOwnerIntakeAuthorization(
-                    valid.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
+        .run(() ->
+            service.readHeldSelectedOwnerIntakeAuthorization(
+                valid.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
     assertThat(wrongNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     var changedReader =

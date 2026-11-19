@@ -94,11 +94,9 @@ class AccountSelectedPublicationSettlementGrpcCodecTest {
           .isInstanceOf(IllegalArgumentException.class);
     }
 
-    assertThatThrownBy(
-            () ->
-                AccountSelectedPublicationSettlementGrpcCodec.Request.create(
-                    "test",
-                    new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1]))
+    assertThatThrownBy(() ->
+            AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                "test", new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("4 MiB");
   }
@@ -181,9 +179,8 @@ class AccountSelectedPublicationSettlementGrpcCodecTest {
             "test", operation.canonicalBytes());
     byte[] oversizedReceipt =
         new byte[AccountSelectedPublicationSettlementGrpcCodec.MAX_MESSAGE_BYTES];
-    assertThatThrownBy(
-            () ->
-                AccountSelectedPublicationSettlementGrpcCodec.toResponse(request, oversizedReceipt))
+    assertThatThrownBy(() ->
+            AccountSelectedPublicationSettlementGrpcCodec.toResponse(request, oversizedReceipt))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("32 MiB");
 
@@ -195,10 +192,8 @@ class AccountSelectedPublicationSettlementGrpcCodecTest {
             .setOriginalOperation(ByteString.copyFrom(request.originalOperation()))
             .setSettlementReceipt(ByteString.copyFrom(oversizedReceipt))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountSelectedPublicationSettlementGrpcCodec.fromResponse(
-                    request, oversizedResponse))
+    assertThatThrownBy(() ->
+            AccountSelectedPublicationSettlementGrpcCodec.fromResponse(request, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("32 MiB");
   }

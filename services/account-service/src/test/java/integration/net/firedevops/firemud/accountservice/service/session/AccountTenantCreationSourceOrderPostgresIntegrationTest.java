@@ -119,17 +119,15 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     AccountTenantCreationSourceOrderBinding first;
     try {
       first =
-          c.tx(
-              () -> {
-                AccountTenantCreationSourceOrderBinding retained =
-                    repository.acquireLocked(fixture.intent(), fixture.admitted(), sources);
-                for (SourceEvidence source : sources) {
-                  CompletableFuture.runAsync(
-                          () -> assertWriterGateDenied(c, source.key()), executor)
-                      .join();
-                }
-                return retained;
-              });
+          c.tx(() -> {
+            AccountTenantCreationSourceOrderBinding retained =
+                repository.acquireLocked(fixture.intent(), fixture.admitted(), sources);
+            for (SourceEvidence source : sources) {
+              CompletableFuture.runAsync(() -> assertWriterGateDenied(c, source.key()), executor)
+                  .join();
+            }
+            return retained;
+          });
     } finally {
       executor.shutdownNow();
     }
@@ -140,19 +138,17 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     assertThat(retry.authorizationDigest()).isEqualTo(first.authorizationDigest());
     assertThat(xmin(c, fixture.intent().creationOperationId())).isEqualTo(originalXmin);
     assertThat(
-            c.tx(
-                () ->
-                    repository
-                        .readOriginal(fixture.intent().creationOperationId())
-                        .orElseThrow()
-                        .canonicalBytes()))
+            c.tx(() ->
+                repository
+                    .readOriginal(fixture.intent().creationOperationId())
+                    .orElseThrow()
+                    .canonicalBytes()))
         .containsExactly(first.canonicalBytes());
     assertThat(
-            c.tx(
-                () ->
-                    repository.readPending(null, 10).stream()
-                        .map(row -> row.binding().creationOperationId())
-                        .toList()))
+            c.tx(() ->
+                repository.readPending(null, 10).stream()
+                    .map(row -> row.binding().creationOperationId())
+                    .toList()))
         .containsExactly(fixture.intent().creationOperationId());
 
     for (SourceEvidence source : sources) {
@@ -173,52 +169,45 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     var repository = repository(c);
 
     var first =
-        c.tx(
-            () ->
-                repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
+        c.tx(() ->
+            repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
     var second =
-        c.tx(
-            () ->
-                repository.acquireLocked(
-                    secondFixture.intent(), secondFixture.admitted(), sources));
+        c.tx(() ->
+            repository.acquireLocked(secondFixture.intent(), secondFixture.admitted(), sources));
 
     assertThat(first.creationOperationId()).isNotEqualTo(second.creationOperationId());
     assertThat(first.sources()).containsExactlyElementsOf(second.sources());
     assertThat(
-            c.tx(
-                () ->
-                    repository.readPending(null, 10).stream()
-                        .map(row -> row.binding().creationOperationId())
-                        .toList()))
+            c.tx(() ->
+                repository.readPending(null, 10).stream()
+                    .map(row -> row.binding().creationOperationId())
+                    .toList()))
         .containsExactlyInAnyOrder(
             firstFixture.intent().creationOperationId(),
             secondFixture.intent().creationOperationId());
     assertThat(
-            c.tx(
-                () ->
-                    repository
-                        .readOriginal(firstFixture.intent().creationOperationId())
-                        .orElseThrow()
-                        .canonicalBytes()))
+            c.tx(() ->
+                repository
+                    .readOriginal(firstFixture.intent().creationOperationId())
+                    .orElseThrow()
+                    .canonicalBytes()))
         .containsExactly(first.canonicalBytes());
     assertThat(
-            c.tx(
-                () ->
-                    repository
-                        .readOriginal(secondFixture.intent().creationOperationId())
-                        .orElseThrow()
-                        .canonicalBytes()))
+            c.tx(() ->
+                repository
+                    .readOriginal(secondFixture.intent().creationOperationId())
+                    .orElseThrow()
+                    .canonicalBytes()))
         .containsExactly(second.canonicalBytes());
     assertThat(
-            c.tx(
-                () ->
-                    Objects.requireNonNull(
-                            c.dsl.fetchOne(
-                                "SELECT count(*) AS count FROM account_tenant_creation_source_order_settlements "
-                                    + "WHERE creation_operation_id IN (?, ?)",
-                                first.creationOperationId(),
-                                second.creationOperationId()))
-                        .get("count", Long.class)))
+            c.tx(() ->
+                Objects.requireNonNull(
+                        c.dsl.fetchOne(
+                            "SELECT count(*) AS count FROM account_tenant_creation_source_order_settlements "
+                                + "WHERE creation_operation_id IN (?, ?)",
+                            first.creationOperationId(),
+                            second.creationOperationId()))
+                    .get("count", Long.class)))
         .isZero();
 
     var sourceChangeRepository = new DraftAuthorizationFenceRepository(c.dsl);
@@ -233,18 +222,15 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     assertThat(c.tx(() -> sourceChangeRepository.sourceMutationPermitted(change))).isFalse();
     String firstXmin = xmin(c, first.creationOperationId());
     var recovered =
-        c.tx(
-            () ->
-                repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
+        c.tx(() ->
+            repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
     assertThat(recovered.canonicalBytes()).containsExactly(first.canonicalBytes());
     assertThat(recovered.authorizationDigest()).isEqualTo(first.authorizationDigest());
     assertThat(xmin(c, first.creationOperationId())).isEqualTo(firstXmin);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        repository.acquireLocked(
-                            unacquiredFixture.intent(), unacquiredFixture.admitted(), sources)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                repository.acquireLocked(
+                    unacquiredFixture.intent(), unacquiredFixture.admitted(), sources)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Applicable authority source change is waiting");
     assertThat(
@@ -264,14 +250,11 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     seedSerializationRows(c, sources);
     var repository = repository(c);
     var first =
-        c.tx(
-            () ->
-                repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
+        c.tx(() ->
+            repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
     var second =
-        c.tx(
-            () ->
-                repository.acquireLocked(
-                    secondFixture.intent(), secondFixture.admitted(), sources));
+        c.tx(() ->
+            repository.acquireLocked(secondFixture.intent(), secondFixture.admitted(), sources));
 
     var sourceChangeRepository = new DraftAuthorizationFenceRepository(c.dsl);
     var waitingChange =
@@ -292,12 +275,11 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     assertThat(firstSettlement.canonicalBytes()).containsExactly(created.canonicalBytes());
     assertThat(xmin(c, first.creationOperationId())).isEqualTo(originalXmin);
     assertThat(
-            c.tx(
-                () ->
-                    repository
-                        .readSettlement(first.creationOperationId())
-                        .orElseThrow()
-                        .canonicalBytes()))
+            c.tx(() ->
+                repository
+                    .readSettlement(first.creationOperationId())
+                    .orElseThrow()
+                    .canonicalBytes()))
         .containsExactly(created.canonicalBytes());
     assertWriterGateDenied(c, "ISSUER:firemud-account-service");
     assertThat(c.tx(() -> repository.readSettlement(second.creationOperationId()))).isEmpty();
@@ -400,18 +382,17 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     }
 
     var created = terminalEvidence(expected, Outcome.CREATED);
-    assertThatThrownBy(
-            () ->
-                readTerminal(
-                    created,
-                    expected,
-                    null,
-                    response ->
-                        response.toBuilder()
-                            .setCreatedReceipt(
-                                response.getCreatedReceipt().toBuilder()
-                                    .setEvidenceDigest("sha256:" + "f".repeat(64)))
-                            .build()))
+    assertThatThrownBy(() ->
+            readTerminal(
+                created,
+                expected,
+                null,
+                response ->
+                    response.toBuilder()
+                        .setCreatedReceipt(
+                            response.getCreatedReceipt().toBuilder()
+                                .setEvidenceDigest("sha256:" + "f".repeat(64)))
+                        .build()))
         .isInstanceOf(RuntimeException.class);
 
     assertThat(c.tx(() -> repository.readSettlement(original.creationOperationId()))).isEmpty();
@@ -428,12 +409,10 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     var original =
         c.tx(() -> repository.acquireLocked(fixture.intent(), fixture.admitted(), sources));
 
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        repository.acquireLocked(
-                            fixture.intent(), fixture.admitted(), sources.subList(0, 7))))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                repository.acquireLocked(
+                    fixture.intent(), fixture.admitted(), sources.subList(0, 7))))
         .isInstanceOf(IllegalArgumentException.class);
 
     List<SourceEvidence> changed = new ArrayList<>(sources);
@@ -448,9 +427,8 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
             first.checkpointStream(),
             first.checkpointSequence(),
             "changed controlled owner bytes".getBytes(StandardCharsets.UTF_8)));
-    assertThatThrownBy(
-            () ->
-                c.tx(() -> repository.acquireLocked(fixture.intent(), fixture.admitted(), changed)))
+    assertThatThrownBy(() ->
+            c.tx(() -> repository.acquireLocked(fixture.intent(), fixture.admitted(), changed)))
         .isInstanceOf(IllegalStateException.class);
 
     AccountTenantCreationIntentRepository.OriginalIntent alteredActor =
@@ -472,42 +450,36 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
             fixture.intent().requestPayload(),
             fixture.intent().requestDigest(),
             fixture.intent().createdAt());
-    assertThatThrownBy(
-            () ->
-                AccountTenantCreationSourceOrderBinding.from(
-                    alteredActor, fixture.admitted(), sources))
+    assertThatThrownBy(() ->
+            AccountTenantCreationSourceOrderBinding.from(alteredActor, fixture.admitted(), sources))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertThat(
-            c.tx(
-                () ->
-                    repository
-                        .readOriginal(fixture.intent().creationOperationId())
-                        .orElseThrow()
-                        .canonicalBytes()))
+            c.tx(() ->
+                repository
+                    .readOriginal(fixture.intent().creationOperationId())
+                    .orElseThrow()
+                    .canonicalBytes()))
         .containsExactly(original.canonicalBytes());
     assertThat(c.tx(() -> consumptionCount(c, fixture.intent().recentReauthenticationEvidenceId())))
         .isZero();
     byte[] invalidTerminal = "unverified terminal input".getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "INSERT INTO account_tenant_creation_source_order_settlements "
-                                + "(creation_operation_id, target_namespace, game_design_creation_request_id, "
-                                + "account_authorization_operation_id, initiating_account_id, creation_request_digest, "
-                                + "account_authorization_digest, outcome_status, terminal_read_payload, terminal_read_digest) "
-                                + "VALUES (?, 'test-game', ?, ?, ?, ?, ?, 'NOT_CREATED', ?, ?)",
-                            fixture.intent().creationOperationId(),
-                            fixture.intent().gameDesignCreationRequestId(),
-                            fixture.intent().creationOperationId(),
-                            fixture.intent().initiatingAccountId(),
-                            fixture.intent().gameDesignRequestDigest(),
-                            original.authorizationDigest(),
-                            invalidTerminal,
-                            "sha256:"
-                                + AccountControlUiCoordination.digest("SHA-256", invalidTerminal))))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "INSERT INTO account_tenant_creation_source_order_settlements "
+                        + "(creation_operation_id, target_namespace, game_design_creation_request_id, "
+                        + "account_authorization_operation_id, initiating_account_id, creation_request_digest, "
+                        + "account_authorization_digest, outcome_status, terminal_read_payload, terminal_read_digest) "
+                        + "VALUES (?, 'test-game', ?, ?, ?, ?, ?, 'NOT_CREATED', ?, ?)",
+                    fixture.intent().creationOperationId(),
+                    fixture.intent().gameDesignCreationRequestId(),
+                    fixture.intent().creationOperationId(),
+                    fixture.intent().initiatingAccountId(),
+                    fixture.intent().gameDesignRequestDigest(),
+                    original.authorizationDigest(),
+                    invalidTerminal,
+                    "sha256:" + AccountControlUiCoordination.digest("SHA-256", invalidTerminal))))
         .isInstanceOf(DataAccessException.class);
     for (String table :
         List.of(
@@ -612,47 +584,41 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
   }
 
   private static void assertWriterGateDenied(Context context, String sourceKey) {
-    assertThatThrownBy(
-            () ->
-                context.tx(
-                    () ->
-                        context.dsl.fetch(
-                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
-                            sourceKey)))
+    assertThatThrownBy(() ->
+            context.tx(() ->
+                context.dsl.fetch(
+                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
+                    sourceKey)))
         .isInstanceOf(DataAccessException.class);
   }
 
   private static void assertWriterGateAllowed(Context context, String sourceKey) {
-    assertThatCode(
-            () ->
-                context.tx(
-                    () ->
-                        context.dsl.fetch(
-                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
-                            sourceKey)))
+    assertThatCode(() ->
+            context.tx(() ->
+                context.dsl.fetch(
+                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
+                    sourceKey)))
         .doesNotThrowAnyException();
   }
 
   private static void seedSerializationRows(Context context, List<SourceEvidence> sources) {
-    context.tx(
-        () -> {
-          for (SourceEvidence source : sources) {
-            context.dsl.execute(
-                "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?) "
-                    + "ON CONFLICT DO NOTHING",
-                source.key());
-          }
-          return null;
-        });
+    context.tx(() -> {
+      for (SourceEvidence source : sources) {
+        context.dsl.execute(
+            "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?) "
+                + "ON CONFLICT DO NOTHING",
+            source.key());
+      }
+      return null;
+    });
   }
 
   private static List<SourceEvidence> controlledSources(Context context, Fixture fixture) {
     List<SourceEvidence> policySources =
-        context.tx(
-            () ->
-                new AccountRecentReauthenticationPolicyRepository(context.dsl)
-                    .resolveCurrentSourcesForGameCreation()
-                    .sources());
+        context.tx(() ->
+            new AccountRecentReauthenticationPolicyRepository(context.dsl)
+                .resolveCurrentSourcesForGameCreation()
+                .sources());
     UUID actor = fixture.intent().initiatingAccountId();
     UUID creatorParty = fixture.intent().creatorPartyId();
     UUID hostedScope = UUID.randomUUID();
@@ -726,24 +692,23 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
         context.service.reauthenticate(
             context.request(account, UUID.randomUUID(), creationOperationId));
     var intent =
-        context.tx(
-            () ->
-                new AccountTenantCreationIntentRepository(context.dsl, context.evidenceRepository)
-                    .claim(
-                        new AccountTenantCreationIntentRepository.Request(
-                            UUID.randomUUID(),
-                            creationOperationId,
-                            UUID.randomUUID(),
-                            account.getAccountUuid(),
-                            "test-game",
-                            "source-game",
-                            "Game",
-                            "controlled source-order test",
-                            reauthentication.evidenceId(),
-                            creatorPartyId,
-                            UUID.randomUUID(),
-                            1,
-                            true)));
+        context.tx(() ->
+            new AccountTenantCreationIntentRepository(context.dsl, context.evidenceRepository)
+                .claim(
+                    new AccountTenantCreationIntentRepository.Request(
+                        UUID.randomUUID(),
+                        creationOperationId,
+                        UUID.randomUUID(),
+                        account.getAccountUuid(),
+                        "test-game",
+                        "source-game",
+                        "Game",
+                        "controlled source-order test",
+                        reauthentication.evidenceId(),
+                        creatorPartyId,
+                        UUID.randomUUID(),
+                        1,
+                        true)));
 
     UUID issuanceOperationId = UUID.randomUUID();
     String tokenHash =
@@ -756,54 +721,50 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     long operationDeadline = tokenExpiry;
     long cleanupDeadline = tokenExpiry + 300_000;
     long receiptDeadline = operationDeadline + 86_400_000;
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_control_ui_issuance_operations "
-                    + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, authorization_scope, caller_workload, "
-                    + "caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, "
-                    + "issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
-                    + "VALUES (?, ?, ?, ?, NULL, 'ACCOUNT', 'spiffe://test-only/source-order', ?, 'test-mac', ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
-                UUID.randomUUID(),
-                issuanceOperationId,
-                UUID.randomUUID(),
-                account.getAccountUuid(),
-                UUID.randomUUID(),
-                "c".repeat(64),
-                activeRegistry,
-                activeRegistry,
-                activeRegistry,
-                activeRegistry,
-                issuedAt,
-                issuedAt + 300,
-                cleanupDeadline,
-                OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 60), ZoneOffset.UTC)));
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
-                    + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
-                tokenHash,
-                activeRegistry,
-                activeRegistry,
-                issuanceOperationId));
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_control_ui_response_envelopes "
-                    + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
-                    + "SELECT operation_id, ?, ?, recovery_expires_at "
-                    + "FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-                activeRegistry,
-                activeRegistry,
-                issuanceOperationId));
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
-                    + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
-                activeRegistry,
-                issuanceOperationId));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_control_ui_issuance_operations "
+                + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, authorization_scope, caller_workload, "
+                + "caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, "
+                + "issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
+                + "VALUES (?, ?, ?, ?, NULL, 'ACCOUNT', 'spiffe://test-only/source-order', ?, 'test-mac', ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
+            UUID.randomUUID(),
+            issuanceOperationId,
+            UUID.randomUUID(),
+            account.getAccountUuid(),
+            UUID.randomUUID(),
+            "c".repeat(64),
+            activeRegistry,
+            activeRegistry,
+            activeRegistry,
+            activeRegistry,
+            issuedAt,
+            issuedAt + 300,
+            cleanupDeadline,
+            OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 60), ZoneOffset.UTC)));
+    context.tx(() ->
+        context.dsl.execute(
+            "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
+                + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
+            tokenHash,
+            activeRegistry,
+            activeRegistry,
+            issuanceOperationId));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_control_ui_response_envelopes "
+                + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+                + "SELECT operation_id, ?, ?, recovery_expires_at "
+                + "FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+            activeRegistry,
+            activeRegistry,
+            issuanceOperationId));
+    context.tx(() ->
+        context.dsl.execute(
+            "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
+                + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+            activeRegistry,
+            issuanceOperationId));
 
     var admissionBinding =
         new AccountTenantCreationAdmissionBinding(
@@ -823,52 +784,47 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
             preparedAt,
             operationDeadline,
             receiptDeadline);
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_tenant_creation_admission_requests "
-                    + "(creation_operation_id, intent_request_id, issuance_operation_id, actor_account_id, target_namespace, "
-                    + "game_design_creation_request_id, game_design_request_digest, intent_digest, active_registry_digest, "
-                    + "reauthentication_evidence_id, token_hash, token_cleanup_deadline_epoch_millis, token_expires_at_epoch_millis, "
-                    + "prepared_at_epoch_millis, operation_deadline_epoch_millis, receipt_cleanup_deadline_epoch_millis, binding_payload, binding_digest) "
-                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                creationOperationId,
-                intent.requestId(),
-                issuanceOperationId,
-                account.getAccountUuid(),
-                admissionBinding.targetNamespace(),
-                admissionBinding.gameDesignCreationRequestId(),
-                admissionBinding.gameDesignRequestDigest(),
-                admissionBinding.intentDigest(),
-                admissionBinding.activeRegistryDigest(),
-                reauthentication.evidenceId(),
-                tokenHash,
-                cleanupDeadline,
-                tokenExpiry,
-                preparedAt,
-                operationDeadline,
-                receiptDeadline,
-                admissionBinding.canonicalReceipt(),
-                AccountControlUiCoordination.digest(
-                    "SHA-256", admissionBinding.canonicalReceipt())));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_tenant_creation_admission_requests "
+                + "(creation_operation_id, intent_request_id, issuance_operation_id, actor_account_id, target_namespace, "
+                + "game_design_creation_request_id, game_design_request_digest, intent_digest, active_registry_digest, "
+                + "reauthentication_evidence_id, token_hash, token_cleanup_deadline_epoch_millis, token_expires_at_epoch_millis, "
+                + "prepared_at_epoch_millis, operation_deadline_epoch_millis, receipt_cleanup_deadline_epoch_millis, binding_payload, binding_digest) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            creationOperationId,
+            intent.requestId(),
+            issuanceOperationId,
+            account.getAccountUuid(),
+            admissionBinding.targetNamespace(),
+            admissionBinding.gameDesignCreationRequestId(),
+            admissionBinding.gameDesignRequestDigest(),
+            admissionBinding.intentDigest(),
+            admissionBinding.activeRegistryDigest(),
+            reauthentication.evidenceId(),
+            tokenHash,
+            cleanupDeadline,
+            tokenExpiry,
+            preparedAt,
+            operationDeadline,
+            receiptDeadline,
+            admissionBinding.canonicalReceipt(),
+            AccountControlUiCoordination.digest("SHA-256", admissionBinding.canonicalReceipt())));
     // Physical AOF/replica/qualification values are controlled test facts. The private Admitted
     // value is still obtained only by reading the actual V1022 durable rows.
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_tenant_creation_admissions "
-                    + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, "
-                    + "protected_binding_id, qualification_fence) VALUES (?, ?, ?, 1, 1, 'test-stipulated-physical-evidence', 7)",
-                creationOperationId,
-                admissionBinding.canonicalReceipt(),
-                AccountControlUiCoordination.digest(
-                    "SHA-256", admissionBinding.canonicalReceipt())));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_tenant_creation_admissions "
+                + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, "
+                + "protected_binding_id, qualification_fence) VALUES (?, ?, ?, 1, 1, 'test-stipulated-physical-evidence', 7)",
+            creationOperationId,
+            admissionBinding.canonicalReceipt(),
+            AccountControlUiCoordination.digest("SHA-256", admissionBinding.canonicalReceipt())));
     var admitted =
-        context.tx(
-            () ->
-                new AccountTenantCreationAdmissionRepository(context.dsl)
-                    .readAdmitted(creationOperationId)
-                    .orElseThrow());
+        context.tx(() ->
+            new AccountTenantCreationAdmissionRepository(context.dsl)
+                .readAdmitted(creationOperationId)
+                .orElseThrow());
     return new Fixture(account, intent, admitted);
   }
 
@@ -890,16 +846,15 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    transaction.executeWithoutResult(
-        ignored -> {
-          dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
-          dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_current "
-                  + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
-        });
+    transaction.executeWithoutResult(ignored -> {
+      dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
+      dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_current "
+              + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
+    });
     var generations = new AccountAuthorityGenerationRepository(dsl);
     var outbox = new AccountAuthorityOutboxRepository(dsl);
     var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);

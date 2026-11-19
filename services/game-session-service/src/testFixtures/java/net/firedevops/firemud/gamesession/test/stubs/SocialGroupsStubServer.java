@@ -369,11 +369,10 @@ public final class SocialGroupsStubServer implements AutoCloseable {
         friendPresenceResponse.get().getPresencesList().stream()
             .filter(entry -> entry.getFriendAccountId().equals(friendAccountId))
             .findFirst()
-            .orElseGet(
-                () ->
-                    net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry.newBuilder()
-                        .setFriendAccountId(friendAccountId)
-                        .build());
+            .orElseGet(() ->
+                net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry.newBuilder()
+                    .setFriendAccountId(friendAccountId)
+                    .build());
     rosterEntries.put(
         friendAccountId,
         FriendRosterEntry.newBuilder()

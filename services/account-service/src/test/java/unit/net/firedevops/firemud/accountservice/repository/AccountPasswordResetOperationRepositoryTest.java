@@ -45,26 +45,25 @@ class AccountPasswordResetOperationRepositoryTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> receipt("0".repeat(64), "0".repeat(64), "bad-verifier"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountPasswordResetOperationRepository.PasswordResetReceipt(
-                    9L,
-                    ACCOUNT_UUID,
-                    "0".repeat(64),
-                    "PASSWORD_RESET",
-                    "wrong-request-id",
-                    1,
-                    "1".repeat(64),
-                    LocalDateTime.of(2030, 1, 2, 3, 4, 5, 123456789),
-                    "2".repeat(64),
-                    streamKey(),
-                    1L,
-                    "account-password-reset-event-v1:" + "0".repeat(64),
-                    "sha256:" + "3".repeat(64),
-                    2L,
-                    2L,
-                    3L,
-                    3L))
+    assertThatThrownBy(() ->
+            new AccountPasswordResetOperationRepository.PasswordResetReceipt(
+                9L,
+                ACCOUNT_UUID,
+                "0".repeat(64),
+                "PASSWORD_RESET",
+                "wrong-request-id",
+                1,
+                "1".repeat(64),
+                LocalDateTime.of(2030, 1, 2, 3, 4, 5, 123456789),
+                "2".repeat(64),
+                streamKey(),
+                1L,
+                "account-password-reset-event-v1:" + "0".repeat(64),
+                "sha256:" + "3".repeat(64),
+                2L,
+                2L,
+                3L,
+                3L))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(dsl);

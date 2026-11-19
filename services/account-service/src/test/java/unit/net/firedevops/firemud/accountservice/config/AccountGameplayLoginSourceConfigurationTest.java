@@ -66,22 +66,20 @@ class AccountGameplayLoginSourceConfigurationTest {
   void entireGraphIsAbsentByDefaultEvenWithoutOwnerInfrastructure() {
     new ApplicationContextRunner()
         .withUserConfiguration(CONFIGURATIONS)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(AccountGameplayAuthenticateReceiver.class);
-              assertThat(context).doesNotHaveBean(AccountGameplayDelegationSigner.class);
-              assertThat(context).doesNotHaveBean(AccountJwtJwksApiBinding.class);
-              assertThat(context).doesNotHaveBean(AccountGameplayDelegationRedisClient.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(AccountGameplayAuthenticateReceiver.class);
+          assertThat(context).doesNotHaveBean(AccountGameplayDelegationSigner.class);
+          assertThat(context).doesNotHaveBean(AccountJwtJwksApiBinding.class);
+          assertThat(context).doesNotHaveBean(AccountGameplayDelegationRedisClient.class);
+        });
     new ApplicationContextRunner()
         .withUserConfiguration(CONFIGURATIONS)
         .withPropertyValues("firemud.account.gameplay-login.enabled=false")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(AccountGameplayAuthenticateReceiver.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(AccountGameplayAuthenticateReceiver.class);
+        });
   }
 
   @Test
@@ -107,76 +105,71 @@ class AccountGameplayLoginSourceConfigurationTest {
       redisFactory.when(() -> RedisClient.create(any(RedisURI.class))).thenReturn(client);
       enabledContext()
           .withPropertyValues("firemud.account.public-jwks-read.enabled=true")
-          .run(
-              context -> {
-                assertThat(context).hasNotFailed();
-                for (Class<?> owner :
-                    List.of(
-                        AccountAuthEvidenceBundleRepository.class,
-                        AccountGameplayDelegationIssuanceRepository.class,
-                        AccountGameplayDelegationResponseEnvelopeRepository.class,
-                        AccountGameplayDelegationResponseEnvelopeService.class,
-                        AccountJwtJwksConfigMapClient.class,
-                        AccountJwtJwksTrustedSource.class,
-                        AccountGameplayDelegationSigner.class,
-                        AccountGameplayDelegationRedisClient.class,
-                        AccountGameplayDelegationAuthorityProjection.class,
-                        AccountGameplayDelegationTokenRegistry.class,
-                        AccountGameplayDelegationIssuanceCommitService.class,
-                        AccountGameplayDelegationCommittedIssuanceOwner.class,
-                        AccountGameplayDelegationResponseRecoveryOwner.class,
-                        AccountGameplayAuthenticateReceiver.class)) {
-                  assertThat(context).hasSingleBean(owner);
-                }
+          .run(context -> {
+            assertThat(context).hasNotFailed();
+            for (Class<?> owner :
+                List.of(
+                    AccountAuthEvidenceBundleRepository.class,
+                    AccountGameplayDelegationIssuanceRepository.class,
+                    AccountGameplayDelegationResponseEnvelopeRepository.class,
+                    AccountGameplayDelegationResponseEnvelopeService.class,
+                    AccountJwtJwksConfigMapClient.class,
+                    AccountJwtJwksTrustedSource.class,
+                    AccountGameplayDelegationSigner.class,
+                    AccountGameplayDelegationRedisClient.class,
+                    AccountGameplayDelegationAuthorityProjection.class,
+                    AccountGameplayDelegationTokenRegistry.class,
+                    AccountGameplayDelegationIssuanceCommitService.class,
+                    AccountGameplayDelegationCommittedIssuanceOwner.class,
+                    AccountGameplayDelegationResponseRecoveryOwner.class,
+                    AccountGameplayAuthenticateReceiver.class)) {
+              assertThat(context).hasSingleBean(owner);
+            }
 
-                var issuance = context.getBean(AccountGameplayDelegationIssuanceRepository.class);
-                var signer = context.getBean(AccountGameplayDelegationSigner.class);
-                var commits = context.getBean(AccountGameplayDelegationIssuanceCommitService.class);
-                var recovery =
-                    context.getBean(AccountGameplayDelegationResponseRecoveryOwner.class);
-                var registry = context.getBean(AccountGameplayDelegationTokenRegistry.class);
-                var envelopes =
-                    context.getBean(AccountGameplayDelegationResponseEnvelopeRepository.class);
-                assertThat(ReflectionTestUtils.getField(signer, "issuanceRepository"))
-                    .isSameAs(issuance);
-                assertThat(ReflectionTestUtils.getField(commits, "signer")).isSameAs(signer);
-                assertThat(ReflectionTestUtils.getField(commits, "tokenRegistry"))
-                    .isSameAs(registry);
-                assertThat(ReflectionTestUtils.getField(recovery, "responseEnvelopes"))
-                    .isSameAs(envelopes);
-                assertThat(ReflectionTestUtils.getField(envelopes, "responseCryptography"))
-                    .isSameAs(context.getBean("accountResponseEnvelopeCryptography"));
-                var receiver = context.getBean(AccountGameplayAuthenticateReceiver.class);
-                var login = ReflectionTestUtils.getField(receiver, "owner");
-                assertThat(ReflectionTestUtils.getField(login, "commitOwner")).isSameAs(commits);
-                assertThat(ReflectionTestUtils.getField(login, "responseOwner")).isSameAs(recovery);
-                assertThat(ReflectionTestUtils.getField(receiver, "expectedWorkload"))
-                    .isEqualTo("spiffe://firemud/ns/test/sa/game-session-service");
-                assertThat(context.getBean(AcknowledgementRequirements.class))
-                    .isEqualTo(new AcknowledgementRequirements(1, 2, 900));
-                var catalog =
-                    (RedisScriptCatalog)
-                        ReflectionTestUtils.getField(
-                            context.getBean(AccountGameplayDelegationRedisClient.class),
-                            "scriptCatalog");
-                assertThat(catalog).isNotNull();
-                assertThat(catalog.require(AccountGenerationProjectionRedisContract.SCRIPT_ID))
-                    .isEqualTo(AccountGenerationProjectionRedisContract.descriptor());
-                assertThat(
-                        catalog.require(AccountGameplayDelegationRedisClient.SCRIPT_ID).principal())
-                    .isEqualTo("account_coord_app");
-                assertThat(
-                        catalog
-                            .require(
-                                AccountGameplayDelegationRedisClient
-                                    .INITIAL_LOGIN_DISPOSAL_SCRIPT_ID)
-                            .principal())
-                    .isEqualTo("account_coord_app");
-                assertThat(apiConstruction.constructed()).hasSize(1);
-                verifyNoInteractions(context.getBean(DSLContext.class));
-                verifyNoInteractions(context.getBean(AccountServiceImpl.class));
-                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
-              });
+            var issuance = context.getBean(AccountGameplayDelegationIssuanceRepository.class);
+            var signer = context.getBean(AccountGameplayDelegationSigner.class);
+            var commits = context.getBean(AccountGameplayDelegationIssuanceCommitService.class);
+            var recovery = context.getBean(AccountGameplayDelegationResponseRecoveryOwner.class);
+            var registry = context.getBean(AccountGameplayDelegationTokenRegistry.class);
+            var envelopes =
+                context.getBean(AccountGameplayDelegationResponseEnvelopeRepository.class);
+            assertThat(ReflectionTestUtils.getField(signer, "issuanceRepository"))
+                .isSameAs(issuance);
+            assertThat(ReflectionTestUtils.getField(commits, "signer")).isSameAs(signer);
+            assertThat(ReflectionTestUtils.getField(commits, "tokenRegistry")).isSameAs(registry);
+            assertThat(ReflectionTestUtils.getField(recovery, "responseEnvelopes"))
+                .isSameAs(envelopes);
+            assertThat(ReflectionTestUtils.getField(envelopes, "responseCryptography"))
+                .isSameAs(context.getBean("accountResponseEnvelopeCryptography"));
+            var receiver = context.getBean(AccountGameplayAuthenticateReceiver.class);
+            var login = ReflectionTestUtils.getField(receiver, "owner");
+            assertThat(ReflectionTestUtils.getField(login, "commitOwner")).isSameAs(commits);
+            assertThat(ReflectionTestUtils.getField(login, "responseOwner")).isSameAs(recovery);
+            assertThat(ReflectionTestUtils.getField(receiver, "expectedWorkload"))
+                .isEqualTo("spiffe://firemud/ns/test/sa/game-session-service");
+            assertThat(context.getBean(AcknowledgementRequirements.class))
+                .isEqualTo(new AcknowledgementRequirements(1, 2, 900));
+            var catalog =
+                (RedisScriptCatalog)
+                    ReflectionTestUtils.getField(
+                        context.getBean(AccountGameplayDelegationRedisClient.class),
+                        "scriptCatalog");
+            assertThat(catalog).isNotNull();
+            assertThat(catalog.require(AccountGenerationProjectionRedisContract.SCRIPT_ID))
+                .isEqualTo(AccountGenerationProjectionRedisContract.descriptor());
+            assertThat(catalog.require(AccountGameplayDelegationRedisClient.SCRIPT_ID).principal())
+                .isEqualTo("account_coord_app");
+            assertThat(
+                    catalog
+                        .require(
+                            AccountGameplayDelegationRedisClient.INITIAL_LOGIN_DISPOSAL_SCRIPT_ID)
+                        .principal())
+                .isEqualTo("account_coord_app");
+            assertThat(apiConstruction.constructed()).hasSize(1);
+            verifyNoInteractions(context.getBean(DSLContext.class));
+            verifyNoInteractions(context.getBean(AccountServiceImpl.class));
+            verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+          });
       var options = ArgumentCaptor.forClass(ClientOptions.class);
       verify(client).setOptions(options.capture());
       assertThat(options.getValue().isAutoReconnect()).isFalse();
@@ -199,35 +192,32 @@ class AccountGameplayLoginSourceConfigurationTest {
       redisFactory.when(() -> RedisClient.create(any(RedisURI.class))).thenReturn(client);
       enabledContext()
           .withPropertyValues("firemud.account.gameplay-login.request-digest-keyring-path=")
-          .run(
-              context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .hasRootCauseInstanceOf(IllegalArgumentException.class)
-                    .hasRootCauseMessage("Protected Account gameplay LOGIN configuration required");
-                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
-              });
+          .run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage("Protected Account gameplay LOGIN configuration required");
+            verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+          });
       enabledContext()
           .withPropertyValues("firemud.account.response-envelope.keyring-path=")
-          .run(
-              context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .hasRootCauseInstanceOf(IllegalArgumentException.class)
-                    .hasRootCauseMessage("Protected Account gameplay LOGIN configuration required");
-                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
-              });
+          .run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage("Protected Account gameplay LOGIN configuration required");
+            verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+          });
       enabledContext()
           .withPropertyValues(
               "firemud.account.gameplay-login.registry-cleanup-margin-millis=300001")
-          .run(
-              context -> {
-                assertThat(context).hasFailed();
-                assertThat(context.getStartupFailure())
-                    .hasRootCauseInstanceOf(IllegalArgumentException.class)
-                    .hasRootCauseMessage("Registry cleanup margin is outside its finite bound");
-                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
-              });
+          .run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage("Registry cleanup margin is outside its finite bound");
+            verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+          });
       assertThat(apiConstruction.constructed()).isNotEmpty();
       verify(client, never()).connect(ByteArrayCodec.INSTANCE);
     }

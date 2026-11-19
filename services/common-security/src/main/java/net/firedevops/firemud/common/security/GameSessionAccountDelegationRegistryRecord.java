@@ -599,35 +599,32 @@ public final class GameSessionAccountDelegationRegistryRecord {
   private static Map<String, Object> requireObject(Object value, String field) {
     if (!(value instanceof Map<?, ?> map)) throw invalid(field + " must be an object");
     Map<String, Object> result = new LinkedHashMap<>();
-    map.forEach(
-        (key, item) -> {
-          if (!(key instanceof String name) || item == null || result.put(name, item) != null) {
-            throw invalid(field + " contains an invalid member");
-          }
-        });
+    map.forEach((key, item) -> {
+      if (!(key instanceof String name) || item == null || result.put(name, item) != null) {
+        throw invalid(field + " contains an invalid member");
+      }
+    });
     return result;
   }
 
   private static Map<String, Object> immutableMap(Map<String, Object> input) {
     Map<String, Object> copy = new LinkedHashMap<>();
-    input.forEach(
-        (key, value) -> {
-          if (key == null || value == null) throw invalid("Null registry field is forbidden");
-          copy.put(key, deepImmutable(value));
-        });
+    input.forEach((key, value) -> {
+      if (key == null || value == null) throw invalid("Null registry field is forbidden");
+      copy.put(key, deepImmutable(value));
+    });
     return Map.copyOf(copy);
   }
 
   private static Object deepImmutable(Object value) {
     if (value instanceof Map<?, ?> map) {
       Map<String, Object> nested = new LinkedHashMap<>();
-      map.forEach(
-          (key, item) -> {
-            if (!(key instanceof String name) || item == null) {
-              throw invalid("Null or invalid nested registry field is forbidden");
-            }
-            nested.put(name, deepImmutable(item));
-          });
+      map.forEach((key, item) -> {
+        if (!(key instanceof String name) || item == null) {
+          throw invalid("Null or invalid nested registry field is forbidden");
+        }
+        nested.put(name, deepImmutable(item));
+      });
       return Map.copyOf(nested);
     }
     if (value instanceof List<?> list) {

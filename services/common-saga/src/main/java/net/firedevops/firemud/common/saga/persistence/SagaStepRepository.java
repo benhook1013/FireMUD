@@ -62,17 +62,16 @@ public class SagaStepRepository {
         .from(sagaStep)
         .where(INSTANCE_ID.eq(instanceId))
         .orderBy(ID.asc())
-        .fetch(
-            record -> {
-              SagaStep entity = new SagaStep();
-              entity.setId(record.get(ID));
-              entity.setInstanceId(record.get(INSTANCE_ID));
-              entity.setName(record.get(NAME));
-              entity.setStatus(record.get(STATUS));
-              entity.setAttempt(record.get(ATTEMPT) == null ? 0 : record.get(ATTEMPT));
-              entity.setCreatedAt(JooqPersistenceSupport.toInstant(record.get(CREATED_AT)));
-              entity.setUpdatedAt(JooqPersistenceSupport.toInstant(record.get(UPDATED_AT)));
-              return entity;
-            });
+        .fetch(record -> {
+          SagaStep entity = new SagaStep();
+          entity.setId(record.get(ID));
+          entity.setInstanceId(record.get(INSTANCE_ID));
+          entity.setName(record.get(NAME));
+          entity.setStatus(record.get(STATUS));
+          entity.setAttempt(record.get(ATTEMPT) == null ? 0 : record.get(ATTEMPT));
+          entity.setCreatedAt(JooqPersistenceSupport.toInstant(record.get(CREATED_AT)));
+          entity.setUpdatedAt(JooqPersistenceSupport.toInstant(record.get(UPDATED_AT)));
+          return entity;
+        });
   }
 }

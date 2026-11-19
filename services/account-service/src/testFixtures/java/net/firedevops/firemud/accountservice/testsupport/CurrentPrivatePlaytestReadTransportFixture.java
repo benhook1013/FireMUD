@@ -49,10 +49,8 @@ public final class CurrentPrivatePlaytestReadTransportFixture implements AutoClo
   private final AtomicBoolean finiteDeadline = new AtomicBoolean();
   private final AtomicReference<Function<Request, ReadCurrentPrivatePlaytestLifecycleResponse>>
       responder =
-          new AtomicReference<>(
-              request ->
-                  CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(
-                      request, Optional.empty()));
+          new AtomicReference<>(request ->
+              CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(request, Optional.empty()));
 
   public static LoopbackMtlsTestPki.Pki createPki(Path directory) throws Exception {
     return LoopbackMtlsTestPki.create(

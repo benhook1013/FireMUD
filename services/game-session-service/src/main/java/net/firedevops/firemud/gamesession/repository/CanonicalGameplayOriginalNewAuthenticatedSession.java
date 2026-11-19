@@ -265,13 +265,12 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
           || !CONTINUITY_PLACEHOLDER.equals(requiredText(root, "continuityBindingExpiresAt")))
         throw invalid();
       root.propertyNames()
-          .forEach(
-              name -> {
-                if (!name.equals("admissionAt") && !name.equals("continuityBindingExpiresAt")) {
-                  JsonNode value = root.get(name);
-                  if (containsPlaceholder(value)) throw invalid();
-                }
-              });
+          .forEach(name -> {
+            if (!name.equals("admissionAt") && !name.equals("continuityBindingExpiresAt")) {
+              JsonNode value = root.get(name);
+              if (containsPlaceholder(value)) throw invalid();
+            }
+          });
     } catch (RuntimeException malformed) {
       throw invalid();
     }

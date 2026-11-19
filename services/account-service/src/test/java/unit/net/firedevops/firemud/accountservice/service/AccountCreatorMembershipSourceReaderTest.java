@@ -53,9 +53,8 @@ class AccountCreatorMembershipSourceReaderTest {
 
   @Test
   void requiresWritableOwnerTransactionBeforeReadingOrEnrollingAnything() {
-    assertThatThrownBy(
-            () ->
-                reader.readFreshNeverJoinedMembershipSnapshot(UUID.randomUUID(), UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            reader.readFreshNeverJoinedMembershipSnapshot(UUID.randomUUID(), UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(
         accounts,

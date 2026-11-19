@@ -108,16 +108,15 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
         CanonicalGameplayRosterRecoveryEvidence.response(
             request, UUID.randomUUID(), 1, UUID.randomUUID(), null);
     when(recovery.recover(request))
-        .thenAnswer(
-            ignored -> {
-              assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()).isNotNull();
-              assertThat(
-                      CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()
-                          .isService("game-session-service"))
-                  .isTrue();
-              assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
-              return expected;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()).isNotNull();
+          assertThat(
+                  CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()
+                      .isService("game-session-service"))
+              .isTrue();
+          assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+          return expected;
+        });
     start();
     var channel = channel("gs");
     try {
@@ -137,16 +136,14 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
     for (String alias : new String[] {"foreign", "account"}) {
       var channel = channel(alias);
       try {
-        assertThatThrownBy(
-                () ->
-                    CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
-                        .withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .recoverOriginalSelection(request()))
+        assertThatThrownBy(() ->
+                CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                    .withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .recoverOriginalSelection(request()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       } finally {
         close(channel);
       }
@@ -161,16 +158,14 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
     start();
     var channel = channel("gs");
     try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .recoverOriginalSelection(request()))
+      assertThatThrownBy(() ->
+              CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .recoverOriginalSelection(request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
     } finally {
       close(channel);
     }
@@ -187,19 +182,16 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
     start();
     var channel = channel("gs");
     try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .recoverOriginalSelection(request()))
+      assertThatThrownBy(() ->
+              CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .recoverOriginalSelection(request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure -> {
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE);
-                assertThat(Status.fromThrowable(failure).getDescription())
-                    .isEqualTo("Original selection recovery unavailable");
-              });
+          .satisfies(failure -> {
+            assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+            assertThat(Status.fromThrowable(failure).getDescription())
+                .isEqualTo("Original selection recovery unavailable");
+          });
     } finally {
       close(channel);
     }
@@ -214,16 +206,14 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
     start();
     var channel = channel("gs");
     try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .recoverOriginalSelection(malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .recoverOriginalSelection(malformed))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.INVALID_ARGUMENT));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.INVALID_ARGUMENT));
     } finally {
       close(channel);
     }
@@ -251,9 +241,8 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
   void authenticatedOwnerRecoveryMismatchUsesActualClientAndReturnsConflictBeforeSql()
       throws Exception {
     var request = request();
-    startOwner(
-        original ->
-            owner(request).toBuilder().setRecoveryUuid(UUID.randomUUID().toString()).build());
+    startOwner(original ->
+        owner(request).toBuilder().setRecoveryUuid(UUID.randomUUID().toString()).build());
     var repository = mock(CanonicalGameplayRosterRetentionRepository.class);
     var transactions = mock(TransactionOperations.class);
     try (var ownerClient = ownerClient()) {
@@ -277,12 +266,11 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
     // real.
     var repository = mock(CanonicalGameplayRosterRetentionRepository.class);
     when(repository.closeAdmission(request, owner, policy()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
-              throw new IllegalArgumentException("Invalid retained original roster receipt");
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
+          throw new IllegalArgumentException("Invalid retained original roster receipt");
+        });
     try (var ownerClient = ownerClient()) {
       ownerClient.init();
       start(
@@ -323,11 +311,10 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
       CanonicalGameplayRosterRecoveryRequest request, Status.Code expected) throws Exception {
     var channel = channel("gs");
     try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .recoverOriginalSelection(request))
+      assertThatThrownBy(() ->
+              CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .recoverOriginalSelection(request))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));

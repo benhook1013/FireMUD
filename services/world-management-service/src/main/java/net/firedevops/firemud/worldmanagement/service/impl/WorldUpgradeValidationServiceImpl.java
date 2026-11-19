@@ -57,10 +57,9 @@ public class WorldUpgradeValidationServiceImpl implements WorldUpgradeValidation
     var worldInstance =
         worldInstanceRepository
             .findByTenantIdAndGameInstanceId(tenantId, sourceGameInstanceId)
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "NOT_FOUND: world instance not found for source game instance"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "NOT_FOUND: world instance not found for source game instance"));
     long regionCount =
         regionInstanceRepository.countByTenantIdAndGameInstanceId(tenantId, sourceGameInstanceId);
     long zoneCount =

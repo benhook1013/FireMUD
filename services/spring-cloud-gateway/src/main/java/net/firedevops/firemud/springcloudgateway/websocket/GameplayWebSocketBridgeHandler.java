@@ -157,12 +157,11 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
             .onErrorResume(
                 GameplayBridgeTerminalCloseException.class,
                 terminal -> closeDownstream(state, terminal.closeClassification()))
-            .doFinally(
-                signal -> {
-                  state.downstreamClosed.set(true);
-                  state.inboundToUpstream.tryEmitComplete();
-                  state.outboundToClient.tryEmitComplete();
-                });
+            .doFinally(signal -> {
+              state.downstreamClosed.set(true);
+              state.inboundToUpstream.tryEmitComplete();
+              state.outboundToClient.tryEmitComplete();
+            });
 
     Mono<Void> upstreamLoop = connectWithRetry(downstream, upstreamConnector, state, 0);
     return Mono.when(downstreamSend, downstreamReceive, upstreamLoop)
@@ -255,9 +254,8 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                     downstream.getId());
               }
               return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
-                  .flatMap(
-                      ignored ->
-                          connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
+                  .flatMap(ignored ->
+                      connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
             })
         .onErrorResume(
             GameplayBridgeTerminalCloseException.class,
@@ -380,36 +378,32 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                   state.outboundToClient.tryEmitComplete();
                   return Mono.defer(() -> state.downstream.close(closeClassification.status()))
                       .timeout(DOWNSTREAM_CLOSE_TIMEOUT)
-                      .doOnSuccess(
-                          unused -> {
-                            gameplayWebSocketObservability.recordClose(closeClassification);
-                            try (RuntimeLoggingContext ignored =
-                                openLoggingContext(state.downstream)) {
-                              LOG.info(
-                                  "Gameplay websocket closed reason={} subreason={} bridge_shutdown_class={} code={}",
-                                  closeClassification.reason(),
-                                  closeClassification.subreason(),
-                                  closeClassification.bridgeShutdownClass(),
-                                  closeClassification.status().getCode());
-                            }
-                          })
-                      .doOnError(
-                          error -> {
-                            GameplayWebSocketObservability.CloseClassification failedClose =
-                                closeClassification.asUnattributedFailure();
-                            gameplayWebSocketObservability.recordClose(failedClose);
-                            try (RuntimeLoggingContext ignored =
-                                openLoggingContext(state.downstream)) {
-                              LOG.warn(
-                                  "Gameplay websocket close failed reason={} subreason={} bridge_shutdown_class={} code={} error={}",
-                                  failedClose.reason(),
-                                  failedClose.subreason(),
-                                  failedClose.bridgeShutdownClass(),
-                                  failedClose.status().getCode(),
-                                  error.getMessage(),
-                                  error);
-                            }
-                          });
+                      .doOnSuccess(unused -> {
+                        gameplayWebSocketObservability.recordClose(closeClassification);
+                        try (RuntimeLoggingContext ignored = openLoggingContext(state.downstream)) {
+                          LOG.info(
+                              "Gameplay websocket closed reason={} subreason={} bridge_shutdown_class={} code={}",
+                              closeClassification.reason(),
+                              closeClassification.subreason(),
+                              closeClassification.bridgeShutdownClass(),
+                              closeClassification.status().getCode());
+                        }
+                      })
+                      .doOnError(error -> {
+                        GameplayWebSocketObservability.CloseClassification failedClose =
+                            closeClassification.asUnattributedFailure();
+                        gameplayWebSocketObservability.recordClose(failedClose);
+                        try (RuntimeLoggingContext ignored = openLoggingContext(state.downstream)) {
+                          LOG.warn(
+                              "Gameplay websocket close failed reason={} subreason={} bridge_shutdown_class={} code={} error={}",
+                              failedClose.reason(),
+                              failedClose.subreason(),
+                              failedClose.bridgeShutdownClass(),
+                              failedClose.status().getCode(),
+                              error.getMessage(),
+                              error);
+                        }
+                      });
                 })
             .cache();
     if (state.closeOperation.compareAndSet(null, closeOperation)) {
@@ -459,13 +453,12 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   private HttpHeaders buildUpstreamHeaders(WebSocketSession downstream) {
     HttpHeaders headers = new HttpHeaders();
     HttpHeaders source = downstream.getHandshakeInfo().getHeaders();
-    FORWARDED_HEADERS.forEach(
-        name -> {
-          String value = source.getFirst(name);
-          if (StringUtils.hasText(value)) {
-            headers.set(name, value);
-          }
-        });
+    FORWARDED_HEADERS.forEach(name -> {
+      String value = source.getFirst(name);
+      if (StringUtils.hasText(value)) {
+        headers.set(name, value);
+      }
+    });
     if (!StringUtils.hasText(headers.getFirst(TRANSPORT_SESSION_HEADER))) {
       headers.set(
           TRANSPORT_SESSION_HEADER, Long.toUnsignedString(stablePositiveLong(downstream.getId())));

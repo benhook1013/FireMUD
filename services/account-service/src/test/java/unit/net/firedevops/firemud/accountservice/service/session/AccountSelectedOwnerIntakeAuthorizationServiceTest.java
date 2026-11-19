@@ -102,11 +102,10 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
             eq(current),
             eq("test"),
             any(Runnable.class)))
-        .thenAnswer(
-            invocation -> {
-              invocation.<Runnable>getArgument(5).run();
-              return scope;
-            });
+        .thenAnswer(invocation -> {
+          invocation.<Runnable>getArgument(5).run();
+          return scope;
+        });
     when(repository.recoverSourceRead(scope))
         .thenReturn(
             recovery(scope, AccountSelectedOwnerIntakeSourceReservationRepository.State.RESERVED));
@@ -115,11 +114,10 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
             argThat(candidate -> sameContent(candidate, content)),
             eq(current),
             any(Runnable.class)))
-        .thenAnswer(
-            invocation -> {
-              invocation.<Runnable>getArgument(3).run();
-              return binding;
-            });
+        .thenAnswer(invocation -> {
+          invocation.<Runnable>getArgument(3).run();
+          return binding;
+        });
     doAnswer(
             invocation -> {
               Function<AccountControlUiActorService.Current, ?> action = invocation.getArgument(3);
@@ -244,26 +242,24 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
     when(sources.read(any(SelectedOwnerIntakeSourceReadEvidence.Request.class)))
         .thenReturn(content(substitutedScope, "substituted"));
 
-    assertThatThrownBy(
-            () ->
-                asPeerResult(
-                    "test",
-                    "game-design-service",
-                    () ->
-                        service.authorizeWithEnvironmentCapture(
-                            TOKEN,
-                            selected.requestId(),
-                            Owner.ENTITY_MANAGEMENT,
-                            selected,
-                            () -> {
-                              captures.incrementAndGet();
-                              return environment;
-                            })))
+    assertThatThrownBy(() ->
+            asPeerResult(
+                "test",
+                "game-design-service",
+                () ->
+                    service.authorizeWithEnvironmentCapture(
+                        TOKEN,
+                        selected.requestId(),
+                        Owner.ENTITY_MANAGEMENT,
+                        selected,
+                        () -> {
+                          captures.incrementAndGet();
+                          return environment;
+                        })))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     assertThat(captures.get()).isEqualTo(1);
     verify(repository)
@@ -304,23 +300,21 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
         .withCurrent(
             eq(TOKEN), eq(TENANT), any(CapturedEnvironmentBoundary.class), any(Function.class));
 
-    assertThatThrownBy(
-            () ->
-                asPeerResult(
-                    "test",
-                    "game-design-service",
-                    () ->
-                        service.authorizeWithEnvironmentCapture(
-                            TOKEN,
-                            selected.requestId(),
-                            Owner.ENTITY_MANAGEMENT,
-                            selected,
-                            () -> environment)))
+    assertThatThrownBy(() ->
+            asPeerResult(
+                "test",
+                "game-design-service",
+                () ->
+                    service.authorizeWithEnvironmentCapture(
+                        TOKEN,
+                        selected.requestId(),
+                        Owner.ENTITY_MANAGEMENT,
+                        selected,
+                        () -> environment)))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.PERMISSION_DENIED));
 
     assertThat(actorCalls.get()).isEqualTo(2);
     verify(sources).read(any(SelectedOwnerIntakeSourceReadEvidence.Request.class));
@@ -344,11 +338,10 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
             argThat(candidate -> sameContent(candidate, content)),
             eq(current),
             any(Runnable.class)))
-        .thenAnswer(
-            invocation -> {
-              invocation.<Runnable>getArgument(3).run();
-              throw new IllegalStateException("final commit acknowledgement lost");
-            });
+        .thenAnswer(invocation -> {
+          invocation.<Runnable>getArgument(3).run();
+          throw new IllegalStateException("final commit acknowledgement lost");
+        });
     when(repository.findFinalAuthorization(scope)).thenReturn(Optional.of(binding));
 
     var result =
@@ -390,23 +383,20 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
         .thenThrow(
             Status.UNAVAILABLE.withDescription("source read outcome unknown").asRuntimeException());
 
-    assertThatThrownBy(
-            () ->
-                asPeerResult(
-                    "test",
-                    "game-design-service",
-                    () ->
-                        service.authorizeWithEnvironmentCapture(
-                            TOKEN,
-                            selected.requestId(),
-                            Owner.ENTITY_MANAGEMENT,
-                            selected,
-                            () -> environment)))
+    assertThatThrownBy(() ->
+            asPeerResult(
+                "test",
+                "game-design-service",
+                () ->
+                    service.authorizeWithEnvironmentCapture(
+                        TOKEN,
+                        selected.requestId(),
+                        Owner.ENTITY_MANAGEMENT,
+                        selected,
+                        () -> environment)))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
 
     verify(repository)
         .reserveSourceRead(
@@ -451,28 +441,26 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
           downstreamCode == Status.Code.FAILED_PRECONDITION
               ? Status.Code.FAILED_PRECONDITION
               : Status.Code.UNAVAILABLE;
-      assertThatThrownBy(
-              () ->
-                  asPeerResult(
-                      "test",
-                      "game-design-service",
-                      () ->
-                          service.authorizeWithEnvironmentCapture(
-                              TOKEN,
-                              selected.requestId(),
-                              Owner.ENTITY_MANAGEMENT,
-                              selected,
-                              () -> environment)))
+      assertThatThrownBy(() ->
+              asPeerResult(
+                  "test",
+                  "game-design-service",
+                  () ->
+                      service.authorizeWithEnvironmentCapture(
+                          TOKEN,
+                          selected.requestId(),
+                          Owner.ENTITY_MANAGEMENT,
+                          selected,
+                          () -> environment)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure -> {
-                StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
-                assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
-                assertThat(statusFailure.getStatus().getDescription())
-                    .isEqualTo("Game Design selected-owner source content is unavailable");
-                assertThat(statusFailure.getCause()).isNull();
-                assertThat(statusFailure.getTrailers()).isNull();
-              });
+          .satisfies(failure -> {
+            StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+            assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
+            assertThat(statusFailure.getStatus().getDescription())
+                .isEqualTo("Game Design selected-owner source content is unavailable");
+            assertThat(statusFailure.getCause()).isNull();
+            assertThat(statusFailure.getTrailers()).isNull();
+          });
 
       verify(repository)
           .reserveSourceRead(
@@ -539,11 +527,10 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
             eq(current),
             eq("test"),
             any(Runnable.class)))
-        .thenAnswer(
-            invocation -> {
-              invocation.<Runnable>getArgument(5).run();
-              return scope;
-            });
+        .thenAnswer(invocation -> {
+          invocation.<Runnable>getArgument(5).run();
+          return scope;
+        });
     when(repository.recoverSourceRead(scope))
         .thenReturn(
             recovery(scope, AccountSelectedOwnerIntakeSourceReservationRepository.State.RESERVED));

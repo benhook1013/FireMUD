@@ -57,15 +57,14 @@ class AccountJwtJwksConfigMapClientTest {
             ApiCall.READ_TARGET_NAMESPACE,
             ApiCall.READ_JWKS_CONFIG_MAP);
     assertThat(api.calls)
-        .allMatch(
-            call ->
-                Set.of(
-                        ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL,
-                        ApiCall.READ_KUBE_SYSTEM_NAMESPACE,
-                        ApiCall.READ_TARGET_NAMESPACE,
-                        ApiCall.READ_JWKS_CONFIG_MAP,
-                        ApiCall.PATCH_JWKS_CONFIG_MAP)
-                    .contains(call));
+        .allMatch(call ->
+            Set.of(
+                    ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL,
+                    ApiCall.READ_KUBE_SYSTEM_NAMESPACE,
+                    ApiCall.READ_TARGET_NAMESPACE,
+                    ApiCall.READ_JWKS_CONFIG_MAP,
+                    ApiCall.PATCH_JWKS_CONFIG_MAP)
+                .contains(call));
   }
 
   @org.junit.jupiter.api.Test
@@ -259,10 +258,8 @@ class AccountJwtJwksConfigMapClientTest {
             AccountJwtJwksConfigMapClient.GENERATION_DATA_KEY,
             marker("op-private"));
 
-    assertThatThrownBy(
-            () ->
-                client(api)
-                    .publish(new ConfigMapSnapshot(CONFIG_MAP_UID, "41", Map.of()), privateJwks))
+    assertThatThrownBy(() ->
+            client(api).publish(new ConfigMapSnapshot(CONFIG_MAP_UID, "41", Map.of()), privateJwks))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account public JWKS contains private material");
 
@@ -399,11 +396,10 @@ class AccountJwtJwksConfigMapClientTest {
   @org.junit.jupiter.api.Test
   void jwksConfigMapAccessHasNoSecretListCreateOrDeleteCapability() {
     assertThat(ApiCall.values())
-        .noneMatch(
-            call ->
-                call.name().contains("SECRET")
-                    || call.name().contains("CREATE")
-                    || call.name().contains("DELETE"));
+        .noneMatch(call ->
+            call.name().contains("SECRET")
+                || call.name().contains("CREATE")
+                || call.name().contains("DELETE"));
     assertThat(ApiCall.values())
         .filteredOn(call -> call.name().contains("JWKS_CONFIG_MAP"))
         .containsExactly(ApiCall.READ_JWKS_CONFIG_MAP, ApiCall.PATCH_JWKS_CONFIG_MAP);

@@ -59,9 +59,8 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
         "not a URI containing secret"
       })
   void refusesMissingAmbiguousOrWeakerUriWithoutRetainingCredentialCauses(String uri) {
-    assertThatThrownBy(
-            () ->
-                AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(uri, 500))
+    assertThatThrownBy(() ->
+            AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(uri, 500))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected Account gameplay LOGIN configuration required")
         .hasNoCause();
@@ -70,11 +69,9 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
   @ParameterizedTest
   @ValueSource(ints = {0, -1, 60_001})
   void commandDeadlineMustBeExplicitAndBounded(int timeout) {
-    assertThatThrownBy(
-            () ->
-                AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
-                    "rediss://account_coord_app:secret@coordination.example.invalid:6380/0",
-                    timeout))
+    assertThatThrownBy(() ->
+            AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
+                "rediss://account_coord_app:secret@coordination.example.invalid:6380/0", timeout))
         .isInstanceOf(IllegalArgumentException.class)
         .hasNoCause();
   }
@@ -105,10 +102,9 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
               new AccountProtectedJwksSourceConfiguration()
                   .accountPublicJwksApiBinding(trust, API_PATH, "test"))
           .isSameAs(construction.constructed().getFirst());
-      assertThatThrownBy(
-              () ->
-                  new AccountProtectedJwksSourceConfiguration()
-                      .accountPublicJwksApiBinding(trust, API_PATH, "other"))
+      assertThatThrownBy(() ->
+              new AccountProtectedJwksSourceConfiguration()
+                  .accountPublicJwksApiBinding(trust, API_PATH, "other"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasNoCause();
     }
@@ -117,10 +113,9 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
             AccountJwtJwksApiBinding.class,
             (api, context) ->
                 when(api.current()).thenReturn(apiBinding("test", "other-cluster")))) {
-      assertThatThrownBy(
-              () ->
-                  new AccountProtectedJwksSourceConfiguration()
-                      .accountPublicJwksApiBinding(trust, API_PATH, "test"))
+      assertThatThrownBy(() ->
+              new AccountProtectedJwksSourceConfiguration()
+                  .accountPublicJwksApiBinding(trust, API_PATH, "test"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasNoCause();
       assertThat(construction.constructed()).hasSize(1);
@@ -132,10 +127,9 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
     var trust = mock(AccountJwtSignerMaterializerTrustBinding.class);
     when(trust.current()).thenReturn(Optional.empty());
     try (var construction = mockConstruction(AccountJwtJwksApiBinding.class)) {
-      assertThatThrownBy(
-              () ->
-                  new AccountProtectedJwksSourceConfiguration()
-                      .accountPublicJwksApiBinding(trust, API_PATH, "test"))
+      assertThatThrownBy(() ->
+              new AccountProtectedJwksSourceConfiguration()
+                  .accountPublicJwksApiBinding(trust, API_PATH, "test"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasNoCause();
       assertThat(construction.constructed()).hasSize(1);
@@ -147,23 +141,20 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
             (api, context) ->
                 when(api.current())
                     .thenThrow(new AccountJwtJwksApiBinding.BindingRejectedException()))) {
-      assertThatThrownBy(
-              () ->
-                  new AccountProtectedJwksSourceConfiguration()
-                      .accountPublicJwksApiBinding(trust, API_PATH, "test"))
+      assertThatThrownBy(() ->
+              new AccountProtectedJwksSourceConfiguration()
+                  .accountPublicJwksApiBinding(trust, API_PATH, "test"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasNoCause();
       assertThat(construction.constructed()).hasSize(1);
     }
-    assertThatThrownBy(
-            () ->
-                new AccountProtectedJwksSourceConfiguration()
-                    .accountPublicJwksApiBinding(trust, "/alternate/binding", "test"))
+    assertThatThrownBy(() ->
+            new AccountProtectedJwksSourceConfiguration()
+                .accountPublicJwksApiBinding(trust, "/alternate/binding", "test"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountProtectedJwksSourceConfiguration()
-                    .accountPublicJwksApiBinding(trust, API_PATH, ""))
+    assertThatThrownBy(() ->
+            new AccountProtectedJwksSourceConfiguration()
+                .accountPublicJwksApiBinding(trust, API_PATH, ""))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

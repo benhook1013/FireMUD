@@ -54,16 +54,15 @@ public class FriendServiceImpl implements FriendService {
         .findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
             request.tenantId(), request.accountId(), request.friendAccountId(), "active")
         .map(this::toDto)
-        .orElseGet(
-            () -> {
-              AccountFriendLink link = new AccountFriendLink();
-              link.setTenantId(request.tenantId());
-              link.setAccountId(request.accountId());
-              link.setFriendAccountId(request.friendAccountId());
-              link.setStatus("active");
-              link.setCreatedAt(Instant.now());
-              return toDto(accountFriendLinkRepository.save(link));
-            });
+        .orElseGet(() -> {
+          AccountFriendLink link = new AccountFriendLink();
+          link.setTenantId(request.tenantId());
+          link.setAccountId(request.accountId());
+          link.setFriendAccountId(request.friendAccountId());
+          link.setStatus("active");
+          link.setCreatedAt(Instant.now());
+          return toDto(accountFriendLinkRepository.save(link));
+        });
   }
 
   @Override
@@ -82,9 +81,8 @@ public class FriendServiceImpl implements FriendService {
   public Optional<FriendRosterEntryDto> getFriend(
       long tenantId, String accountId, String friendAccountId) {
     return listFriends(tenantId, accountId, FriendRosterFilter.ALL).friends().stream()
-        .filter(
-            entry ->
-                entry.friendAccountId() != null && entry.friendAccountId().equals(friendAccountId))
+        .filter(entry ->
+            entry.friendAccountId() != null && entry.friendAccountId().equals(friendAccountId))
         .findFirst();
   }
 
@@ -163,9 +161,8 @@ public class FriendServiceImpl implements FriendService {
             .orElseGet(Map::of);
     List<String> presenceAccountIds =
         friendAccountIds.stream()
-            .filter(
-                friendAccountId ->
-                    canQueryPresence(visibilityPolicyFor(friendAccountId, visibilityPolicies)))
+            .filter(friendAccountId ->
+                canQueryPresence(visibilityPolicyFor(friendAccountId, visibilityPolicies)))
             .toList();
     Map<String, FriendPresenceDto> byAccountId =
         loadFriendPresenceByAccountId(tenantId, accountId, presenceAccountIds, visibilityPolicies);

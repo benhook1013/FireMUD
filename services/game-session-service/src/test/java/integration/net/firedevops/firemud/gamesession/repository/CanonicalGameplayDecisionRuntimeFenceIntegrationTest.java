@@ -121,70 +121,62 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
           .isEqualTo("unrelated-runtime-update");
       assertThat(unrelatedUpdateReadback.get("row_version", Long.class)).isEqualTo(2L);
 
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET status = 'STOPPED'"
-                          + " WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET status = 'STOPPED'"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET version_id = version_id + 1"
-                          + " WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET version_id = version_id + 1"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET run_owned_start_request_id = 'replacement-start'"
-                          + " WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET run_owned_start_request_id = 'replacement-start'"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET run_owned_start_published_release_bundle_ref ="
-                          + " 'replacement-release-ref' WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET run_owned_start_published_release_bundle_ref ="
+                      + " 'replacement-release-ref' WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET run_owned_start_active_epoch ="
-                          + " run_owned_start_active_epoch + 1 WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET run_owned_start_active_epoch ="
+                      + " run_owned_start_active_epoch + 1 WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET row_version = row_version - 1"
-                          + " WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET row_version = row_version - 1"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "DELETE FROM game_instances WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "DELETE FROM game_instances WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining("runtime row is fenced");
 
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_session_canonical_binding_transition"
-                          + " SET status = 'ABORTED' WHERE transition_id = ("
-                          + " SELECT transition_id FROM game_session_canonical_binding_transition"
-                          + " WHERE candidate_binding_ref = ?)",
-                      candidateRef))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_session_canonical_binding_transition"
+                      + " SET status = 'ABORTED' WHERE transition_id = ("
+                      + " SELECT transition_id FROM game_session_canonical_binding_transition"
+                      + " WHERE candidate_binding_ref = ?)",
+                  candidateRef))
           .hasMessageContaining("definitive first-NEW Account abort evidence");
 
       assertThat(
@@ -257,18 +249,17 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
       // A fresh source-bound RUNNING row cannot be stripped of its run-owned launch association.
       // The V26 deferred guard rejects that impossible setup before V1044's lease-bound fence runs.
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_instances SET row_version = row_version + 1,"
-                          + " run_owned_start_request_id = NULL,"
-                          + " run_owned_start_request_digest = NULL,"
-                          + " run_owned_start_published_release_bundle_ref = NULL,"
-                          + " run_owned_start_preparing_epoch = NULL,"
-                          + " run_owned_start_active_epoch = NULL"
-                          + " WHERE tenant_id = ? AND id = ?",
-                      target.gameSessionTenantId(),
-                      target.gameInstanceId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_instances SET row_version = row_version + 1,"
+                      + " run_owned_start_request_id = NULL,"
+                      + " run_owned_start_request_digest = NULL,"
+                      + " run_owned_start_published_release_bundle_ref = NULL,"
+                      + " run_owned_start_preparing_epoch = NULL,"
+                      + " run_owned_start_active_epoch = NULL"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
           .hasMessageContaining(
               "Fresh Game Session instance requires one exact complete launch association");
 
@@ -745,17 +736,16 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       UUID canonicalTenantId,
       UUID sourceIntakeOperationId,
       UUID sourceIntakeRequestId) {
-    assertThatThrownBy(
-            () ->
-                insertLaunchPreparation(
-                    dsl,
-                    target,
-                    realmId,
-                    catalogCreationRequestId,
-                    catalogRevision,
-                    canonicalTenantId,
-                    sourceIntakeOperationId,
-                    sourceIntakeRequestId))
+    assertThatThrownBy(() ->
+            insertLaunchPreparation(
+                dsl,
+                target,
+                realmId,
+                catalogCreationRequestId,
+                catalogRevision,
+                canonicalTenantId,
+                sourceIntakeOperationId,
+                sourceIntakeRequestId))
         .hasMessageContaining("fk_gs_canonical_launch_preparation_catalog");
   }
 

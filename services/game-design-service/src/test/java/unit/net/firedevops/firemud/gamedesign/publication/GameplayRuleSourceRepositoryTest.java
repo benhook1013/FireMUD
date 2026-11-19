@@ -49,12 +49,11 @@ class GameplayRuleSourceRepositoryTest {
     var decoded = GameplayRuleSnapshot.fromStored(snapshot.canonicalJson());
     assertThat(decoded).isEqualTo(snapshot);
     assertThat(decoded.manifest().families()).hasSize(Family.values().length);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleSnapshot.fromStored(
-                    snapshot
-                        .canonicalJson()
-                        .replace("game-design-gameplay-rule-source-snapshot/v1", "unknown/v1")))
+    assertThatThrownBy(() ->
+            GameplayRuleSnapshot.fromStored(
+                snapshot
+                    .canonicalJson()
+                    .replace("game-design-gameplay-rule-source-snapshot/v1", "unknown/v1")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

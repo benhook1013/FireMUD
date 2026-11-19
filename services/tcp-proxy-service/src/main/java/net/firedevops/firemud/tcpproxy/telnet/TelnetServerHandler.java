@@ -451,17 +451,16 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     CompletableFuture<WebSocket> pingFuture =
         socket.sendPing(ByteBuffer.wrap(new byte[] {1, 2, 3, 4}));
     outstandingSends.add(pingFuture);
-    pingFuture.whenComplete(
-        (ws, error) -> {
-          try (CombinedLoggingContext ignored = openLoggingContext()) {
-            outstandingSends.remove(pingFuture);
-            sample.stop(heartbeatTimer);
-            if (error != null) {
-              logger.warn("Gateway heartbeat failed; triggering reconnect", error);
-              handleGatewayDisconnect();
-            }
-          }
-        });
+    pingFuture.whenComplete((ws, error) -> {
+      try (CombinedLoggingContext ignored = openLoggingContext()) {
+        outstandingSends.remove(pingFuture);
+        sample.stop(heartbeatTimer);
+        if (error != null) {
+          logger.warn("Gateway heartbeat failed; triggering reconnect", error);
+          handleGatewayDisconnect();
+        }
+      }
+    });
   }
 
   private void drainBuffer() {
@@ -479,26 +478,25 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
       inFlightSend = sendFuture;
       outstandingSends.add(sendFuture);
     }
-    sendFuture.whenComplete(
-        (ws, error) -> {
-          try (CombinedLoggingContext ignored = openLoggingContext()) {
-            synchronized (bufferLifecycleLock) {
-              outstandingSends.remove(sendFuture);
-              if (error == null) {
-                inFlightSend = null;
-                buffer.poll();
-              }
-            }
-            if (error == null) {
-              touchActivity();
-            } else {
-              logger.warn("Gateway send failed; scheduling reconnect", error);
-              handleGatewayDisconnect();
-            }
-            updateBufferDepthGauge();
-            drainBuffer();
+    sendFuture.whenComplete((ws, error) -> {
+      try (CombinedLoggingContext ignored = openLoggingContext()) {
+        synchronized (bufferLifecycleLock) {
+          outstandingSends.remove(sendFuture);
+          if (error == null) {
+            inFlightSend = null;
+            buffer.poll();
           }
-        });
+        }
+        if (error == null) {
+          touchActivity();
+        } else {
+          logger.warn("Gateway send failed; scheduling reconnect", error);
+          handleGatewayDisconnect();
+        }
+        updateBufferDepthGauge();
+        drainBuffer();
+      }
+    });
   }
 
   @Override
@@ -768,16 +766,15 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
       connection.cancel(true);
       return;
     }
-    connection.whenComplete(
-        (socket, error) -> {
-          if (!inFlightGatewayConnection.compareAndSet(connection, null) || error == null) {
-            return;
-          }
-          try (CombinedLoggingContext ignored = openLoggingContext()) {
-            logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-            handleGatewaySetupFailure(error);
-          }
-        });
+    connection.whenComplete((socket, error) -> {
+      if (!inFlightGatewayConnection.compareAndSet(connection, null) || error == null) {
+        return;
+      }
+      try (CombinedLoggingContext ignored = openLoggingContext()) {
+        logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+        handleGatewaySetupFailure(error);
+      }
+    });
   }
 
   private void handleGatewayDisconnect() {
@@ -957,47 +954,42 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
       return;
     }
     long sequence = disconnectSequence.incrementAndGet();
-    CompletableFuture.supplyAsync(
-            () ->
-                eventService.notifyDisconnect(
-                    sessionContext.gameInstanceId(),
-                    sessionContext.tenantId(),
-                    proxyConnectionId,
-                    sequence))
-        .thenAccept(
-            response ->
-                handleDisconnectResponse(
-                    response, sessionContext.gameInstanceId(), sessionContext.tenantId()))
-        .exceptionally(
-            failure -> {
-              try (CombinedLoggingContext ignored = openLoggingContext()) {
-                Status.Code status = Status.fromThrowable(failure).getCode();
-                if (isExpectedShutdownDisconnectFailure(status)) {
-                  logger.debug(
-                      "Suppressing expected shutdown-path disconnect notification failure for session {} tenant {} status={}",
-                      sessionContext.gameInstanceId(),
-                      sessionContext.tenantId(),
-                      status,
-                      failure);
-                  meterRegistry
-                      .counter(
-                          EXPECTED_SHUTDOWN_DISCONNECT_NOTIFY_FAILURE_METRIC,
-                          "status",
-                          status.name())
-                      .increment();
-                  return null;
-                }
-                logger.warn(
-                    "Failed to notify Game Session Service about disconnect for session {} tenant {}",
-                    sessionContext.gameInstanceId(),
-                    sessionContext.tenantId(),
-                    failure);
-                meterRegistry
-                    .counter(DISCONNECT_NOTIFY_TRANSPORT_FAILURE_METRIC, "status", status.name())
-                    .increment();
-              }
+    CompletableFuture.supplyAsync(() ->
+            eventService.notifyDisconnect(
+                sessionContext.gameInstanceId(),
+                sessionContext.tenantId(),
+                proxyConnectionId,
+                sequence))
+        .thenAccept(response ->
+            handleDisconnectResponse(
+                response, sessionContext.gameInstanceId(), sessionContext.tenantId()))
+        .exceptionally(failure -> {
+          try (CombinedLoggingContext ignored = openLoggingContext()) {
+            Status.Code status = Status.fromThrowable(failure).getCode();
+            if (isExpectedShutdownDisconnectFailure(status)) {
+              logger.debug(
+                  "Suppressing expected shutdown-path disconnect notification failure for session {} tenant {} status={}",
+                  sessionContext.gameInstanceId(),
+                  sessionContext.tenantId(),
+                  status,
+                  failure);
+              meterRegistry
+                  .counter(
+                      EXPECTED_SHUTDOWN_DISCONNECT_NOTIFY_FAILURE_METRIC, "status", status.name())
+                  .increment();
               return null;
-            });
+            }
+            logger.warn(
+                "Failed to notify Game Session Service about disconnect for session {} tenant {}",
+                sessionContext.gameInstanceId(),
+                sessionContext.tenantId(),
+                failure);
+            meterRegistry
+                .counter(DISCONNECT_NOTIFY_TRANSPORT_FAILURE_METRIC, "status", status.name())
+                .increment();
+          }
+          return null;
+        });
   }
 
   private void handleDisconnectResponse(

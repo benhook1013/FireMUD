@@ -81,82 +81,81 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
     requireNonNil(accountId, "accountId");
     requireNonNil(requestId, "requestId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          BigInteger inventoryRevision = lockInventoryRevision(transaction);
-          Record control = lockExistingControl(transaction, accountId);
-          String controlState = control.get("state", String.class);
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      BigInteger inventoryRevision = lockInventoryRevision(transaction);
+      Record control = lockExistingControl(transaction, accountId);
+      String controlState = control.get("state", String.class);
 
-          Record priorIntent =
+      Record priorIntent =
+          transaction.fetchOne(
+              "SELECT * FROM " + INTENT + " WHERE account_id = ? AND request_id = ? FOR UPDATE",
+              accountId,
+              requestId);
+      if ("ACQUISITION_INTENT".equals(controlState)) {
+        if (priorIntent == null) {
+          throw conflict("A different account-fence intent already owns this account");
+        }
+        return loadAndRequireCurrent(transaction, control, priorIntent);
+      }
+      if (priorIntent != null) {
+        throw conflict("The requested account-fence intent is no longer the current owner");
+      }
+      requireNoActiveControl(control, accountId);
+      CanonicalGameplayLegacyMigrationDisposition legacyDisposition =
+          readVerifiedLegacyDisposition(transaction, inventoryRevision, true);
+      requireNoFutureAccountRows(transaction, accountId, inventoryRevision);
+
+      BigInteger previousFence = readBigInteger(control, "last_operation_fence");
+      BigInteger operationFence = previousFence.add(BigInteger.ONE);
+      UUID operationId = randomNonNilUuid();
+      while (operationId.equals(accountId) || operationId.equals(requestId)) {
+        operationId = randomNonNilUuid();
+      }
+      UUID plannedAccountAdmissionFence = randomNonNilUuid();
+      while (plannedAccountAdmissionFence.equals(operationId)
+          || plannedAccountAdmissionFence.equals(requestId)
+          || plannedAccountAdmissionFence.equals(accountId)) {
+        plannedAccountAdmissionFence = randomNonNilUuid();
+      }
+
+      List<CanonicalGameplayAccountAdmissionFenceIntent.CohortRow> cohortRows =
+          captureCohortRows(transaction, accountId);
+      requireResolvableCohortScopes(cohortRows);
+      List<CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget> barrierTargets =
+          captureBarrierTargets(transaction, accountId);
+      requireBarrierTargetsCoverCohort(cohortRows, barrierTargets);
+      String cohortDigest = digestCohortRows(cohortRows);
+      String barrierTargetDigest = digestBarrierTargets(barrierTargets);
+      insertIntent(
+          transaction,
+          operationId,
+          requestId,
+          accountId,
+          operationFence,
+          plannedAccountAdmissionFence,
+          inventoryRevision,
+          legacyDisposition,
+          cohortRows,
+          barrierTargets,
+          cohortDigest,
+          barrierTargetDigest);
+      closeNewPreparation(
+          transaction,
+          accountId,
+          previousFence,
+          operationFence,
+          operationId,
+          plannedAccountAdmissionFence,
+          inventoryRevision);
+      Record savedIntent =
+          Objects.requireNonNull(
               transaction.fetchOne(
-                  "SELECT * FROM " + INTENT + " WHERE account_id = ? AND request_id = ? FOR UPDATE",
-                  accountId,
-                  requestId);
-          if ("ACQUISITION_INTENT".equals(controlState)) {
-            if (priorIntent == null) {
-              throw conflict("A different account-fence intent already owns this account");
-            }
-            return loadAndRequireCurrent(transaction, control, priorIntent);
-          }
-          if (priorIntent != null) {
-            throw conflict("The requested account-fence intent is no longer the current owner");
-          }
-          requireNoActiveControl(control, accountId);
-          CanonicalGameplayLegacyMigrationDisposition legacyDisposition =
-              readVerifiedLegacyDisposition(transaction, inventoryRevision, true);
-          requireNoFutureAccountRows(transaction, accountId, inventoryRevision);
-
-          BigInteger previousFence = readBigInteger(control, "last_operation_fence");
-          BigInteger operationFence = previousFence.add(BigInteger.ONE);
-          UUID operationId = randomNonNilUuid();
-          while (operationId.equals(accountId) || operationId.equals(requestId)) {
-            operationId = randomNonNilUuid();
-          }
-          UUID plannedAccountAdmissionFence = randomNonNilUuid();
-          while (plannedAccountAdmissionFence.equals(operationId)
-              || plannedAccountAdmissionFence.equals(requestId)
-              || plannedAccountAdmissionFence.equals(accountId)) {
-            plannedAccountAdmissionFence = randomNonNilUuid();
-          }
-
-          List<CanonicalGameplayAccountAdmissionFenceIntent.CohortRow> cohortRows =
-              captureCohortRows(transaction, accountId);
-          requireResolvableCohortScopes(cohortRows);
-          List<CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget> barrierTargets =
-              captureBarrierTargets(transaction, accountId);
-          requireBarrierTargetsCoverCohort(cohortRows, barrierTargets);
-          String cohortDigest = digestCohortRows(cohortRows);
-          String barrierTargetDigest = digestBarrierTargets(barrierTargets);
-          insertIntent(
-              transaction,
-              operationId,
-              requestId,
-              accountId,
-              operationFence,
-              plannedAccountAdmissionFence,
-              inventoryRevision,
-              legacyDisposition,
-              cohortRows,
-              barrierTargets,
-              cohortDigest,
-              barrierTargetDigest);
-          closeNewPreparation(
-              transaction,
-              accountId,
-              previousFence,
-              operationFence,
-              operationId,
-              plannedAccountAdmissionFence,
-              inventoryRevision);
-          Record savedIntent =
-              Objects.requireNonNull(
-                  transaction.fetchOne(
-                      "SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId),
-                  "persisted account-fence intent must exist");
-          Record savedControl = lockExistingControl(transaction, accountId);
-          return loadAndRequireCurrent(transaction, savedControl, savedIntent);
-        });
+                  "SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId),
+              "persisted account-fence intent must exist");
+      Record savedControl = lockExistingControl(transaction, accountId);
+      return loadAndRequireCurrent(transaction, savedControl, savedIntent);
+    });
   }
 
   /** Reads and verifies the immutable persisted tuple, cohort rows, and target rows. */
@@ -164,45 +163,42 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
     requireNonNil(accountId, "accountId");
     requireNonNil(requestId, "requestId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          Record control = readControl(transaction, accountId);
-          Record intent =
-              transaction.fetchOne(
-                  "SELECT * FROM " + INTENT + " WHERE account_id = ? AND request_id = ?",
-                  accountId,
-                  requestId);
-          if (control == null || intent == null) {
-            throw conflict("The exact account-fence intent or its positive control row is missing");
-          }
-          return loadAndRequireCurrent(transaction, control, intent);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      Record control = readControl(transaction, accountId);
+      Record intent =
+          transaction.fetchOne(
+              "SELECT * FROM " + INTENT + " WHERE account_id = ? AND request_id = ?",
+              accountId,
+              requestId);
+      if (control == null || intent == null) {
+        throw conflict("The exact account-fence intent or its positive control row is missing");
+      }
+      return loadAndRequireCurrent(transaction, control, intent);
+    });
   }
 
   /** Reloads the current durable intent and account control using only the operation identity. */
   CanonicalGameplayAccountAdmissionFenceIntent readCurrentFenceIntent(UUID operationId) {
     requireNonNil(operationId, "operationId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          Record intent =
-              transaction.fetchOne(
-                  "SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId);
-          if (intent == null) {
-            throw conflict("The exact account-fence intent operation is missing");
-          }
-          UUID accountId =
-              Objects.requireNonNull(intent.get("account_id", UUID.class), "intent account id");
-          Record control = readControl(transaction, accountId);
-          if (control == null) {
-            throw conflict("The account-fence intent lost its positive account-control row");
-          }
-          return loadAndRequireCurrent(transaction, control, intent);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      Record intent =
+          transaction.fetchOne("SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId);
+      if (intent == null) {
+        throw conflict("The exact account-fence intent operation is missing");
+      }
+      UUID accountId =
+          Objects.requireNonNull(intent.get("account_id", UUID.class), "intent account id");
+      Record control = readControl(transaction, accountId);
+      if (control == null) {
+        throw conflict("The account-fence intent lost its positive account-control row");
+      }
+      return loadAndRequireCurrent(transaction, control, intent);
+    });
   }
 
   /**
@@ -223,196 +219,192 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
       throw conflict("CLOSED readback differs from the explicitly expected operation and target");
     }
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
 
-          // The prepare owner takes this same inventory-clock then account-control lock order.
-          // The operation lookup below is only a locator; current SQL ownership is reloaded.
-          lockInventoryRevision(transaction);
-          Record identity =
-              transaction.fetchOne(
-                  "SELECT account_id FROM " + INTENT + " WHERE operation_id = ?",
-                  expectedOperationId);
-          if (identity == null) {
-            throw conflict("The exact CLOSED receipt acquisition intent is missing");
-          }
-          UUID accountId =
-              Objects.requireNonNull(identity.get("account_id", UUID.class), "intent account id");
-          Record control = lockExistingControl(transaction, accountId);
-          Record intentRow =
-              transaction.fetchOne(
-                  "SELECT * FROM " + INTENT + " WHERE operation_id = ? FOR UPDATE",
-                  expectedOperationId);
-          if (intentRow == null) {
-            throw conflict("The exact CLOSED receipt acquisition intent is missing");
-          }
-          CanonicalGameplayAccountAdmissionFenceIntent currentIntent =
-              loadAndRequireCurrent(transaction, control, intentRow);
-          requireSameIntentSnapshot(readback.intent(), currentIntent);
-          if (!expectedOperationId.equals(currentIntent.operationId())
-              || !accountId.equals(currentIntent.accountId())
-              || !accountId.equals(readback.accountId())) {
-            throw conflict("CLOSED readback differs from the exact current intent owner");
-          }
+      // The prepare owner takes this same inventory-clock then account-control lock order.
+      // The operation lookup below is only a locator; current SQL ownership is reloaded.
+      lockInventoryRevision(transaction);
+      Record identity =
+          transaction.fetchOne(
+              "SELECT account_id FROM " + INTENT + " WHERE operation_id = ?", expectedOperationId);
+      if (identity == null) {
+        throw conflict("The exact CLOSED receipt acquisition intent is missing");
+      }
+      UUID accountId =
+          Objects.requireNonNull(identity.get("account_id", UUID.class), "intent account id");
+      Record control = lockExistingControl(transaction, accountId);
+      Record intentRow =
+          transaction.fetchOne(
+              "SELECT * FROM " + INTENT + " WHERE operation_id = ? FOR UPDATE",
+              expectedOperationId);
+      if (intentRow == null) {
+        throw conflict("The exact CLOSED receipt acquisition intent is missing");
+      }
+      CanonicalGameplayAccountAdmissionFenceIntent currentIntent =
+          loadAndRequireCurrent(transaction, control, intentRow);
+      requireSameIntentSnapshot(readback.intent(), currentIntent);
+      if (!expectedOperationId.equals(currentIntent.operationId())
+          || !accountId.equals(currentIntent.accountId())
+          || !accountId.equals(readback.accountId())) {
+        throw conflict("CLOSED readback differs from the exact current intent owner");
+      }
 
-          CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget target =
-              requireUniqueBarrierTarget(currentIntent, expectedTargetOrdinal);
-          Record persistedTarget =
-              transaction.fetchOne(
-                  "SELECT account_id, tenant_id, playable_state_namespace_id, target_state FROM "
-                      + BARRIER_TARGET
-                      + " WHERE operation_id = ? AND target_ordinal = ? FOR SHARE",
-                  expectedOperationId,
-                  expectedTargetOrdinal);
-          if (persistedTarget == null
-              || !"REQUIRED".equals(persistedTarget.get("target_state", String.class))
-              || !accountId.equals(persistedTarget.get("account_id", UUID.class))
-              || !target.tenantId().equals(persistedTarget.get("tenant_id", UUID.class))
-              || !target
-                  .playableStateNamespaceId()
-                  .equals(persistedTarget.get("playable_state_namespace_id", UUID.class))) {
-            throw conflict("CLOSED receipt target is not the exact current REQUIRED SQL target");
-          }
+      CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget target =
+          requireUniqueBarrierTarget(currentIntent, expectedTargetOrdinal);
+      Record persistedTarget =
+          transaction.fetchOne(
+              "SELECT account_id, tenant_id, playable_state_namespace_id, target_state FROM "
+                  + BARRIER_TARGET
+                  + " WHERE operation_id = ? AND target_ordinal = ? FOR SHARE",
+              expectedOperationId,
+              expectedTargetOrdinal);
+      if (persistedTarget == null
+          || !"REQUIRED".equals(persistedTarget.get("target_state", String.class))
+          || !accountId.equals(persistedTarget.get("account_id", UUID.class))
+          || !target.tenantId().equals(persistedTarget.get("tenant_id", UUID.class))
+          || !target
+              .playableStateNamespaceId()
+              .equals(persistedTarget.get("playable_state_namespace_id", UUID.class))) {
+        throw conflict("CLOSED receipt target is not the exact current REQUIRED SQL target");
+      }
 
-          CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
-              readback.assignment();
-          requireReadbackAssignment(
-              assignment, currentIntent, target, expectedOperationId, expectedTargetOrdinal);
-          Record persistedTag =
-              transaction.fetchOne(
-                  "SELECT tenant_id, allocation_version, tenant_gameplay_tag FROM "
-                      + TENANT_TAG_MAPPING
-                      + " WHERE tenant_id = ? FOR SHARE",
-                  target.tenantId());
-          if (persistedTag == null
-              || !target.tenantId().equals(persistedTag.get("tenant_id", UUID.class))
-              || !Integer.valueOf(assignment.allocationVersion())
-                  .equals(persistedTag.get("allocation_version", Integer.class))
-              || !assignment
-                  .tenantGameplayTag()
-                  .equals(persistedTag.get("tenant_gameplay_tag", String.class))) {
-            throw conflict("Persisted tenant mapping differs from the CLOSED readback assignment");
-          }
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment = readback.assignment();
+      requireReadbackAssignment(
+          assignment, currentIntent, target, expectedOperationId, expectedTargetOrdinal);
+      Record persistedTag =
+          transaction.fetchOne(
+              "SELECT tenant_id, allocation_version, tenant_gameplay_tag FROM "
+                  + TENANT_TAG_MAPPING
+                  + " WHERE tenant_id = ? FOR SHARE",
+              target.tenantId());
+      if (persistedTag == null
+          || !target.tenantId().equals(persistedTag.get("tenant_id", UUID.class))
+          || !Integer.valueOf(assignment.allocationVersion())
+              .equals(persistedTag.get("allocation_version", Integer.class))
+          || !assignment
+              .tenantGameplayTag()
+              .equals(persistedTag.get("tenant_gameplay_tag", String.class))) {
+        throw conflict("Persisted tenant mapping differs from the CLOSED readback assignment");
+      }
 
-          String redisKey = CanonicalGameplaySessionRedisKeys.accountAdmissionBarrier(assignment);
-          if (!redisKey.equals(readback.key())) {
-            throw conflict("Canonical CLOSED barrier key differs from the physical readback");
-          }
+      String redisKey = CanonicalGameplaySessionRedisKeys.accountAdmissionBarrier(assignment);
+      if (!redisKey.equals(readback.key())) {
+        throw conflict("Canonical CLOSED barrier key differs from the physical readback");
+      }
 
-          CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before =
-              readback.beforeIncarnation();
-          CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after =
-              readback.afterIncarnation();
-          requireVerifiedIncarnation(before, currentIntent, target, assignment);
-          requireVerifiedIncarnation(after, currentIntent, target, assignment);
-          if (!before.incarnationDigest().equals(after.incarnationDigest())
-              || !before.acceptedAttestationDigest().equals(after.acceptedAttestationDigest())
-              || after.issuedAtEpochMillis() < before.issuedAtEpochMillis()
-              || after.observedAtEpochMillis() < before.observedAtEpochMillis()) {
-            throw conflict("Protected observations changed incarnation or regressed");
-          }
+      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before =
+          readback.beforeIncarnation();
+      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after =
+          readback.afterIncarnation();
+      requireVerifiedIncarnation(before, currentIntent, target, assignment);
+      requireVerifiedIncarnation(after, currentIntent, target, assignment);
+      if (!before.incarnationDigest().equals(after.incarnationDigest())
+          || !before.acceptedAttestationDigest().equals(after.acceptedAttestationDigest())
+          || after.issuedAtEpochMillis() < before.issuedAtEpochMillis()
+          || after.observedAtEpochMillis() < before.observedAtEpochMillis()) {
+        throw conflict("Protected observations changed incarnation or regressed");
+      }
 
-          Map<String, String> expectedFields =
-              expectedClosedBarrierFields(
-                  currentIntent, target, assignment, after.incarnationDigest());
-          if (!CLOSED_BARRIER_FIELDS.equals(readback.barrierFields().keySet())
-              || !expectedFields.equals(readback.barrierFields())
-              || !CLOSED_BARRIER_SCHEMA.equals(readback.barrierFields().get("schema"))
-              || !CLOSED_BARRIER_STATE.equals(readback.barrierFields().get("state"))) {
-            throw conflict("Physical CLOSED barrier fields differ from the current owner tuple");
-          }
-          requireSuccessfulClosedMutation(readback.mutationOutcome());
-          String fieldsDigest = digestClosedBarrierFields(expectedFields);
+      Map<String, String> expectedFields =
+          expectedClosedBarrierFields(currentIntent, target, assignment, after.incarnationDigest());
+      if (!CLOSED_BARRIER_FIELDS.equals(readback.barrierFields().keySet())
+          || !expectedFields.equals(readback.barrierFields())
+          || !CLOSED_BARRIER_SCHEMA.equals(readback.barrierFields().get("schema"))
+          || !CLOSED_BARRIER_STATE.equals(readback.barrierFields().get("state"))) {
+        throw conflict("Physical CLOSED barrier fields differ from the current owner tuple");
+      }
+      requireSuccessfulClosedMutation(readback.mutationOutcome());
+      String fieldsDigest = digestClosedBarrierFields(expectedFields);
 
-          // Clock is trusted owner configuration and is sampled only after all SQL guards.
-          long now = clock.millis();
-          if (now <= 0) {
-            throw conflict("Trusted CLOSED receipt acceptance time must be positive");
-          }
-          requireCurrentObservationWindow(before, now);
-          requireCurrentObservationWindow(after, now);
+      // Clock is trusted owner configuration and is sampled only after all SQL guards.
+      long now = clock.millis();
+      if (now <= 0) {
+        throw conflict("Trusted CLOSED receipt acceptance time must be positive");
+      }
+      requireCurrentObservationWindow(before, now);
+      requireCurrentObservationWindow(after, now);
 
-          Record existing =
+      Record existing =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + CLOSED_RECEIPT
+                  + " WHERE operation_id = ? AND target_ordinal = ? FOR UPDATE",
+              expectedOperationId,
+              expectedTargetOrdinal);
+      if (existing != null) {
+        StoredClosedBarrierReceipt original = toStoredClosedBarrierReceipt(existing);
+        requireSameStoredBarrierIdentity(
+            original,
+            currentIntent,
+            target,
+            assignment,
+            redisKey,
+            fieldsDigest,
+            before.acceptedAttestationDigest(),
+            before.incarnationDigest());
+        // A fresh protected observation has new source bytes/times. Exact retry returns the
+        // original immutable SQL row, including its original creation time and source digests.
+        return original;
+      }
+
+      transaction.execute(
+          "INSERT INTO "
+              + CLOSED_RECEIPT
+              + " (operation_id, request_id, account_id, operation_fence,"
+              + " planned_account_admission_fence, inventory_snapshot_revision, cohort_digest,"
+              + " barrier_target_digest, target_ordinal, tenant_id,"
+              + " playable_state_namespace_id, tenant_gameplay_tag, workload_namespace,"
+              + " allocation_version, barrier_key, barrier_schema, incarnation_digest,"
+              + " barrier_state, accepted_attestation_digest, barrier_fields_digest,"
+              + " before_source_payload_digest, before_observation_issued_at_epoch_millis,"
+              + " before_observation_observed_at_epoch_millis,"
+              + " before_observation_expires_at_epoch_millis, after_source_payload_digest,"
+              + " after_observation_issued_at_epoch_millis,"
+              + " after_observation_observed_at_epoch_millis,"
+              + " after_observation_expires_at_epoch_millis)"
+              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+              + " ?, ?, ?, ?, ?, ?)",
+          currentIntent.operationId(),
+          currentIntent.requestId(),
+          currentIntent.accountId(),
+          decimal(currentIntent.operationFence()),
+          currentIntent.plannedAccountAdmissionFence(),
+          decimal(currentIntent.inventorySnapshotRevision()),
+          currentIntent.cohortDigest(),
+          currentIntent.barrierTargetDigest(),
+          target.ordinal(),
+          target.tenantId(),
+          target.playableStateNamespaceId(),
+          assignment.tenantGameplayTag(),
+          assignment.workloadNamespace(),
+          assignment.allocationVersion(),
+          redisKey,
+          CLOSED_BARRIER_SCHEMA,
+          after.incarnationDigest(),
+          CLOSED_BARRIER_STATE,
+          before.acceptedAttestationDigest(),
+          fieldsDigest,
+          before.payloadDigest(),
+          before.issuedAtEpochMillis(),
+          before.observedAtEpochMillis(),
+          before.expiresAtEpochMillis(),
+          after.payloadDigest(),
+          after.issuedAtEpochMillis(),
+          after.observedAtEpochMillis(),
+          after.expiresAtEpochMillis());
+
+      Record saved =
+          Objects.requireNonNull(
               transaction.fetchOne(
                   "SELECT * FROM "
                       + CLOSED_RECEIPT
                       + " WHERE operation_id = ? AND target_ordinal = ? FOR UPDATE",
                   expectedOperationId,
-                  expectedTargetOrdinal);
-          if (existing != null) {
-            StoredClosedBarrierReceipt original = toStoredClosedBarrierReceipt(existing);
-            requireSameStoredBarrierIdentity(
-                original,
-                currentIntent,
-                target,
-                assignment,
-                redisKey,
-                fieldsDigest,
-                before.acceptedAttestationDigest(),
-                before.incarnationDigest());
-            // A fresh protected observation has new source bytes/times. Exact retry returns the
-            // original immutable SQL row, including its original creation time and source digests.
-            return original;
-          }
-
-          transaction.execute(
-              "INSERT INTO "
-                  + CLOSED_RECEIPT
-                  + " (operation_id, request_id, account_id, operation_fence,"
-                  + " planned_account_admission_fence, inventory_snapshot_revision, cohort_digest,"
-                  + " barrier_target_digest, target_ordinal, tenant_id,"
-                  + " playable_state_namespace_id, tenant_gameplay_tag, workload_namespace,"
-                  + " allocation_version, barrier_key, barrier_schema, incarnation_digest,"
-                  + " barrier_state, accepted_attestation_digest, barrier_fields_digest,"
-                  + " before_source_payload_digest, before_observation_issued_at_epoch_millis,"
-                  + " before_observation_observed_at_epoch_millis,"
-                  + " before_observation_expires_at_epoch_millis, after_source_payload_digest,"
-                  + " after_observation_issued_at_epoch_millis,"
-                  + " after_observation_observed_at_epoch_millis,"
-                  + " after_observation_expires_at_epoch_millis)"
-                  + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                  + " ?, ?, ?, ?, ?, ?)",
-              currentIntent.operationId(),
-              currentIntent.requestId(),
-              currentIntent.accountId(),
-              decimal(currentIntent.operationFence()),
-              currentIntent.plannedAccountAdmissionFence(),
-              decimal(currentIntent.inventorySnapshotRevision()),
-              currentIntent.cohortDigest(),
-              currentIntent.barrierTargetDigest(),
-              target.ordinal(),
-              target.tenantId(),
-              target.playableStateNamespaceId(),
-              assignment.tenantGameplayTag(),
-              assignment.workloadNamespace(),
-              assignment.allocationVersion(),
-              redisKey,
-              CLOSED_BARRIER_SCHEMA,
-              after.incarnationDigest(),
-              CLOSED_BARRIER_STATE,
-              before.acceptedAttestationDigest(),
-              fieldsDigest,
-              before.payloadDigest(),
-              before.issuedAtEpochMillis(),
-              before.observedAtEpochMillis(),
-              before.expiresAtEpochMillis(),
-              after.payloadDigest(),
-              after.issuedAtEpochMillis(),
-              after.observedAtEpochMillis(),
-              after.expiresAtEpochMillis());
-
-          Record saved =
-              Objects.requireNonNull(
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + CLOSED_RECEIPT
-                          + " WHERE operation_id = ? AND target_ordinal = ? FOR UPDATE",
-                      expectedOperationId,
-                      expectedTargetOrdinal),
-                  "inserted CLOSED receipt must exist");
-          return toStoredClosedBarrierReceipt(saved);
-        });
+                  expectedTargetOrdinal),
+              "inserted CLOSED receipt must exist");
+      return toStoredClosedBarrierReceipt(saved);
+    });
   }
 
   private static void insertIntent(
@@ -838,24 +830,23 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
                 + COHORT
                 + " WHERE operation_id = ? ORDER BY row_ordinal",
             operationId)
-        .map(
-            row -> {
-              CanonicalGameplayAccountAdmissionFenceIntent.CohortKind kind;
-              try {
-                kind =
-                    CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.valueOf(
-                        row.get("source_kind", String.class));
-              } catch (RuntimeException malformed) {
-                throw conflict("Persisted account-fence cohort contains an unknown source kind");
-              }
-              return CanonicalGameplayAccountAdmissionFenceIntent.cohortRow(
-                  readLong(row, "row_ordinal"),
-                  kind,
-                  row.get("source_key", String.class),
-                  row.get("tenant_id", UUID.class),
-                  row.get("playable_state_namespace_id", UUID.class),
-                  row.get("source_record_json", String.class));
-            });
+        .map(row -> {
+          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind kind;
+          try {
+            kind =
+                CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.valueOf(
+                    row.get("source_kind", String.class));
+          } catch (RuntimeException malformed) {
+            throw conflict("Persisted account-fence cohort contains an unknown source kind");
+          }
+          return CanonicalGameplayAccountAdmissionFenceIntent.cohortRow(
+              readLong(row, "row_ordinal"),
+              kind,
+              row.get("source_key", String.class),
+              row.get("tenant_id", UUID.class),
+              row.get("playable_state_namespace_id", UUID.class),
+              row.get("source_record_json", String.class));
+        });
   }
 
   private static List<CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget>
@@ -866,12 +857,11 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
                 + BARRIER_TARGET
                 + " WHERE operation_id = ? ORDER BY target_ordinal",
             operationId)
-        .map(
-            row ->
-                CanonicalGameplayAccountAdmissionFenceIntent.barrierTarget(
-                    readLong(row, "target_ordinal"),
-                    row.get("tenant_id", UUID.class),
-                    row.get("playable_state_namespace_id", UUID.class)));
+        .map(row ->
+            CanonicalGameplayAccountAdmissionFenceIntent.barrierTarget(
+                readLong(row, "target_ordinal"),
+                row.get("tenant_id", UUID.class),
+                row.get("playable_state_namespace_id", UUID.class)));
   }
 
   private static CanonicalGameplayLegacyMigrationDisposition readVerifiedLegacyDisposition(

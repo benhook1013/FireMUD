@@ -134,10 +134,9 @@ class EntityManagementClientTest {
       })
   void rosterReadRejectsNonCanonicalAccountBeforeTransport(String accountId) {
     EntityManagementClient client = newClient();
-    assertThatThrownBy(
-            () ->
-                client.listCharactersByAccount(
-                    "22", accountId, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+    assertThatThrownBy(() ->
+            client.listCharactersByAccount(
+                "22", accountId, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -223,10 +222,9 @@ class EntityManagementClientTest {
             SESSION_CONTEXT.pointerVersion(),
             SESSION_CONTEXT.playableStateScope());
 
-    assertThatThrownBy(
-            () ->
-                client.findCharacterByName(
-                    legacyRoomContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
+    assertThatThrownBy(() ->
+            client.findCharacterByName(
+                legacyRoomContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Emberline"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("roomInstanceId must be a runtime room id like R-1021");
   }

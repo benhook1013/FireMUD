@@ -128,25 +128,22 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     }
     assertThat(first.familyStates())
         .hasSize(23)
-        .allSatisfy(
-            state -> {
-              assertThat(state.state())
-                  .isEqualTo(EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY);
-              assertThat(state.rowCount()).isZero();
-              assertThat(state.referenceCount()).isZero();
-            });
+        .allSatisfy(state -> {
+          assertThat(state.state())
+              .isEqualTo(EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY);
+          assertThat(state.rowCount()).isZero();
+          assertThat(state.referenceCount()).isZero();
+        });
     assertThat(first.familyStates())
-        .filteredOn(
-            state ->
-                state.evidenceKind()
-                    == EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind
-                        .EMPTY_ONLY_OWNER_PROVIDER)
+        .filteredOn(state ->
+            state.evidenceKind()
+                == EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind
+                    .EMPTY_ONLY_OWNER_PROVIDER)
         .hasSize(14);
     assertThat(first.familyStates())
-        .filteredOn(
-            state ->
-                state.evidenceKind()
-                    == EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind.V1_SOURCE_CENSUS)
+        .filteredOn(state ->
+            state.evidenceKind()
+                == EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind.V1_SOURCE_CENSUS)
         .hasSize(9);
     assertThat(first.localTenantKey()).isPositive();
     assertThat(first.localVersionKey()).isPositive().isNotEqualTo(first.localTenantKey());
@@ -176,12 +173,11 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     assertThat(readBack.receiptDigest()).isEqualTo(first.receiptDigest());
     assertThat(readBack.retainedAt().toInstant()).isEqualTo(first.retainedAt().toInstant());
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO items (name, tenant_id, version_id) VALUES ('blocked', ?, ?)",
-                    first.localTenantKey(),
-                    first.localVersionKey()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO items (name, tenant_id, version_id) VALUES ('blocked', ?, ?)",
+                first.localTenantKey(),
+                first.localVersionKey()))
         .isInstanceOf(DataAccessException.class);
     dsl.execute(
         "INSERT INTO items (name, tenant_id, version_id) VALUES ('unassociated', 81001, 81002)");
@@ -272,12 +268,11 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                     gameDesignVersionRowId)
                 .canonicalBytes())
         .containsExactly(receipt.canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                repository.readPublicationScope(
-                    EntityEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
-                    EntityEmptySelectedSourceIntakePostgresFixture.TENANT,
-                    gameDesignVersionRowId + 1L))
+    assertThatThrownBy(() ->
+            repository.readPublicationScope(
+                EntityEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                EntityEmptySelectedSourceIntakePostgresFixture.TENANT,
+                gameDesignVersionRowId + 1L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("missing or ambiguous");
 
@@ -315,15 +310,14 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                 receipt.targetNamespace(),
                 receipt.intakeRequestId())
             .get(0, String.class);
-    assertThatThrownBy(
-            () ->
-                new EntitySelectedEmptyPublicationDigestService(
-                        EntityEmptySelectedSourceIntakePostgresFixture.NAMESPACE, repository)
-                    .getDraftDesignDigest(
-                        PublicationDigestRequestBinding.full(
-                            EntityEmptySelectedSourceIntakePostgresFixture.TENANT.toString(),
-                            Long.toString(gameDesignVersionRowId),
-                            "publish-request-2")))
+    assertThatThrownBy(() ->
+            new EntitySelectedEmptyPublicationDigestService(
+                    EntityEmptySelectedSourceIntakePostgresFixture.NAMESPACE, repository)
+                .getDraftDesignDigest(
+                    PublicationDigestRequestBinding.full(
+                        EntityEmptySelectedSourceIntakePostgresFixture.TENANT.toString(),
+                        Long.toString(gameDesignVersionRowId),
+                        "publish-request-2")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("original retained World freeze");
     String rowAfterMismatchedPublicationRead =
@@ -427,12 +421,11 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     assertThatThrownBy(() -> repository.read(receipt.targetNamespace(), receipt.intakeRequestId()))
         .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class)
         .hasMessageContaining("Entity stored source receipt is corrupt");
-    assertThatThrownBy(
-            () ->
-                repository.readPublicationScope(
-                    receipt.targetNamespace(),
-                    receipt.canonicalTenantId(),
-                    fixture.authorization().selected().target().gameDesignVersionRowId()))
+    assertThatThrownBy(() ->
+            repository.readPublicationScope(
+                receipt.targetNamespace(),
+                receipt.canonicalTenantId(),
+                fixture.authorization().selected().target().gameDesignVersionRowId()))
         .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
   }
 
@@ -552,17 +545,15 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
 
     dsl.execute("ALTER TABLE " + table + " DISABLE TRIGGER USER");
     try {
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE " + table + " SET row_count = 1 WHERE target_namespace = ?",
-                      receipt.targetNamespace()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE " + table + " SET row_count = 1 WHERE target_namespace = ?",
+                  receipt.targetNamespace()))
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE " + table + " SET owner_state = 'UNKNOWN' WHERE target_namespace = ?",
-                      receipt.targetNamespace()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE " + table + " SET owner_state = 'UNKNOWN' WHERE target_namespace = ?",
+                  receipt.targetNamespace()))
           .isInstanceOf(DataAccessException.class);
       dsl.execute(
           "DELETE FROM " + table + " WHERE target_namespace = ? AND intake_request_id = ?",
@@ -574,12 +565,11 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     assertThatThrownBy(() -> repository.read(receipt.targetNamespace(), receipt.intakeRequestId()))
         .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class)
         .hasMessageContaining("provider readback is missing or differs");
-    assertThatThrownBy(
-            () ->
-                repository.readPublicationScope(
-                    receipt.targetNamespace(),
-                    receipt.canonicalTenantId(),
-                    fixture.authorization().selected().target().gameDesignVersionRowId()))
+    assertThatThrownBy(() ->
+            repository.readPublicationScope(
+                receipt.targetNamespace(),
+                receipt.canonicalTenantId(),
+                fixture.authorization().selected().target().gameDesignVersionRowId()))
         .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
   }
 

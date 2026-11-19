@@ -404,63 +404,58 @@ class AccountJwtJwksTrustedSourceTest {
     var reviewStatus = new AtomicInteger(503);
     var json = JsonMapper.builder().build();
     when(operation.send(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              ApiCall call = invocation.getArgument(0);
-              int status =
-                  call == ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL ? reviewStatus.get() : 200;
-              Map<String, ?> body =
-                  switch (call) {
-                    case REVIEW_AUTHENTICATED_PRINCIPAL ->
-                        status == 201
-                            ? Map.of(
-                                "apiVersion", "authentication.k8s.io/v1",
-                                "kind", "SelfSubjectReview",
-                                "status",
-                                    Map.of(
-                                        "userInfo",
-                                        Map.of("username", parsed.expectedApiUsername())))
-                            : Map.of();
-                    case READ_KUBE_SYSTEM_NAMESPACE, READ_TARGET_NAMESPACE ->
-                        Map.of(
-                            "apiVersion",
-                            "v1",
-                            "kind",
-                            "Namespace",
-                            "metadata",
-                            Map.of(
-                                "name",
-                                call == ApiCall.READ_KUBE_SYSTEM_NAMESPACE
-                                    ? "kube-system"
-                                    : NAMESPACE,
-                                "uid",
-                                call == ApiCall.READ_KUBE_SYSTEM_NAMESPACE
-                                    ? CLUSTER_UID
-                                    : NAMESPACE_UID),
+        .thenAnswer(invocation -> {
+          ApiCall call = invocation.getArgument(0);
+          int status = call == ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL ? reviewStatus.get() : 200;
+          Map<String, ?> body =
+              switch (call) {
+                case REVIEW_AUTHENTICATED_PRINCIPAL ->
+                    status == 201
+                        ? Map.of(
+                            "apiVersion", "authentication.k8s.io/v1",
+                            "kind", "SelfSubjectReview",
                             "status",
-                            Map.of("phase", "Active"));
-                    case READ_JWKS_CONFIG_MAP ->
+                                Map.of(
+                                    "userInfo", Map.of("username", parsed.expectedApiUsername())))
+                        : Map.of();
+                case READ_KUBE_SYSTEM_NAMESPACE, READ_TARGET_NAMESPACE ->
+                    Map.of(
+                        "apiVersion",
+                        "v1",
+                        "kind",
+                        "Namespace",
+                        "metadata",
                         Map.of(
-                            "apiVersion",
-                            "v1",
-                            "kind",
-                            "ConfigMap",
-                            "metadata",
-                            Map.of(
-                                "name",
-                                AccountJwtJwksConfigMapClient.CONFIG_MAP_NAME,
-                                "namespace",
-                                NAMESPACE,
-                                "uid",
-                                CONFIG_MAP_UID,
-                                "resourceVersion",
-                                fixture.snapshot.resourceVersion()),
-                            "data",
-                            fixture.snapshot.data());
-                    default -> throw new AssertionError("Unexpected public-read API call");
-                  };
-              return new ApiResponse(status, json.writeValueAsBytes(body));
-            });
+                            "name",
+                            call == ApiCall.READ_KUBE_SYSTEM_NAMESPACE ? "kube-system" : NAMESPACE,
+                            "uid",
+                            call == ApiCall.READ_KUBE_SYSTEM_NAMESPACE
+                                ? CLUSTER_UID
+                                : NAMESPACE_UID),
+                        "status",
+                        Map.of("phase", "Active"));
+                case READ_JWKS_CONFIG_MAP ->
+                    Map.of(
+                        "apiVersion",
+                        "v1",
+                        "kind",
+                        "ConfigMap",
+                        "metadata",
+                        Map.of(
+                            "name",
+                            AccountJwtJwksConfigMapClient.CONFIG_MAP_NAME,
+                            "namespace",
+                            NAMESPACE,
+                            "uid",
+                            CONFIG_MAP_UID,
+                            "resourceVersion",
+                            fixture.snapshot.resourceVersion()),
+                        "data",
+                        fixture.snapshot.data());
+                default -> throw new AssertionError("Unexpected public-read API call");
+              };
+          return new ApiResponse(status, json.writeValueAsBytes(body));
+        });
     var source =
         new AccountJwtJwksTrustedSource(
             new AccountJwtJwksConfigMapClient(api),
@@ -704,20 +699,19 @@ class AccountJwtJwksTrustedSourceTest {
               fixture.accountBinding, fixture.trustFence))
           .thenReturn(Optional.of(fixture.publication), Optional.of(after));
       when(fixture.configMapClient.observe())
-          .thenAnswer(
-              invocation -> {
-                if (tamper.equals("trust"))
-                  when(fixture.materializerTrust.current())
-                      .thenReturn(Optional.of(binding(CLUSTER_UID, NAMESPACE_UID, "other-trust")));
-                Map<String, String> data = new LinkedHashMap<>(fixture.snapshot.data());
-                if (tamper.equals("marker"))
-                  data.put("jwt-generation.json", fixture.initialMarker + " ");
-                if (tamper.equals("jwks")) data.put("jwks.json", "{\"keys\":[]}");
-                return new ConfigMapSnapshot(
-                    tamper.equals("uid") ? "44444444-4444-4444-8444-444444444444" : CONFIG_MAP_UID,
-                    "42",
-                    data);
-              });
+          .thenAnswer(invocation -> {
+            if (tamper.equals("trust"))
+              when(fixture.materializerTrust.current())
+                  .thenReturn(Optional.of(binding(CLUSTER_UID, NAMESPACE_UID, "other-trust")));
+            Map<String, String> data = new LinkedHashMap<>(fixture.snapshot.data());
+            if (tamper.equals("marker"))
+              data.put("jwt-generation.json", fixture.initialMarker + " ");
+            if (tamper.equals("jwks")) data.put("jwks.json", "{\"keys\":[]}");
+            return new ConfigMapSnapshot(
+                tamper.equals("uid") ? "44444444-4444-4444-8444-444444444444" : CONFIG_MAP_UID,
+                "42",
+                data);
+          });
       assertRejectedPublicRead(fixture);
       verify(fixture.configMapClient).observe();
     }
@@ -728,26 +722,22 @@ class AccountJwtJwksTrustedSourceTest {
     Fixture fixture = new Fixture();
     AtomicInteger reads = new AtomicInteger();
     when(fixture.desiredStateRepository.readLockedEnrollmentState(fixture.accountBinding))
-        .thenAnswer(
-            invocation -> {
-              if (reads.incrementAndGet() == 2) {
-                fixture.useStableCommittedState();
-                var committed =
-                    fixture
-                        .desiredStateRepository
-                        .readCurrentCommittedSigner(
-                            fixture.accountBinding,
-                            fixture.trustFence,
-                            API_BINDING_DIGEST,
-                            "api-r1")
-                        .orElseThrow();
-                when(committed.promotion().publicConfigMapUid())
-                    .thenReturn("44444444-4444-4444-8444-444444444444");
-                when(committed.publicReceipt().configMapUid())
-                    .thenReturn("44444444-4444-4444-8444-444444444444");
-              }
-              return fixture.desiredStateRepository.readEnrollmentState(fixture.accountBinding);
-            });
+        .thenAnswer(invocation -> {
+          if (reads.incrementAndGet() == 2) {
+            fixture.useStableCommittedState();
+            var committed =
+                fixture
+                    .desiredStateRepository
+                    .readCurrentCommittedSigner(
+                        fixture.accountBinding, fixture.trustFence, API_BINDING_DIGEST, "api-r1")
+                    .orElseThrow();
+            when(committed.promotion().publicConfigMapUid())
+                .thenReturn("44444444-4444-4444-8444-444444444444");
+            when(committed.publicReceipt().configMapUid())
+                .thenReturn("44444444-4444-4444-8444-444444444444");
+          }
+          return fixture.desiredStateRepository.readEnrollmentState(fixture.accountBinding);
+        });
     assertRejectedPublicRead(fixture);
     verify(fixture.configMapClient).observe();
     assertThat(reads.get()).isEqualTo(2);
@@ -775,11 +765,10 @@ class AccountJwtJwksTrustedSourceTest {
     Fixture cancelled = new Fixture();
     try (var context = Context.current().withCancellation()) {
       when(cancelled.configMapClient.observe())
-          .thenAnswer(
-              invocation -> {
-                context.cancel(null);
-                return cancelled.snapshot;
-              });
+          .thenAnswer(invocation -> {
+            context.cancel(null);
+            return cancelled.snapshot;
+          });
       assertThatThrownBy(() -> context.call(cancelled.source::currentPublicRead))
           .isInstanceOf(SourceUnavailableException.class);
       verify(cancelled.configMapClient).observe();
@@ -849,13 +838,12 @@ class AccountJwtJwksTrustedSourceTest {
         .thenReturn(Optional.of(fixture.publication), Optional.of(later));
     when(fixture.configMapClient.observe())
         .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "43", fixture.snapshot.data()))
-        .thenAnswer(
-            invocation -> {
-              assertThatThrownBy(fixture.source::load)
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessage("Account trusted public JWKS source was rejected");
-              return new ConfigMapSnapshot(CONFIG_MAP_UID, "44", fixture.snapshot.data());
-            });
+        .thenAnswer(invocation -> {
+          assertThatThrownBy(fixture.source::load)
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("Account trusted public JWKS source was rejected");
+          return new ConfigMapSnapshot(CONFIG_MAP_UID, "44", fixture.snapshot.data());
+        });
 
     var result = fixture.source.currentPublicRead();
     assertThat(result.sourceIdentity().configMapUid()).isEqualTo(CONFIG_MAP_UID);
@@ -944,25 +932,23 @@ class AccountJwtJwksTrustedSourceTest {
         try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
           AtomicInteger trustReads = new AtomicInteger();
           when(fixture.materializerTrust.current())
-              .thenAnswer(
-                  invocation -> {
-                    assertThat(Context.current().getDeadline()).isSameAs(deadline);
-                    if (trustReads.incrementAndGet() == (afterMovement ? 3 : 1)) {
-                      if (failure.equals("cancel")) incoming.cancel(null);
-                      else ticks.set(TimeUnit.SECONDS.toNanos(2));
-                    }
-                    return Optional.of(fixture.binding);
-                  });
-          incoming.run(
-              () -> {
-                if (afterMovement) assertRejectedPublicRead(fixture);
-                else
-                  assertThatThrownBy(fixture.source::currentPublicRead)
-                      .isExactlyInstanceOf(SourceUnavailableException.class);
-                assertThatThrownBy(fixture.source::load)
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("Account trusted public JWKS source was rejected");
+              .thenAnswer(invocation -> {
+                assertThat(Context.current().getDeadline()).isSameAs(deadline);
+                if (trustReads.incrementAndGet() == (afterMovement ? 3 : 1)) {
+                  if (failure.equals("cancel")) incoming.cancel(null);
+                  else ticks.set(TimeUnit.SECONDS.toNanos(2));
+                }
+                return Optional.of(fixture.binding);
               });
+          incoming.run(() -> {
+            if (afterMovement) assertRejectedPublicRead(fixture);
+            else
+              assertThatThrownBy(fixture.source::currentPublicRead)
+                  .isExactlyInstanceOf(SourceUnavailableException.class);
+            assertThatThrownBy(fixture.source::load)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Account trusted public JWKS source was rejected");
+          });
           assertThat(trustReads.get()).isEqualTo(afterMovement ? 3 : 1);
           verify(fixture.configMapClient, times(afterMovement ? 1 : 0)).observe();
         }
@@ -1000,14 +986,13 @@ class AccountJwtJwksTrustedSourceTest {
     CountDownLatch release = new CountDownLatch(1);
     AtomicInteger observations = new AtomicInteger();
     when(fixture.configMapClient.observe())
-        .thenAnswer(
-            invocation -> {
-              if (observations.incrementAndGet() == 1) {
-                blocked.countDown();
-                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
-              }
-              return fixture.snapshot;
-            });
+        .thenAnswer(invocation -> {
+          if (observations.incrementAndGet() == 1) {
+            blocked.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+          }
+          return fixture.snapshot;
+        });
     var pool = Executors.newFixedThreadPool(2);
     try {
       var first = pool.submit(fixture.source::currentPublicRead);
@@ -1039,19 +1024,18 @@ class AccountJwtJwksTrustedSourceTest {
         new java.util.concurrent.ConcurrentLinkedQueue<>();
     AtomicInteger observations = new AtomicInteger();
     when(fixture.configMapClient.observe())
-        .thenAnswer(
-            invocation -> {
-              int current = observations.incrementAndGet();
-              if (current == 1) {
-                firstWorker.set(Thread.currentThread());
-                firstRemote.countDown();
-                assertThat(releaseFirst.await(5, TimeUnit.SECONDS)).isTrue();
-              } else if (current == 2) {
-                secondRemote.countDown();
-                assertThat(releaseSecond.await(5, TimeUnit.SECONDS)).isTrue();
-              }
-              return fixture.snapshot;
-            });
+        .thenAnswer(invocation -> {
+          int current = observations.incrementAndGet();
+          if (current == 1) {
+            firstWorker.set(Thread.currentThread());
+            firstRemote.countDown();
+            assertThat(releaseFirst.await(5, TimeUnit.SECONDS)).isTrue();
+          } else if (current == 2) {
+            secondRemote.countDown();
+            assertThat(releaseSecond.await(5, TimeUnit.SECONDS)).isTrue();
+          }
+          return fixture.snapshot;
+        });
     var pool = Executors.newFixedThreadPool(3);
     var completed =
         new java.util.concurrent.ExecutorCompletionService<
@@ -1060,28 +1044,26 @@ class AccountJwtJwksTrustedSourceTest {
       var first = completed.submit(fixture.source::currentPublicRead);
       assertThat(firstRemote.await(5, TimeUnit.SECONDS)).isTrue();
       for (int i = 0; i < 2; i++) {
-        completed.submit(
-            () -> {
-              queuedWorkers.add(Thread.currentThread());
-              queued.countDown();
-              return fixture.source.currentPublicRead();
-            });
+        completed.submit(() -> {
+          queuedWorkers.add(Thread.currentThread());
+          queued.countDown();
+          return fixture.source.currentPublicRead();
+        });
       }
       assertThat(queued.await(5, TimeUnit.SECONDS)).isTrue();
       org.awaitility.Awaitility.await()
           .atMost(2, TimeUnit.SECONDS)
-          .untilAsserted(
-              () -> {
-                assertThat(queuedWorkers).hasSize(2);
-                for (Thread worker : queuedWorkers) {
-                  var info =
-                      java.lang.management.ManagementFactory.getThreadMXBean()
-                          .getThreadInfo(worker.threadId());
-                  assertThat(info).isNotNull();
-                  assertThat(info.getThreadState()).isEqualTo(Thread.State.BLOCKED);
-                  assertThat(info.getLockOwnerId()).isEqualTo(firstWorker.get().threadId());
-                }
-              });
+          .untilAsserted(() -> {
+            assertThat(queuedWorkers).hasSize(2);
+            for (Thread worker : queuedWorkers) {
+              var info =
+                  java.lang.management.ManagementFactory.getThreadMXBean()
+                      .getThreadInfo(worker.threadId());
+              assertThat(info).isNotNull();
+              assertThat(info.getThreadState()).isEqualTo(Thread.State.BLOCKED);
+              assertThat(info.getLockOwnerId()).isEqualTo(firstWorker.get().threadId());
+            }
+          });
       releaseFirst.countDown();
       assertThat(first.get(5, TimeUnit.SECONDS).jwksBytes())
           .containsExactly(JWKS_1.getBytes(StandardCharsets.UTF_8));
@@ -1118,40 +1100,37 @@ class AccountJwtJwksTrustedSourceTest {
     AtomicReference<Thread> firstWorker = new AtomicReference<>();
     AtomicReference<Thread> secondWorker = new AtomicReference<>();
     when(fixture.configMapClient.observe())
-        .thenAnswer(
-            invocation -> {
-              if (observations.incrementAndGet() == 1) {
-                firstWorker.set(Thread.currentThread());
-                blocked.countDown();
-                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
-                return fixture.snapshot;
-              }
-              return new ConfigMapSnapshot(
-                  "44444444-4444-4444-8444-444444444444", "42", fixture.snapshot.data());
-            });
+        .thenAnswer(invocation -> {
+          if (observations.incrementAndGet() == 1) {
+            firstWorker.set(Thread.currentThread());
+            blocked.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return fixture.snapshot;
+          }
+          return new ConfigMapSnapshot(
+              "44444444-4444-4444-8444-444444444444", "42", fixture.snapshot.data());
+        });
     var pool = Executors.newFixedThreadPool(2);
     try {
       var first = pool.submit(fixture.source::currentPublicRead);
       assertThat(blocked.await(5, TimeUnit.SECONDS)).isTrue();
       var second =
-          pool.submit(
-              () -> {
-                secondWorker.set(Thread.currentThread());
-                secondStarted.countDown();
-                return fixture.source.currentPublicRead();
-              });
+          pool.submit(() -> {
+            secondWorker.set(Thread.currentThread());
+            secondStarted.countDown();
+            return fixture.source.currentPublicRead();
+          });
       assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
       org.awaitility.Awaitility.await()
           .atMost(2, TimeUnit.SECONDS)
-          .untilAsserted(
-              () -> {
-                var info =
-                    java.lang.management.ManagementFactory.getThreadMXBean()
-                        .getThreadInfo(secondWorker.get().threadId());
-                assertThat(info).isNotNull();
-                assertThat(info.getThreadState()).isEqualTo(Thread.State.BLOCKED);
-                assertThat(info.getLockOwnerId()).isEqualTo(firstWorker.get().threadId());
-              });
+          .untilAsserted(() -> {
+            var info =
+                java.lang.management.ManagementFactory.getThreadMXBean()
+                    .getThreadInfo(secondWorker.get().threadId());
+            assertThat(info).isNotNull();
+            assertThat(info.getThreadState()).isEqualTo(Thread.State.BLOCKED);
+            assertThat(info.getLockOwnerId()).isEqualTo(firstWorker.get().threadId());
+          });
       release.countDown();
       assertThat(first.get(5, TimeUnit.SECONDS).sourceIdentity().configMapUid())
           .isEqualTo(CONFIG_MAP_UID);
@@ -1837,10 +1816,9 @@ class AccountJwtJwksTrustedSourceTest {
     var guard = mock(AccountPublicJwksReadWorkloadGuard.class);
     when(guard.requireCaller())
         .thenReturn(mock(AccountPublicJwksReadWorkloadGuard.ProtectedCaller.class));
-    assertThatThrownBy(
-            () ->
-                new AccountPublicJwksReadService(fixture.source, guard)
-                    .read(AccountPublicJwksReadCodec.request()))
+    assertThatThrownBy(() ->
+            new AccountPublicJwksReadService(fixture.source, guard)
+                .read(AccountPublicJwksReadCodec.request()))
         .isExactlyInstanceOf(
             net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException
                 .class);

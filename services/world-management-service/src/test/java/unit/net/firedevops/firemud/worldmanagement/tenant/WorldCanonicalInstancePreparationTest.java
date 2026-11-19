@@ -69,10 +69,8 @@ class WorldCanonicalInstancePreparationTest {
                 freeze.appliedCommitId(),
                 freeze.contentDigest(),
                 "another-workflow"))) {
-      assertThatThrownBy(
-              () ->
-                  WorldCanonicalInstancePreparation.requireExactReleaseGraph(
-                      changed, fixture.plan()))
+      assertThatThrownBy(() ->
+              WorldCanonicalInstancePreparation.requireExactReleaseGraph(changed, fixture.plan()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var changedSchema =
@@ -91,10 +89,9 @@ class WorldCanonicalInstancePreparationTest {
             2,
             freeze.suppliedOwnedAffectedTuples());
     when(fixture.plan().sourceBinding()).thenReturn(new Request(source.plan(), changedSchema));
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstancePreparation.requireExactReleaseGraph(
-                    fixture.release(), fixture.plan()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstancePreparation.requireExactReleaseGraph(
+                fixture.release(), fixture.plan()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("World participant differs");
   }
@@ -154,19 +151,17 @@ class WorldCanonicalInstancePreparationTest {
       Request source, UUID version, String commit, String worldDigest, String workflow) {
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(source.plan().ownerBinding().gameDesignVersionId()),
-                        false,
-                        null,
-                        commit,
-                        "WORLD_MANAGEMENT".equals(owner) ? worldDigest : "a".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "b".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(source.plan().ownerBinding().gameDesignVersionId()),
+                    false,
+                    null,
+                    commit,
+                    "WORLD_MANAGEMENT".equals(owner) ? worldDigest : "a".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(owner),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "b".repeat(64) : null))
             .toList();
     return AuthoredWorldReleaseAttestationEvidence.create(
         source.freeze().targetNamespace(),
@@ -592,15 +587,14 @@ class WorldCanonicalInstancePreparationTest {
         "5".repeat(64),
         3,
         binding.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList());
   }
 

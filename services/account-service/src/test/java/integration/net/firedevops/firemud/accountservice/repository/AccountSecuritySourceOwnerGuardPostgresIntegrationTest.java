@@ -110,20 +110,17 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
 
     Account afterReset = accounts.findByAccountUuid(seed.account().getAccountUuid()).orElseThrow();
     PasswordResetReceipt resetReceipt =
-        transaction.execute(
-            status ->
-                resetOperations.findByTokenHash(sha256Hex(seed.rawResetToken())).orElseThrow());
+        transaction.execute(status ->
+            resetOperations.findByTokenHash(sha256Hex(seed.rawResetToken())).orElseThrow());
     ScopeState resetState = readState(transaction, generations, seed.account().getAccountUuid());
     CurrentSourceEvidence resetEvidence =
-        transaction.execute(
-            status ->
-                sources.readCurrentAccountSource(seed.account().getAccountUuid(), resetState));
+        transaction.execute(status ->
+            sources.readCurrentAccountSource(seed.account().getAccountUuid(), resetState));
     var resetEvent =
-        transaction.execute(
-            status ->
-                outbox
-                    .findEvent(resetReceipt.outboxStreamKey(), resetReceipt.outboxSequence())
-                    .orElseThrow());
+        transaction.execute(status ->
+            outbox
+                .findEvent(resetReceipt.outboxStreamKey(), resetReceipt.outboxSequence())
+                .orElseThrow());
     var decodedReset =
         PasswordResetAuthorityEventV1Codec.verify(
             new String(resetEvent.payload(), StandardCharsets.UTF_8));
@@ -139,12 +136,11 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
     assertThat(resetEvidence.checkpoint().sequence()).isEqualTo(1L);
     assertThat(afterReset.getPasswordHash()).startsWith("$argon2");
 
-    assertDatabaseWriteRejected(
-        () ->
-            dsl.execute(
-                "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
-                "unbacked-password-verifier",
-                seed.account().getAccountUuid()));
+    assertDatabaseWriteRejected(() ->
+        dsl.execute(
+            "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
+            "unbacked-password-verifier",
+            seed.account().getAccountUuid()));
     assertThat(
             accounts
                 .findByAccountUuid(seed.account().getAccountUuid())
@@ -152,19 +148,17 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
                 .getPasswordHash())
         .isEqualTo(afterReset.getPasswordHash());
 
-    assertDatabaseWriteRejected(
-        () ->
-            dsl.execute(
-                "UPDATE account_password_reset_operation_receipts "
-                    + "SET request_digest = request_digest WHERE token_hash = ?",
-                HEX.parseHex(resetReceipt.tokenHash())));
-    assertDatabaseWriteRejected(
-        () ->
-            dsl.execute(
-                "UPDATE account_authority_issuance_fences "
-                    + "SET issuance_fence = issuance_fence + 1, source_version = source_version + 1 "
-                    + "WHERE account_uuid = ?",
-                seed.account().getAccountUuid()));
+    assertDatabaseWriteRejected(() ->
+        dsl.execute(
+            "UPDATE account_password_reset_operation_receipts "
+                + "SET request_digest = request_digest WHERE token_hash = ?",
+            HEX.parseHex(resetReceipt.tokenHash())));
+    assertDatabaseWriteRejected(() ->
+        dsl.execute(
+            "UPDATE account_authority_issuance_fences "
+                + "SET issuance_fence = issuance_fence + 1, source_version = source_version + 1 "
+                + "WHERE account_uuid = ?",
+            seed.account().getAccountUuid()));
     assertThat(readState(transaction, generations, seed.account().getAccountUuid()))
         .isEqualTo(resetState);
 
@@ -203,19 +197,17 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
         transaction.execute(
             status -> logoutOperations.findByRequestId(logoutRequestId).orElseThrow());
     var logoutEvent =
-        transaction.execute(
-            status ->
-                outbox
-                    .findEvent(logoutReceipt.outboxStreamKey(), logoutReceipt.outboxSequence())
-                    .orElseThrow());
+        transaction.execute(status ->
+            outbox
+                .findEvent(logoutReceipt.outboxStreamKey(), logoutReceipt.outboxSequence())
+                .orElseThrow());
     var decodedLogout =
         AccountLogoutAllAuthorityEventV1Codec.verify(
             new String(logoutEvent.payload(), StandardCharsets.UTF_8));
     ScopeState finalState = readState(transaction, generations, seed.account().getAccountUuid());
     CurrentSourceEvidence finalEvidence =
-        transaction.execute(
-            status ->
-                sources.readCurrentAccountSource(seed.account().getAccountUuid(), finalState));
+        transaction.execute(status ->
+            sources.readCurrentAccountSource(seed.account().getAccountUuid(), finalState));
 
     assertThat(decodedLogout.accountId()).isEqualTo(seed.account().getAccountUuid().toString());
     assertThat(decodedLogout.accountAuthorityGeneration()).isEqualTo("3");
@@ -228,12 +220,11 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
     assertThat(finalState.sourceVersion()).isEqualTo(3L);
     assertThat(finalState.issuanceFence().value()).isEqualTo(3L);
 
-    assertDatabaseWriteRejected(
-        () ->
-            dsl.execute(
-                "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
-                "logout-is-not-password-reset-authority",
-                seed.account().getAccountUuid()));
+    assertDatabaseWriteRejected(() ->
+        dsl.execute(
+            "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
+            "logout-is-not-password-reset-authority",
+            seed.account().getAccountUuid()));
     assertThat(
             accounts
                 .findByAccountUuid(seed.account().getAccountUuid())
@@ -263,24 +254,23 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
       TransactionTemplate transaction,
       AccountRepository accounts,
       PasswordResetTokenRepository tokens) {
-    return transaction.execute(
-        status -> {
-          String suffix = UUID.randomUUID().toString();
-          Account account = new Account();
-          account.setUsername("source-guard-" + suffix);
-          account.setEmail("source-guard-" + suffix + "@example.test");
-          account.setPasswordHash("initial-password-verifier-" + suffix);
-          account.setRole("player");
-          Account saved = accounts.save(account);
+    return transaction.execute(status -> {
+      String suffix = UUID.randomUUID().toString();
+      Account account = new Account();
+      account.setUsername("source-guard-" + suffix);
+      account.setEmail("source-guard-" + suffix + "@example.test");
+      account.setPasswordHash("initial-password-verifier-" + suffix);
+      account.setRole("player");
+      Account saved = accounts.save(account);
 
-          String rawToken = "reset-token-" + suffix;
-          PasswordResetToken token = new PasswordResetToken();
-          token.setAccount(saved);
-          token.setToken(rawToken);
-          token.setExpiresAt(LocalDateTime.now().plusHours(2));
-          tokens.save(token);
-          return new Seed(saved, rawToken);
-        });
+      String rawToken = "reset-token-" + suffix;
+      PasswordResetToken token = new PasswordResetToken();
+      token.setAccount(saved);
+      token.setToken(rawToken);
+      token.setExpiresAt(LocalDateTime.now().plusHours(2));
+      tokens.save(token);
+      return new Seed(saved, rawToken);
+    });
   }
 
   private AccountServiceImpl newPasswordResetService(

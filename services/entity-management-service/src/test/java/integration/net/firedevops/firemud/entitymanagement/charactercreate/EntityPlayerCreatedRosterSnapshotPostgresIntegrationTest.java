@@ -120,15 +120,14 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
     assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshot_actors")))
         .isZero();
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE entity_canonical_gameplay_roster_snapshots SET canonical_player_created_source_identity = ? WHERE snapshot_uuid = ?",
-                    sourceIdentity().toBuilder()
-                        .setDescriptorRevisionUuid(UUID.randomUUID().toString())
-                        .build()
-                        .toByteArray(),
-                    snapshot))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE entity_canonical_gameplay_roster_snapshots SET canonical_player_created_source_identity = ? WHERE snapshot_uuid = ?",
+                sourceIdentity().toBuilder()
+                    .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+                    .build()
+                    .toByteArray(),
+                snapshot))
         .isInstanceOf(DataAccessException.class);
   }
 
@@ -165,10 +164,9 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                     .setDescriptorUuid(UUID.randomUUID().toString()))
             .build();
     var beforeMismatch = rosterRowCounts();
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.capture(
-                    changedSourceRequest, source, empty.original(), emptyAdmission))
+    assertThatThrownBy(() ->
+            snapshotRepository.capture(
+                changedSourceRequest, source, empty.original(), emptyAdmission))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     assertThat(rosterRowCounts()).isEqualTo(beforeMismatch);
@@ -214,36 +212,33 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
     assertThat(lateCandidateRows).hasSize(2);
     var emptyCandidate =
         lateCandidateRows.stream()
-            .filter(
-                candidate ->
-                    candidate
-                        .binding()
-                        .snapshot()
-                        .snapshotUuid()
-                        .toString()
-                        .equals(emptyReceipt.getRoster().getSnapshotUuid()))
+            .filter(candidate ->
+                candidate
+                    .binding()
+                    .snapshot()
+                    .snapshotUuid()
+                    .toString()
+                    .equals(emptyReceipt.getRoster().getSnapshotUuid()))
             .findFirst()
             .orElseThrow();
     var initialPopulatedCandidate =
         lateCandidateRows.stream()
-            .filter(
-                candidate ->
-                    candidate
-                        .binding()
-                        .snapshot()
-                        .snapshotUuid()
-                        .toString()
-                        .equals(populatedReceipt.getRoster().getSnapshotUuid()))
+            .filter(candidate ->
+                candidate
+                    .binding()
+                    .snapshot()
+                    .snapshotUuid()
+                    .toString()
+                    .equals(populatedReceipt.getRoster().getSnapshotUuid()))
             .findFirst()
             .orElseThrow();
     UUID siblingHold = UUID.randomUUID();
-    transaction.executeWithoutResult(
-        ignored ->
-            delayedBinding.acquire(
-                initialPopulatedCandidate.binding(),
-                UUID.randomUUID(),
-                siblingHold,
-                CanonicalGameplayRosterRetentionRepository.ReferenceKind.HOLD));
+    transaction.executeWithoutResult(ignored ->
+        delayedBinding.acquire(
+            initialPopulatedCandidate.binding(),
+            UUID.randomUUID(),
+            siblingHold,
+            CanonicalGameplayRosterRetentionRepository.ReferenceKind.HOLD));
     UUID populatedSnapshotUuid = initialPopulatedCandidate.snapshotUuid();
     var populatedCandidate =
         transaction.execute(ignored -> delayedBinding.candidates(null, 10)).stream()
@@ -268,34 +263,24 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
     AtomicInteger secondSealPid = new AtomicInteger();
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<Boolean> firstSeal =
-          executor.submit(
-              () ->
-                  transaction.execute(
-                      ignored -> {
-                        firstSealPid.set(
-                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                        assertThat(
-                                delayedBinding.observeRetirement(
-                                    emptyCandidate, emptyProof, policy))
-                            .as("the empty created sibling persists its own seal")
-                            .isTrue();
-                        firstSealAcquired.countDown();
-                        awaitSiblingLatch(
-                            allowFirstSealCommit, "first created sibling seal commit");
-                        return true;
-                      }));
+          executor.submit(() ->
+              transaction.execute(ignored -> {
+                firstSealPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                assertThat(delayedBinding.observeRetirement(emptyCandidate, emptyProof, policy))
+                    .as("the empty created sibling persists its own seal")
+                    .isTrue();
+                firstSealAcquired.countDown();
+                awaitSiblingLatch(allowFirstSealCommit, "first created sibling seal commit");
+                return true;
+              }));
       assertThat(firstSealAcquired.await(10, TimeUnit.SECONDS)).isTrue();
       Future<Boolean> secondSeal =
-          executor.submit(
-              () ->
-                  transaction.execute(
-                      ignored -> {
-                        secondSealPid.set(
-                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                        secondSealStarted.countDown();
-                        return delayedBinding.observeRetirement(
-                            populatedCandidate, populatedProof, policy);
-                      }));
+          executor.submit(() ->
+              transaction.execute(ignored -> {
+                secondSealPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                secondSealStarted.countDown();
+                return delayedBinding.observeRetirement(populatedCandidate, populatedProof, policy);
+              }));
       assertThat(secondSealStarted.await(10, TimeUnit.SECONDS)).isTrue();
       awaitBackendBlockedBy(secondSealPid.get(), firstSealPid.get());
       allowFirstSealCommit.countDown();
@@ -312,49 +297,41 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             .findFirst()
             .orElseThrow();
     assertThat(
-            transaction.<Boolean>execute(
-                ignored ->
-                    delayedBinding.observeRetirement(sealedEmptyCandidate, emptyProof, policy)))
+            transaction.<Boolean>execute(ignored ->
+                delayedBinding.observeRetirement(sealedEmptyCandidate, emptyProof, policy)))
         .as("exact retirement replay keeps the empty sibling's persisted proof")
         .isTrue();
 
     var changedProof = createdRetirementProof(empty, emptyReceipt, targetFence, UUID.randomUUID());
     assertThat(
-            transaction.<Boolean>execute(
-                ignored ->
-                    delayedBinding.observeRetirement(sealedEmptyCandidate, changedProof, policy)))
+            transaction.<Boolean>execute(ignored ->
+                delayedBinding.observeRetirement(sealedEmptyCandidate, changedProof, policy)))
         .as("a different proof cannot replace a retained sibling seal")
         .isFalse();
 
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    ignored ->
-                        delayedBinding.acquire(
-                            populatedCandidate.binding(),
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            CanonicalGameplayRosterRetentionRepository.ReferenceKind.RECOVERY)))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(ignored ->
+                delayedBinding.acquire(
+                    populatedCandidate.binding(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    CanonicalGameplayRosterRetentionRepository.ReferenceKind.RECOVERY)))
         .as("the live created snapshot's recovery path is fenced by its shared target seal")
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
 
     var currentEmpty =
         transaction.execute(ignored -> delayedBinding.candidates(null, 10)).stream()
-            .filter(
-                candidate ->
-                    candidate
-                        .snapshotUuid()
-                        .equals(emptyCandidate.binding().snapshot().snapshotUuid()))
+            .filter(candidate ->
+                candidate.snapshotUuid().equals(emptyCandidate.binding().snapshot().snapshotUuid()))
             .findFirst()
             .orElseThrow();
     var currentPopulated =
         transaction.execute(ignored -> delayedBinding.candidates(null, 10)).stream()
-            .filter(
-                candidate ->
-                    candidate
-                        .snapshotUuid()
-                        .equals(populatedCandidate.binding().snapshot().snapshotUuid()))
+            .filter(candidate ->
+                candidate
+                    .snapshotUuid()
+                    .equals(populatedCandidate.binding().snapshot().snapshotUuid()))
             .findFirst()
             .orElseThrow();
     assertThat(
@@ -380,12 +357,11 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
       var confirmation =
           net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
               .confirmation(transfer.acknowledgementRequest(), transfer.acknowledgement());
-      transaction.executeWithoutResult(
-          ignored ->
-              delayedBinding.recordRetirementConfirmation(
-                  transfer,
-                  net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
-                      .confirmationResponse(confirmation)));
+      transaction.executeWithoutResult(ignored ->
+          delayedBinding.recordRetirementConfirmation(
+              transfer,
+              net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+                  .confirmationResponse(confirmation)));
     }
     dsl.fetch("SELECT pg_sleep(0.05)");
 
@@ -409,9 +385,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
         .as("the shared target fence remains while a sibling and delayed nonce remain")
         .isZero();
 
-    transaction.executeWithoutResult(
-        ignored ->
-            delayedBinding.release(populatedCandidate.binding(), UUID.randomUUID(), siblingHold));
+    transaction.executeWithoutResult(ignored ->
+        delayedBinding.release(populatedCandidate.binding(), UUID.randomUUID(), siblingHold));
     dsl.fetch("SELECT pg_sleep(0.05)");
     var unheldPopulated =
         transaction.execute(ignored -> delayedBinding.candidates(null, 10)).stream()
@@ -432,10 +407,9 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
     assertThat(transaction.<Integer>execute(ignored -> delayedBinding.purgeRetiredTargets(8)))
         .as("the pre-seal delayed nonce still holds the shared target fence after siblings dispose")
         .isZero();
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.capture(
-                    delayed.request(), source, delayed.original(), delayedAdmission))
+    assertThatThrownBy(() ->
+            snapshotRepository.capture(
+                delayed.request(), source, delayed.original(), delayedAdmission))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
     assertThatThrownBy(() -> reserveAdmission(inputs(source, accountId, targetFence).request()))
@@ -554,12 +528,11 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                 .get(0, UUID.class))
         .isEqualTo(UUID.fromString(first.getRoster().getSnapshotUuid()));
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE entity_canonical_gameplay_roster_snapshots SET canonical_player_created_source_identity = ? WHERE snapshot_uuid = ?",
-                    sourceIdentity().toByteArray(),
-                    UUID.fromString(first.getRoster().getSnapshotUuid())))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE entity_canonical_gameplay_roster_snapshots SET canonical_player_created_source_identity = ? WHERE snapshot_uuid = ?",
+                sourceIdentity().toByteArray(),
+                UUID.fromString(first.getRoster().getSnapshotUuid())))
         .isInstanceOf(DataAccessException.class);
   }
 
@@ -685,10 +658,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                     .setDescriptorUuid(UUID.randomUUID().toString()))
             .build();
     var beforeSelectedSourceMismatch = rosterRowCounts();
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.readSelected(
-                    substitutedSource, inputs.source(), selectedOriginal))
+    assertThatThrownBy(() ->
+            snapshotRepository.readSelected(substitutedSource, inputs.source(), selectedOriginal))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     assertThat(rosterRowCounts()).isEqualTo(beforeSelectedSourceMismatch);
@@ -700,10 +671,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                 selectedRequest.getPlayerExecutionContext().toBuilder()
                     .setAccountId(otherAccount.toString()))
             .build();
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.readSelected(
-                    substitutedAccount, inputs.source(), selectedOriginal))
+    assertThatThrownBy(() ->
+            snapshotRepository.readSelected(substitutedAccount, inputs.source(), selectedOriginal))
         .isInstanceOf(IllegalArgumentException.class);
     var wrongNamespaceRequest =
         CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
@@ -719,10 +688,9 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             selectedOriginal.getOwnerFence(),
             UUID.fromString(selectedOriginal.getTargetFenceUuid()),
             snapshot);
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.readSelected(
-                    selectedRequest, inputs.source(), wrongNamespaceOriginal))
+    assertThatThrownBy(() ->
+            snapshotRepository.readSelected(
+                selectedRequest, inputs.source(), wrongNamespaceOriginal))
         .isInstanceOf(IllegalArgumentException.class);
 
     var beforeQuarantineSnapshot =
@@ -735,9 +703,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                 "UPDATE characters SET actor_identity_status='QUARANTINED', actor_identity_quarantine_reason='OWNER_PROVENANCE_REVOKED' WHERE character_uuid=? AND actor_identity_status='OWNER_RESOLVED'",
                 actorId))
         .isOne();
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.readSelected(selectedRequest, inputs.source(), selectedOriginal))
+    assertThatThrownBy(() ->
+            snapshotRepository.readSelected(selectedRequest, inputs.source(), selectedOriginal))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_SNAPSHOT_STALE");
     assertThat(rosterRowCounts()).isEqualTo(beforeQuarantineCounts);
@@ -761,13 +728,12 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             "SELECT xmin::text AS row_version, original_request, terminal_bytes, entity_source_receipt FROM entity_character_create_operations WHERE target_namespace = ? AND operation_id = ?",
             proof.action().scope().targetNamespace(),
             UUID.fromString(proof.original().getOperationId()));
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.capture(
-                    freshInputs.request(),
-                    freshInputs.source(),
-                    freshInputs.original(),
-                    freshAdmission))
+    assertThatThrownBy(() ->
+            snapshotRepository.capture(
+                freshInputs.request(),
+                freshInputs.source(),
+                freshInputs.original(),
+                freshAdmission))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("FAILED_PRECONDITION")
         .hasMessageContaining("Fresh PLAYER_CREATED roster is unavailable");
@@ -814,20 +780,18 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             .build();
     var recoveryOwner = selectedOriginal.toBuilder().setRecoveryUuid(recoveryId.toString()).build();
     var retentionRepository = new CanonicalGameplayRosterRetentionRepository(dsl);
-    transaction.executeWithoutResult(
-        ignored ->
-            retentionRepository.closeAdmission(
-                recoveryRequest,
-                recoveryOwner,
-                new CanonicalGameplayRosterRetentionPolicy(
-                    Duration.ofHours(1),
-                    Duration.ofHours(1),
-                    Duration.ofHours(1),
-                    Duration.ofMinutes(1),
-                    2)));
-    assertThatThrownBy(
-            () ->
-                snapshotRepository.readSelected(selectedRequest, inputs.source(), selectedOriginal))
+    transaction.executeWithoutResult(ignored ->
+        retentionRepository.closeAdmission(
+            recoveryRequest,
+            recoveryOwner,
+            new CanonicalGameplayRosterRetentionPolicy(
+                Duration.ofHours(1),
+                Duration.ofHours(1),
+                Duration.ofHours(1),
+                Duration.ofMinutes(1),
+                2)));
+    assertThatThrownBy(() ->
+            snapshotRepository.readSelected(selectedRequest, inputs.source(), selectedOriginal))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
 
@@ -931,10 +895,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             UUID.fromString(inputs.request().getPlayerExecutionContext().getSessionId()),
             changedSource);
     var beforeSourceSubstitution = rosterRowCounts();
-    assertThatThrownBy(
-            () ->
-                repository.capture(
-                    sourceSubstitution, inputs.source(), inputs.original(), admission))
+    assertThatThrownBy(() ->
+            repository.capture(sourceSubstitution, inputs.source(), inputs.original(), admission))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     assertThat(rosterRowCounts()).isEqualTo(beforeSourceSubstitution);
@@ -947,10 +909,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             otherAccount,
             UUID.fromString(inputs.request().getPlayerExecutionContext().getSessionId()),
             inputs.request().getExpectedSource());
-    assertThatThrownBy(
-            () ->
-                repository.capture(
-                    accountSubstitution, inputs.source(), inputs.original(), admission))
+    assertThatThrownBy(() ->
+            repository.capture(accountSubstitution, inputs.source(), inputs.original(), admission))
         .isInstanceOf(IllegalArgumentException.class);
 
     UUID otherSession = UUID.randomUUID();
@@ -961,10 +921,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             UUID.fromString(inputs.request().getCanonicalAccountUuid()),
             otherSession,
             inputs.request().getExpectedSource());
-    assertThatThrownBy(
-            () ->
-                repository.capture(
-                    sessionSubstitution, inputs.source(), inputs.original(), admission))
+    assertThatThrownBy(() ->
+            repository.capture(sessionSubstitution, inputs.source(), inputs.original(), admission))
         .isInstanceOf(IllegalArgumentException.class);
 
     var wrongNamespaceRequest =
@@ -981,10 +939,9 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             inputs.original().getOwnerFence(),
             UUID.fromString(inputs.original().getTargetFenceUuid()),
             null);
-    assertThatThrownBy(
-            () ->
-                repository.capture(
-                    inputs.request(), inputs.source(), wrongNamespaceOriginal, admission))
+    assertThatThrownBy(() ->
+            repository.capture(
+                inputs.request(), inputs.source(), wrongNamespaceOriginal, admission))
         .isInstanceOf(IllegalArgumentException.class);
 
     var isolatedTarget =
@@ -1000,9 +957,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                 inputs.request().getPlayerExecutionContext().toBuilder()
                     .setPlayableStateScope("ISOLATED"))
             .build();
-    assertThatThrownBy(
-            () ->
-                repository.capture(isolatedRequest, inputs.source(), inputs.original(), admission))
+    assertThatThrownBy(() ->
+            repository.capture(isolatedRequest, inputs.source(), inputs.original(), admission))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshots"))).isZero();
@@ -1025,9 +981,8 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
         "CREATE TRIGGER fail_player_created_original_bind BEFORE INSERT ON entity_canonical_roster_original_selections FOR EACH ROW EXECUTE FUNCTION fail_player_created_original_bind()");
     var repository = new EntityPlayerCreatedRosterSnapshotRepository(dsl, transactionManager);
 
-    assertThatThrownBy(
-            () ->
-                repository.capture(inputs.request(), inputs.source(), inputs.original(), admission))
+    assertThatThrownBy(() ->
+            repository.capture(inputs.request(), inputs.source(), inputs.original(), admission))
         .isInstanceOf(DataAccessException.class);
 
     assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshots"))).isZero();

@@ -80,10 +80,9 @@ class AccountGameplayDelegationAuthorityProjectionTest {
             null,
             valid.canonicalIssuerProjection());
 
-    assertThatThrownBy(
-            () ->
-                AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(
-                    missingAccountProjection))
+    assertThatThrownBy(() ->
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(
+                missingAccountProjection))
         .isInstanceOf(
             AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
   }
@@ -169,11 +168,10 @@ class AccountGameplayDelegationAuthorityProjectionTest {
     void selectedSourceChangedAfterExactRedisReadbackNeverReturnsObservation() {
       SelectedOwnerFixture fixture = new SelectedOwnerFixture();
       when(fixture.redis.readSelectedAuthorityProjections(ACCOUNT_ID, fixture.tenant))
-          .thenAnswer(
-              invocation -> {
-                when(fixture.member.getMembershipVersion()).thenReturn(3L);
-                return fixture.values;
-              });
+          .thenAnswer(invocation -> {
+            when(fixture.member.getMembershipVersion()).thenReturn(3L);
+            return fixture.values;
+          });
       assertThatThrownBy(
               () -> fixture.projection.observeSelectedCurrent(ACCOUNT_ID, fixture.tenant))
           .isInstanceOf(
@@ -619,16 +617,15 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               org.mockito.ArgumentMatchers.anyBoolean(),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
               any(List.class)))
-          .thenAnswer(
-              invocation -> {
-                @SuppressWarnings("unchecked")
-                List<byte[]> candidates = invocation.getArgument(4);
-                String candidate = new String(candidates.getLast(), StandardCharsets.UTF_8);
-                if (candidate.contains("\"accountId\"")) {
-                  when(fixture.member.getMembershipVersion()).thenReturn(3L);
-                }
-                return AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED;
-              });
+          .thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<byte[]> candidates = invocation.getArgument(4);
+            String candidate = new String(candidates.getLast(), StandardCharsets.UTF_8);
+            if (candidate.contains("\"accountId\"")) {
+              when(fixture.member.getMembershipVersion()).thenReturn(3L);
+            }
+            return AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED;
+          });
 
       assertThatThrownBy(
               () -> fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant))
@@ -720,9 +717,8 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
           .thenReturn(
               snapshot(1L, 2L)); // The actual composite still proves 1, not this claimed head.
-      assertThatThrownBy(
-              () ->
-                  contradictory.projection.observeSelectedCurrent(ACCOUNT_ID, contradictory.tenant))
+      assertThatThrownBy(() ->
+              contradictory.projection.observeSelectedCurrent(ACCOUNT_ID, contradictory.tenant))
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
       org.mockito.Mockito.verifyNoInteractions(contradictory.redis);
@@ -969,18 +965,15 @@ class AccountGameplayDelegationAuthorityProjectionTest {
           .doesNotContainKeys("schema", "scope", "digest", "checkpoint");
       Map<String, Object> altered = new LinkedHashMap<>(decodeFields(issuer));
       altered.put("schema", "account-auth-authority-projection/v1");
-      assertThatThrownBy(
-              () ->
-                  AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
-                      JSON.writeValueAsBytes(altered),
-                      "issuer",
-                      GameSessionAccountDelegationProfile.ISSUER))
+      assertThatThrownBy(() ->
+              AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+                  JSON.writeValueAsBytes(altered),
+                  "issuer",
+                  GameSessionAccountDelegationProfile.ISSUER))
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
-      assertThatThrownBy(
-              () ->
-                  AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(
-                      snapshot(2, 1)))
+      assertThatThrownBy(() ->
+              AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot(2, 1)))
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
     }
@@ -1021,31 +1014,28 @@ class AccountGameplayDelegationAuthorityProjectionTest {
       for (String field : List.of("issuanceFence", "digest", "generation")) {
         Map<String, Object> altered = new LinkedHashMap<>(decodeFields(account));
         altered.put(field, "1");
-        assertThatThrownBy(
-                () ->
-                    AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
-                        JSON.writeValueAsString(altered)
-                            .getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        "account",
-                        ACCOUNT_ID.toString()))
+        assertThatThrownBy(() ->
+                AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+                    JSON.writeValueAsString(altered)
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    "account",
+                    ACCOUNT_ID.toString()))
             .isInstanceOf(
                 AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
       }
       Map<String, Object> missing = new LinkedHashMap<>(decodeFields(account));
       missing.remove("sourceEvent");
-      assertThatThrownBy(
-              () ->
-                  AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
-                      JSON.writeValueAsString(missing)
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                      "account",
-                      ACCOUNT_ID.toString()))
+      assertThatThrownBy(() ->
+              AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+                  JSON.writeValueAsString(missing)
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                  "account",
+                  ACCOUNT_ID.toString()))
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
-      assertThatThrownBy(
-              () ->
-                  AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
-                      account, "account", UUID.randomUUID().toString()))
+      assertThatThrownBy(() ->
+              AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+                  account, "account", UUID.randomUUID().toString()))
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
     }
@@ -1150,11 +1140,10 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
           .thenReturn(snapshot(1L, 11L));
       when(redis.publishAuthorityProjections(any(UUID.class), any(byte[].class), any(byte[].class)))
-          .thenAnswer(
-              invocation -> {
-                assertThat(transactionActive.get()).isFalse();
-                return AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(transactionActive.get()).isFalse();
+            return AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED;
+          });
       AccountGameplayDelegationAuthorityProjection projection =
           new AccountGameplayDelegationAuthorityProjection(
               sourceEvidence, transactionManager, redis);
@@ -1304,11 +1293,10 @@ class AccountGameplayDelegationAuthorityProjectionTest {
       PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
       TransactionStatus status = mock(TransactionStatus.class);
       when(manager.getTransaction(any(TransactionDefinition.class)))
-          .thenAnswer(
-              invocation -> {
-                if (active != null) active.set(true);
-                return status;
-              });
+          .thenAnswer(invocation -> {
+            if (active != null) active.set(true);
+            return status;
+          });
       doAnswer(
               invocation -> {
                 if (active != null) active.set(false);

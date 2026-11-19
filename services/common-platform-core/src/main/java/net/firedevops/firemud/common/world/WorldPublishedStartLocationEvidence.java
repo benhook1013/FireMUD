@@ -181,15 +181,14 @@ public record WorldPublishedStartLocationEvidence(
     }
     List<OwnedAffectedTuple> boundTuples =
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .sorted(
                 Comparator.comparing(OwnedAffectedTuple::owner)
                     .thenComparing(OwnedAffectedTuple::aggregateType)
@@ -325,17 +324,16 @@ public record WorldPublishedStartLocationEvidence(
     value.put(
         "worldAffectedTuples",
         request.worldAffectedTuples().stream()
-            .map(
-                tuple -> {
-                  Map<String, Object> item = new LinkedHashMap<>();
-                  item.put("owner", tuple.owner());
-                  item.put("aggregateType", tuple.aggregateType());
-                  item.put("aggregateId", tuple.aggregateId());
-                  item.put("scopeType", tuple.scopeType());
-                  item.put("scopeId", tuple.scopeId());
-                  item.put("expectedEpoch", tuple.expectedEpoch());
-                  return item;
-                })
+            .map(tuple -> {
+              Map<String, Object> item = new LinkedHashMap<>();
+              item.put("owner", tuple.owner());
+              item.put("aggregateType", tuple.aggregateType());
+              item.put("aggregateId", tuple.aggregateId());
+              item.put("scopeType", tuple.scopeType());
+              item.put("scopeId", tuple.scopeId());
+              item.put("expectedEpoch", tuple.expectedEpoch());
+              return item;
+            })
             .toList());
     return value;
   }

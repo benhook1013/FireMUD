@@ -110,31 +110,29 @@ class WorldSelectedOwnerInventoryReadServiceTest {
 
       var callOrder = new ArrayList<String>();
       when(account.readHeld(any()))
-          .thenAnswer(
-              invocation -> {
-                var request =
-                    (SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request)
-                        invocation.getArgument(0);
-                callOrder.add("account");
-                assertThat(request.binding().canonicalBytes())
-                    .containsExactly(fixture.binding().canonicalBytes());
-                assertThat(request.intendedReader())
-                    .isEqualTo("spiffe://firemud/ns/firemud/sa/world-management-service");
-                assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-                assertThat(request.readRequestId()).isNotEqualTo(fixture.request().readRequestId());
-                assertThat(request.closureReadPurpose())
-                    .isEqualTo(
-                        owner == Owner.ENTITY_MANAGEMENT
-                            ? "ENTITY_INTAKE_WORLD_CLOSURE_READ"
-                            : "AUTOMATION_INTAKE_WORLD_CLOSURE_READ");
-                return new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(request);
-              });
+          .thenAnswer(invocation -> {
+            var request =
+                (SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request)
+                    invocation.getArgument(0);
+            callOrder.add("account");
+            assertThat(request.binding().canonicalBytes())
+                .containsExactly(fixture.binding().canonicalBytes());
+            assertThat(request.intendedReader())
+                .isEqualTo("spiffe://firemud/ns/firemud/sa/world-management-service");
+            assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+            assertThat(request.readRequestId()).isNotEqualTo(fixture.request().readRequestId());
+            assertThat(request.closureReadPurpose())
+                .isEqualTo(
+                    owner == Owner.ENTITY_MANAGEMENT
+                        ? "ENTITY_INTAKE_WORLD_CLOSURE_READ"
+                        : "AUTOMATION_INTAKE_WORLD_CLOSURE_READ");
+            return new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(request);
+          });
       when(inventoryRead.readRetained(fixture.freezeEvidence()))
-          .thenAnswer(
-              invocation -> {
-                callOrder.add("retained-world");
-                return retainedInventory;
-              });
+          .thenAnswer(invocation -> {
+            callOrder.add("retained-world");
+            return retainedInventory;
+          });
 
       var service = new WorldSelectedOwnerInventoryReadService(NAMESPACE, inventoryRead, account);
       var result =
@@ -158,28 +156,26 @@ class WorldSelectedOwnerInventoryReadServiceTest {
         var inventoryRead = mock(WorldSelectedPublicationArtifactInventoryReadService.class);
         var account = mock(SelectedOwnerIntakeWorldClosureAuthorizationReadClient.class);
         when(account.readHeld(any()))
-            .thenAnswer(
-                invocation -> {
-                  var expected =
-                      (SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request)
-                          invocation.getArgument(0);
-                  if (absent) return null;
-                  var changed =
-                      SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.create(
-                          NAMESPACE, fixture.binding());
-                  while (changed.readRequestId().equals(expected.readRequestId())) {
-                    changed =
-                        SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.create(
-                            NAMESPACE, fixture.binding());
-                  }
-                  return new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(changed);
-                });
+            .thenAnswer(invocation -> {
+              var expected =
+                  (SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request)
+                      invocation.getArgument(0);
+              if (absent) return null;
+              var changed =
+                  SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.create(
+                      NAMESPACE, fixture.binding());
+              while (changed.readRequestId().equals(expected.readRequestId())) {
+                changed =
+                    SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.create(
+                        NAMESPACE, fixture.binding());
+              }
+              return new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(changed);
+            });
         var service = new WorldSelectedOwnerInventoryReadService(NAMESPACE, inventoryRead, account);
 
-        assertThatThrownBy(
-                () ->
-                    withPeer(
-                        peer(NAMESPACE, serviceName(owner)), () -> service.read(fixture.request())))
+        assertThatThrownBy(() ->
+                withPeer(
+                    peer(NAMESPACE, serviceName(owner)), () -> service.read(fixture.request())))
             .isInstanceOfSatisfying(
                 WorldSelectedOwnerInventoryReadService.ReadFailure.class,
                 failure -> {

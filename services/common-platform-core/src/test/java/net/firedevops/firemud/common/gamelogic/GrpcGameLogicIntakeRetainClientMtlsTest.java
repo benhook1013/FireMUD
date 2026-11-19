@@ -98,10 +98,9 @@ class GrpcGameLogicIntakeRetainClientMtlsTest {
     client.init();
     assertThatThrownBy(() -> client.retain(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(calls).hasValue(0);
     assertThat(clientPeer.get()).isNull();
   }
@@ -181,12 +180,11 @@ class GrpcGameLogicIntakeRetainClientMtlsTest {
   private static void assertSanitizedUnavailable(ThrowingCallable operation) {
     assertThatThrownBy(operation)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = Status.fromThrowable(failure);
-              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(status.getDescription()).isNull();
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          var status = Status.fromThrowable(failure);
+          assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(status.getDescription()).isNull();
+          assertThat(failure.getCause()).isNull();
+        });
   }
 }

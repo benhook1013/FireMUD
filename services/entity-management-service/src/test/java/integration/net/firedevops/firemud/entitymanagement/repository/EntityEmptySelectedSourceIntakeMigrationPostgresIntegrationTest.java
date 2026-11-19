@@ -126,12 +126,9 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
                 "SELECT key_kind, numeric_key, claim_kind "
                     + "FROM entity_empty_source_numeric_key_reservation "
                     + "WHERE claim_kind = 'LEGACY_NUMERIC' ORDER BY key_kind, numeric_key")
-            .map(
-                row ->
-                    new ReservedNumericKey(
-                        row.get(0, String.class),
-                        row.get(1, Long.class),
-                        row.get(2, String.class)));
+            .map(row ->
+                new ReservedNumericKey(
+                    row.get(0, String.class), row.get(1, Long.class), row.get(2, String.class)));
     assertThat(legacyKeys)
         .containsExactly(
             new ReservedNumericKey("TENANT", 31001L, "LEGACY_NUMERIC"),
@@ -195,12 +192,11 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     try (Connection staleRowWriter = repeatableReadSnapshot()) {
       commitCanonicalReservation(99001L);
       try {
-        assertThatThrownBy(
-                () ->
-                    execute(
-                        staleRowWriter,
-                        "INSERT INTO characters (account_id, name, tenant_id) "
-                            + "VALUES (99001, 'stale-snapshot-character', 99001)"))
+        assertThatThrownBy(() ->
+                execute(
+                    staleRowWriter,
+                    "INSERT INTO characters (account_id, name, tenant_id) "
+                        + "VALUES (99001, 'stale-snapshot-character', 99001)"))
             .isInstanceOf(SQLException.class)
             .hasMessageContaining(
                 "Entity authored-source row writes require READ COMMITTED isolation");

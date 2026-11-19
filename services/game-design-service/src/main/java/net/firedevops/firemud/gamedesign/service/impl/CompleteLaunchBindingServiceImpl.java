@@ -99,11 +99,10 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
                 descriptor.authoredWorldSourceOperationId(),
                 descriptor.authoredWorldSourceEvidenceDigest(),
                 descriptor.versionId())
-            .orElseThrow(
-                () ->
-                    deny(
-                        "AUTHORED_WORLD_SOURCE_NOT_FOUND",
-                        "exact committed source or descriptor version is missing"));
+            .orElseThrow(() ->
+                deny(
+                    "AUTHORED_WORLD_SOURCE_NOT_FOUND",
+                    "exact committed source or descriptor version is missing"));
     AuthoredWorldSourceEvidence source = sourceSnapshot.sourceEvidence();
     requireSourceMatchesDescriptor(source, descriptor, canonicalTenantId, worldSlug);
     if (sourceSnapshot.versionState() == null
@@ -324,11 +323,10 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         versionRepository
             .findByCanonicalTenantIdAndCanonicalVersionId(
                 bundle.canonicalTenantId(), bundle.canonicalVersionId())
-            .orElseThrow(
-                () ->
-                    deny(
-                        "CANONICAL_VERSION_NOT_FOUND",
-                        "release canonical Version identity has no exact persisted owner source"));
+            .orElseThrow(() ->
+                deny(
+                    "CANONICAL_VERSION_NOT_FOUND",
+                    "release canonical Version identity has no exact persisted owner source"));
     if (!Objects.equals(version.getId(), descriptor.versionId())
         || !Objects.equals(version.getTenantId(), source.sourceGameTenantKey())
         || !Objects.equals(version.getCanonicalTenantId(), source.canonicalTenantId())

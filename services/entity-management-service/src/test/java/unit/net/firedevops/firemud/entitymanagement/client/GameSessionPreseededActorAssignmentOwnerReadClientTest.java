@@ -49,16 +49,14 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
     CommonGrpcClientProperties plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new GameSessionPreseededActorAssignmentOwnerReadClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameSessionPreseededActorAssignmentOwnerReadClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
-    assertThatThrownBy(
-            () ->
-                new GameSessionPreseededActorAssignmentOwnerReadClient(
-                    new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameSessionPreseededActorAssignmentOwnerReadClient(
+                new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("TLS configuration is required");
 
@@ -67,10 +65,9 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
             incompleteMtlsProperties(null, "entity.key", "gs-ca.crt"),
             incompleteMtlsProperties("entity.crt", null, "gs-ca.crt"),
             incompleteMtlsProperties("entity.crt", "entity.key", null))) {
-      assertThatThrownBy(
-              () ->
-                  new GameSessionPreseededActorAssignmentOwnerReadClient(
-                      new ServiceEndpointsProperties(), incomplete, channelFactory, NAMESPACE))
+      assertThatThrownBy(() ->
+              new GameSessionPreseededActorAssignmentOwnerReadClient(
+                  new ServiceEndpointsProperties(), incomplete, channelFactory, NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("certificate, key, and CA");
     }
@@ -80,18 +77,16 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
             incompleteMtlsProperties("classpath:entity.crt", "entity.key", "gs-ca.crt"),
             incompleteMtlsProperties("entity.crt", "classpath:entity.key", "gs-ca.crt"),
             incompleteMtlsProperties("entity.crt", "entity.key", "classpath:gs-ca.crt"))) {
-      assertThatThrownBy(
-              () ->
-                  new GameSessionPreseededActorAssignmentOwnerReadClient(
-                      new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
+      assertThatThrownBy(() ->
+              new GameSessionPreseededActorAssignmentOwnerReadClient(
+                  new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("file-backed");
     }
 
-    assertThatThrownBy(
-            () ->
-                new GameSessionPreseededActorAssignmentOwnerReadClient(
-                    new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
+    assertThatThrownBy(() ->
+            new GameSessionPreseededActorAssignmentOwnerReadClient(
+                new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(channelFactory);

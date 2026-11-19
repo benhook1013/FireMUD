@@ -18,10 +18,8 @@ class AccountStartSessionReservationProofPkiTest {
   void timeoutTerminatesAndReapsTheStalledChild() throws Exception {
     Process process = awaitingPassword();
     try {
-      assertThatThrownBy(
-              () ->
-                  AccountStartSessionReservationProofPki.awaitKeytoolExit(
-                      process, 1, TimeUnit.SECONDS))
+      assertThatThrownBy(() ->
+              AccountStartSessionReservationProofPki.awaitKeytoolExit(process, 1, TimeUnit.SECONDS))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("execution deadline");
       assertThat(process.isAlive()).isFalse();
@@ -37,10 +35,9 @@ class AccountStartSessionReservationProofPkiTest {
     Process process = awaitingPassword();
     try {
       Thread.currentThread().interrupt();
-      assertThatThrownBy(
-              () ->
-                  AccountStartSessionReservationProofPki.awaitKeytoolExit(
-                      process, 30, TimeUnit.SECONDS))
+      assertThatThrownBy(() ->
+              AccountStartSessionReservationProofPki.awaitKeytoolExit(
+                  process, 30, TimeUnit.SECONDS))
           .isInstanceOf(InterruptedException.class);
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
       Thread.interrupted();

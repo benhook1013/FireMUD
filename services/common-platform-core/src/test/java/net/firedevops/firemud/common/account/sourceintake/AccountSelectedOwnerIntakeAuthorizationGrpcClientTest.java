@@ -26,23 +26,20 @@ class AccountSelectedOwnerIntakeAuthorizationGrpcClientTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
+                endpoints, plaintext, new GrpcChannelFactory(), "test"))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
-                    endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
+                endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), "test"))
         .isInstanceOf(IllegalArgumentException.class);
 
     var properties = tlsFiles();
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
-                    endpoints, properties, new GrpcChannelFactory(), "not/a/namespace"))
+    assertThatThrownBy(() ->
+            new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
+                endpoints, properties, new GrpcChannelFactory(), "not/a/namespace"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

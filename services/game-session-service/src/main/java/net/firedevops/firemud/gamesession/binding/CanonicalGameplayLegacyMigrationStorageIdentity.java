@@ -66,9 +66,8 @@ public record CanonicalGameplayLegacyMigrationStorageIdentity(
             redisRunId,
             redisStorageUid);
     StringBuilder framed = new StringBuilder("canonical-gameplay-storage-identity/v1|");
-    fields.forEach(
-        field ->
-            framed.append(field.getBytes(StandardCharsets.UTF_8).length).append(':').append(field));
+    fields.forEach(field ->
+        framed.append(field.getBytes(StandardCharsets.UTF_8).length).append(':').append(field));
     try {
       return "sha256:"
           + HexFormat.of()

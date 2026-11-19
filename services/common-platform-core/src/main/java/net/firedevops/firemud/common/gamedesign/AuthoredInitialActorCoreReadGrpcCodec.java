@@ -106,11 +106,10 @@ public final class AuthoredInitialActorCoreReadGrpcCodec {
     var descriptor = descriptorOutcome.descriptor();
     List<AuthoredInitialActorCoreProjection> projections =
         response.getProjectionsList().stream()
-            .map(
-                projection ->
-                    AuthoredInitialActorCoreProjection.fromStored(
-                        projection.getCanonicalProjectionBytes().toByteArray(),
-                        projection.getProjectionDigest()))
+            .map(projection ->
+                AuthoredInitialActorCoreProjection.fromStored(
+                    projection.getCanonicalProjectionBytes().toByteArray(),
+                    projection.getProjectionDigest()))
             .toList();
     ReadResult result = new ReadResult(expectedRequest, associationRead, descriptor, projections);
     byte[] canonical = response.getCanonicalResultBytes().toByteArray();

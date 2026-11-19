@@ -103,14 +103,13 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalSayText()));
     assertThat(socialStub().lastRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID);
-              assertThat(request.getContent()).isEqualTo("hello travelers");
-              assertThat(request.getType())
-                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
-              assertThat(request.getEffectId()).isNotBlank();
-            });
+        .hasValueSatisfying(request -> {
+          assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID);
+          assertThat(request.getContent()).isEqualTo("hello travelers");
+          assertThat(request.getType())
+              .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+          assertThat(request.getEffectId()).isNotBlank();
+        });
 
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
@@ -207,12 +206,11 @@ class CommunicationWebSocketCrossServiceTest {
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_UUID
-                        + "] - online in Demo World / Live Realm (idle)"));
+        .anyMatch(response ->
+            response.contains(
+                "Sora [acct #"
+                    + SORA_ACCOUNT_UUID
+                    + "] - online in Demo World / Live Realm (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
   }
@@ -232,13 +230,12 @@ class CommunicationWebSocketCrossServiceTest {
                 + "] - online in Demo World / Live Realm (idle)");
 
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains("Friends ONLINE [1/1]:")
-                    && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_UUID
-                            + "] - online in Demo World / Live Realm (idle)"));
+        .anyMatch(response ->
+            response.contains("Friends ONLINE [1/1]:")
+                && response.contains(
+                    "1) Sora [acct #"
+                        + SORA_ACCOUNT_UUID
+                        + "] - online in Demo World / Live Realm (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(),
         Long.toString(TENANT_ID),
@@ -261,13 +258,12 @@ class CommunicationWebSocketCrossServiceTest {
                 + "] - online in Demo World / Live Realm (idle)");
 
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains("Friends SHARED [1/1]:")
-                    && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_UUID
-                            + "] - online in Demo World / Live Realm (idle)"));
+        .anyMatch(response ->
+            response.contains("Friends SHARED [1/1]:")
+                && response.contains(
+                    "1) Sora [acct #"
+                        + SORA_ACCOUNT_UUID
+                        + "] - online in Demo World / Live Realm (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(),
         Long.toString(TENANT_ID),
@@ -289,12 +285,11 @@ class CommunicationWebSocketCrossServiceTest {
             "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
 
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_UUID
-                        + "] - online in Demo World / Live Realm (idle)"));
+        .anyMatch(response ->
+            response.contains(
+                "Sora [acct #"
+                    + SORA_ACCOUNT_UUID
+                    + "] - online in Demo World / Live Realm (idle)"));
   }
 
   @Test

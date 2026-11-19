@@ -79,15 +79,14 @@ class GameDesignAuthorizedTenantCreationClientTest {
     for (String description : new String[] {null, ""}) {
       var f = new Fixture(description);
       when(f.stub.createAuthorizedTenant(any()))
-          .thenAnswer(
-              invocation -> {
-                var request = invocation.<CreateAuthorizedTenantRequest>getArgument(0);
-                assertThat(request.getCreateRequestId()).isEqualTo(f.call.toString());
-                assertThat(request.hasDescription()).isEqualTo(description != null);
-                assertThat(request.getCreationRequestDigest())
-                    .isEqualTo(f.binding.creationRequestDigest());
-                return f.response();
-              });
+          .thenAnswer(invocation -> {
+            var request = invocation.<CreateAuthorizedTenantRequest>getArgument(0);
+            assertThat(request.getCreateRequestId()).isEqualTo(f.call.toString());
+            assertThat(request.hasDescription()).isEqualTo(description != null);
+            assertThat(request.getCreationRequestDigest())
+                .isEqualTo(f.binding.creationRequestDigest());
+            return f.response();
+          });
       assertThat(f.send()).isEqualTo(f.receipt);
       verify(f.stub).withDeadlineAfter(5000L, TimeUnit.MILLISECONDS);
     }
@@ -157,10 +156,8 @@ class GameDesignAuthorizedTenantCreationClientTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertThatThrownBy(untouched::send).isInstanceOf(IllegalStateException.class);
     TransactionSynchronizationManager.clear();
-    assertThatThrownBy(
-            () ->
-                untouched.client.create(
-                    untouched.call, untouched.binding, "fresh", "Game", null, 1L))
+    assertThatThrownBy(() ->
+            untouched.client.create(untouched.call, untouched.binding, "fresh", "Game", null, 1L))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(untouched.stub);
   }
@@ -170,10 +167,9 @@ class GameDesignAuthorizedTenantCreationClientTest {
     var tls = tls();
     tls.setPlaintext(true);
     var channels = mock(GrpcChannelFactory.class);
-    assertThatThrownBy(
-            () ->
-                new GameDesignAuthorizedTenantCreationClient(
-                    new ServiceEndpointsProperties(), tls, channels, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignAuthorizedTenantCreationClient(
+                new ServiceEndpointsProperties(), tls, channels, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     var f = new Fixture(null);
     Field field = GameDesignAuthorizedTenantCreationClient.class.getDeclaredField("peer");
@@ -187,10 +183,9 @@ class GameDesignAuthorizedTenantCreationClientTest {
 
     var missingFileTls = tls();
     missingFileTls.setCertChain(tlsDirectory.resolve("missing-cert.pem").toString());
-    assertThatThrownBy(
-            () ->
-                new GameDesignAuthorizedTenantCreationClient(
-                    new ServiceEndpointsProperties(), missingFileTls, channels, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignAuthorizedTenantCreationClient(
+                new ServiceEndpointsProperties(), missingFileTls, channels, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("existing readable file");
     verifyNoInteractions(channels);
@@ -245,10 +240,9 @@ class GameDesignAuthorizedTenantCreationClientTest {
         .thenReturn(channel);
     var client = newClient(channelFactory);
 
-    assertThatThrownBy(
-            () ->
-                client.create(
-                    f.call, f.binding, "fresh", "Game", null, System.currentTimeMillis() + 60_000))
+    assertThatThrownBy(() ->
+            client.create(
+                f.call, f.binding, "fresh", "Game", null, System.currentTimeMillis() + 60_000))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     assertThatThrownBy(() -> client.closeOriginal(f.binding))
@@ -262,10 +256,9 @@ class GameDesignAuthorizedTenantCreationClientTest {
         .buildChannel(anyString(), eq(6565), any(CommonGrpcClientProperties.class), eq(true));
     client.close();
 
-    assertThatThrownBy(
-            () ->
-                client.create(
-                    f.call, f.binding, "fresh", "Game", null, System.currentTimeMillis() + 60_000))
+    assertThatThrownBy(() ->
+            client.create(
+                f.call, f.binding, "fresh", "Game", null, System.currentTimeMillis() + 60_000))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     assertThatThrownBy(() -> client.closeOriginal(f.binding))
@@ -299,15 +292,9 @@ class GameDesignAuthorizedTenantCreationClientTest {
       assertThat(expectedPeer.get(baseStub.getCallOptions().getCredentials()))
           .isEqualTo("spiffe://firemud/ns/test/sa/game-design-service");
 
-      assertThatThrownBy(
-              () ->
-                  client.create(
-                      f.call,
-                      f.binding,
-                      "fresh",
-                      "Game",
-                      null,
-                      System.currentTimeMillis() + 60_000))
+      assertThatThrownBy(() ->
+              client.create(
+                  f.call, f.binding, "fresh", "Game", null, System.currentTimeMillis() + 60_000))
           .isInstanceOf(StatusRuntimeException.class)
           .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
           .isEqualTo(Status.Code.UNAUTHENTICATED);

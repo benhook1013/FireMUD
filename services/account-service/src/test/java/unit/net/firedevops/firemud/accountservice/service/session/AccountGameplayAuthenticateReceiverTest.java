@@ -400,17 +400,16 @@ class AccountGameplayAuthenticateReceiverTest {
     var peer = GrpcPeerIdentity.parseUri(WORKLOAD).orElseThrow();
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () ->
-                adapter.retireInitialGameplayLogin(
-                    request
-                        .clone()
-                        .setTokenWitness(
-                            net.firedevops.firemud.account.v1.InitialGameplayLoginTokenWitness
-                                .newBuilder()
-                                .setTokenJti(TOKEN_JTI.toString()))
-                        .build(),
-                    incomplete));
+        .run(() ->
+            adapter.retireInitialGameplayLogin(
+                request
+                    .clone()
+                    .setTokenWitness(
+                        net.firedevops.firemud.account.v1.InitialGameplayLoginTokenWitness
+                            .newBuilder()
+                            .setTokenJti(TOKEN_JTI.toString()))
+                    .build(),
+                incomplete));
     assertThat(Status.fromThrowable(incomplete.failure).getCode())
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(disposal);

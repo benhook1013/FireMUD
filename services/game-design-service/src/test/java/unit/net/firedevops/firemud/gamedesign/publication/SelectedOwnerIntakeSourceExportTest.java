@@ -106,15 +106,14 @@ class SelectedOwnerIntakeSourceExportTest {
   void rejectsDifferentSelectedBindingAndChangedFamilyContent() {
     var selected = binding(COMMIT, CommandSource.deletePayload("absent-command"));
     var sources = sources(selected, "0");
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceExport.create(
-                    scope(
-                        Owner.ENTITY_MANAGEMENT,
-                        binding(
-                            id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
-                            CommandSource.deletePayload("absent-command"))),
-                    sources))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceExport.create(
+                scope(
+                    Owner.ENTITY_MANAGEMENT,
+                    binding(
+                        id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                        CommandSource.deletePayload("absent-command"))),
+                sources))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("COMMAND");
 
@@ -148,16 +147,14 @@ class SelectedOwnerIntakeSourceExportTest {
             complete.branding(),
             Optional.empty());
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceExport.create(
-                    scope(Owner.ENTITY_MANAGEMENT, selected), missingBranding))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceExport.create(
+                scope(Owner.ENTITY_MANAGEMENT, selected), missingBranding))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("branding");
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceExport.create(
-                    scope(Owner.AUTOMATION_SCRIPTING, selected), missingTemplate))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceExport.create(
+                scope(Owner.AUTOMATION_SCRIPTING, selected), missingTemplate))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("template-config");
   }
@@ -166,10 +163,9 @@ class SelectedOwnerIntakeSourceExportTest {
   void rejectsExportLargerThanEightMib() {
     var selected = binding(COMMIT, "x".repeat(1_400_000));
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceExport.create(
-                    scope(Owner.ENTITY_MANAGEMENT, selected), sources(selected, "0")))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceExport.create(
+                scope(Owner.ENTITY_MANAGEMENT, selected), sources(selected, "0")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("8 MiB");
   }

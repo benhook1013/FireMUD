@@ -42,10 +42,9 @@ class WorldCanonicalInstancePreparationServiceTest {
 
     var commitVerifier =
         mock(WorldCanonicalInstancePreparationService.CommitAuthorityVerifier.class);
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInstancePreparationService(repository, commitVerifier)
-                    .recoverExact(identity))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInstancePreparationService(repository, commitVerifier)
+                .recoverExact(identity))
         .isInstanceOf(WorldCanonicalInstancePreparationService.PreparationDeniedException.class)
         .hasMessageContaining("no authenticated original-operation verifier");
 

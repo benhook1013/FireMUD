@@ -410,31 +410,30 @@ public final class AccountGameplayAdmissionLeaseOwner {
     final AccountGameplayAdmissionAbortResolution resolution;
     try {
       resolution =
-          inWritableSerializableTransaction(
-              dsl -> {
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
-                    .requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
-                var repository = new AccountGameplayAdmissionLeaseRepository(dsl);
-                var original =
-                    repository
-                        .readExact(lease)
-                        .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
-                if (original.state() == AccountGameplayAdmissionLeaseOperation.State.COMMITTED
-                    || original.bindingDecisionId() != null) throw unavailable();
-                if (original.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING)
-                  original = repository.recordAborted(lease, null, UUID.randomUUID());
-                if (original.state() != AccountGameplayAdmissionLeaseOperation.State.ABORTED
-                    || original.bindingDecisionId() != null
-                    || original.orphanCleanupId() == null) throw unavailable();
-                return new AccountGameplayAdmissionAbortResolutionRepository(dsl)
-                    .recordOrReplayNeverAdmitted(
-                        lease,
-                        original.orphanCleanupId(),
-                        request.transitionId(),
-                        request.abandonmentId(),
-                        decision.candidateDigest(),
-                        decision.closureDigest());
-              });
+          inWritableSerializableTransaction(dsl -> {
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
+                .requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
+            var repository = new AccountGameplayAdmissionLeaseRepository(dsl);
+            var original =
+                repository
+                    .readExact(lease)
+                    .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
+            if (original.state() == AccountGameplayAdmissionLeaseOperation.State.COMMITTED
+                || original.bindingDecisionId() != null) throw unavailable();
+            if (original.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING)
+              original = repository.recordAborted(lease, null, UUID.randomUUID());
+            if (original.state() != AccountGameplayAdmissionLeaseOperation.State.ABORTED
+                || original.bindingDecisionId() != null
+                || original.orphanCleanupId() == null) throw unavailable();
+            return new AccountGameplayAdmissionAbortResolutionRepository(dsl)
+                .recordOrReplayNeverAdmitted(
+                    lease,
+                    original.orphanCleanupId(),
+                    request.transitionId(),
+                    request.abandonmentId(),
+                    decision.candidateDigest(),
+                    decision.closureDigest());
+          });
     } catch (RuntimeException unknown) {
       throw unavailable();
     }
@@ -750,17 +749,16 @@ public final class AccountGameplayAdmissionLeaseOwner {
     Objects.requireNonNull(caller);
     Objects.requireNonNull(tenantId);
     try {
-      return inWritableSerializableTransaction(
-          dsl -> {
-            AccountGameplayAdmissionCurrentSources currentSources =
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
-            var current =
-                currentSources.readCurrentPublicProductionNew(
-                    tenantId, caller.identity().tokenJti(), caller.currentCandidate());
-            return operation.apply(
-                new CurrentAccountOperation(
-                    dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
-          });
+      return inWritableSerializableTransaction(dsl -> {
+        AccountGameplayAdmissionCurrentSources currentSources =
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
+        var current =
+            currentSources.readCurrentPublicProductionNew(
+                tenantId, caller.identity().tokenJti(), caller.currentCandidate());
+        return operation.apply(
+            new CurrentAccountOperation(
+                dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (RuntimeException unavailable) {
@@ -772,15 +770,14 @@ public final class AccountGameplayAdmissionLeaseOwner {
   private AccountGameplayAdmissionLeaseOperation readExactWithCurrentCallerOnly(
       VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease) {
     try {
-      return inWritableSerializableTransaction(
-          dsl -> {
-            AccountGameplayAdmissionCurrentSources currentSources =
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
-            currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
-            return new AccountGameplayAdmissionLeaseRepository(dsl)
-                .readExact(lease)
-                .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
-          });
+      return inWritableSerializableTransaction(dsl -> {
+        AccountGameplayAdmissionCurrentSources currentSources =
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
+        currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
+        return new AccountGameplayAdmissionLeaseRepository(dsl)
+            .readExact(lease)
+            .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (RuntimeException unavailable) {
@@ -795,25 +792,24 @@ public final class AccountGameplayAdmissionLeaseOwner {
   private AccountGameplayAdmissionLeaseOperation readExactForFinalization(
       VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease) {
     try {
-      return inWritableSerializableTransaction(
-          dsl -> {
-            AccountGameplayAdmissionCurrentSources currentSources =
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
-            currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
-            AccountGameplayAdmissionLeaseRepository repository =
-                new AccountGameplayAdmissionLeaseRepository(dsl);
-            AccountGameplayAdmissionLeaseOperation operation =
-                repository
-                    .readExact(lease)
-                    .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
-            if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING) {
-              var current =
-                  currentSources.readCurrentPublicProductionNew(
-                      tenantId(lease), caller.identity().tokenJti(), caller.currentCandidate());
-              current.requireMatchesOriginalLease(lease);
-            }
-            return operation;
-          });
+      return inWritableSerializableTransaction(dsl -> {
+        AccountGameplayAdmissionCurrentSources currentSources =
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
+        currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
+        AccountGameplayAdmissionLeaseRepository repository =
+            new AccountGameplayAdmissionLeaseRepository(dsl);
+        AccountGameplayAdmissionLeaseOperation operation =
+            repository
+                .readExact(lease)
+                .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
+        if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING) {
+          var current =
+              currentSources.readCurrentPublicProductionNew(
+                  tenantId(lease), caller.identity().tokenJti(), caller.currentCandidate());
+          current.requireMatchesOriginalLease(lease);
+        }
+        return operation;
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (RuntimeException unavailable) {
@@ -827,28 +823,27 @@ public final class AccountGameplayAdmissionLeaseOwner {
   private AccountGameplayAdmissionLeaseOperation abortExactWithCurrentCallerOnly(
       VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease, UUID decisionId) {
     try {
-      return inWritableSerializableTransaction(
-          dsl -> {
-            AccountGameplayAdmissionCurrentSources currentSources =
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
-            currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
-            AccountGameplayAdmissionLeaseRepository repository =
-                new AccountGameplayAdmissionLeaseRepository(dsl);
-            AccountGameplayAdmissionLeaseOperation operation =
-                repository
-                    .readExact(lease)
-                    .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
-            if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING) {
-              // Null decision records an unresolved orphan obligation, not proof of absence.
-              return repository.recordAborted(lease, decisionId, UUID.randomUUID());
-            }
-            if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.ABORTED) {
-              requireAbortDecisionMatches(decisionId, operation);
-            } else if (decisionId != null && !decisionId.equals(operation.bindingDecisionId())) {
-              throw unavailable();
-            }
-            return operation;
-          });
+      return inWritableSerializableTransaction(dsl -> {
+        AccountGameplayAdmissionCurrentSources currentSources =
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
+        currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
+        AccountGameplayAdmissionLeaseRepository repository =
+            new AccountGameplayAdmissionLeaseRepository(dsl);
+        AccountGameplayAdmissionLeaseOperation operation =
+            repository
+                .readExact(lease)
+                .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
+        if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING) {
+          // Null decision records an unresolved orphan obligation, not proof of absence.
+          return repository.recordAborted(lease, decisionId, UUID.randomUUID());
+        }
+        if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.ABORTED) {
+          requireAbortDecisionMatches(decisionId, operation);
+        } else if (decisionId != null && !decisionId.equals(operation.bindingDecisionId())) {
+          throw unavailable();
+        }
+        return operation;
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (RuntimeException unavailable) {
@@ -864,26 +859,24 @@ public final class AccountGameplayAdmissionLeaseOwner {
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setReadOnly(false);
     T result =
-        transaction.execute(
-            status -> {
-              if (!status.isNewTransaction()) throw unavailable();
-              Object resource =
-                  TransactionSynchronizationManager.getResource(
-                      Objects.requireNonNull(manager.getDataSource()));
-              if (!(resource instanceof ConnectionHolder holder)) throw unavailable();
-              Connection connection = holder.getConnection();
-              try {
-                if (connection.getAutoCommit()
-                    || connection.isReadOnly()
-                    || connection.getTransactionIsolation()
-                        != Connection.TRANSACTION_SERIALIZABLE) {
-                  throw unavailable();
-                }
-              } catch (java.sql.SQLException failure) {
-                throw unavailable();
-              }
-              return operation.apply(DSL.using(connection, SQLDialect.POSTGRES));
-            });
+        transaction.execute(status -> {
+          if (!status.isNewTransaction()) throw unavailable();
+          Object resource =
+              TransactionSynchronizationManager.getResource(
+                  Objects.requireNonNull(manager.getDataSource()));
+          if (!(resource instanceof ConnectionHolder holder)) throw unavailable();
+          Connection connection = holder.getConnection();
+          try {
+            if (connection.getAutoCommit()
+                || connection.isReadOnly()
+                || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE) {
+              throw unavailable();
+            }
+          } catch (java.sql.SQLException failure) {
+            throw unavailable();
+          }
+          return operation.apply(DSL.using(connection, SQLDialect.POSTGRES));
+        });
     return Objects.requireNonNull(result);
   }
 

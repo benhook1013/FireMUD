@@ -29,15 +29,14 @@ class GameSessionJwtReadinessReceiverProtoMapperTest {
             PlayerBootstrapJwtProfileValidator.PROFILE,
             ReadinessProbeCoordinates.ExpectedOutcome.INAPPLICABLE_REJECT);
 
-    outcomes.forEach(
-        (profile, expectedOutcome) -> {
-          var parsed = mapper.parse(request(profile, expectedOutcome).build());
-          assertThat(parsed.coordinates().getExpectedOutcome()).isEqualTo(expectedOutcome);
-          assertThat(parsed.expectedOutcome()).isEqualTo(expectedOutcome);
-          // Independent SHA-256 vector for the literal ASCII compact token below.
-          assertThat(parsed.compactTokenSha256())
-              .isEqualTo("256d04db4e5e4ac308751ed0885b722b758630567c53a7125ed9fbd068e5c3f6");
-        });
+    outcomes.forEach((profile, expectedOutcome) -> {
+      var parsed = mapper.parse(request(profile, expectedOutcome).build());
+      assertThat(parsed.coordinates().getExpectedOutcome()).isEqualTo(expectedOutcome);
+      assertThat(parsed.expectedOutcome()).isEqualTo(expectedOutcome);
+      // Independent SHA-256 vector for the literal ASCII compact token below.
+      assertThat(parsed.compactTokenSha256())
+          .isEqualTo("256d04db4e5e4ac308751ed0885b722b758630567c53a7125ed9fbd068e5c3f6");
+    });
   }
 
   @Test

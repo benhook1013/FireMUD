@@ -173,11 +173,10 @@ public final class AccountControlUiAuthority {
     }
     List<String> roles = Arrays.asList(roleValues.clone());
     if (roles.stream()
-            .anyMatch(
-                value ->
-                    value == null
-                        || !java.util.Set.of("platformAdmin", "billingAdmin", "support")
-                            .contains(value))
+            .anyMatch(value ->
+                value == null
+                    || !java.util.Set.of("platformAdmin", "billingAdmin", "support")
+                        .contains(value))
         || !roles.equals(roles.stream().distinct().sorted().toList())) {
       throw unavailable();
     }
@@ -189,14 +188,13 @@ public final class AccountControlUiAuthority {
     authority.put("privateRealmGrantVersions", List.of());
     source
         .accountSecurityCutoff()
-        .ifPresent(
-            cutoff ->
-                authority.put(
-                    "accountSecurityCutoff",
-                    Map.of(
-                        "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey", cutoff.outboxStreamKey(),
-                        "outboxSequence", cutoff.outboxSequence())));
+        .ifPresent(cutoff ->
+            authority.put(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey", cutoff.outboxStreamKey(),
+                    "outboxSequence", cutoff.outboxSequence())));
     byte[] issuerBytes =
         current.canonicalIssuerProjection().toJson().getBytes(StandardCharsets.UTF_8);
     byte[] accountBytes =
@@ -305,14 +303,13 @@ public final class AccountControlUiAuthority {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw unavailable();
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw unavailable();
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw unavailable();
+      }
+    });
   }
 
   private static IllegalStateException unavailable() {
@@ -372,37 +369,34 @@ public final class AccountControlUiAuthority {
     authority.put("privateRealmGrantVersions", List.of());
     tuple
         .accountSecurityCutoff()
-        .ifPresent(
-            cutoff ->
-                authority.put(
-                    "accountSecurityCutoff",
-                    Map.of(
-                        "accountAuthorityGeneration",
-                        cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey",
-                        cutoff.outboxStreamKey(),
-                        "outboxSequence",
-                        cutoff.outboxSequence())));
+        .ifPresent(cutoff ->
+            authority.put(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration",
+                    cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey",
+                    cutoff.outboxStreamKey(),
+                    "outboxSequence",
+                    cutoff.outboxSequence())));
     tuple
         .tenantBillingCutoff()
-        .ifPresent(
-            cutoffs -> {
-              Map<String, Object> values = new LinkedHashMap<>();
-              cutoffs.forEach(
-                  (id, cutoff) ->
-                      values.put(
-                          id,
-                          Map.of(
-                              "tenantAuthorityGeneration",
-                              Long.parseLong(cutoff.tenantAuthorityGeneration()),
-                              "tenantBillingSequence",
-                              Long.parseLong(cutoff.tenantBillingSequence()),
-                              "outboxStreamKey",
-                              cutoff.outboxStreamKey(),
-                              "outboxSequence",
-                              Long.parseLong(cutoff.outboxSequence()))));
-              authority.put("tenantBillingCutoff", Map.copyOf(values));
-            });
+        .ifPresent(cutoffs -> {
+          Map<String, Object> values = new LinkedHashMap<>();
+          cutoffs.forEach((id, cutoff) ->
+              values.put(
+                  id,
+                  Map.of(
+                      "tenantAuthorityGeneration",
+                      Long.parseLong(cutoff.tenantAuthorityGeneration()),
+                      "tenantBillingSequence",
+                      Long.parseLong(cutoff.tenantBillingSequence()),
+                      "outboxStreamKey",
+                      cutoff.outboxStreamKey(),
+                      "outboxSequence",
+                      Long.parseLong(cutoff.outboxSequence()))));
+          authority.put("tenantBillingCutoff", Map.copyOf(values));
+        });
     var upstream = existing.issuerAccount();
     var issuanceFenceSource = requireIssuanceFenceSource(member);
     byte[] issuer = upstream.canonicalIssuerProjection().toJson().getBytes(StandardCharsets.UTF_8);
@@ -489,21 +483,19 @@ public final class AccountControlUiAuthority {
                     .toList()));
     var checkpoints =
         member.outboxCheckpoints().stream()
-            .map(
-                checkpoint -> {
-                  Map<String, Object> value = new LinkedHashMap<>();
-                  value.put("outboxStreamKey", checkpoint.outboxStreamKey());
-                  value.put("outboxSequence", checkpoint.outboxSequence());
-                  member.outboxSourceEvidence().stream()
-                      .filter(event -> event.outboxStreamKey().equals(checkpoint.outboxStreamKey()))
-                      .findFirst()
-                      .ifPresent(
-                          event -> {
-                            value.put("sourceEventId", event.eventId());
-                            value.put("sourceEventDigest", event.eventDigest());
-                          });
-                  return Map.copyOf(value);
-                })
+            .map(checkpoint -> {
+              Map<String, Object> value = new LinkedHashMap<>();
+              value.put("outboxStreamKey", checkpoint.outboxStreamKey());
+              value.put("outboxSequence", checkpoint.outboxSequence());
+              member.outboxSourceEvidence().stream()
+                  .filter(event -> event.outboxStreamKey().equals(checkpoint.outboxStreamKey()))
+                  .findFirst()
+                  .ifPresent(event -> {
+                    value.put("sourceEventId", event.eventId());
+                    value.put("sourceEventDigest", event.eventDigest());
+                  });
+              return Map.copyOf(value);
+            })
             .toList();
     Map<String, Object> identity =
         Map.of(

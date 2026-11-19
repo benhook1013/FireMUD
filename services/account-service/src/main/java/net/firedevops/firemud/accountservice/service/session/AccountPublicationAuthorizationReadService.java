@@ -50,11 +50,10 @@ public final class AccountPublicationAuthorizationReadService {
           .asRuntimeException();
     }
     try {
-      ownerTransaction.execute(
-          status -> {
-            repository.readHeld(request.binding());
-            return null;
-          });
+      ownerTransaction.execute(status -> {
+        repository.readHeld(request.binding());
+        return null;
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (IllegalArgumentException inconsistent) {

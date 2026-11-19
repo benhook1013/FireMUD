@@ -34,23 +34,22 @@ class WorldManagementTemporalHostingTest {
 
   @Test
   void worldManagementModuleUsesSharedTemporalHostingPattern() {
-    contextRunner.run(
-        context -> {
-          TemporalTaskQueueResolver taskQueues = context.getBean(TemporalTaskQueueResolver.class);
-          WorkerFactory workerFactory = context.getBean(WorkerFactory.class);
-          Worker worker = context.getBean(Worker.class);
-          String taskQueue = taskQueues.forWorkflowFamily("world-lifecycle");
+    contextRunner.run(context -> {
+      TemporalTaskQueueResolver taskQueues = context.getBean(TemporalTaskQueueResolver.class);
+      WorkerFactory workerFactory = context.getBean(WorkerFactory.class);
+      Worker worker = context.getBean(Worker.class);
+      String taskQueue = taskQueues.forWorkflowFamily("world-lifecycle");
 
-          assertThat(taskQueue).isEqualTo("firemud:world-management-service:world-lifecycle");
-          assertThat(
-                  FiremudWorkflowIds.workflowId(
-                      "world-lifecycle", "tenant-1", "world-instance", "create-request-1"))
-              .isEqualTo("world-lifecycle:tenant-1:world-instance:create-request-1");
+      assertThat(taskQueue).isEqualTo("firemud:world-management-service:world-lifecycle");
+      assertThat(
+              FiremudWorkflowIds.workflowId(
+                  "world-lifecycle", "tenant-1", "world-instance", "create-request-1"))
+          .isEqualTo("world-lifecycle:tenant-1:world-instance:create-request-1");
 
-          verify(workerFactory).newWorker(taskQueue);
-          verify(worker).registerWorkflowImplementationTypes(HostProbeWorkflowImpl.class);
-          verify(workerFactory).start();
-        });
+      verify(workerFactory).newWorker(taskQueue);
+      verify(worker).registerWorkflowImplementationTypes(HostProbeWorkflowImpl.class);
+      verify(workerFactory).start();
+    });
   }
 
   @Configuration(proxyBeanMethods = false)

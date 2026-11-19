@@ -66,118 +66,112 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     requireOriginalEvidence(original, accountEvidence);
     String accountEvidenceDigest = digestAccountEvidence(accountEvidence);
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          BigInteger inventoryRevision = lockInventoryRevision(transaction);
-          Record control = lockExistingControl(transaction, accountEvidence.accountId());
-          AccountControlSource source = readNoActiveControl(control, accountEvidence.accountId());
-          if (inventoryRevision.signum() <= 0) {
-            throw conflict(
-                "Initial account barrier requires positive canonical inventory revision");
-          }
-          requireExactOriginalLogin(transaction, original, accountEvidence);
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      BigInteger inventoryRevision = lockInventoryRevision(transaction);
+      Record control = lockExistingControl(transaction, accountEvidence.accountId());
+      AccountControlSource source = readNoActiveControl(control, accountEvidence.accountId());
+      if (inventoryRevision.signum() <= 0) {
+        throw conflict("Initial account barrier requires positive canonical inventory revision");
+      }
+      requireExactOriginalLogin(transaction, original, accountEvidence);
 
-          Record prior = readInitializer(transaction, original.requestId(), true);
-          if (prior != null) {
-            InitializerSnapshot snapshot = toSnapshot(prior);
-            requireSameOriginalTarget(
-                snapshot,
-                original,
-                accountEvidence.accountId(),
-                tenantId,
-                playableStateNamespaceId,
-                accountEvidenceDigest);
-            requireSameCurrentSource(snapshot, source);
-            return snapshot;
-          }
+      Record prior = readInitializer(transaction, original.requestId(), true);
+      if (prior != null) {
+        InitializerSnapshot snapshot = toSnapshot(prior);
+        requireSameOriginalTarget(
+            snapshot,
+            original,
+            accountEvidence.accountId(),
+            tenantId,
+            playableStateNamespaceId,
+            accountEvidenceDigest);
+        requireSameCurrentSource(snapshot, source);
+        return snapshot;
+      }
 
-          UUID initializerId = randomNonNilUuid();
-          while (initializerId.equals(original.requestId())
-              || initializerId.equals(original.callerContextId())
-              || initializerId.equals(accountEvidence.accountId())) {
-            initializerId = randomNonNilUuid();
-          }
-          transaction.execute(
-              "INSERT INTO "
-                  + INITIALIZER
-                  + " (initializer_id, original_request_id, original_caller_context_id,"
-                  + " original_attempt_fence, account_id, account_login_evidence_digest,"
-                  + " source_control_state, source_control_epoch, inventory_snapshot_revision,"
-                  + " source_control_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              initializerId,
-              original.requestId(),
-              original.callerContextId(),
-              original.expectedAttemptFence(),
-              accountEvidence.accountId(),
-              accountEvidenceDigest,
-              NO_ACTIVE,
-              new BigDecimal(source.epoch()),
-              new BigDecimal(inventoryRevision),
-              source.digest());
-          transaction.execute(
-              "INSERT INTO "
-                  + TARGET
-                  + " (initializer_id, original_request_id, account_id, target_ordinal, tenant_id,"
-                  + " playable_state_namespace_id, target_state)"
-                  + " VALUES (?, ?, ?, 0, ?, ?, 'NEVER_DISPATCHED')",
-              initializerId,
-              original.requestId(),
-              accountEvidence.accountId(),
-              tenantId,
-              playableStateNamespaceId);
-          Record created = readInitializer(transaction, original.requestId(), true);
-          if (created == null) throw conflict("Initial account barrier target readback is missing");
-          InitializerSnapshot snapshot = toSnapshot(created);
-          requireSameOriginalTarget(
-              snapshot,
-              original,
-              accountEvidence.accountId(),
-              tenantId,
-              playableStateNamespaceId,
-              accountEvidenceDigest);
-          requireSameCurrentSource(snapshot, source);
-          return snapshot;
-        });
+      UUID initializerId = randomNonNilUuid();
+      while (initializerId.equals(original.requestId())
+          || initializerId.equals(original.callerContextId())
+          || initializerId.equals(accountEvidence.accountId())) {
+        initializerId = randomNonNilUuid();
+      }
+      transaction.execute(
+          "INSERT INTO "
+              + INITIALIZER
+              + " (initializer_id, original_request_id, original_caller_context_id,"
+              + " original_attempt_fence, account_id, account_login_evidence_digest,"
+              + " source_control_state, source_control_epoch, inventory_snapshot_revision,"
+              + " source_control_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          initializerId,
+          original.requestId(),
+          original.callerContextId(),
+          original.expectedAttemptFence(),
+          accountEvidence.accountId(),
+          accountEvidenceDigest,
+          NO_ACTIVE,
+          new BigDecimal(source.epoch()),
+          new BigDecimal(inventoryRevision),
+          source.digest());
+      transaction.execute(
+          "INSERT INTO "
+              + TARGET
+              + " (initializer_id, original_request_id, account_id, target_ordinal, tenant_id,"
+              + " playable_state_namespace_id, target_state)"
+              + " VALUES (?, ?, ?, 0, ?, ?, 'NEVER_DISPATCHED')",
+          initializerId,
+          original.requestId(),
+          accountEvidence.accountId(),
+          tenantId,
+          playableStateNamespaceId);
+      Record created = readInitializer(transaction, original.requestId(), true);
+      if (created == null) throw conflict("Initial account barrier target readback is missing");
+      InitializerSnapshot snapshot = toSnapshot(created);
+      requireSameOriginalTarget(
+          snapshot,
+          original,
+          accountEvidence.accountId(),
+          tenantId,
+          playableStateNamespaceId,
+          accountEvidenceDigest);
+      requireSameCurrentSource(snapshot, source);
+      return snapshot;
+    });
   }
 
   /** Reads the exact live owner context for protected INITIAL incarnation observation. */
   InitialObservationContext readCurrentObservationContext(UUID originalRequestId) {
     requireNonNil(originalRequestId, "originalRequestId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          Record row = readInitializer(transaction, originalRequestId, false);
-          if (row == null) throw conflict("Exact original INITIAL account target is missing");
-          InitializerSnapshot snapshot = toSnapshot(row);
-          AccountControlSource current =
-              readCurrentNoActiveControl(transaction, snapshot.accountId());
-          requireSameCurrentSource(snapshot, current);
-          if (snapshot.state() != State.OPEN_INSTALLED) {
-            requireOriginalJournalStillCurrent(transaction, snapshot);
-          }
-          return InitialObservationContext.from(snapshot);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      Record row = readInitializer(transaction, originalRequestId, false);
+      if (row == null) throw conflict("Exact original INITIAL account target is missing");
+      InitializerSnapshot snapshot = toSnapshot(row);
+      AccountControlSource current = readCurrentNoActiveControl(transaction, snapshot.accountId());
+      requireSameCurrentSource(snapshot, current);
+      if (snapshot.state() != State.OPEN_INSTALLED) {
+        requireOriginalJournalStillCurrent(transaction, snapshot);
+      }
+      return InitialObservationContext.from(snapshot);
+    });
   }
 
   InitializerSnapshot readCurrent(UUID originalRequestId) {
     requireNonNil(originalRequestId, "originalRequestId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          InitializerSnapshot snapshot = readRequiredCurrent(transaction, originalRequestId, false);
-          AccountControlSource current =
-              readCurrentNoActiveControl(transaction, snapshot.accountId());
-          requireSameCurrentSource(snapshot, current);
-          if (snapshot.state() != State.OPEN_INSTALLED) {
-            requireOriginalJournalStillCurrent(transaction, snapshot);
-          }
-          return snapshot;
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      InitializerSnapshot snapshot = readRequiredCurrent(transaction, originalRequestId, false);
+      AccountControlSource current = readCurrentNoActiveControl(transaction, snapshot.accountId());
+      requireSameCurrentSource(snapshot, current);
+      if (snapshot.state() != State.OPEN_INSTALLED) {
+        requireOriginalJournalStillCurrent(transaction, snapshot);
+      }
+      return snapshot;
+    });
   }
 
   /**
@@ -191,53 +185,52 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     requireNonNil(tenantId, "tenantId");
     requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          var rows =
-              transaction.fetch(
-                  "SELECT i.initializer_id, i.original_request_id, i.original_caller_context_id,"
-                      + " i.original_attempt_fence, i.account_id, i.account_login_evidence_digest,"
-                      + " i.source_control_state, i.source_control_epoch,"
-                      + " i.inventory_snapshot_revision, i.source_control_digest, t.tenant_id,"
-                      + " t.playable_state_namespace_id, t.target_state,"
-                      + " t.before_accepted_attestation_digest, t.before_incarnation_digest,"
-                      + " t.before_source_payload_digest,"
-                      + " t.before_observation_issued_at_epoch_millis,"
-                      + " t.before_observation_observed_at_epoch_millis,"
-                      + " t.before_observation_expires_at_epoch_millis, t.installed_fields_digest"
-                      + " FROM "
-                      + INITIALIZER
-                      + " i JOIN "
-                      + TARGET
-                      + " t ON t.initializer_id = i.initializer_id"
-                      + " AND t.original_request_id = i.original_request_id"
-                      + " WHERE i.account_id = ? AND t.account_id = ? AND t.tenant_id = ?"
-                      + " AND t.playable_state_namespace_id = ?"
-                      + " AND t.target_state = 'OPEN_INSTALLED'"
-                      + " ORDER BY i.initializer_id, t.target_ordinal",
-                  accountId,
-                  accountId,
-                  tenantId,
-                  playableStateNamespaceId);
-          if (rows.size() != 1) {
-            throw conflict(
-                rows.isEmpty()
-                    ? "No retained installed INITIAL OPEN target matches the exact account scope"
-                    : "Multiple retained installed INITIAL OPEN targets match the exact account scope");
-          }
-          InitializerSnapshot snapshot = toSnapshot(rows.get(0));
-          if (snapshot.state() != State.OPEN_INSTALLED
-              || !accountId.equals(snapshot.accountId())
-              || !tenantId.equals(snapshot.tenantId())
-              || !playableStateNamespaceId.equals(snapshot.playableStateNamespaceId())) {
-            throw conflict("Retained INITIAL OPEN target differs from the exact account scope");
-          }
-          AccountControlSource current = readCurrentNoActiveControl(transaction, accountId);
-          requireSameCurrentSource(snapshot, current);
-          return snapshot;
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      var rows =
+          transaction.fetch(
+              "SELECT i.initializer_id, i.original_request_id, i.original_caller_context_id,"
+                  + " i.original_attempt_fence, i.account_id, i.account_login_evidence_digest,"
+                  + " i.source_control_state, i.source_control_epoch,"
+                  + " i.inventory_snapshot_revision, i.source_control_digest, t.tenant_id,"
+                  + " t.playable_state_namespace_id, t.target_state,"
+                  + " t.before_accepted_attestation_digest, t.before_incarnation_digest,"
+                  + " t.before_source_payload_digest,"
+                  + " t.before_observation_issued_at_epoch_millis,"
+                  + " t.before_observation_observed_at_epoch_millis,"
+                  + " t.before_observation_expires_at_epoch_millis, t.installed_fields_digest"
+                  + " FROM "
+                  + INITIALIZER
+                  + " i JOIN "
+                  + TARGET
+                  + " t ON t.initializer_id = i.initializer_id"
+                  + " AND t.original_request_id = i.original_request_id"
+                  + " WHERE i.account_id = ? AND t.account_id = ? AND t.tenant_id = ?"
+                  + " AND t.playable_state_namespace_id = ?"
+                  + " AND t.target_state = 'OPEN_INSTALLED'"
+                  + " ORDER BY i.initializer_id, t.target_ordinal",
+              accountId,
+              accountId,
+              tenantId,
+              playableStateNamespaceId);
+      if (rows.size() != 1) {
+        throw conflict(
+            rows.isEmpty()
+                ? "No retained installed INITIAL OPEN target matches the exact account scope"
+                : "Multiple retained installed INITIAL OPEN targets match the exact account scope");
+      }
+      InitializerSnapshot snapshot = toSnapshot(rows.get(0));
+      if (snapshot.state() != State.OPEN_INSTALLED
+          || !accountId.equals(snapshot.accountId())
+          || !tenantId.equals(snapshot.tenantId())
+          || !playableStateNamespaceId.equals(snapshot.playableStateNamespaceId())) {
+        throw conflict("Retained INITIAL OPEN target differs from the exact account scope");
+      }
+      AccountControlSource current = readCurrentNoActiveControl(transaction, accountId);
+      requireSameCurrentSource(snapshot, current);
+      return snapshot;
+    });
   }
 
   /**
@@ -250,51 +243,50 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     requireNonNil(originalRequestId, "originalRequestId");
     Objects.requireNonNull(beforeIncarnation, "beforeIncarnation");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          lockInventoryRevision(transaction);
-          Record locator = readInitializer(transaction, originalRequestId, false);
-          if (locator == null) throw conflict("Exact original INITIAL account target is missing");
-          InitializerSnapshot located = toSnapshot(locator);
-          Record control = lockExistingControl(transaction, located.accountId());
-          AccountControlSource source = readNoActiveControl(control, located.accountId());
-          InitializerSnapshot current = readRequiredCurrent(transaction, originalRequestId, true);
-          requireSameCurrentSource(current, source);
-          requireOriginalJournalStillCurrent(transaction, current);
-          requireInitialObservationMatches(current, beforeIncarnation);
-          if (current.state() != State.NEVER_DISPATCHED) {
-            throw conflict("INITIAL remote attempt was already possible and cannot be reissued");
-          }
-          int updated =
-              transaction.execute(
-                  "UPDATE "
-                      + TARGET
-                      + " SET target_state = 'DISPATCH_POSSIBLE',"
-                      + " before_accepted_attestation_digest = ?, before_incarnation_digest = ?,"
-                      + " before_source_payload_digest = ?,"
-                      + " before_observation_issued_at_epoch_millis = ?,"
-                      + " before_observation_observed_at_epoch_millis = ?,"
-                      + " before_observation_expires_at_epoch_millis = ?"
-                      + " WHERE initializer_id = ? AND target_ordinal = 0"
-                      + " AND target_state = 'NEVER_DISPATCHED'",
-                  beforeIncarnation.acceptedAttestationDigest(),
-                  beforeIncarnation.incarnationDigest(),
-                  beforeIncarnation.payloadDigest(),
-                  beforeIncarnation.issuedAtEpochMillis(),
-                  beforeIncarnation.observedAtEpochMillis(),
-                  beforeIncarnation.expiresAtEpochMillis(),
-                  current.initializerId());
-          requireOne(updated, "INITIAL one-time remote dispatch claim was lost");
-          InitializerSnapshot saved = readRequiredCurrent(transaction, originalRequestId, true);
-          if (saved.state() != State.DISPATCH_POSSIBLE
-              || !saved.beforeIncarnationDigest().equals(beforeIncarnation.incarnationDigest())
-              || !saved.beforeSourcePayloadDigest().equals(beforeIncarnation.payloadDigest())) {
-            throw conflict("INITIAL remote dispatch state did not read back exactly");
-          }
-          requireSameCurrentSource(saved, source);
-          return saved;
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      lockInventoryRevision(transaction);
+      Record locator = readInitializer(transaction, originalRequestId, false);
+      if (locator == null) throw conflict("Exact original INITIAL account target is missing");
+      InitializerSnapshot located = toSnapshot(locator);
+      Record control = lockExistingControl(transaction, located.accountId());
+      AccountControlSource source = readNoActiveControl(control, located.accountId());
+      InitializerSnapshot current = readRequiredCurrent(transaction, originalRequestId, true);
+      requireSameCurrentSource(current, source);
+      requireOriginalJournalStillCurrent(transaction, current);
+      requireInitialObservationMatches(current, beforeIncarnation);
+      if (current.state() != State.NEVER_DISPATCHED) {
+        throw conflict("INITIAL remote attempt was already possible and cannot be reissued");
+      }
+      int updated =
+          transaction.execute(
+              "UPDATE "
+                  + TARGET
+                  + " SET target_state = 'DISPATCH_POSSIBLE',"
+                  + " before_accepted_attestation_digest = ?, before_incarnation_digest = ?,"
+                  + " before_source_payload_digest = ?,"
+                  + " before_observation_issued_at_epoch_millis = ?,"
+                  + " before_observation_observed_at_epoch_millis = ?,"
+                  + " before_observation_expires_at_epoch_millis = ?"
+                  + " WHERE initializer_id = ? AND target_ordinal = 0"
+                  + " AND target_state = 'NEVER_DISPATCHED'",
+              beforeIncarnation.acceptedAttestationDigest(),
+              beforeIncarnation.incarnationDigest(),
+              beforeIncarnation.payloadDigest(),
+              beforeIncarnation.issuedAtEpochMillis(),
+              beforeIncarnation.observedAtEpochMillis(),
+              beforeIncarnation.expiresAtEpochMillis(),
+              current.initializerId());
+      requireOne(updated, "INITIAL one-time remote dispatch claim was lost");
+      InitializerSnapshot saved = readRequiredCurrent(transaction, originalRequestId, true);
+      if (saved.state() != State.DISPATCH_POSSIBLE
+          || !saved.beforeIncarnationDigest().equals(beforeIncarnation.incarnationDigest())
+          || !saved.beforeSourcePayloadDigest().equals(beforeIncarnation.payloadDigest())) {
+        throw conflict("INITIAL remote dispatch state did not read back exactly");
+      }
+      requireSameCurrentSource(saved, source);
+      return saved;
+    });
   }
 
   /**
@@ -313,60 +305,58 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     requireReadback(readback);
     String fieldsDigest = digestFields(readback.value().fields());
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          lockInventoryRevision(transaction);
-          Record locator = readInitializer(transaction, originalRequestId, false);
-          if (locator == null) throw conflict("Exact original INITIAL account target is missing");
-          InitializerSnapshot located = toSnapshot(locator);
-          Record control = lockExistingControl(transaction, located.accountId());
-          AccountControlSource source = readNoActiveControl(control, located.accountId());
-          InitializerSnapshot current = readRequiredCurrent(transaction, originalRequestId, true);
-          requireSameCurrentSource(current, source);
-          requireOriginalJournalStillCurrent(transaction, current);
-          requireSameReadbackContext(current, readback);
-          long now = clock.millis();
-          if (now <= 0
-              || now < readback.beforeIncarnation().issuedAtEpochMillis()
-              || now >= readback.beforeIncarnation().expiresAtEpochMillis()
-              || now < readback.afterIncarnation().issuedAtEpochMillis()
-              || now >= readback.afterIncarnation().expiresAtEpochMillis()) {
-            throw conflict(
-                "INITIAL protected incarnation observation expired before SQL completion");
-          }
-          if (current.state() == State.OPEN_INSTALLED) {
-            if (!fieldsDigest.equals(current.installedFieldsDigest())) {
-              throw conflict("An installed INITIAL OPEN value cannot be replaced");
-            }
-            return current;
-          }
-          if (current.state() != State.DISPATCH_POSSIBLE) {
-            throw conflict("INITIAL OPEN readback has no persisted possible-dispatch state");
-          }
-          int updated =
-              transaction.execute(
-                  "UPDATE "
-                      + TARGET
-                      + " SET target_state = 'OPEN_INSTALLED', installed_fields_digest = ?,"
-                      + " completed_at = CURRENT_TIMESTAMP"
-                      + " WHERE initializer_id = ? AND target_ordinal = 0"
-                      + " AND target_state = 'DISPATCH_POSSIBLE'"
-                      + " AND before_incarnation_digest = ?"
-                      + " AND before_accepted_attestation_digest = ?",
-                  fieldsDigest,
-                  current.initializerId(),
-                  readback.beforeIncarnation().incarnationDigest(),
-                  readback.beforeIncarnation().acceptedAttestationDigest());
-          requireOne(updated, "INITIAL OPEN completion lost its exact original SQL target");
-          InitializerSnapshot saved = readRequiredCurrent(transaction, originalRequestId, true);
-          if (saved.state() != State.OPEN_INSTALLED
-              || !fieldsDigest.equals(saved.installedFieldsDigest())) {
-            throw conflict("INITIAL OPEN completion readback differs from its exact SQL postimage");
-          }
-          requireSameCurrentSource(saved, source);
-          return saved;
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      lockInventoryRevision(transaction);
+      Record locator = readInitializer(transaction, originalRequestId, false);
+      if (locator == null) throw conflict("Exact original INITIAL account target is missing");
+      InitializerSnapshot located = toSnapshot(locator);
+      Record control = lockExistingControl(transaction, located.accountId());
+      AccountControlSource source = readNoActiveControl(control, located.accountId());
+      InitializerSnapshot current = readRequiredCurrent(transaction, originalRequestId, true);
+      requireSameCurrentSource(current, source);
+      requireOriginalJournalStillCurrent(transaction, current);
+      requireSameReadbackContext(current, readback);
+      long now = clock.millis();
+      if (now <= 0
+          || now < readback.beforeIncarnation().issuedAtEpochMillis()
+          || now >= readback.beforeIncarnation().expiresAtEpochMillis()
+          || now < readback.afterIncarnation().issuedAtEpochMillis()
+          || now >= readback.afterIncarnation().expiresAtEpochMillis()) {
+        throw conflict("INITIAL protected incarnation observation expired before SQL completion");
+      }
+      if (current.state() == State.OPEN_INSTALLED) {
+        if (!fieldsDigest.equals(current.installedFieldsDigest())) {
+          throw conflict("An installed INITIAL OPEN value cannot be replaced");
+        }
+        return current;
+      }
+      if (current.state() != State.DISPATCH_POSSIBLE) {
+        throw conflict("INITIAL OPEN readback has no persisted possible-dispatch state");
+      }
+      int updated =
+          transaction.execute(
+              "UPDATE "
+                  + TARGET
+                  + " SET target_state = 'OPEN_INSTALLED', installed_fields_digest = ?,"
+                  + " completed_at = CURRENT_TIMESTAMP"
+                  + " WHERE initializer_id = ? AND target_ordinal = 0"
+                  + " AND target_state = 'DISPATCH_POSSIBLE'"
+                  + " AND before_incarnation_digest = ?"
+                  + " AND before_accepted_attestation_digest = ?",
+              fieldsDigest,
+              current.initializerId(),
+              readback.beforeIncarnation().incarnationDigest(),
+              readback.beforeIncarnation().acceptedAttestationDigest());
+      requireOne(updated, "INITIAL OPEN completion lost its exact original SQL target");
+      InitializerSnapshot saved = readRequiredCurrent(transaction, originalRequestId, true);
+      if (saved.state() != State.OPEN_INSTALLED
+          || !fieldsDigest.equals(saved.installedFieldsDigest())) {
+        throw conflict("INITIAL OPEN completion readback differs from its exact SQL postimage");
+      }
+      requireSameCurrentSource(saved, source);
+      return saved;
+    });
   }
 
   void requireNoAmbientTransaction() {
@@ -375,13 +365,12 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
       throw conflict("INITIAL account barrier phases require no ambient SQL transaction");
     }
     try {
-      dsl.connectionResult(
-          connection -> {
-            if (!connection.getAutoCommit()) {
-              throw conflict("INITIAL account barrier phases cannot join a jOOQ transaction");
-            }
-            return Boolean.TRUE;
-          });
+      dsl.connectionResult(connection -> {
+        if (!connection.getAutoCommit()) {
+          throw conflict("INITIAL account barrier phases cannot join a jOOQ transaction");
+        }
+        return Boolean.TRUE;
+      });
     } catch (RuntimeException failure) {
       if (failure instanceof CanonicalGameplayBindingInventoryConflictException) throw failure;
       throw conflict("INITIAL account barrier SQL connection state is unavailable");

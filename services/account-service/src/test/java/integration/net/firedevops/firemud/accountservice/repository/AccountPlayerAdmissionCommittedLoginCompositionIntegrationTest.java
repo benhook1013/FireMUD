@@ -221,10 +221,9 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
               .isExactlyInstanceOf(StatusRuntimeException.class)
               .hasMessage("CANCELLED: Account player-admission entitlement read did not complete")
-              .satisfies(
-                  failure ->
-                      assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                          .isEqualTo(Status.Code.CANCELLED));
+              .satisfies(failure ->
+                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                      .isEqualTo(Status.Code.CANCELLED));
           verify(receiver).readPlayerAdmissionEntitlement(any(), any());
           // Retaining valid signature bytes and local custody is insufficient after Account moves.
           // The actual caller verifier and receiver classify this currentness loss as UNAVAILABLE.
@@ -232,10 +231,9 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> true))
               .isExactlyInstanceOf(StatusRuntimeException.class)
               .hasMessage("UNAVAILABLE: Account player-admission entitlement read did not complete")
-              .satisfies(
-                  failure ->
-                      assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                          .isEqualTo(Status.Code.UNAVAILABLE));
+              .satisfies(failure ->
+                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                      .isEqualTo(Status.Code.UNAVAILABLE));
           verify(receiver, times(2)).readPlayerAdmissionEntitlement(any(), any());
           login.close();
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> true))
@@ -253,91 +251,83 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
   private static void controlledTarget(CanonicalGameplayAdmissionDecisionReadClient targets) {
     when(targets.resolvePublishedRealmAdmissionTarget(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var selector =
-                  invocation.getArgument(
-                      0,
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
-              var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
-              when(target.targetNamespace()).thenReturn(selector.targetNamespace());
-              when(target.canonicalTenantId()).thenReturn(selector.tenantId());
-              when(target.tenantSlug()).thenReturn(selector.tenantSlug());
-              when(target.worldSlug()).thenReturn(selector.worldSlug());
-              when(target.realmId()).thenReturn(selector.realmId());
-              when(target.realmSlug()).thenReturn(selector.realmSlug());
-              when(target.playableStateNamespaceId())
-                  .thenReturn(selector.playableStateNamespaceId());
-              when(target.playableStateScope()).thenReturn(selector.playableStateScope());
-              when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
-              when(target.catalogRevision()).thenReturn(selector.catalogRevision());
-              when(target.pointerVersion()).thenReturn(selector.pointerVersion());
-              when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
-              when(target.ownerProofOutcome())
-                  .thenReturn(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
-              UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
-              when(target.canonicalVersionId()).thenReturn(version);
-              when(target.activeWorldEpoch()).thenReturn(5L);
-              var strict =
-                  new CanonicalGameplayRosterOwnerReadEvidence.Request(
-                      selector.readRequestId(),
-                      selector.accountId(),
-                      selector.targetNamespace(),
-                      selector.tenantId(),
-                      selector.worldSlug(),
-                      selector.realmId(),
-                      selector.realmSlug(),
-                      selector.playableStateNamespaceId(),
-                      selector.playableStateScope(),
-                      selector.gameInstanceId(),
-                      version,
-                      selector.catalogRevision(),
-                      selector.pointerVersion(),
-                      5L);
-              var resolved =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget
-                          .class);
-              when(resolved.selector()).thenReturn(selector);
-              when(resolved.currentTarget()).thenReturn(target);
-              when(resolved.strictSelector()).thenReturn(strict);
-              var read =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
-              when(read.selector()).thenReturn(strict);
-              when(read.currentTarget()).thenReturn(target);
-              var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
-              when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
-              var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
-              when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
-              when(source.publishedPolicySetEvidence()).thenReturn(policies);
-              var ownerProof =
-                  mock(
-                      net.firedevops.firemud.common.world
-                          .GameSessionCanonicalInitialAdmissionOwnerProof.class);
-              when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
-              when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
-              when(read.sourceEvidence()).thenReturn(source);
-              var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              when(world.canonicalBytes())
-                  .thenReturn(
-                      "controlled-complete-world-source"
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-              when(world.captureId())
-                  .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
-              when(world.rowVersion()).thenReturn(2L);
-              when(read.worldLifecycleEvidence()).thenReturn(world);
-              when(targets.readPublishedRealmAdmissionOwner(strict))
-                  .thenAnswer(
-                      readCall -> {
-                        assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                            .isFalse();
-                        return read;
-                      });
-              return resolved;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var selector =
+              invocation.getArgument(
+                  0, CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
+          var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
+          when(target.targetNamespace()).thenReturn(selector.targetNamespace());
+          when(target.canonicalTenantId()).thenReturn(selector.tenantId());
+          when(target.tenantSlug()).thenReturn(selector.tenantSlug());
+          when(target.worldSlug()).thenReturn(selector.worldSlug());
+          when(target.realmId()).thenReturn(selector.realmId());
+          when(target.realmSlug()).thenReturn(selector.realmSlug());
+          when(target.playableStateNamespaceId()).thenReturn(selector.playableStateNamespaceId());
+          when(target.playableStateScope()).thenReturn(selector.playableStateScope());
+          when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
+          when(target.catalogRevision()).thenReturn(selector.catalogRevision());
+          when(target.pointerVersion()).thenReturn(selector.pointerVersion());
+          when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
+          when(target.ownerProofOutcome())
+              .thenReturn(
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
+          UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
+          when(target.canonicalVersionId()).thenReturn(version);
+          when(target.activeWorldEpoch()).thenReturn(5L);
+          var strict =
+              new CanonicalGameplayRosterOwnerReadEvidence.Request(
+                  selector.readRequestId(),
+                  selector.accountId(),
+                  selector.targetNamespace(),
+                  selector.tenantId(),
+                  selector.worldSlug(),
+                  selector.realmId(),
+                  selector.realmSlug(),
+                  selector.playableStateNamespaceId(),
+                  selector.playableStateScope(),
+                  selector.gameInstanceId(),
+                  version,
+                  selector.catalogRevision(),
+                  selector.pointerVersion(),
+                  5L);
+          var resolved =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget.class);
+          when(resolved.selector()).thenReturn(selector);
+          when(resolved.currentTarget()).thenReturn(target);
+          when(resolved.strictSelector()).thenReturn(strict);
+          var read =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+          when(read.selector()).thenReturn(strict);
+          when(read.currentTarget()).thenReturn(target);
+          var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
+          when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
+          var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
+          when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
+          when(source.publishedPolicySetEvidence()).thenReturn(policies);
+          var ownerProof =
+              mock(
+                  net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof
+                      .class);
+          when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
+          when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
+          when(read.sourceEvidence()).thenReturn(source);
+          var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          when(world.canonicalBytes())
+              .thenReturn(
+                  "controlled-complete-world-source"
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          when(world.captureId())
+              .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
+          when(world.rowVersion()).thenReturn(2L);
+          when(read.worldLifecycleEvidence()).thenReturn(world);
+          when(targets.readPublishedRealmAdmissionOwner(strict))
+              .thenAnswer(readCall -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return read;
+              });
+          return resolved;
+        });
   }
 
   private static AuthenticateResponse projectRecoveredInitial(InitialGameplayLoginResult result) {

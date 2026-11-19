@@ -246,11 +246,10 @@ class DurableScreenBufferServiceTest {
     verify(repository).saveAll(entries.capture());
     assertThat(entries.getValue())
         .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.getPayloadJson()).isEqualTo(oversized.payloadJson());
-              assertThat(entry.getByteSize()).isGreaterThan(2_000);
-            });
+        .satisfies(entry -> {
+          assertThat(entry.getPayloadJson()).isEqualTo(oversized.payloadJson());
+          assertThat(entry.getByteSize()).isGreaterThan(2_000);
+        });
     verify(repository).updateExpiryByScope(TENANT_ID, GAME_INSTANCE_ID, CHARACTER_ID, null);
     verify(hotCache, never()).append(anyLong(), anyLong(), anyLong(), any());
     verify(hotCache)
@@ -258,10 +257,9 @@ class DurableScreenBufferServiceTest {
             eq(TENANT_ID),
             eq(GAME_INSTANCE_ID),
             eq(CHARACTER_ID),
-            org.mockito.ArgumentMatchers.argThat(
-                cached ->
-                    cached.size() == 1
-                        && cached.getFirst().payloadJson().equals(oversized.payloadJson())));
+            org.mockito.ArgumentMatchers.argThat(cached ->
+                cached.size() == 1
+                    && cached.getFirst().payloadJson().equals(oversized.payloadJson())));
   }
 
   @Test
@@ -291,10 +289,9 @@ class DurableScreenBufferServiceTest {
             eq(TENANT_ID),
             eq(GAME_INSTANCE_ID),
             eq(CHARACTER_ID),
-            org.mockito.ArgumentMatchers.argThat(
-                cached ->
-                    cached.size() == 1
-                        && cached.getFirst().payloadJson().equals(oversized.payloadJson())));
+            org.mockito.ArgumentMatchers.argThat(cached ->
+                cached.size() == 1
+                    && cached.getFirst().payloadJson().equals(oversized.payloadJson())));
   }
 
   @Test

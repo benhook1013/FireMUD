@@ -371,90 +371,86 @@ public final class AccountJwtJwksTrustedSource
     }
     try {
       OwnerProjection result =
-          accountTransaction.execute(
-              status -> {
-                Optional<DesiredState> enrollment =
-                    allowPreparedDeny
-                        ? desiredStateRepository.readLockedEnrollmentState(binding.accountBinding())
-                        : desiredStateRepository.readEnrollmentState(binding.accountBinding());
-                DesiredState enrolled =
-                    enrollment.orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
-                if (allowPreparedDeny && enrolled.preparedOperationId().isPresent()) {
-                  return preparedProjection(enrolled, binding, api);
-                }
-                if (enrolled.durableActive().isEmpty() && enrolled.publishedActive().isEmpty()) {
-                  return initialPrepublicationProjection(enrolled, binding, api, allowPreparedDeny);
-                }
-                CommittedSignerEvidence committed =
-                    desiredStateRepository
-                        .readCurrentCommittedSigner(
-                            binding.accountBinding(),
-                            trustFence(binding),
-                            api.bindingDigest(),
-                            api.configRevision())
-                        .orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
-                ActiveSigner currentActive =
-                    new ActiveSigner(
-                        committed.promotion().targetGeneration(),
-                        committed.promotion().targetKid());
-                PublishedProjection projection = committedProjection(committed);
-                if (committed.desiredState().generationOperationId().isEmpty()) {
-                  return new OwnerProjection(committed, projection);
-                }
+          accountTransaction.execute(status -> {
+            Optional<DesiredState> enrollment =
+                allowPreparedDeny
+                    ? desiredStateRepository.readLockedEnrollmentState(binding.accountBinding())
+                    : desiredStateRepository.readEnrollmentState(binding.accountBinding());
+            DesiredState enrolled =
+                enrollment.orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
+            if (allowPreparedDeny && enrolled.preparedOperationId().isPresent()) {
+              return preparedProjection(enrolled, binding, api);
+            }
+            if (enrolled.durableActive().isEmpty() && enrolled.publishedActive().isEmpty()) {
+              return initialPrepublicationProjection(enrolled, binding, api, allowPreparedDeny);
+            }
+            CommittedSignerEvidence committed =
+                desiredStateRepository
+                    .readCurrentCommittedSigner(
+                        binding.accountBinding(),
+                        trustFence(binding),
+                        api.bindingDigest(),
+                        api.configRevision())
+                    .orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
+            ActiveSigner currentActive =
+                new ActiveSigner(
+                    committed.promotion().targetGeneration(), committed.promotion().targetKid());
+            PublishedProjection projection = committedProjection(committed);
+            if (committed.desiredState().generationOperationId().isEmpty()) {
+              return new OwnerProjection(committed, projection);
+            }
 
-                var request =
-                    desiredStateRepository.readCurrentGenerationRequest(
-                        binding.accountBinding(), trustFence(binding));
-                if (request.phase()
-                    != AccountJwtSignerDesiredStateRepository.GenerationPhase.GENERATION_RECORDED) {
-                  return new OwnerProjection(committed, projection);
-                }
-                Optional<PublicationEvidence> currentPublication =
-                    publicationRepository.readCurrentPublication(
-                        binding.accountBinding(), trustFence(binding));
-                if (currentPublication.isEmpty()) {
-                  return new OwnerProjection(committed, projection);
-                }
-                PublicationEvidence evidence = currentPublication.orElseThrow();
-                requirePublicationBinding(evidence, binding, api);
-                PrepublicationIntent intent = evidence.intent();
-                PublicationReceipt receipt = evidence.receipt().orElse(null);
-                if (receipt == null && !allowPreparedDeny) throw unavailable();
-                if (!intent.operationId().equals(request.operationId())
-                    || !intent.operationDigest().equals(request.operationDigest())
-                    || !intent.generationRequestDigest().equals(request.generationRequestDigest())
-                    || !intent.generationReceiptDigest().equals(request.generationReceiptDigest())
-                    || !intent.targetGeneration().equals(request.targetGeneration())
-                    || !intent.targetKid().equals(request.targetKid())
-                    || !intent.publicKeyFingerprint().equals(request.publicKeyFingerprint())
-                    || !intent.expectedDurableActive().equals(Optional.of(currentActive))
-                    || !intent.expectedPublishedActive().equals(Optional.of(currentActive))
-                    || !intent.configMapUid().equals(committed.promotion().publicConfigMapUid())
-                    || (receipt != null
-                        && !receipt
-                            .configMapUid()
-                            .equals(committed.promotion().publicConfigMapUid()))
-                    || !intent.apiBindingDigest().equals(api.bindingDigest())
-                    || !intent.apiConfigRevision().equals(api.configRevision())) {
-                  throw rejected();
-                }
-                requireRetainedPublicKeySet(committed, intent);
-                if (receipt == null) {
-                  requirePrepublicationMarker(intent, binding, api);
-                  if (!intent.expectedResourceVersion().equals(projection.resourceVersion())) {
-                    throw rejected();
-                  }
-                  return new OwnerProjection(committed, projection, null, null, intent);
-                }
-                return new OwnerProjection(
-                    committed,
-                    new PublishedProjection(
-                        intent.configMapUid(),
-                        receipt.observedResourceVersion(),
-                        intent.jwksJson(),
-                        intent.generationMarkerJson(),
-                        receipt.publicDataDigest()));
-              });
+            var request =
+                desiredStateRepository.readCurrentGenerationRequest(
+                    binding.accountBinding(), trustFence(binding));
+            if (request.phase()
+                != AccountJwtSignerDesiredStateRepository.GenerationPhase.GENERATION_RECORDED) {
+              return new OwnerProjection(committed, projection);
+            }
+            Optional<PublicationEvidence> currentPublication =
+                publicationRepository.readCurrentPublication(
+                    binding.accountBinding(), trustFence(binding));
+            if (currentPublication.isEmpty()) {
+              return new OwnerProjection(committed, projection);
+            }
+            PublicationEvidence evidence = currentPublication.orElseThrow();
+            requirePublicationBinding(evidence, binding, api);
+            PrepublicationIntent intent = evidence.intent();
+            PublicationReceipt receipt = evidence.receipt().orElse(null);
+            if (receipt == null && !allowPreparedDeny) throw unavailable();
+            if (!intent.operationId().equals(request.operationId())
+                || !intent.operationDigest().equals(request.operationDigest())
+                || !intent.generationRequestDigest().equals(request.generationRequestDigest())
+                || !intent.generationReceiptDigest().equals(request.generationReceiptDigest())
+                || !intent.targetGeneration().equals(request.targetGeneration())
+                || !intent.targetKid().equals(request.targetKid())
+                || !intent.publicKeyFingerprint().equals(request.publicKeyFingerprint())
+                || !intent.expectedDurableActive().equals(Optional.of(currentActive))
+                || !intent.expectedPublishedActive().equals(Optional.of(currentActive))
+                || !intent.configMapUid().equals(committed.promotion().publicConfigMapUid())
+                || (receipt != null
+                    && !receipt.configMapUid().equals(committed.promotion().publicConfigMapUid()))
+                || !intent.apiBindingDigest().equals(api.bindingDigest())
+                || !intent.apiConfigRevision().equals(api.configRevision())) {
+              throw rejected();
+            }
+            requireRetainedPublicKeySet(committed, intent);
+            if (receipt == null) {
+              requirePrepublicationMarker(intent, binding, api);
+              if (!intent.expectedResourceVersion().equals(projection.resourceVersion())) {
+                throw rejected();
+              }
+              return new OwnerProjection(committed, projection, null, null, intent);
+            }
+            return new OwnerProjection(
+                committed,
+                new PublishedProjection(
+                    intent.configMapUid(),
+                    receipt.observedResourceVersion(),
+                    intent.jwksJson(),
+                    intent.generationMarkerJson(),
+                    receipt.publicDataDigest()));
+          });
       if (result == null) {
         throw unavailable();
       }

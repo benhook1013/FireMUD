@@ -59,10 +59,9 @@ class WorldSelectedFullPublicationEvidenceFixtureTest {
     when(version.sourceIntakeReceipt()).thenReturn(versionIntake);
     when(versionIntake.operationId()).thenReturn(versionIntakeOperationId);
 
-    assertThatThrownBy(
-            () ->
-                WorldSelectedFullPublicationEvidenceFixture.readCommittedFreeze(
-                    worldDsl, "test", selection, graph, accountBinding, freezeEvidence))
+    assertThatThrownBy(() ->
+            WorldSelectedFullPublicationEvidenceFixture.readCommittedFreeze(
+                worldDsl, "test", selection, graph, accountBinding, freezeEvidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("World retained source/Version rows differ");
 

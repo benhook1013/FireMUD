@@ -248,199 +248,193 @@ public class GameInstanceRepository {
             validatedBaseVersionId,
             null,
             false);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          Optional<ScriptPinMutationResult> replay =
-              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (replay.isPresent()) {
-            return replay.get();
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Optional<ScriptPinMutationResult> replay =
+          ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+      if (replay.isPresent()) {
+        return replay.get();
+      }
 
-          Record current =
-              tx.select(SELECT_FIELDS)
-                  .from(GAME_INSTANCES)
-                  .where(
-                      GAME_INSTANCES
-                          .ID
-                          .eq(gameInstanceId)
-                          .and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
-                  .forUpdate()
-                  .fetchOne();
-          if (current == null) {
-            throw new IllegalArgumentException("Game instance not found");
-          }
-          // Different request IDs serialize on the instance row. Recheck the operation after
-          // taking that lock so an identical concurrent request replays the winner's result
-          // instead of racing its primary-key insert.
-          replay =
-              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (replay.isPresent()) {
-            return replay.get();
-          }
-          String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
-          Long previousBaseVersionId = current.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID);
-          Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
-          String previousRequestId =
-              current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
-          ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
-          String effectiveOperationKind =
-              effectiveOperationKind(operationKind, targetScriptPatchVersion, previousPatch);
-          String effectiveMutationDigest =
-              mutationDigest(
-                  tenantId,
-                  gameInstanceId,
-                  effectiveOperationKind,
-                  targetScriptPatchVersion,
-                  actorPrincipal,
-                  reason,
-                  expectedPinKind,
-                  expectedScriptPinEpoch);
-
-          Long lockedRuntimeVersionId =
-              RuntimeVersionIdResolver.resolve(
-                  current.get(GAME_INSTANCES.VERSION_ID),
-                  current.get(GAME_INSTANCES.RUNTIME_VERSION));
-          if (lockedRuntimeVersionId == null
-              || !validatedBaseVersionId.equals(lockedRuntimeVersionId)) {
-            String errorCode =
-                lockedRuntimeVersionId == null
-                    ? "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"
-                    : "SCRIPT_PATCH_BASE_VERSION_MISMATCH";
-            ScriptPinMutationResult result =
-                new ScriptPinMutationResult(
-                    previousPatch,
-                    previousEpoch,
-                    previousPatch,
-                    previousEpoch,
-                    controlPlaneRequestId,
-                    errorCode,
-                    previousBaseVersionId,
-                    previousBaseVersionId);
-            insertOperation(
-                tx,
-                tenantId,
-                gameInstanceId,
-                effectiveOperationKind,
-                targetScriptPatchVersion,
-                validatedBaseVersionId,
-                expectedPinKind,
-                expectedScriptPinEpoch,
-                actorPrincipal,
-                reason,
-                effectiveMutationDigest,
-                result);
-            return result;
-          }
-
-          long currentEpoch = previousEpoch == null ? 0L : previousEpoch;
-          if (!expectedPinMatches(
-              expectedPinKind, expectedScriptPinEpoch, previousPatch, previousEpoch)) {
-            ScriptPinMutationResult result =
-                new ScriptPinMutationResult(
-                    previousPatch,
-                    previousEpoch,
-                    previousPatch,
-                    previousEpoch,
-                    controlPlaneRequestId,
-                    "SCRIPT_PIN_EXPECTATION_FAILED",
-                    previousBaseVersionId,
-                    previousBaseVersionId);
-            insertOperation(
-                tx,
-                tenantId,
-                gameInstanceId,
-                effectiveOperationKind,
-                targetScriptPatchVersion,
-                validatedBaseVersionId,
-                expectedPinKind,
-                expectedScriptPinEpoch,
-                actorPrincipal,
-                reason,
-                effectiveMutationDigest,
-                result);
-            return result;
-          }
-
-          if (currentEpoch == Long.MAX_VALUE) {
-            ScriptPinMutationResult result =
-                new ScriptPinMutationResult(
-                    previousPatch,
-                    previousEpoch,
-                    previousPatch,
-                    previousEpoch,
-                    controlPlaneRequestId,
-                    "SCRIPT_PIN_EPOCH_EXHAUSTED",
-                    previousBaseVersionId,
-                    previousBaseVersionId);
-            insertOperation(
-                tx,
-                tenantId,
-                gameInstanceId,
-                effectiveOperationKind,
-                targetScriptPatchVersion,
-                validatedBaseVersionId,
-                expectedPinKind,
-                expectedScriptPinEpoch,
-                actorPrincipal,
-                reason,
-                effectiveMutationDigest,
-                result);
-            return result;
-          }
-
-          long resultingEpoch = currentEpoch + 1L;
-          long currentRowVersion =
-              current.get(GAME_INSTANCES.ROW_VERSION) == null
-                  ? 0L
-                  : current.get(GAME_INSTANCES.ROW_VERSION);
-          int updated =
-              tx.update(GAME_INSTANCES)
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, targetScriptPatchVersion)
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID, validatedBaseVersionId)
-                  .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, resultingEpoch)
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_AT, toLocalDateTime(Instant.now()))
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_BY, actorPrincipal)
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_REASON, reason)
-                  .set(
-                      GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
-                      controlPlaneRequestId)
-                  .set(GAME_INSTANCES.ROW_VERSION, currentRowVersion + 1L)
-                  .where(
-                      GAME_INSTANCES
-                          .ID
-                          .eq(gameInstanceId)
-                          .and(GAME_INSTANCES.TENANT_ID.eq(tenantId))
-                          .and(GAME_INSTANCES.ROW_VERSION.eq(currentRowVersion)))
-                  .execute();
-          if (updated != 1) {
-            throw new IllegalStateException("Failed to update game_instance id=" + gameInstanceId);
-          }
-          ScriptPinMutationResult result =
-              new ScriptPinMutationResult(
-                  previousPatch,
-                  previousEpoch,
-                  targetScriptPatchVersion,
-                  resultingEpoch,
-                  controlPlaneRequestId,
-                  null,
-                  previousBaseVersionId,
-                  validatedBaseVersionId);
-          insertOperation(
-              tx,
+      Record current =
+          tx.select(SELECT_FIELDS)
+              .from(GAME_INSTANCES)
+              .where(
+                  GAME_INSTANCES.ID.eq(gameInstanceId).and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
+              .forUpdate()
+              .fetchOne();
+      if (current == null) {
+        throw new IllegalArgumentException("Game instance not found");
+      }
+      // Different request IDs serialize on the instance row. Recheck the operation after
+      // taking that lock so an identical concurrent request replays the winner's result
+      // instead of racing its primary-key insert.
+      replay = ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+      if (replay.isPresent()) {
+        return replay.get();
+      }
+      String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+      Long previousBaseVersionId = current.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID);
+      Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
+      String previousRequestId =
+          current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
+      ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
+      String effectiveOperationKind =
+          effectiveOperationKind(operationKind, targetScriptPatchVersion, previousPatch);
+      String effectiveMutationDigest =
+          mutationDigest(
               tenantId,
               gameInstanceId,
               effectiveOperationKind,
               targetScriptPatchVersion,
-              validatedBaseVersionId,
-              expectedPinKind,
-              expectedScriptPinEpoch,
               actorPrincipal,
               reason,
-              effectiveMutationDigest,
-              result);
-          return result;
-        });
+              expectedPinKind,
+              expectedScriptPinEpoch);
+
+      Long lockedRuntimeVersionId =
+          RuntimeVersionIdResolver.resolve(
+              current.get(GAME_INSTANCES.VERSION_ID), current.get(GAME_INSTANCES.RUNTIME_VERSION));
+      if (lockedRuntimeVersionId == null
+          || !validatedBaseVersionId.equals(lockedRuntimeVersionId)) {
+        String errorCode =
+            lockedRuntimeVersionId == null
+                ? "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"
+                : "SCRIPT_PATCH_BASE_VERSION_MISMATCH";
+        ScriptPinMutationResult result =
+            new ScriptPinMutationResult(
+                previousPatch,
+                previousEpoch,
+                previousPatch,
+                previousEpoch,
+                controlPlaneRequestId,
+                errorCode,
+                previousBaseVersionId,
+                previousBaseVersionId);
+        insertOperation(
+            tx,
+            tenantId,
+            gameInstanceId,
+            effectiveOperationKind,
+            targetScriptPatchVersion,
+            validatedBaseVersionId,
+            expectedPinKind,
+            expectedScriptPinEpoch,
+            actorPrincipal,
+            reason,
+            effectiveMutationDigest,
+            result);
+        return result;
+      }
+
+      long currentEpoch = previousEpoch == null ? 0L : previousEpoch;
+      if (!expectedPinMatches(
+          expectedPinKind, expectedScriptPinEpoch, previousPatch, previousEpoch)) {
+        ScriptPinMutationResult result =
+            new ScriptPinMutationResult(
+                previousPatch,
+                previousEpoch,
+                previousPatch,
+                previousEpoch,
+                controlPlaneRequestId,
+                "SCRIPT_PIN_EXPECTATION_FAILED",
+                previousBaseVersionId,
+                previousBaseVersionId);
+        insertOperation(
+            tx,
+            tenantId,
+            gameInstanceId,
+            effectiveOperationKind,
+            targetScriptPatchVersion,
+            validatedBaseVersionId,
+            expectedPinKind,
+            expectedScriptPinEpoch,
+            actorPrincipal,
+            reason,
+            effectiveMutationDigest,
+            result);
+        return result;
+      }
+
+      if (currentEpoch == Long.MAX_VALUE) {
+        ScriptPinMutationResult result =
+            new ScriptPinMutationResult(
+                previousPatch,
+                previousEpoch,
+                previousPatch,
+                previousEpoch,
+                controlPlaneRequestId,
+                "SCRIPT_PIN_EPOCH_EXHAUSTED",
+                previousBaseVersionId,
+                previousBaseVersionId);
+        insertOperation(
+            tx,
+            tenantId,
+            gameInstanceId,
+            effectiveOperationKind,
+            targetScriptPatchVersion,
+            validatedBaseVersionId,
+            expectedPinKind,
+            expectedScriptPinEpoch,
+            actorPrincipal,
+            reason,
+            effectiveMutationDigest,
+            result);
+        return result;
+      }
+
+      long resultingEpoch = currentEpoch + 1L;
+      long currentRowVersion =
+          current.get(GAME_INSTANCES.ROW_VERSION) == null
+              ? 0L
+              : current.get(GAME_INSTANCES.ROW_VERSION);
+      int updated =
+          tx.update(GAME_INSTANCES)
+              .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, targetScriptPatchVersion)
+              .set(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID, validatedBaseVersionId)
+              .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, resultingEpoch)
+              .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_AT, toLocalDateTime(Instant.now()))
+              .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_BY, actorPrincipal)
+              .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_REASON, reason)
+              .set(
+                  GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
+                  controlPlaneRequestId)
+              .set(GAME_INSTANCES.ROW_VERSION, currentRowVersion + 1L)
+              .where(
+                  GAME_INSTANCES
+                      .ID
+                      .eq(gameInstanceId)
+                      .and(GAME_INSTANCES.TENANT_ID.eq(tenantId))
+                      .and(GAME_INSTANCES.ROW_VERSION.eq(currentRowVersion)))
+              .execute();
+      if (updated != 1) {
+        throw new IllegalStateException("Failed to update game_instance id=" + gameInstanceId);
+      }
+      ScriptPinMutationResult result =
+          new ScriptPinMutationResult(
+              previousPatch,
+              previousEpoch,
+              targetScriptPatchVersion,
+              resultingEpoch,
+              controlPlaneRequestId,
+              null,
+              previousBaseVersionId,
+              validatedBaseVersionId);
+      insertOperation(
+          tx,
+          tenantId,
+          gameInstanceId,
+          effectiveOperationKind,
+          targetScriptPatchVersion,
+          validatedBaseVersionId,
+          expectedPinKind,
+          expectedScriptPinEpoch,
+          actorPrincipal,
+          reason,
+          effectiveMutationDigest,
+          result);
+      return result;
+    });
   }
 
   /**
@@ -502,75 +496,70 @@ public class GameInstanceRepository {
             validatedBaseVersionId,
             errorCode,
             true);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          Optional<ScriptPinMutationResult> replay =
-              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (replay.isPresent()) {
-            return replay.get();
-          }
-          Record current =
-              tx.select(SELECT_FIELDS)
-                  .from(GAME_INSTANCES)
-                  .where(
-                      GAME_INSTANCES
-                          .ID
-                          .eq(gameInstanceId)
-                          .and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
-                  .forUpdate()
-                  .fetchOne();
-          if (current == null) {
-            throw new IllegalArgumentException("Game instance not found");
-          }
-          replay =
-              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (replay.isPresent()) {
-            return replay.get();
-          }
-          String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
-          Long previousBaseVersionId = current.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID);
-          Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
-          String previousRequestId =
-              current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
-          ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
-          String effectiveOperationKind =
-              effectiveOperationKind(operationKind, targetScriptPatchVersion, previousPatch);
-          String effectiveMutationDigest =
-              mutationDigest(
-                  tenantId,
-                  gameInstanceId,
-                  effectiveOperationKind,
-                  targetScriptPatchVersion,
-                  actorPrincipal,
-                  reason,
-                  expectedPinKind,
-                  expectedScriptPinEpoch);
-          ScriptPinMutationResult result =
-              new ScriptPinMutationResult(
-                  previousPatch,
-                  previousEpoch,
-                  previousPatch,
-                  previousEpoch,
-                  controlPlaneRequestId,
-                  errorCode,
-                  previousBaseVersionId,
-                  previousBaseVersionId);
-          insertOperation(
-              tx,
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Optional<ScriptPinMutationResult> replay =
+          ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+      if (replay.isPresent()) {
+        return replay.get();
+      }
+      Record current =
+          tx.select(SELECT_FIELDS)
+              .from(GAME_INSTANCES)
+              .where(
+                  GAME_INSTANCES.ID.eq(gameInstanceId).and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
+              .forUpdate()
+              .fetchOne();
+      if (current == null) {
+        throw new IllegalArgumentException("Game instance not found");
+      }
+      replay = ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+      if (replay.isPresent()) {
+        return replay.get();
+      }
+      String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+      Long previousBaseVersionId = current.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID);
+      Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
+      String previousRequestId =
+          current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
+      ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
+      String effectiveOperationKind =
+          effectiveOperationKind(operationKind, targetScriptPatchVersion, previousPatch);
+      String effectiveMutationDigest =
+          mutationDigest(
               tenantId,
               gameInstanceId,
               effectiveOperationKind,
               targetScriptPatchVersion,
-              validatedBaseVersionId,
-              expectedPinKind,
-              expectedScriptPinEpoch,
               actorPrincipal,
               reason,
-              effectiveMutationDigest,
-              result);
-          return result;
-        });
+              expectedPinKind,
+              expectedScriptPinEpoch);
+      ScriptPinMutationResult result =
+          new ScriptPinMutationResult(
+              previousPatch,
+              previousEpoch,
+              previousPatch,
+              previousEpoch,
+              controlPlaneRequestId,
+              errorCode,
+              previousBaseVersionId,
+              previousBaseVersionId);
+      insertOperation(
+          tx,
+          tenantId,
+          gameInstanceId,
+          effectiveOperationKind,
+          targetScriptPatchVersion,
+          validatedBaseVersionId,
+          expectedPinKind,
+          expectedScriptPinEpoch,
+          actorPrincipal,
+          reason,
+          effectiveMutationDigest,
+          result);
+      return result;
+    });
   }
 
   public void deleteById(Long id) {

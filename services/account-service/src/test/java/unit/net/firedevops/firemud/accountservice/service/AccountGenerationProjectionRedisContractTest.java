@@ -103,23 +103,20 @@ class AccountGenerationProjectionRedisContractTest {
         key, "PRESENT", "expected", "candidate");
     AccountGenerationProjectionRedisContract.validateInvocation(key, "VERIFY", "expected", "");
 
-    assertThatThrownBy(
-            () ->
-                AccountGenerationProjectionRedisContract.validateInvocation(
-                    "session:auth:generation:issuer:c980fa44-619e-4ca4-8ad6-75b0538a66a3",
-                    "ABSENT",
-                    "",
-                    "candidate"))
+    assertThatThrownBy(() ->
+            AccountGenerationProjectionRedisContract.validateInvocation(
+                "session:auth:generation:issuer:c980fa44-619e-4ca4-8ad6-75b0538a66a3",
+                "ABSENT",
+                "",
+                "candidate"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGenerationProjectionRedisContract.validateInvocation(
-                    key, "VERIFY", "expected", "candidate"))
+    assertThatThrownBy(() ->
+            AccountGenerationProjectionRedisContract.validateInvocation(
+                key, "VERIFY", "expected", "candidate"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGenerationProjectionRedisContract.validateInvocation(
-                    key, "ABSENT", "not-empty", "candidate"))
+    assertThatThrownBy(() ->
+            AccountGenerationProjectionRedisContract.validateInvocation(
+                key, "ABSENT", "not-empty", "candidate"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

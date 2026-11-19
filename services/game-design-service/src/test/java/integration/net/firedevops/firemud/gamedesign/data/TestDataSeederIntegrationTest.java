@@ -170,91 +170,79 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
                         actualMountedWorldLeaf)
                     .orElseThrow());
     org.mockito.Mockito.clearInvocations(launchDescriptorService);
-    peerContext.run(
-        () -> {
-          assertThat(authorization.authorizeSource(sourceRequest)).isEqualTo(receipt);
-          assertThat(authorization.authorizeVersion(versionRequest)).isEqualTo(receipt);
-          var sourceOutput =
-              new FixedReadObserver<
-                  net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse>();
-          new net.firedevops.firemud.gamedesign.service.impl
-                  .RunOwnedFixtureAuthoredWorldSourceReadGrpcService(
-                  authorization, authoredWorldSourceRepository, NAMESPACE)
-              .resolveAuthoredWorldSource(sourceRequest, sourceOutput);
-          assertThat(sourceOutput.failure).isNull();
-          assertThat(sourceOutput.completed).isTrue();
-          assertThat(
-                  net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec
-                      .fromReadResponse(
-                          net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec
-                              .fromReadRequest(NAMESPACE, sourceRequest),
-                          sourceOutput.value))
-              .isEqualTo(source);
-          var versionOutput =
-              new FixedReadObserver<
-                  net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse>();
-          new net.firedevops.firemud.gamedesign.service.impl
-                  .RunOwnedFixtureAuthoredWorldVersionStateGrpcService(
-                  authorization, transactionManager, authoredWorldSourceRepository, NAMESPACE)
-              .getAuthoredWorldVersionState(versionRequest, versionOutput);
-          assertThat(versionOutput.failure).isNull();
-          assertThat(versionOutput.completed).isTrue();
-          var actual =
+    peerContext.run(() -> {
+      assertThat(authorization.authorizeSource(sourceRequest)).isEqualTo(receipt);
+      assertThat(authorization.authorizeVersion(versionRequest)).isEqualTo(receipt);
+      var sourceOutput =
+          new FixedReadObserver<
+              net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse>();
+      new net.firedevops.firemud.gamedesign.service.impl
+              .RunOwnedFixtureAuthoredWorldSourceReadGrpcService(
+              authorization, authoredWorldSourceRepository, NAMESPACE)
+          .resolveAuthoredWorldSource(sourceRequest, sourceOutput);
+      assertThat(sourceOutput.failure).isNull();
+      assertThat(sourceOutput.completed).isTrue();
+      assertThat(
+              net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.fromReadResponse(
+                  net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.fromReadRequest(
+                      NAMESPACE, sourceRequest),
+                  sourceOutput.value))
+          .isEqualTo(source);
+      var versionOutput =
+          new FixedReadObserver<
+              net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse>();
+      new net.firedevops.firemud.gamedesign.service.impl
+              .RunOwnedFixtureAuthoredWorldVersionStateGrpcService(
+              authorization, transactionManager, authoredWorldSourceRepository, NAMESPACE)
+          .getAuthoredWorldVersionState(versionRequest, versionOutput);
+      assertThat(versionOutput.failure).isNull();
+      assertThat(versionOutput.completed).isTrue();
+      var actual =
+          net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec.fromResponse(
               net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec
-                  .fromResponse(
-                      net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec
-                          .fromRequest(versionRequest),
-                      versionOutput.value);
-          assertThat(actual.sourceEvidence()).isEqualTo(source);
-          assertThat(actual.versionStateEpoch())
-              .isEqualTo(receipt.launchReadEvidence().versionState().getVersionStateEpoch());
-        });
+                  .fromRequest(versionRequest),
+              versionOutput.value);
+      assertThat(actual.sourceEvidence()).isEqualTo(source);
+      assertThat(actual.versionStateEpoch())
+          .isEqualTo(receipt.launchReadEvidence().versionState().getVersionStateEpoch());
+    });
     org.mockito.Mockito.verify(launchDescriptorService, org.mockito.Mockito.never())
         .resolveLaunchDescriptor(any());
     assertThat(fixedReadOwnerRows()).isEqualTo(before);
     assertThat(Files.readAllBytes(fixture.receiptPath())).containsExactly(receiptBefore);
     org.mockito.Mockito.clearInvocations(authoredWorldSourceRepository, launchDescriptorService);
-    peerContext.run(
-        () -> {
-          assertThatThrownBy(
-                  () ->
-                      authorization.authorizeSource(
-                          sourceRequest.toBuilder()
-                              .setOperationId(UUID.randomUUID().toString())
-                              .build()))
-              .isInstanceOf(SecurityException.class);
-          assertThatThrownBy(
-                  () ->
-                      authorization.authorizeSource(
-                          sourceRequest.toBuilder()
-                              .setCanonicalTenantId(UUID.randomUUID().toString())
-                              .build()))
-              .isInstanceOf(SecurityException.class);
-          assertThatThrownBy(
-                  () ->
-                      authorization.authorizeSource(
-                          sourceRequest.toBuilder().setWorldSlug("different-world").build()))
-              .isInstanceOf(SecurityException.class);
-          assertThatThrownBy(
-                  () ->
-                      authorization.authorizeVersion(
-                          versionRequest.toBuilder().setTargetNamespace("other").build()))
-              .isInstanceOf(SecurityException.class);
-          assertThatThrownBy(
-                  () ->
-                      authorization.authorizeVersion(
-                          versionRequest.toBuilder()
-                              .setVersionId(versionRequest.getVersionId() + 1)
-                              .build()))
-              .isInstanceOf(SecurityException.class);
-          assertThatThrownBy(
-                  () ->
-                      authorization.authorizeVersion(
-                          versionRequest.toBuilder()
-                              .setExpectedSourceEvidenceDigest("sha256:" + "f".repeat(64))
-                              .build()))
-              .isInstanceOf(SecurityException.class);
-        });
+    peerContext.run(() -> {
+      assertThatThrownBy(() ->
+              authorization.authorizeSource(
+                  sourceRequest.toBuilder().setOperationId(UUID.randomUUID().toString()).build()))
+          .isInstanceOf(SecurityException.class);
+      assertThatThrownBy(() ->
+              authorization.authorizeSource(
+                  sourceRequest.toBuilder()
+                      .setCanonicalTenantId(UUID.randomUUID().toString())
+                      .build()))
+          .isInstanceOf(SecurityException.class);
+      assertThatThrownBy(() ->
+              authorization.authorizeSource(
+                  sourceRequest.toBuilder().setWorldSlug("different-world").build()))
+          .isInstanceOf(SecurityException.class);
+      assertThatThrownBy(() ->
+              authorization.authorizeVersion(
+                  versionRequest.toBuilder().setTargetNamespace("other").build()))
+          .isInstanceOf(SecurityException.class);
+      assertThatThrownBy(() ->
+              authorization.authorizeVersion(
+                  versionRequest.toBuilder()
+                      .setVersionId(versionRequest.getVersionId() + 1)
+                      .build()))
+          .isInstanceOf(SecurityException.class);
+      assertThatThrownBy(() ->
+              authorization.authorizeVersion(
+                  versionRequest.toBuilder()
+                      .setExpectedSourceEvidenceDigest("sha256:" + "f".repeat(64))
+                      .build()))
+          .isInstanceOf(SecurityException.class);
+    });
     org.mockito.Mockito.verifyNoInteractions(
         authoredWorldSourceRepository, launchDescriptorService);
     assertThat(fixedReadOwnerRows()).isEqualTo(before);
@@ -401,57 +389,52 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
           fixture.worldManagementCertificatePath(),
           fixture.worldManagementCertificatePath().resolveSibling("world-management.key"),
           (sourceClient, versionClient) -> {
-            assertSocketReadDenied(
-                () ->
-                    sourceClient.read(
-                        new AuthoredWorldSourceGrpcCodec.ReadRequest(
-                            NAMESPACE,
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            source.canonicalTenantId(),
-                            source.worldSlug())));
-            assertSocketReadDenied(
-                () ->
-                    sourceClient.read(
-                        new AuthoredWorldSourceGrpcCodec.ReadRequest(
-                            NAMESPACE,
-                            UUID.randomUUID(),
-                            source.operationId(),
-                            UUID.randomUUID(),
-                            source.worldSlug())));
-            assertSocketReadDenied(
-                () ->
-                    sourceClient.read(
-                        new AuthoredWorldSourceGrpcCodec.ReadRequest(
-                            NAMESPACE,
-                            UUID.randomUUID(),
-                            source.operationId(),
-                            source.canonicalTenantId(),
-                            "different-world")));
-            assertSocketReadDenied(
-                () ->
-                    versionClient.read(
-                        new AuthoredWorldVersionStateEvidence.Request(
-                            1,
-                            NAMESPACE,
-                            UUID.randomUUID(),
-                            source.canonicalTenantId(),
-                            source.worldSlug(),
-                            source.operationId(),
-                            source.evidenceDigest(),
-                            versionRequest.versionId() + 1)));
-            assertSocketReadDenied(
-                () ->
-                    versionClient.read(
-                        new AuthoredWorldVersionStateEvidence.Request(
-                            1,
-                            NAMESPACE,
-                            UUID.randomUUID(),
-                            source.canonicalTenantId(),
-                            source.worldSlug(),
-                            source.operationId(),
-                            "sha256:" + "f".repeat(64),
-                            versionRequest.versionId())));
+            assertSocketReadDenied(() ->
+                sourceClient.read(
+                    new AuthoredWorldSourceGrpcCodec.ReadRequest(
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        source.canonicalTenantId(),
+                        source.worldSlug())));
+            assertSocketReadDenied(() ->
+                sourceClient.read(
+                    new AuthoredWorldSourceGrpcCodec.ReadRequest(
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        source.operationId(),
+                        UUID.randomUUID(),
+                        source.worldSlug())));
+            assertSocketReadDenied(() ->
+                sourceClient.read(
+                    new AuthoredWorldSourceGrpcCodec.ReadRequest(
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        source.operationId(),
+                        source.canonicalTenantId(),
+                        "different-world")));
+            assertSocketReadDenied(() ->
+                versionClient.read(
+                    new AuthoredWorldVersionStateEvidence.Request(
+                        1,
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        source.canonicalTenantId(),
+                        source.worldSlug(),
+                        source.operationId(),
+                        source.evidenceDigest(),
+                        versionRequest.versionId() + 1)));
+            assertSocketReadDenied(() ->
+                versionClient.read(
+                    new AuthoredWorldVersionStateEvidence.Request(
+                        1,
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        source.canonicalTenantId(),
+                        source.worldSlug(),
+                        source.operationId(),
+                        "sha256:" + "f".repeat(64),
+                        versionRequest.versionId())));
           });
       org.mockito.Mockito.verifyNoInteractions(
           authoredWorldSourceRepository, launchDescriptorService, fixtureReadback, fixturePolicy);
@@ -492,13 +475,12 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
     Path receiptPath = fixture.receiptPath();
 
     new TransactionTemplate(transactionManager)
-        .execute(
-            status -> {
-              seeder.run(new DefaultApplicationArguments(new String[] {}));
-              assertThat(receiptPath).doesNotExist();
-              status.setRollbackOnly();
-              return null;
-            });
+        .execute(status -> {
+          seeder.run(new DefaultApplicationArguments(new String[] {}));
+          assertThat(receiptPath).doesNotExist();
+          status.setRollbackOnly();
+          return null;
+        });
 
     assertThat(receiptPath).doesNotExist();
     assertThat(dsl.fetchCount(SOURCE_OPERATIONS, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
@@ -621,11 +603,9 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
             creation.sourceGameRowId(),
             creation.sourceGameTenantKey(),
             creation.provenanceKind());
-    assertThatThrownBy(
-            () ->
-                new net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository(
-                        dsl)
-                    .readPublishedSet(fixtureTarget))
+    assertThatThrownBy(() ->
+            new net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository(dsl)
+                .readPublishedSet(fixtureTarget))
         .hasMessageContaining("FIXTURE_POLICY_IS_NOT_HUMAN_PUBLICATION_EVIDENCE");
     assertThat(
             net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
@@ -640,13 +620,12 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
                     creation.canonicalTenantId())
                 .get(0, Long.class))
         .isZero();
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE game_design_published_realm_policy_set "
-                        + "SET fixture_request_digest=? WHERE canonical_tenant_id=?",
-                    "sha256:" + "f".repeat(64),
-                    creation.canonicalTenantId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE game_design_published_realm_policy_set "
+                    + "SET fixture_request_digest=? WHERE canonical_tenant_id=?",
+                "sha256:" + "f".repeat(64),
+                creation.canonicalTenantId()))
         .hasMessageContaining("fixture policy seal is immutable");
     JsonNode sourceJson = envelope.get("sourceEvidence");
     assertThat(sourceJson.size()).isEqualTo(13);
@@ -846,26 +825,23 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
     TransactionTemplate registration = new TransactionTemplate(transactionManager);
 
     try {
-      assertThatThrownBy(
-              () ->
-                  registration.execute(
-                      status -> {
-                        TransactionSynchronizationManager.registerSynchronization(
-                            new TransactionSynchronization() {
-                              @Override
-                              public int getOrder() {
-                                return Ordered.HIGHEST_PRECEDENCE;
-                              }
+      assertThatThrownBy(() ->
+              registration.execute(status -> {
+                TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                      @Override
+                      public int getOrder() {
+                        return Ordered.HIGHEST_PRECEDENCE;
+                      }
 
-                              @Override
-                              public void afterCommit() {
-                                writeVersionStateEpoch(
-                                    versionMutation, tenantId, versionId, changedEpoch);
-                              }
-                            });
-                        seeder.run(new DefaultApplicationArguments(new String[] {}));
-                        return null;
-                      }))
+                      @Override
+                      public void afterCommit() {
+                        writeVersionStateEpoch(versionMutation, tenantId, versionId, changedEpoch);
+                      }
+                    });
+                seeder.run(new DefaultApplicationArguments(new String[] {}));
+                return null;
+              }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Run-owned published version does not match its game source");
 
@@ -1316,13 +1292,8 @@ class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
         GameDesignPublishedRealmPolicySet.GAME_DESIGN_PUBLISHED_REALM_POLICY_SET
             .getReferences()
             .stream()
-            .filter(
-                reference ->
-                    reference
-                        .getKey()
-                        .getTable()
-                        .getName()
-                        .equals("game_design_realm_policy_capture"))
+            .filter(reference ->
+                reference.getKey().getTable().getName().equals("game_design_realm_policy_capture"))
             .toList();
     assertThat(generatedCaptureReferences).hasSize(1);
     var generatedCaptureReference = generatedCaptureReferences.getFirst();

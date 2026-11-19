@@ -25,17 +25,16 @@ public class EffectiveCommunicationSettingsController {
   public ResponseEntity<ApiResponse<DomainSettings<CommunicationProperties>>> communication(
       @RequestParam(required = false) String tenantId,
       @RequestParam(required = false) String gameInstanceId) {
-    return GameLogicRequestReaders.withBadRequest(
-        () -> {
-          Long parsedTenantId =
-              GameLogicRequestReaders.requireOptionalPositiveLong(tenantId, "tenantId");
-          Long parsedGameInstanceId =
-              GameLogicRequestReaders.requireOptionalPositiveLong(gameInstanceId, "gameInstanceId");
-          EffectiveCommunicationSettingsResolver.ResolvedValue<CommunicationProperties> resolved =
-              settingsResolver.resolvedCommunication(parsedTenantId, parsedGameInstanceId);
-          return ResponseEntity.ok(
-              ApiResponse.success(new DomainSettings<>(resolved.effective(), resolved.sources())));
-        });
+    return GameLogicRequestReaders.withBadRequest(() -> {
+      Long parsedTenantId =
+          GameLogicRequestReaders.requireOptionalPositiveLong(tenantId, "tenantId");
+      Long parsedGameInstanceId =
+          GameLogicRequestReaders.requireOptionalPositiveLong(gameInstanceId, "gameInstanceId");
+      EffectiveCommunicationSettingsResolver.ResolvedValue<CommunicationProperties> resolved =
+          settingsResolver.resolvedCommunication(parsedTenantId, parsedGameInstanceId);
+      return ResponseEntity.ok(
+          ApiResponse.success(new DomainSettings<>(resolved.effective(), resolved.sources())));
+    });
   }
 
   public record DomainSettings<T>(T effective, List<String> sources) {

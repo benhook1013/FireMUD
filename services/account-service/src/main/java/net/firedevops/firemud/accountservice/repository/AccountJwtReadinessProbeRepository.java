@@ -303,12 +303,11 @@ public class AccountJwtReadinessProbeRepository {
     if (currentPlan.entries().isEmpty()
         || currentPlan.entries().size() > MAX_ENTRIES_PER_OPERATION
         || currentPlan.entries().stream()
-            .anyMatch(
-                entry ->
-                    entry.state() != ProbeState.PLANNED
-                        || entry.signingAttemptedAtEpochSecond().isPresent()
-                        || entry.compactTokenSha256().isPresent()
-                        || entry.verificationReceipt().isPresent())) {
+            .anyMatch(entry ->
+                entry.state() != ProbeState.PLANNED
+                    || entry.signingAttemptedAtEpochSecond().isPresent()
+                    || entry.compactTokenSha256().isPresent()
+                    || entry.verificationReceipt().isPresent())) {
       throw new DeliveryAlreadyClaimedException();
     }
     if (selectDeliveryClaim(currentPlan.operationId(), true) != null) {
@@ -607,10 +606,9 @@ public class AccountJwtReadinessProbeRepository {
       VerificationReceipt existing =
           entry
               .verificationReceipt()
-              .orElseThrow(
-                  () ->
-                      new QuarantinedStateException(
-                          "Verified readiness entry has no immutable receipt"));
+              .orElseThrow(() ->
+                  new QuarantinedStateException(
+                      "Verified readiness entry has no immutable receipt"));
       requireMatchingObservation(existing, observation);
       return entry;
     }
@@ -2765,61 +2763,54 @@ public class AccountJwtReadinessProbeRepository {
     List<Map<String, Object>> validators =
         snapshot.validators().stream()
             .sorted(java.util.Comparator.comparing(ValidatorObservation::validatorId))
-            .map(
-                validator -> {
-                  List<Map<String, Object>> applicable =
-                      validator.profiles().stream()
-                          .map(
-                              profile ->
-                                  Map.<String, Object>of(
-                                      "audience", profile.audience(),
-                                      "tokenProfile", profile.tokenProfile()))
-                          .sorted(
-                              java.util.Comparator.comparing(
-                                      (Map<String, Object> value) ->
-                                          value.get("tokenProfile").toString())
-                                  .thenComparing(value -> value.get("audience").toString()))
-                          .toList();
-                  List<Map<String, Object>> inapplicable =
-                      PRODUCTION_PROFILE_CASES.stream()
-                          .filter(
-                              profile ->
-                                  validator.profiles().stream()
-                                      .noneMatch(
-                                          actual ->
-                                              actual.tokenProfile().equals(profile.tokenProfile())
-                                                  && actual.audience().equals(profile.audience())))
-                          .map(
-                              profile ->
-                                  Map.<String, Object>of(
-                                      "audience", profile.audience(),
-                                      "tokenProfile", profile.tokenProfile()))
-                          .toList();
-                  Map<String, Object> value = new LinkedHashMap<>();
-                  value.put("applicableProfiles", applicable);
-                  value.put("deploymentUid", validator.deploymentUid());
-                  value.put("image", validator.image());
-                  value.put("podCount", validator.pods().size());
-                  value.put(
-                      "pods",
-                      validator.pods().stream()
-                          .sorted(java.util.Comparator.comparing(PodObservation::uid))
-                          .map(
-                              pod ->
-                                  Map.of(
-                                      "podUid", pod.uid(),
-                                      "podIp", pod.podIp(),
-                                      "exactPodEndpoint", pod.endpoint().toString(),
-                                      "canonicalServiceUri", pod.receiverServiceUri(),
-                                      "leafSpkiSha256", pod.leafSpkiSha256(),
-                                      "image", pod.image(),
-                                      "verifierConfigSha256", pod.verifierConfigSha256()))
-                          .toList());
-                  value.put("inapplicableProfiles", inapplicable);
-                  value.put("validatorId", validator.validatorId());
-                  value.put("verifierConfigSha256", validator.verifierConfigSha256());
-                  return value;
-                })
+            .map(validator -> {
+              List<Map<String, Object>> applicable =
+                  validator.profiles().stream()
+                      .map(profile ->
+                          Map.<String, Object>of(
+                              "audience", profile.audience(),
+                              "tokenProfile", profile.tokenProfile()))
+                      .sorted(
+                          java.util.Comparator.comparing((Map<String, Object> value) ->
+                                  value.get("tokenProfile").toString())
+                              .thenComparing(value -> value.get("audience").toString()))
+                      .toList();
+              List<Map<String, Object>> inapplicable =
+                  PRODUCTION_PROFILE_CASES.stream()
+                      .filter(profile ->
+                          validator.profiles().stream()
+                              .noneMatch(actual ->
+                                  actual.tokenProfile().equals(profile.tokenProfile())
+                                      && actual.audience().equals(profile.audience())))
+                      .map(profile ->
+                          Map.<String, Object>of(
+                              "audience", profile.audience(),
+                              "tokenProfile", profile.tokenProfile()))
+                      .toList();
+              Map<String, Object> value = new LinkedHashMap<>();
+              value.put("applicableProfiles", applicable);
+              value.put("deploymentUid", validator.deploymentUid());
+              value.put("image", validator.image());
+              value.put("podCount", validator.pods().size());
+              value.put(
+                  "pods",
+                  validator.pods().stream()
+                      .sorted(java.util.Comparator.comparing(PodObservation::uid))
+                      .map(pod ->
+                          Map.of(
+                              "podUid", pod.uid(),
+                              "podIp", pod.podIp(),
+                              "exactPodEndpoint", pod.endpoint().toString(),
+                              "canonicalServiceUri", pod.receiverServiceUri(),
+                              "leafSpkiSha256", pod.leafSpkiSha256(),
+                              "image", pod.image(),
+                              "verifierConfigSha256", pod.verifierConfigSha256()))
+                      .toList());
+              value.put("inapplicableProfiles", inapplicable);
+              value.put("validatorId", validator.validatorId());
+              value.put("verifierConfigSha256", validator.verifierConfigSha256());
+              return value;
+            })
             .toList();
     Map<String, Object> source = new LinkedHashMap<>();
     source.put("apiBindingDigest", snapshot.apiBindingDigest());
@@ -2837,11 +2828,10 @@ public class AccountJwtReadinessProbeRepository {
     matrix.put(
         "productionProfiles",
         PRODUCTION_PROFILE_CASES.stream()
-            .map(
-                profile ->
-                    Map.of(
-                        "audience", profile.audience(),
-                        "tokenProfile", profile.tokenProfile()))
+            .map(profile ->
+                Map.of(
+                    "audience", profile.audience(),
+                    "tokenProfile", profile.tokenProfile()))
             .toList());
     matrix.put("schemaVersion", INVENTORY_PLAN_VERSION);
     matrix.put("source", source);
@@ -2899,10 +2889,9 @@ public class AccountJwtReadinessProbeRepository {
           entry.probeKind() == ProbeKind.CANARY
               ? ProbeExpectation.ACCEPT
               : validator.profiles().stream()
-                      .anyMatch(
-                          profile ->
-                              profile.tokenProfile().equals(entry.tokenProfile())
-                                  && profile.audience().equals(entry.audience()))
+                      .anyMatch(profile ->
+                          profile.tokenProfile().equals(entry.tokenProfile())
+                              && profile.audience().equals(entry.audience()))
                   ? ProbeExpectation.ACCEPT
                   : ProbeExpectation.INAPPLICABLE_REJECT;
       for (PodObservation pod : validator.pods()) {
@@ -3522,13 +3511,11 @@ public class AccountJwtReadinessProbeRepository {
       if (compactTokenSha256.isPresent() != signingAttemptedAtEpochSecond.isPresent()) {
         throw new QuarantinedStateException("Readiness signing-attempt evidence is partial");
       }
-      signingAttemptedAtEpochSecond.ifPresent(
-          attemptedAt -> {
-            if (attemptedAt < plannedIssuedAtEpochSecond || attemptedAt >= expiresAtEpochSecond) {
-              throw new QuarantinedStateException(
-                  "Readiness signing-attempt time is outside its plan");
-            }
-          });
+      signingAttemptedAtEpochSecond.ifPresent(attemptedAt -> {
+        if (attemptedAt < plannedIssuedAtEpochSecond || attemptedAt >= expiresAtEpochSecond) {
+          throw new QuarantinedStateException("Readiness signing-attempt time is outside its plan");
+        }
+      });
       if ((state == ProbeState.ABORTED
                   || state == ProbeState.EXPIRED
                   || state == ProbeState.CLEANED)
@@ -3550,19 +3537,18 @@ public class AccountJwtReadinessProbeRepository {
               && verificationReceipt.isPresent())) {
         throw new QuarantinedStateException("Readiness state and verification receipt disagree");
       }
-      verificationReceipt.ifPresent(
-          receipt -> {
-            if ((receipt.receiptVersion() == 1 && !receipt.verifiedKid().equals(targetKid))
-                || (receipt.receiptVersion() == 2
-                    && receipt.verifiedKid() != null
-                    && !receipt.verifiedKid().equals(targetKid))
-                || receipt.resultEntryVersion() > entryVersion
-                || receipt.sourceEntryVersion() + 1L != receipt.resultEntryVersion()
-                || (state == ProbeState.VERIFIED && receipt.resultEntryVersion() != entryVersion)) {
-              throw new QuarantinedStateException(
-                  "Readiness verification receipt differs from its immutable entry");
-            }
-          });
+      verificationReceipt.ifPresent(receipt -> {
+        if ((receipt.receiptVersion() == 1 && !receipt.verifiedKid().equals(targetKid))
+            || (receipt.receiptVersion() == 2
+                && receipt.verifiedKid() != null
+                && !receipt.verifiedKid().equals(targetKid))
+            || receipt.resultEntryVersion() > entryVersion
+            || receipt.sourceEntryVersion() + 1L != receipt.resultEntryVersion()
+            || (state == ProbeState.VERIFIED && receipt.resultEntryVersion() != entryVersion)) {
+          throw new QuarantinedStateException(
+              "Readiness verification receipt differs from its immutable entry");
+        }
+      });
       if (verificationReceipt.isPresent()
           && verificationReceipt.orElseThrow().resultEntryVersion() > entryVersion) {
         throw new QuarantinedStateException("Terminal readiness receipt version is invalid");
@@ -4064,15 +4050,14 @@ public class AccountJwtReadinessProbeRepository {
       requireGeneration(targetGeneration);
       requireKid(targetKid);
       expectedActive = Objects.requireNonNull(expectedActive);
-      expectedActive.ifPresent(
-          active -> {
-            requireGeneration(active.generation());
-            requireKid(active.kid());
-            if (Long.parseLong(targetGeneration) <= Long.parseLong(active.generation())
-                || targetKid.equals(active.kid())) {
-              throw new QuarantinedStateException("Delivery active fence is not older than target");
-            }
-          });
+      expectedActive.ifPresent(active -> {
+        requireGeneration(active.generation());
+        requireKid(active.kid());
+        if (Long.parseLong(targetGeneration) <= Long.parseLong(active.generation())
+            || targetKid.equals(active.kid())) {
+          throw new QuarantinedStateException("Delivery active fence is not older than target");
+        }
+      });
       requireDigest(readinessBindingDigest, "readiness trust digest");
       requireRevision(readinessConfigRevision, "readiness trust revision");
       if (readinessBindingValidUntilEpochSecond <= claimedAtEpochSecond) {

@@ -232,10 +232,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             .doesNotContain(CONTROLLED_COMPACT_TOKEN);
         assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
             .isExactlyInstanceOf(io.grpc.StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(io.grpc.Status.Code.CANCELLED));
+            .satisfies(failure ->
+                assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.CANCELLED));
         assertThat(f.dsl.fetchCount(DSL.table("account_tenant_membership")))
             .isEqualTo(membershipsBefore);
       } finally {
@@ -264,12 +263,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
                   .isFalse();
-              f.dsl.connection(
-                  connection -> {
-                    assertThat(connection.getTransactionIsolation())
-                        .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
-                    assertThat(connection.isReadOnly()).isFalse();
-                  });
+              f.dsl.connection(connection -> {
+                assertThat(connection.getTransactionIsolation())
+                    .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
+                assertThat(connection.isReadOnly()).isFalse();
+              });
               return invocation.callRealMethod();
             })
         .when(f.demos)
@@ -315,11 +313,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             status -> f.memberships.findFreshMembership(f.account.getAccountUuid(), f.tenantId));
     assertThat(missing).isEmpty();
     assertThat(value.membershipSource().checkpoints())
-        .anySatisfy(
-            checkpoint -> {
-              assertThat(checkpoint.outboxStreamKey()).contains("membership/");
-              assertThat(checkpoint.outboxSequence()).isEqualTo("0");
-            });
+        .anySatisfy(checkpoint -> {
+          assertThat(checkpoint.outboxStreamKey()).contains("membership/");
+          assertThat(checkpoint.outboxSequence()).isEqualTo("0");
+        });
     assertThat(value.membershipSource().sourceEvidence()).isNotEmpty();
   }
 
@@ -376,13 +373,12 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         // jOOQ connection must propagate the owner's five-second JDBC query timeout.
         assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
-            .satisfies(
-                failure -> {
-                  Throwable cause = failure;
-                  while (cause.getCause() != null) cause = cause.getCause();
-                  assertThat(cause).isInstanceOf(SQLException.class);
-                  assertThat(((SQLException) cause).getSQLState()).isEqualTo("57014");
-                });
+            .satisfies(failure -> {
+              Throwable cause = failure;
+              while (cause.getCause() != null) cause = cause.getCause();
+              assertThat(cause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) cause).getSQLState()).isEqualTo("57014");
+            });
       } finally {
         blocker.rollback();
       }
@@ -459,91 +455,83 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
   private static void controlledTarget(CanonicalGameplayAdmissionDecisionReadClient targets) {
     when(targets.resolvePublishedRealmAdmissionTarget(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var selector =
-                  invocation.getArgument(
-                      0,
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
-              var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
-              when(target.targetNamespace()).thenReturn(selector.targetNamespace());
-              when(target.canonicalTenantId()).thenReturn(selector.tenantId());
-              when(target.tenantSlug()).thenReturn(selector.tenantSlug());
-              when(target.worldSlug()).thenReturn(selector.worldSlug());
-              when(target.realmId()).thenReturn(selector.realmId());
-              when(target.realmSlug()).thenReturn(selector.realmSlug());
-              when(target.playableStateNamespaceId())
-                  .thenReturn(selector.playableStateNamespaceId());
-              when(target.playableStateScope()).thenReturn(selector.playableStateScope());
-              when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
-              when(target.catalogRevision()).thenReturn(selector.catalogRevision());
-              when(target.pointerVersion()).thenReturn(selector.pointerVersion());
-              when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
-              when(target.ownerProofOutcome())
-                  .thenReturn(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
-              UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
-              when(target.canonicalVersionId()).thenReturn(version);
-              when(target.activeWorldEpoch()).thenReturn(5L);
-              var strict =
-                  new CanonicalGameplayRosterOwnerReadEvidence.Request(
-                      selector.readRequestId(),
-                      selector.accountId(),
-                      selector.targetNamespace(),
-                      selector.tenantId(),
-                      selector.worldSlug(),
-                      selector.realmId(),
-                      selector.realmSlug(),
-                      selector.playableStateNamespaceId(),
-                      selector.playableStateScope(),
-                      selector.gameInstanceId(),
-                      version,
-                      selector.catalogRevision(),
-                      selector.pointerVersion(),
-                      5L);
-              var resolved =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget
-                          .class);
-              when(resolved.selector()).thenReturn(selector);
-              when(resolved.currentTarget()).thenReturn(target);
-              when(resolved.strictSelector()).thenReturn(strict);
-              var read =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
-              when(read.selector()).thenReturn(strict);
-              when(read.currentTarget()).thenReturn(target);
-              var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
-              when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
-              var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
-              when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
-              when(source.publishedPolicySetEvidence()).thenReturn(policies);
-              var ownerProof =
-                  mock(
-                      net.firedevops.firemud.common.world
-                          .GameSessionCanonicalInitialAdmissionOwnerProof.class);
-              when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
-              when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
-              when(read.sourceEvidence()).thenReturn(source);
-              var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              when(world.canonicalBytes())
-                  .thenReturn(
-                      "controlled-complete-world-source"
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-              when(world.captureId())
-                  .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
-              when(world.rowVersion()).thenReturn(2L);
-              when(read.worldLifecycleEvidence()).thenReturn(world);
-              when(targets.readPublishedRealmAdmissionOwner(strict))
-                  .thenAnswer(
-                      readCall -> {
-                        assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                            .isFalse();
-                        return read;
-                      });
-              return resolved;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var selector =
+              invocation.getArgument(
+                  0, CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
+          var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
+          when(target.targetNamespace()).thenReturn(selector.targetNamespace());
+          when(target.canonicalTenantId()).thenReturn(selector.tenantId());
+          when(target.tenantSlug()).thenReturn(selector.tenantSlug());
+          when(target.worldSlug()).thenReturn(selector.worldSlug());
+          when(target.realmId()).thenReturn(selector.realmId());
+          when(target.realmSlug()).thenReturn(selector.realmSlug());
+          when(target.playableStateNamespaceId()).thenReturn(selector.playableStateNamespaceId());
+          when(target.playableStateScope()).thenReturn(selector.playableStateScope());
+          when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
+          when(target.catalogRevision()).thenReturn(selector.catalogRevision());
+          when(target.pointerVersion()).thenReturn(selector.pointerVersion());
+          when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
+          when(target.ownerProofOutcome())
+              .thenReturn(
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
+          UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
+          when(target.canonicalVersionId()).thenReturn(version);
+          when(target.activeWorldEpoch()).thenReturn(5L);
+          var strict =
+              new CanonicalGameplayRosterOwnerReadEvidence.Request(
+                  selector.readRequestId(),
+                  selector.accountId(),
+                  selector.targetNamespace(),
+                  selector.tenantId(),
+                  selector.worldSlug(),
+                  selector.realmId(),
+                  selector.realmSlug(),
+                  selector.playableStateNamespaceId(),
+                  selector.playableStateScope(),
+                  selector.gameInstanceId(),
+                  version,
+                  selector.catalogRevision(),
+                  selector.pointerVersion(),
+                  5L);
+          var resolved =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget.class);
+          when(resolved.selector()).thenReturn(selector);
+          when(resolved.currentTarget()).thenReturn(target);
+          when(resolved.strictSelector()).thenReturn(strict);
+          var read =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+          when(read.selector()).thenReturn(strict);
+          when(read.currentTarget()).thenReturn(target);
+          var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
+          when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
+          var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
+          when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
+          when(source.publishedPolicySetEvidence()).thenReturn(policies);
+          var ownerProof =
+              mock(
+                  net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof
+                      .class);
+          when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
+          when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
+          when(read.sourceEvidence()).thenReturn(source);
+          var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          when(world.canonicalBytes())
+              .thenReturn(
+                  "controlled-complete-world-source"
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          when(world.captureId())
+              .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
+          when(world.rowVersion()).thenReturn(2L);
+          when(read.worldLifecycleEvidence()).thenReturn(world);
+          when(targets.readPublishedRealmAdmissionOwner(strict))
+              .thenAnswer(readCall -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return read;
+              });
+          return resolved;
+        });
   }
 
   private static final class Fixture {
@@ -651,53 +639,50 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               NOW.plusSeconds(120).toString());
       String joinRequestId = UUID.randomUUID().toString();
       String callerBinding = "controlled-join-caller";
-      transaction.execute(
-          status -> {
-            tenants.importVerified(tenantSource);
-            sources.initializeIssuerIfAbsent(ISSUER);
-            generations.initializeTenantIfAbsent(tenantId);
-            generations.initialize(
-                AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.getAccountUuid(), tenantId));
-            scopes.insertCanonical(account.getId(), scope, provenance);
-            operations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
-            return null;
-          });
+      transaction.execute(status -> {
+        tenants.importVerified(tenantSource);
+        sources.initializeIssuerIfAbsent(ISSUER);
+        generations.initializeTenantIfAbsent(tenantId);
+        generations.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.getAccountUuid(), tenantId));
+        scopes.insertCanonical(account.getId(), scope, provenance);
+        operations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
+        return null;
+      });
       var entitlement =
-          transaction.execute(
-              status ->
-                  demos.provision(
-                      new DemoTenantEntitlementRequest(
-                          UUID.randomUUID(),
-                          tenantId,
-                          tenantSource.creationRequestId(),
-                          tenantSource.requestDigest(),
-                          null,
-                          null,
-                          null,
-                          true,
-                          true,
-                          true,
-                          true,
-                          new DemoTenantEntitlementRequest.Quotas(3, 2, 4096)),
-                      tenantSource));
+          transaction.execute(status ->
+              demos.provision(
+                  new DemoTenantEntitlementRequest(
+                      UUID.randomUUID(),
+                      tenantId,
+                      tenantSource.creationRequestId(),
+                      tenantSource.requestDigest(),
+                      null,
+                      null,
+                      null,
+                      true,
+                      true,
+                      true,
+                      true,
+                      new DemoTenantEntitlementRequest.Quotas(3, 2, 4096)),
+                  tenantSource));
       if (entitlement == null) throw new IllegalStateException("Demo source is absent");
-      transaction.execute(
-          status -> {
-            operations.bindCanonicalPolicyEvidence(
-                joinRequestId,
-                scope,
-                callerBinding,
-                entitlement.allowPublicJoin(),
-                entitlement.entitlementVersion());
-            if (join) {
-              terminal.commitCanonicalFirstJoin(scope, joinRequestId, callerBinding);
-            } else {
-              accounts.findByAccountUuidForUpdate(account.getAccountUuid()).orElseThrow();
-              memberships.prepareFreshCreatorAbsence(account.getAccountUuid(), tenantId);
-            }
-            return null;
-          });
+      transaction.execute(status -> {
+        operations.bindCanonicalPolicyEvidence(
+            joinRequestId,
+            scope,
+            callerBinding,
+            entitlement.allowPublicJoin(),
+            entitlement.entitlementVersion());
+        if (join) {
+          terminal.commitCanonicalFirstJoin(scope, joinRequestId, callerBinding);
+        } else {
+          accounts.findByAccountUuidForUpdate(account.getAccountUuid()).orElseThrow();
+          memberships.prepareFreshCreatorAbsence(account.getAccountUuid(), tenantId);
+        }
+        return null;
+      });
       var issuances = mock(AccountGameplayDelegationIssuanceRepository.class);
       var callers = mock(AccountGameplayAdmissionCallerVerifier.class);
       var identity =
@@ -734,17 +719,14 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       when(caller.currentCandidate()).thenReturn(candidate);
       when(callers.verifyPresentedCompactToken(CONTROLLED_COMPACT_TOKEN)).thenReturn(caller);
       when(issuances.readCurrentCommittedCandidateByJti(identity.tokenJti()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                    .isFalse();
-                dsl.connection(
-                    connection ->
-                        assertThat(connection.getTransactionIsolation())
-                            .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
-                return Optional.of(candidate);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+            dsl.connection(connection ->
+                assertThat(connection.getTransactionIsolation())
+                    .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
+            return Optional.of(candidate);
+          });
       var targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
       controlledTarget(targets);
       owner =

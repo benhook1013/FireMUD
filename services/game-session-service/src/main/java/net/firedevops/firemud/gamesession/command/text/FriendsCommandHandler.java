@@ -474,12 +474,11 @@ public class FriendsCommandHandler {
   private FriendPresenceViewOutput toView(ListFriendsResponse response, FriendListFilter filter) {
     List<FriendPresenceViewOutput.Entry> allEntries =
         java.util.stream.IntStream.range(0, response.getFriendsCount())
-            .mapToObj(
-                index -> {
-                  FriendRosterEntry entry = response.getFriends(index);
-                  int ordinal = entry.getOrdinal() > 0 ? entry.getOrdinal() : index + 1;
-                  return toEntry(ordinal, entry);
-                })
+            .mapToObj(index -> {
+              FriendRosterEntry entry = response.getFriends(index);
+              int ordinal = entry.getOrdinal() > 0 ? entry.getOrdinal() : index + 1;
+              return toEntry(ordinal, entry);
+            })
             .toList();
     boolean canonicalFiltered =
         filter == FriendListFilter.ALL

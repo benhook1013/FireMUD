@@ -626,41 +626,38 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
     requireSupportedPrivateRealmGrantVersions(tuple, path);
     tuple
         .tenantBillingCutoff()
-        .ifPresent(
-            cutoffs -> {
-              MembershipAuthorityEventV1Codec.TenantBillingCutoff cutoff =
-                  exactTenantCutoff(cutoffs, tenantId, path + ".tenantBillingCutoff");
-              requirePositiveDecimal(
-                  cutoff.tenantAuthorityGeneration(),
-                  path + ".tenantBillingCutoff.tenantAuthorityGeneration");
-              requirePositiveDecimal(
-                  cutoff.tenantBillingSequence(),
-                  path + ".tenantBillingCutoff.tenantBillingSequence");
-              requireEquals(
-                  EVENT_STREAM_PREFIX + "tenant/" + tenantId,
-                  cutoff.outboxStreamKey(),
-                  path + ".tenantBillingCutoff.outboxStreamKey");
-              requirePositiveDecimal(
-                  cutoff.outboxSequence(), path + ".tenantBillingCutoff.outboxSequence");
-            });
+        .ifPresent(cutoffs -> {
+          MembershipAuthorityEventV1Codec.TenantBillingCutoff cutoff =
+              exactTenantCutoff(cutoffs, tenantId, path + ".tenantBillingCutoff");
+          requirePositiveDecimal(
+              cutoff.tenantAuthorityGeneration(),
+              path + ".tenantBillingCutoff.tenantAuthorityGeneration");
+          requirePositiveDecimal(
+              cutoff.tenantBillingSequence(), path + ".tenantBillingCutoff.tenantBillingSequence");
+          requireEquals(
+              EVENT_STREAM_PREFIX + "tenant/" + tenantId,
+              cutoff.outboxStreamKey(),
+              path + ".tenantBillingCutoff.outboxStreamKey");
+          requirePositiveDecimal(
+              cutoff.outboxSequence(), path + ".tenantBillingCutoff.outboxSequence");
+        });
     tuple
         .accountSecurityCutoff()
-        .ifPresent(
-            cutoff -> {
-              requirePositiveDecimal(
-                  cutoff.accountAuthorityGeneration(),
-                  path + ".accountSecurityCutoff.accountAuthorityGeneration");
-              requireEquals(
-                  EVENT_STREAM_PREFIX + "account/" + accountId,
-                  cutoff.outboxStreamKey(),
-                  path + ".accountSecurityCutoff.outboxStreamKey");
-              requirePositiveDecimal(
-                  cutoff.outboxSequence(), path + ".accountSecurityCutoff.outboxSequence");
-              requireEquals(
-                  tuple.accountAuthorityGeneration(),
-                  cutoff.accountAuthorityGeneration(),
-                  path + ".accountSecurityCutoff.accountAuthorityGeneration");
-            });
+        .ifPresent(cutoff -> {
+          requirePositiveDecimal(
+              cutoff.accountAuthorityGeneration(),
+              path + ".accountSecurityCutoff.accountAuthorityGeneration");
+          requireEquals(
+              EVENT_STREAM_PREFIX + "account/" + accountId,
+              cutoff.outboxStreamKey(),
+              path + ".accountSecurityCutoff.outboxStreamKey");
+          requirePositiveDecimal(
+              cutoff.outboxSequence(), path + ".accountSecurityCutoff.outboxSequence");
+          requireEquals(
+              tuple.accountAuthorityGeneration(),
+              cutoff.accountAuthorityGeneration(),
+              path + ".accountSecurityCutoff.accountAuthorityGeneration");
+        });
   }
 
   private static MembershipAuthorityEventV1Codec.TenantBillingCutoff exactTenantCutoff(

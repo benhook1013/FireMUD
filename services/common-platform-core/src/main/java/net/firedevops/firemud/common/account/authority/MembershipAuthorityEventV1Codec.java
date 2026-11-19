@@ -257,19 +257,16 @@ public final class MembershipAuthorityEventV1Codec {
     Map<String, String> values = new TreeMap<>();
     object
         .fields()
-        .forEachRemaining(
-            entry -> {
-              requireUuidKey(entry.getKey(), path);
-              JsonNode value = entry.getValue();
-              if (value == null
-                  || !value.isTextual()
-                  || !isPositiveOwnerCounter(value.textValue())) {
-                throw invalid(
-                    path + "." + entry.getKey(),
-                    "must be a positive canonical decimal string in the owner range");
-              }
-              values.put(entry.getKey(), value.textValue());
-            });
+        .forEachRemaining(entry -> {
+          requireUuidKey(entry.getKey(), path);
+          JsonNode value = entry.getValue();
+          if (value == null || !value.isTextual() || !isPositiveOwnerCounter(value.textValue())) {
+            throw invalid(
+                path + "." + entry.getKey(),
+                "must be a positive canonical decimal string in the owner range");
+          }
+          values.put(entry.getKey(), value.textValue());
+        });
     return Collections.unmodifiableMap(values);
   }
 
@@ -340,26 +337,22 @@ public final class MembershipAuthorityEventV1Codec {
     }
     cutoffs
         .fields()
-        .forEachRemaining(
-            entry -> {
-              String tenantId = entry.getKey();
-              requireUuidKey(tenantId, "authorityTuple.tenantBillingCutoff");
-              if (!(entry.getValue() instanceof ObjectNode cutoff)) {
-                throw invalid(
-                    "authorityTuple.tenantBillingCutoff." + tenantId, "must be an object");
-              }
-              requireExactFields(
-                  cutoff, TENANT_CUTOFF_FIELDS, Set.of(), "tenantBillingCutoff entry");
-              requirePositiveDecimal(
-                  cutoff, "tenantAuthorityGeneration", "tenantBillingCutoff entry");
-              requirePositiveDecimal(cutoff, "tenantBillingSequence", "tenantBillingCutoff entry");
-              requirePositiveDecimal(cutoff, "outboxSequence", "tenantBillingCutoff entry");
-              requireExactText(
-                  cutoff,
-                  "outboxStreamKey",
-                  EVENT_STREAM_PREFIX + "tenant/" + tenantId,
-                  "tenantBillingCutoff entry");
-            });
+        .forEachRemaining(entry -> {
+          String tenantId = entry.getKey();
+          requireUuidKey(tenantId, "authorityTuple.tenantBillingCutoff");
+          if (!(entry.getValue() instanceof ObjectNode cutoff)) {
+            throw invalid("authorityTuple.tenantBillingCutoff." + tenantId, "must be an object");
+          }
+          requireExactFields(cutoff, TENANT_CUTOFF_FIELDS, Set.of(), "tenantBillingCutoff entry");
+          requirePositiveDecimal(cutoff, "tenantAuthorityGeneration", "tenantBillingCutoff entry");
+          requirePositiveDecimal(cutoff, "tenantBillingSequence", "tenantBillingCutoff entry");
+          requirePositiveDecimal(cutoff, "outboxSequence", "tenantBillingCutoff entry");
+          requireExactText(
+              cutoff,
+              "outboxStreamKey",
+              EVENT_STREAM_PREFIX + "tenant/" + tenantId,
+              "tenantBillingCutoff entry");
+        });
   }
 
   private static MembershipEvent toEvidence(ObjectNode wire, String digest, String canonicalJson) {
@@ -398,17 +391,16 @@ public final class MembershipAuthorityEventV1Codec {
       tupleNode
           .get("tenantBillingCutoff")
           .fields()
-          .forEachRemaining(
-              entry -> {
-                JsonNode cutoff = entry.getValue();
-                values.put(
-                    entry.getKey(),
-                    new TenantBillingCutoff(
-                        cutoff.get("tenantAuthorityGeneration").textValue(),
-                        cutoff.get("tenantBillingSequence").textValue(),
-                        cutoff.get("outboxStreamKey").textValue(),
-                        cutoff.get("outboxSequence").textValue()));
-              });
+          .forEachRemaining(entry -> {
+            JsonNode cutoff = entry.getValue();
+            values.put(
+                entry.getKey(),
+                new TenantBillingCutoff(
+                    cutoff.get("tenantAuthorityGeneration").textValue(),
+                    cutoff.get("tenantBillingSequence").textValue(),
+                    cutoff.get("outboxStreamKey").textValue(),
+                    cutoff.get("outboxSequence").textValue()));
+          });
       tenantCutoffs = Optional.of(immutableMap(values));
     }
 
@@ -488,12 +480,11 @@ public final class MembershipAuthorityEventV1Codec {
     }
     object
         .fieldNames()
-        .forEachRemaining(
-            field -> {
-              if (!required.contains(field) && !optional.contains(field)) {
-                throw invalid(path + "." + field, "is not declared by this schema");
-              }
-            });
+        .forEachRemaining(field -> {
+          if (!required.contains(field) && !optional.contains(field)) {
+            throw invalid(path + "." + field, "is not declared by this schema");
+          }
+        });
   }
 
   private static String requireExactText(

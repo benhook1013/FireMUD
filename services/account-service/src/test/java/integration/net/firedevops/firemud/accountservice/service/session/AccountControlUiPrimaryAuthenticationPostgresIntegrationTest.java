@@ -74,20 +74,16 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     Account account = c.account("PASSWORD");
     String before = c.accountBytes(account.getAccountUuid());
     UUID authenticated =
-        c.tx(
-            () ->
-                c.primary
-                    .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
-                    .accountId());
+        c.tx(() ->
+            c.primary
+                .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
+                .accountId());
     assertThat(authenticated).isEqualTo(account.getAccountUuid());
     assertThat(account.getAccountUuidSourceNumericId()).isEqualTo(account.getId());
     assertThat(c.accountBytes(account.getAccountUuid())).isEqualTo(before);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.primary.authenticateControlUiPrimaryIdentity(
-                            account.getEmail(), "wrong-secret")))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "wrong-secret")))
         .isInstanceOf(AuthenticationException.class);
     assertThat(c.accountBytes(account.getAccountUuid())).isEqualTo(before);
   }
@@ -96,13 +92,11 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
   void freshAccountCannotBeCreatedInSecurityLockedStateAndLeavesNoRows() {
     Context c = context();
     Account lockedAccount = c.accountCandidate("PASSWORD", AccountLifecycleState.SECURITY_LOCKED);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () -> {
-                      c.accounts.save(lockedAccount);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            c.tx(() -> {
+              c.accounts.save(lockedAccount);
+              return null;
+            }))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Fresh Accounts must be created in the ACTIVE lifecycle state");
 
@@ -119,36 +113,28 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     Context c = context();
     Account account = c.account("EMAIL_OTP");
     AccountEmailLoginChallenge original = c.challenge(account);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.primary.authenticateControlUiPrimaryIdentity(
-                            account.getEmail(), "wrong-otp")))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "wrong-otp")))
         .isInstanceOf(AuthenticationException.class);
     assertThat(c.challenges.findByAccountId(account.getId())).contains(original);
-    c.transaction.executeWithoutResult(
-        status -> {
-          assertThat(
-                  c.primary
-                      .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
-                      .accountId())
-              .isEqualTo(account.getAccountUuid());
-          assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
-          status.setRollbackOnly();
-        });
+    c.transaction.executeWithoutResult(status -> {
+      assertThat(
+              c.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), OTP).accountId())
+          .isEqualTo(account.getAccountUuid());
+      assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
+      status.setRollbackOnly();
+    });
     assertThat(c.challenges.findByAccountId(account.getId())).contains(original);
     assertThat(
-            c.tx(
-                () ->
-                    c.primary
-                        .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
-                        .accountId()))
+            c.tx(() ->
+                c.primary
+                    .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
+                    .accountId()))
         .isEqualTo(account.getAccountUuid());
     assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
-    assertThatThrownBy(
-            () ->
-                c.tx(() -> c.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)))
+    assertThatThrownBy(() ->
+            c.tx(() -> c.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)))
         .isInstanceOf(AuthenticationException.class);
     assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
   }
@@ -167,31 +153,27 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        firstPid.set(c.pid());
-                        UUID actor =
-                            c.primary
-                                .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
-                                .accountId();
-                        firstAuthenticated.countDown();
-                        awaitLatch(releaseFirst);
-                        return actor;
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                firstPid.set(c.pid());
+                UUID actor =
+                    c.primary
+                        .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
+                        .accountId();
+                firstAuthenticated.countDown();
+                awaitLatch(releaseFirst);
+                return actor;
+              }));
       awaitLatch(firstAuthenticated);
       var second =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        secondPid.set(c.pid());
-                        secondEntered.countDown();
-                        return c.primary
-                            .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
-                            .accountId();
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                secondPid.set(c.pid());
+                secondEntered.countDown();
+                return c.primary
+                    .authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)
+                    .accountId();
+              }));
       awaitLatch(secondEntered);
       awaitBlocked(c, secondPid.get(), firstPid.get());
       assertThat(first.isDone()).isFalse();
@@ -216,12 +198,11 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     var releaseReset = new CountDownLatch(1);
     var resetPid = new AtomicInteger();
     Context c =
-        context(
-            dsl -> {
-              resetPid.set(backendPid(dsl));
-              resetLocked.countDown();
-              awaitLatch(releaseReset);
-            });
+        context(dsl -> {
+          resetPid.set(backendPid(dsl));
+          resetLocked.countDown();
+          awaitLatch(releaseReset);
+        });
     Account account = c.account("PASSWORD");
     String resetToken = c.passwordResetToken(account);
     var issuerEntered = new CountDownLatch(1);
@@ -229,22 +210,19 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var reset =
-          executor.submit(
-              () ->
-                  c.primary.completePasswordReset(
-                      new CompletePasswordResetRequest(resetToken, RESET_PASSWORD)));
+          executor.submit(() ->
+              c.primary.completePasswordReset(
+                  new CompletePasswordResetRequest(resetToken, RESET_PASSWORD)));
       awaitLatch(resetLocked);
       var issuance =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        issuerPid.set(c.pid());
-                        issuerEntered.countDown();
-                        return c.primary
-                            .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
-                            .accountId();
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                issuerPid.set(c.pid());
+                issuerEntered.countDown();
+                return c.primary
+                    .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
+                    .accountId();
+              }));
       awaitLatch(issuerEntered);
       awaitBlocked(c, issuerPid.get(), resetPid.get());
       assertThat(issuance.isDone()).isFalse();
@@ -255,11 +233,10 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
           .isInstanceOf(ExecutionException.class)
           .hasCauseInstanceOf(AuthenticationException.class);
       assertThat(
-              c.tx(
-                  () ->
-                      c.primary
-                          .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
-                          .accountId()))
+              c.tx(() ->
+                  c.primary
+                      .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
+                      .accountId()))
           .isEqualTo(account.getAccountUuid());
       assertResetAuthorityCommitted(c, account);
     } finally {
@@ -280,44 +257,37 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var issuance =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        issuerPid.set(c.pid());
-                        UUID actor =
-                            c.primary
-                                .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
-                                .accountId();
-                        issuanceAuthenticated.countDown();
-                        awaitLatch(releaseIssuance);
-                        return actor;
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                issuerPid.set(c.pid());
+                UUID actor =
+                    c.primary
+                        .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
+                        .accountId();
+                issuanceAuthenticated.countDown();
+                awaitLatch(releaseIssuance);
+                return actor;
+              }));
       awaitLatch(issuanceAuthenticated);
       var reset =
-          executor.submit(
-              () ->
-                  c.primary.completePasswordReset(
-                      new CompletePasswordResetRequest(resetToken, RESET_PASSWORD)));
+          executor.submit(() ->
+              c.primary.completePasswordReset(
+                  new CompletePasswordResetRequest(resetToken, RESET_PASSWORD)));
       awaitAnyBlockedBy(c, issuerPid.get());
       assertThat(reset.isDone()).isFalse();
 
       releaseIssuance.countDown();
       assertThat(issuance.get(10, TimeUnit.SECONDS)).isEqualTo(account.getAccountUuid());
       reset.get(10, TimeUnit.SECONDS);
-      assertThatThrownBy(
-              () ->
-                  c.tx(
-                      () ->
-                          c.primary.authenticateControlUiPrimaryIdentity(
-                              account.getEmail(), PASSWORD)))
+      assertThatThrownBy(() ->
+              c.tx(() ->
+                  c.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)))
           .isInstanceOf(AuthenticationException.class);
       assertThat(
-              c.tx(
-                  () ->
-                      c.primary
-                          .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
-                          .accountId()))
+              c.tx(() ->
+                  c.primary
+                      .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
+                      .accountId()))
           .isEqualTo(account.getAccountUuid());
       assertResetAuthorityCommitted(c, account);
     } finally {
@@ -520,31 +490,29 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     }
 
     AccountEmailLoginChallenge challenge(Account account) {
-      return tx(
-          () -> {
-            var challenge = new AccountEmailLoginChallenge();
-            var now = LocalDateTime.now().withNano(0);
-            challenge.setAccountId(account.getId());
-            challenge.setCodeHash(hash(OTP));
-            challenge.setExpiresAt(now.plusMinutes(5));
-            challenge.setResendAvailableAt(now.plusMinutes(1));
-            challenge.setCreatedAt(now);
-            challenge.setUpdatedAt(now);
-            return challenges.save(challenge);
-          });
+      return tx(() -> {
+        var challenge = new AccountEmailLoginChallenge();
+        var now = LocalDateTime.now().withNano(0);
+        challenge.setAccountId(account.getId());
+        challenge.setCodeHash(hash(OTP));
+        challenge.setExpiresAt(now.plusMinutes(5));
+        challenge.setResendAvailableAt(now.plusMinutes(1));
+        challenge.setCreatedAt(now);
+        challenge.setUpdatedAt(now);
+        return challenges.save(challenge);
+      });
     }
 
     String passwordResetToken(Account account) {
       String rawToken = "test-only-reset-token-" + UUID.randomUUID();
-      tx(
-          () -> {
-            var token = new PasswordResetToken();
-            token.setAccount(account);
-            token.setToken(rawToken);
-            token.setExpiresAt(LocalDateTime.now().plusHours(1));
-            resetTokens.save(token);
-            return null;
-          });
+      tx(() -> {
+        var token = new PasswordResetToken();
+        token.setAccount(account);
+        token.setToken(rawToken);
+        token.setExpiresAt(LocalDateTime.now().plusHours(1));
+        resetTokens.save(token);
+        return null;
+      });
       return rawToken;
     }
 

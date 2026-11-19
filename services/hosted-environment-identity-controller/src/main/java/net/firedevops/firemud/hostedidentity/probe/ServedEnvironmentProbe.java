@@ -413,16 +413,15 @@ public class ServedEnvironmentProbe {
   private static RunningProbe startProbe(ProbeName name, Callable<ProbeResult> operation) {
     ProbeAttempt attempt = new ProbeAttempt();
     FutureTask<ProbeResult> task =
-        new FutureTask<>(
-            () -> {
-              CURRENT_ATTEMPT.set(attempt);
-              try {
-                return operation.call();
-              } finally {
-                attempt.closeOpenSocket();
-                CURRENT_ATTEMPT.remove();
-              }
-            });
+        new FutureTask<>(() -> {
+          CURRENT_ATTEMPT.set(attempt);
+          try {
+            return operation.call();
+          } finally {
+            attempt.closeOpenSocket();
+            CURRENT_ATTEMPT.remove();
+          }
+        });
     Thread.ofVirtual().name("served-environment-probe-" + name.label()).start(task);
     return new RunningProbe(name, task, attempt);
   }
@@ -656,14 +655,13 @@ public class ServedEnvironmentProbe {
     List<X509Certificate> anchors = certificates(requiredData(material, "ca.crt"));
     X509Certificate anchor =
         anchors.stream()
-            .filter(
-                certificate -> {
-                  try {
-                    return normalizedAnchor.equals(fingerprint(certificate));
-                  } catch (Exception exception) {
-                    throw new IllegalArgumentException("gRPC trust anchor is invalid", exception);
-                  }
-                })
+            .filter(certificate -> {
+              try {
+                return normalizedAnchor.equals(fingerprint(certificate));
+              } catch (Exception exception) {
+                throw new IllegalArgumentException("gRPC trust anchor is invalid", exception);
+              }
+            })
             .findFirst()
             .orElseThrow(() -> new IllegalArgumentException("gRPC trust anchor mismatch"));
 

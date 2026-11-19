@@ -209,10 +209,9 @@ public class AccountConnectScopeRepository {
 
     CanonicalConnectScopeEvidence committed =
         readCanonicalEvidenceByTokenHash(tokenHash)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Canonical Account connect scope insert readback is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Canonical Account connect scope insert readback is absent"));
     if (!committed.equals(expected)) {
       throw new CanonicalScopeConflictException(
           "Canonical Account connect scope conflicts with immutable token-hash evidence");
@@ -230,14 +229,13 @@ public class AccountConnectScopeRepository {
     }
     String tokenHash = AccountJoinDigest.tokenHash(connectScopeId);
     return readCanonicalEvidenceByTokenHash(tokenHash)
-        .map(
-            evidence -> {
-              CanonicalJoinScopeV2 scope = toCanonicalScope(evidence, connectScopeId);
-              if (!evidence.scopeDigest().equals(AccountJoinDigest.scopeV2(scope))) {
-                throw new IllegalStateException("Canonical JOIN scope digest mismatch");
-              }
-              return scope;
-            });
+        .map(evidence -> {
+          CanonicalJoinScopeV2 scope = toCanonicalScope(evidence, connectScopeId);
+          if (!evidence.scopeDigest().equals(AccountJoinDigest.scopeV2(scope))) {
+            throw new IllegalStateException("Canonical JOIN scope digest mismatch");
+          }
+          return scope;
+        });
   }
 
   /** Hash-only V2 evidence for operation cross-readback; it never reconstructs the bearer. */
@@ -312,10 +310,8 @@ public class AccountConnectScopeRepository {
       FreshTenantCreationEvidence association =
           freshTenantIdentities
               .read(expectedTenantUuid)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Canonical JOIN scope fresh tenant source is absent"));
+              .orElseThrow(() ->
+                  new IllegalStateException("Canonical JOIN scope fresh tenant source is absent"));
       if (!expectedTenantUuid.equals(association.canonicalTenantId())
           || expectedProvenance.legacyTenantId() != null
           || !expectedProvenance.sourceOperationId().equals(association.operationId())

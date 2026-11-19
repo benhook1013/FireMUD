@@ -52,49 +52,47 @@ class CanonicalInitialAdmissionRequestTest {
 
   @Test
   void bothOriginsRequireTheirExactPriorPointerShape() {
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialAdmissionRequest(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    "SHARED",
-                    GAME_INSTANCE,
-                    CANONICAL_VERSION,
-                    7L,
-                    12L,
-                    OriginKind.NO_PRIOR_POINTER,
-                    13L,
-                    "gs-initial-admission-17",
-                    noPriorRequest().requestDigest(),
-                    HOLD_ID,
-                    HOLD_FENCE,
-                    "sha256:" + "c".repeat(64)))
+    assertThatThrownBy(() ->
+            new CanonicalInitialAdmissionRequest(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                "SHARED",
+                GAME_INSTANCE,
+                CANONICAL_VERSION,
+                7L,
+                12L,
+                OriginKind.NO_PRIOR_POINTER,
+                13L,
+                "gs-initial-admission-17",
+                noPriorRequest().requestDigest(),
+                HOLD_ID,
+                HOLD_FENCE,
+                "sha256:" + "c".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must not carry");
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialAdmissionRequest(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    "SHARED",
-                    GAME_INSTANCE,
-                    CANONICAL_VERSION,
-                    7L,
-                    12L,
-                    OriginKind.EXPECT_CLOSED,
-                    null,
-                    "gs-initial-admission-17",
-                    noPriorRequest().requestDigest(),
-                    HOLD_ID,
-                    HOLD_FENCE,
-                    "sha256:" + "c".repeat(64)))
+    assertThatThrownBy(() ->
+            new CanonicalInitialAdmissionRequest(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                "SHARED",
+                GAME_INSTANCE,
+                CANONICAL_VERSION,
+                7L,
+                12L,
+                OriginKind.EXPECT_CLOSED,
+                null,
+                "gs-initial-admission-17",
+                noPriorRequest().requestDigest(),
+                HOLD_ID,
+                HOLD_FENCE,
+                "sha256:" + "c".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires a positive");
   }
@@ -124,37 +122,35 @@ class CanonicalInitialAdmissionRequestTest {
             request.holdBindingDigest());
 
     proof.requireMatches(request);
-    assertThatThrownBy(
-            () ->
-                new CanonicalInitialAdmissionWorldProof(
-                        proof.initialAdmissionRequestId(),
-                        proof.requestDigest(),
-                        proof.targetNamespace(),
-                        proof.canonicalTenantId(),
-                        proof.worldSlug(),
-                        proof.realmId(),
-                        proof.playableStateNamespaceId(),
-                        proof.playableStateScope(),
-                        proof.canonicalGameInstanceId(),
-                        uuid("66666666-6666-4666-8666-666666666666"),
-                        proof.lifecycleState(),
-                        proof.activeLifecycleEpoch(),
-                        proof.originKind(),
-                        proof.expectedCatalogRevision(),
-                        proof.expectedPriorPointerVersion(),
-                        proof.holdId(),
-                        proof.holdFence(),
-                        proof.holdBindingDigest())
-                    .requireMatches(request))
+    assertThatThrownBy(() ->
+            new CanonicalInitialAdmissionWorldProof(
+                    proof.initialAdmissionRequestId(),
+                    proof.requestDigest(),
+                    proof.targetNamespace(),
+                    proof.canonicalTenantId(),
+                    proof.worldSlug(),
+                    proof.realmId(),
+                    proof.playableStateNamespaceId(),
+                    proof.playableStateScope(),
+                    proof.canonicalGameInstanceId(),
+                    uuid("66666666-6666-4666-8666-666666666666"),
+                    proof.lifecycleState(),
+                    proof.activeLifecycleEpoch(),
+                    proof.originKind(),
+                    proof.expectedCatalogRevision(),
+                    proof.expectedPriorPointerVersion(),
+                    proof.holdId(),
+                    proof.holdFence(),
+                    proof.holdBindingDigest())
+                .requireMatches(request))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match");
   }
 
   @Test
   void unauthenticatedDefaultWorldVerifierNeverTreatsCallerTupleAsOwnerProof() {
-    assertThatThrownBy(
-            () ->
-                new DefaultDeniedCanonicalInitialAdmissionWorldVerifier().verify(noPriorRequest()))
+    assertThatThrownBy(() ->
+            new DefaultDeniedCanonicalInitialAdmissionWorldVerifier().verify(noPriorRequest()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("denied until authenticated World");
   }

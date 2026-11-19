@@ -112,13 +112,12 @@ public record LookViewOutput(
             .map(exit -> new LookViewExit(exit.getLabel(), exit.getDescription()))
             .collect(Collectors.toList()),
         result.getEntitiesList().stream()
-            .map(
-                entity ->
-                    new LookViewEntity(
-                        entity.getEntityType().name(),
-                        entity.getDisplayName(),
-                        entity.getRole(),
-                        entity.getStateFlagsList().stream().collect(Collectors.toList())))
+            .map(entity ->
+                new LookViewEntity(
+                    entity.getEntityType().name(),
+                    entity.getDisplayName(),
+                    entity.getRole(),
+                    entity.getStateFlagsList().stream().collect(Collectors.toList())))
             .collect(Collectors.toList()));
   }
 

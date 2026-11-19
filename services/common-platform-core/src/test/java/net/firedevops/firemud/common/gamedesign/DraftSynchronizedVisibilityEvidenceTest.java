@@ -89,24 +89,22 @@ class DraftSynchronizedVisibilityEvidenceTest {
     assertThatThrownBy(() -> evidence(binding, vector.replace("WORLD_TEMPLATE", "OTHER")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bound epoch declaration");
-    assertThatThrownBy(
-            () ->
-                new DraftSynchronizedVisibilityEvidence(
-                    request(), binding, "APPLYING", fence(binding, vector)))
+    assertThatThrownBy(() ->
+            new DraftSynchronizedVisibilityEvidence(
+                request(), binding, "APPLYING", fence(binding, vector)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not bound");
-    assertThatThrownBy(
-            () ->
-                new DraftSynchronizedVisibilityEvidence(
-                    request(),
-                    binding,
-                    "SYNCHRONIZED",
-                    new DraftSynchronizedVisibilityEvidence.Fence(
-                        REQUEST_ID,
-                        COMMIT_ID,
-                        "sha256:" + "f".repeat(64),
-                        vector,
-                        OffsetDateTime.parse("2026-10-06T00:00:00Z"))))
+    assertThatThrownBy(() ->
+            new DraftSynchronizedVisibilityEvidence(
+                request(),
+                binding,
+                "SYNCHRONIZED",
+                new DraftSynchronizedVisibilityEvidence.Fence(
+                    REQUEST_ID,
+                    COMMIT_ID,
+                    "sha256:" + "f".repeat(64),
+                    vector,
+                    OffsetDateTime.parse("2026-10-06T00:00:00Z"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("full input");
   }

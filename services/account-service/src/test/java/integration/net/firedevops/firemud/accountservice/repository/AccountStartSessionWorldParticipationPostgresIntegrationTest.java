@@ -157,27 +157,25 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       // The Game Session point-in-time observation is stipulated; Account's original issue,
       // redemption, source capture, acquisition gates, and PostgreSQL retention are real.
       var acquisition =
-          proof.worldParticipationAcquisitionService(
-              request ->
-                  new Result(
-                      request,
-                      leaseExpiresAt,
-                      StartSessionAccountRedemptionProjection.fromOriginalTuple(
-                          original.originalTuple())));
+          proof.worldParticipationAcquisitionService(request ->
+              new Result(
+                  request,
+                  leaseExpiresAt,
+                  StartSessionAccountRedemptionProjection.fromOriginalTuple(
+                      original.originalTuple())));
 
       // Discard the owner response to model transport loss. The database row is used only as a
       // physical proof oracle; it is not supplied to the historical lookup request.
-      withWorldPeer(
-          () ->
-              acquisition.acquire(
-                  new AcquisitionRequest(
-                      originalTupleBytes,
-                      gameSessionMutationId,
-                      gameSessionAttemptId,
-                      gameSessionOwnerFence,
-                      gameInstanceId,
-                      preparationInput,
-                      preparationDigest)));
+      withWorldPeer(() ->
+          acquisition.acquire(
+              new AcquisitionRequest(
+                  originalTupleBytes,
+                  gameSessionMutationId,
+                  gameSessionAttemptId,
+                  gameSessionOwnerFence,
+                  gameInstanceId,
+                  preparationInput,
+                  preparationDigest)));
 
       var sql =
           physicalSql(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), proof);
@@ -198,11 +196,10 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       var attemptRepository =
           new AccountStartSessionWorldOriginalAttemptEvidenceRepository(sql.dsl());
       var expiredParticipation =
-          transaction.execute(
-              status ->
-                  new AccountStartSessionWorldParticipationRepository(sql.dsl())
-                      .findHistoricalExact(committedParticipationId, committedParticipationFence)
-                      .orElseThrow());
+          transaction.execute(status ->
+              new AccountStartSessionWorldParticipationRepository(sql.dsl())
+                  .findHistoricalExact(committedParticipationId, committedParticipationFence)
+                  .orElseThrow());
       var expiredAttemptRequest =
           new Request(
               UUID.randomUUID(),
@@ -211,21 +208,18 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               gameSessionAttemptId,
               gameSessionMutationId,
               gameSessionOwnerFence);
-      assertThatThrownBy(
-              () ->
-                  transaction.execute(
-                      status ->
-                          attemptRepository
-                              .findCurrentExact(expiredParticipation, expiredAttemptRequest)
-                              .orElseThrow()))
+      assertThatThrownBy(() ->
+              transaction.execute(status ->
+                  attemptRepository
+                      .findCurrentExact(expiredParticipation, expiredAttemptRequest)
+                      .orElseThrow()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("unavailable");
       var retainedAttempt =
-          transaction.execute(
-              status ->
-                  attemptRepository
-                      .findHistoricalExact(expiredParticipation, expiredAttemptRequest)
-                      .orElseThrow());
+          transaction.execute(status ->
+              attemptRepository
+                  .findHistoricalExact(expiredParticipation, expiredAttemptRequest)
+                  .orElseThrow());
       assertThat(retainedAttempt.originalLeaseExpiresAt()).isEqualTo(leaseExpiresAt);
       assertThat(retainedAttempt.result().request().canonicalPostAuthorizationTuple())
           .containsExactly(originalTupleBytes);
@@ -442,18 +436,17 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
   private static void assertGuardRejected(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                throw new AssertionError(
-                    "Participation guard rejection must be a PostgreSQL exception", sqlFailure);
-              }
-              var serverError = postgresFailure.getServerErrorMessage();
-              assertThat(serverError).isNotNull();
-              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+            throw new AssertionError(
+                "Participation guard rejection must be a PostgreSQL exception", sqlFailure);
+          }
+          var serverError = postgresFailure.getServerErrorMessage();
+          assertThat(serverError).isNotNull();
+          assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+        });
   }
 
   private static SQLException findSqlException(Throwable failure) {

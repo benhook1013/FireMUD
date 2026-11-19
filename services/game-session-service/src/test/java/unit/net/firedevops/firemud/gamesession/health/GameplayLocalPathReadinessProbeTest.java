@@ -34,20 +34,19 @@ class GameplayLocalPathReadinessProbeTest {
     @SuppressWarnings("unchecked")
     RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
     when(sessionContextService.findByTenantAndSessionId(anyLong(), anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long sessionId = invocation.getArgument(1, Long.class);
-              long probeSequence = sessionId - PROBE_SESSION_ID_BASE;
-              return Optional.of(
-                  new SessionContext(
-                      sessionId,
-                      0L,
-                      PROBE_ACCOUNT_ID,
-                      PROBE_CHARACTER_ID,
-                      0L,
-                      "readiness-room-" + probeSequence,
-                      null));
-            });
+        .thenAnswer(invocation -> {
+          long sessionId = invocation.getArgument(1, Long.class);
+          long probeSequence = sessionId - PROBE_SESSION_ID_BASE;
+          return Optional.of(
+              new SessionContext(
+                  sessionId,
+                  0L,
+                  PROBE_ACCOUNT_ID,
+                  PROBE_CHARACTER_ID,
+                  0L,
+                  "readiness-room-" + probeSequence,
+                  null));
+        });
 
     GameplayLocalPathReadinessProbe probe =
         new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate);
@@ -83,10 +82,9 @@ class GameplayLocalPathReadinessProbeTest {
         .save(any(SessionContext.class));
     RedisSessionContextService strictLookup = new RedisSessionContextService(redisTemplate, 1000L);
     when(sessionContextService.findByTenantAndSessionId(anyLong(), anyLong()))
-        .thenAnswer(
-            invocation ->
-                strictLookup.findByTenantAndSessionId(
-                    invocation.getArgument(0, Long.class), invocation.getArgument(1, Long.class)));
+        .thenAnswer(invocation ->
+            strictLookup.findByTenantAndSessionId(
+                invocation.getArgument(0, Long.class), invocation.getArgument(1, Long.class)));
 
     GameplayLocalPathReadinessProbe probe =
         new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate);

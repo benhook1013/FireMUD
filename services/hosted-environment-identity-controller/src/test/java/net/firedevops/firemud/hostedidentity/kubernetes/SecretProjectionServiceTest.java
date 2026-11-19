@@ -1428,17 +1428,12 @@ class SecretProjectionServiceTest {
             org.mockito.ArgumentMatchers.anyBoolean(),
             org.mockito.ArgumentMatchers.anyBoolean(),
             org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(
-            invocation -> {
-              Secret source = invocation.getArgument(0);
-              String spki = source == selectedGatewaySource ? "3".repeat(64) : "2".repeat(64);
-              return new SecretMaterialValidator.MaterialSummary(
-                  "1".repeat(64),
-                  spki,
-                  java.time.Instant.EPOCH,
-                  java.time.Instant.MAX,
-                  "4".repeat(64));
-            });
+        .thenAnswer(invocation -> {
+          Secret source = invocation.getArgument(0);
+          String spki = source == selectedGatewaySource ? "3".repeat(64) : "2".repeat(64);
+          return new SecretMaterialValidator.MaterialSummary(
+              "1".repeat(64), spki, java.time.Instant.EPOCH, java.time.Instant.MAX, "4".repeat(64));
+        });
     GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
     CertificateMaterialService service =
         new CertificateMaterialService(

@@ -96,30 +96,28 @@ public final class WorldPrivateFreshOperationRepository {
       ByteString original = Objects.requireNonNull(held.originalOperation());
       requireExact(input, held, source, original);
       // Persist the immutable original before a separately committed materialization/abort outcome.
-      write.executeWithoutResult(
-          status -> {
+      write.executeWithoutResult(status -> {
+        requireExact(input, held, source, original);
+        timeouts();
+        dsl.fetchValue(
+            "SELECT " + schema + ".world_private_fresh_intent(?,?,?)",
+            input.inputJson(),
+            input.inputDigest(),
+            original.toByteArray());
+        requireExact(input, held, source, original);
+      });
+      requireExact(input, held, source, original);
+      Terminal committed =
+          write.execute(status -> {
             requireExact(input, held, source, original);
             timeouts();
             dsl.fetchValue(
-                "SELECT " + schema + ".world_private_fresh_intent(?,?,?)",
-                input.inputJson(),
-                input.inputDigest(),
-                original.toByteArray());
+                "SELECT " + schema + ".world_private_fresh_finish(?,?)",
+                input.operationId(),
+                abort);
             requireExact(input, held, source, original);
+            return terminal(input.operationId()).orElseThrow();
           });
-      requireExact(input, held, source, original);
-      Terminal committed =
-          write.execute(
-              status -> {
-                requireExact(input, held, source, original);
-                timeouts();
-                dsl.fetchValue(
-                    "SELECT " + schema + ".world_private_fresh_finish(?,?)",
-                    input.operationId(),
-                    abort);
-                requireExact(input, held, source, original);
-                return terminal(input.operationId()).orElseThrow();
-              });
       requireExact(input, held, source, original);
       Terminal retained = read(input.operationId()).orElseThrow();
       if (!retained.equals(committed))
@@ -132,11 +130,10 @@ public final class WorldPrivateFreshOperationRepository {
   public Optional<Terminal> read(UUID operationId) {
     independent();
     Objects.requireNonNull(operationId);
-    return read.execute(
-        status -> {
-          timeouts();
-          return terminal(operationId);
-        });
+    return read.execute(status -> {
+      timeouts();
+      return terminal(operationId);
+    });
   }
 
   private void timeouts() {

@@ -82,36 +82,35 @@ public class StartSessionPreAuthorizationReservationRepository {
     }
     String tupleJson = tuple.canonicalJson();
     String mutationDigest = tuple.mutationDigest();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          int inserted =
-              tx.insertInto(TABLE)
-                  .set(TABLE.CONTROL_PLANE_REQUEST_ID, tuple.controlPlaneRequestId())
-                  .set(TABLE.PRE_AUTHORIZATION_TUPLE_JSON, tupleJson)
-                  .set(TABLE.MUTATION_DIGEST, mutationDigest)
-                  .set(TABLE.PHASE, Phase.ACCOUNT_AUTHORIZATION.name())
-                  .set(TABLE.STATE, State.RESERVED.name())
-                  .set(TABLE.RESERVATION_OWNER_ID, ownerId)
-                  .set(TABLE.RESERVATION_CLAIM_FENCE, 1L)
-                  .set(TABLE.CLAIM_OWNER_ID, ownerId)
-                  .set(TABLE.CLAIM_FENCE, 1L)
-                  .set(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS, expiresAtEpochMillis)
-                  .set(TABLE.CLAIM_STATE, ClaimState.ACTIVE.name())
-                  .set(CLAIM_PURPOSE, ClaimPurpose.ORIGINAL.name())
-                  .set(TABLE.CREATED_AT_EPOCH_MS, nowEpochMillis)
-                  .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                  .onConflict(TABLE.CONTROL_PLANE_REQUEST_ID)
-                  .doNothing()
-                  .execute();
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            throw new IllegalStateException("reservation row was not visible after acquire");
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          return new AcquireResult(snapshot, inserted == 1);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      int inserted =
+          tx.insertInto(TABLE)
+              .set(TABLE.CONTROL_PLANE_REQUEST_ID, tuple.controlPlaneRequestId())
+              .set(TABLE.PRE_AUTHORIZATION_TUPLE_JSON, tupleJson)
+              .set(TABLE.MUTATION_DIGEST, mutationDigest)
+              .set(TABLE.PHASE, Phase.ACCOUNT_AUTHORIZATION.name())
+              .set(TABLE.STATE, State.RESERVED.name())
+              .set(TABLE.RESERVATION_OWNER_ID, ownerId)
+              .set(TABLE.RESERVATION_CLAIM_FENCE, 1L)
+              .set(TABLE.CLAIM_OWNER_ID, ownerId)
+              .set(TABLE.CLAIM_FENCE, 1L)
+              .set(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS, expiresAtEpochMillis)
+              .set(TABLE.CLAIM_STATE, ClaimState.ACTIVE.name())
+              .set(CLAIM_PURPOSE, ClaimPurpose.ORIGINAL.name())
+              .set(TABLE.CREATED_AT_EPOCH_MS, nowEpochMillis)
+              .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+              .onConflict(TABLE.CONTROL_PLANE_REQUEST_ID)
+              .doNothing()
+              .execute();
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        throw new IllegalStateException("reservation row was not visible after acquire");
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      return new AcquireResult(snapshot, inserted == 1);
+    });
   }
 
   public Optional<Snapshot> find(String controlPlaneRequestId) {
@@ -123,15 +122,14 @@ public class StartSessionPreAuthorizationReservationRepository {
 
   public Optional<Snapshot> findExact(StartSessionPreAuthorizationReservationTuple tuple) {
     return find(tuple.controlPlaneRequestId())
-        .map(
-            snapshot -> {
-              if (!snapshot.tuple().canonicalJson().equals(tuple.canonicalJson())
-                  || !snapshot.mutationDigest().equals(tuple.mutationDigest())) {
-                throw new StartSessionPreAuthorizationReservationService
-                    .IdempotencyConflictException(tuple.controlPlaneRequestId());
-              }
-              return snapshot;
-            });
+        .map(snapshot -> {
+          if (!snapshot.tuple().canonicalJson().equals(tuple.canonicalJson())
+              || !snapshot.mutationDigest().equals(tuple.mutationDigest())) {
+            throw new StartSessionPreAuthorizationReservationService.IdempotencyConflictException(
+                tuple.controlPlaneRequestId());
+          }
+          return snapshot;
+        });
   }
 
   /** Reads an exact, current Account-authorization claim without locking or changing the row. */
@@ -198,48 +196,46 @@ public class StartSessionPreAuthorizationReservationRepository {
         currentClaimOwnerId,
         currentClaimFence,
         nowEpochMillis);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          int updated =
-              tx.update(TABLE)
-                  .set(TABLE.STATE, State.AUTHORIZATION_PENDING.name())
-                  .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                  .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
-                  .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
-                  .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
-                  .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
-                  .and(TABLE.STATE.eq(State.RESERVED.name()))
-                  .and(TABLE.RESERVATION_OWNER_ID.eq(reservationOwnerId))
-                  .and(TABLE.RESERVATION_CLAIM_FENCE.eq(reservationClaimFence))
-                  .and(TABLE.CLAIM_OWNER_ID.eq(currentClaimOwnerId))
-                  .and(TABLE.CLAIM_FENCE.eq(currentClaimFence))
-                  .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
-                  .and(
-                      CLAIM_PURPOSE.in(
-                          ClaimPurpose.ORIGINAL.name(),
-                          ClaimPurpose.RESERVED_RECOVERY_ISSUE.name()))
-                  .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
-                  .execute();
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
-                tuple.controlPlaneRequestId());
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          if (updated == 1) {
-            return new TransitionResult(snapshot, true);
-          }
-          if (isCurrentClaim(row, currentClaimOwnerId, currentClaimFence, nowEpochMillis)
-              && snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
-              && snapshot.state() == State.AUTHORIZATION_PENDING
-              && isIssueClaimPurpose(snapshot.claimPurpose())) {
-            return new TransitionResult(snapshot, false);
-          }
-          throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
-              tuple.controlPlaneRequestId());
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      int updated =
+          tx.update(TABLE)
+              .set(TABLE.STATE, State.AUTHORIZATION_PENDING.name())
+              .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+              .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
+              .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
+              .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
+              .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
+              .and(TABLE.STATE.eq(State.RESERVED.name()))
+              .and(TABLE.RESERVATION_OWNER_ID.eq(reservationOwnerId))
+              .and(TABLE.RESERVATION_CLAIM_FENCE.eq(reservationClaimFence))
+              .and(TABLE.CLAIM_OWNER_ID.eq(currentClaimOwnerId))
+              .and(TABLE.CLAIM_FENCE.eq(currentClaimFence))
+              .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
+              .and(
+                  CLAIM_PURPOSE.in(
+                      ClaimPurpose.ORIGINAL.name(), ClaimPurpose.RESERVED_RECOVERY_ISSUE.name()))
+              .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
+              .execute();
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
+            tuple.controlPlaneRequestId());
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      if (updated == 1) {
+        return new TransitionResult(snapshot, true);
+      }
+      if (isCurrentClaim(row, currentClaimOwnerId, currentClaimFence, nowEpochMillis)
+          && snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
+          && snapshot.state() == State.AUTHORIZATION_PENDING
+          && isIssueClaimPurpose(snapshot.claimPurpose())) {
+        return new TransitionResult(snapshot, false);
+      }
+      throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
+          tuple.controlPlaneRequestId());
+    });
   }
 
   /** Original-claim overload retained for focused repository tests and original callers. */
@@ -287,73 +283,70 @@ public class StartSessionPreAuthorizationReservationRepository {
           tuple.controlPlaneRequestId());
     }
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            throw stale(tuple);
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          requireExactLiveClaim(
-              row,
-              snapshot,
-              reservationOwnerId,
-              reservationClaimFence,
-              currentClaimOwnerId,
-              currentClaimFence,
-              nowEpochMillis);
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        throw stale(tuple);
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      requireExactLiveClaim(
+          row,
+          snapshot,
+          reservationOwnerId,
+          reservationClaimFence,
+          currentClaimOwnerId,
+          currentClaimFence,
+          nowEpochMillis);
 
-          if (snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
-              && snapshot.state() == State.AUTHORIZATION_PENDING) {
-            if (!isPendingAuthorizationClaimPurpose(snapshot.claimPurpose())) {
-              throw stale(tuple);
-            }
-            int updated =
-                tx.update(TABLE)
-                    .set(TABLE.STATE, State.AUTHORIZED.name())
-                    .set(POST_AUTHORIZATION_TUPLE_JSON, postAuthorizationTupleJson)
-                    .set(OWNER_EXECUTION_HANDOFF_ID, (UUID) null)
-                    .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                    .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
-                    .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
-                    .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
-                    .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
-                    .and(TABLE.STATE.eq(State.AUTHORIZATION_PENDING.name()))
-                    .and(TABLE.RESERVATION_OWNER_ID.eq(reservationOwnerId))
-                    .and(TABLE.RESERVATION_CLAIM_FENCE.eq(reservationClaimFence))
-                    .and(TABLE.CLAIM_OWNER_ID.eq(currentClaimOwnerId))
-                    .and(TABLE.CLAIM_FENCE.eq(currentClaimFence))
-                    .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
-                    .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
-                    .and(POST_AUTHORIZATION_TUPLE_JSON.isNull())
-                    .execute();
-            if (updated != 1) {
-              throw stale(tuple);
-            }
-            return new AuthorizationTransitionResult(
-                toAuthorizedSnapshot(
-                    selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true)),
-                true);
-          }
-
-          if ((snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
-                  && snapshot.state() == State.AUTHORIZED)
-              || (snapshot.phase() == Phase.OWNER_EXECUTION
-                  && snapshot.state() == State.OWNER_EXECUTION_PENDING)) {
-            if (snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
-                && !isAuthorizedResponseClaimPurpose(snapshot.claimPurpose())) {
-              throw stale(tuple);
-            }
-            String persistedTuple = row.get(POST_AUTHORIZATION_TUPLE_JSON);
-            if (!postAuthorizationTupleJson.equals(persistedTuple)) {
-              throw conflict(tuple);
-            }
-            return new AuthorizationTransitionResult(toAuthorizedSnapshot(row), false);
-          }
+      if (snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
+          && snapshot.state() == State.AUTHORIZATION_PENDING) {
+        if (!isPendingAuthorizationClaimPurpose(snapshot.claimPurpose())) {
           throw stale(tuple);
-        });
+        }
+        int updated =
+            tx.update(TABLE)
+                .set(TABLE.STATE, State.AUTHORIZED.name())
+                .set(POST_AUTHORIZATION_TUPLE_JSON, postAuthorizationTupleJson)
+                .set(OWNER_EXECUTION_HANDOFF_ID, (UUID) null)
+                .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+                .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
+                .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
+                .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
+                .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
+                .and(TABLE.STATE.eq(State.AUTHORIZATION_PENDING.name()))
+                .and(TABLE.RESERVATION_OWNER_ID.eq(reservationOwnerId))
+                .and(TABLE.RESERVATION_CLAIM_FENCE.eq(reservationClaimFence))
+                .and(TABLE.CLAIM_OWNER_ID.eq(currentClaimOwnerId))
+                .and(TABLE.CLAIM_FENCE.eq(currentClaimFence))
+                .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
+                .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
+                .and(POST_AUTHORIZATION_TUPLE_JSON.isNull())
+                .execute();
+        if (updated != 1) {
+          throw stale(tuple);
+        }
+        return new AuthorizationTransitionResult(
+            toAuthorizedSnapshot(selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true)),
+            true);
+      }
+
+      if ((snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION && snapshot.state() == State.AUTHORIZED)
+          || (snapshot.phase() == Phase.OWNER_EXECUTION
+              && snapshot.state() == State.OWNER_EXECUTION_PENDING)) {
+        if (snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
+            && !isAuthorizedResponseClaimPurpose(snapshot.claimPurpose())) {
+          throw stale(tuple);
+        }
+        String persistedTuple = row.get(POST_AUTHORIZATION_TUPLE_JSON);
+        if (!postAuthorizationTupleJson.equals(persistedTuple)) {
+          throw conflict(tuple);
+        }
+        return new AuthorizationTransitionResult(toAuthorizedSnapshot(row), false);
+      }
+      throw stale(tuple);
+    });
   }
 
   /**
@@ -391,78 +384,75 @@ public class StartSessionPreAuthorizationReservationRepository {
           tuple.controlPlaneRequestId());
     }
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            throw stale(tuple);
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          requireExactLiveClaim(
-              row,
-              snapshot,
-              reservationOwnerId,
-              reservationClaimFence,
-              currentClaimOwnerId,
-              currentClaimFence,
-              nowEpochMillis);
-          boolean mayBeginOwnerExecution =
-              snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION
-                  && snapshot.state() == State.AUTHORIZED;
-          boolean mayReplayOwnerExecution =
-              snapshot.phase() == Phase.OWNER_EXECUTION
-                  && snapshot.state() == State.OWNER_EXECUTION_PENDING;
-          if (!mayBeginOwnerExecution && !mayReplayOwnerExecution) {
-            throw stale(tuple);
-          }
-          if (mayBeginOwnerExecution && !isOwnerHandoffClaimPurpose(snapshot.claimPurpose())) {
-            throw stale(tuple);
-          }
-          String persistedTuple = row.get(POST_AUTHORIZATION_TUPLE_JSON);
-          if (!postAuthorizationTupleJson.equals(persistedTuple)) {
-            throw conflict(tuple);
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        throw stale(tuple);
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      requireExactLiveClaim(
+          row,
+          snapshot,
+          reservationOwnerId,
+          reservationClaimFence,
+          currentClaimOwnerId,
+          currentClaimFence,
+          nowEpochMillis);
+      boolean mayBeginOwnerExecution =
+          snapshot.phase() == Phase.ACCOUNT_AUTHORIZATION && snapshot.state() == State.AUTHORIZED;
+      boolean mayReplayOwnerExecution =
+          snapshot.phase() == Phase.OWNER_EXECUTION
+              && snapshot.state() == State.OWNER_EXECUTION_PENDING;
+      if (!mayBeginOwnerExecution && !mayReplayOwnerExecution) {
+        throw stale(tuple);
+      }
+      if (mayBeginOwnerExecution && !isOwnerHandoffClaimPurpose(snapshot.claimPurpose())) {
+        throw stale(tuple);
+      }
+      String persistedTuple = row.get(POST_AUTHORIZATION_TUPLE_JSON);
+      if (!postAuthorizationTupleJson.equals(persistedTuple)) {
+        throw conflict(tuple);
+      }
 
-          if (mayBeginOwnerExecution) {
-            int updated =
-                tx.update(TABLE)
-                    .set(TABLE.PHASE, Phase.OWNER_EXECUTION.name())
-                    .set(TABLE.STATE, State.OWNER_EXECUTION_PENDING.name())
-                    .set(OWNER_EXECUTION_HANDOFF_ID, handoffId)
-                    .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                    .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
-                    .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
-                    .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
-                    .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
-                    .and(TABLE.STATE.eq(State.AUTHORIZED.name()))
-                    .and(TABLE.RESERVATION_OWNER_ID.eq(reservationOwnerId))
-                    .and(TABLE.RESERVATION_CLAIM_FENCE.eq(reservationClaimFence))
-                    .and(TABLE.CLAIM_OWNER_ID.eq(currentClaimOwnerId))
-                    .and(TABLE.CLAIM_FENCE.eq(currentClaimFence))
-                    .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
-                    .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
-                    .and(POST_AUTHORIZATION_TUPLE_JSON.eq(postAuthorizationTupleJson))
-                    .and(OWNER_EXECUTION_HANDOFF_ID.isNull())
-                    .execute();
-            if (updated != 1) {
-              throw stale(tuple);
-            }
-            return new OwnerExecutionTransitionResult(
-                toAuthorizedSnapshot(
-                    selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true)),
-                true);
-          }
-
-          if (mayReplayOwnerExecution) {
-            if (!handoffId.equals(row.get(OWNER_EXECUTION_HANDOFF_ID))) {
-              throw conflict(tuple);
-            }
-            return new OwnerExecutionTransitionResult(toAuthorizedSnapshot(row), false);
-          }
+      if (mayBeginOwnerExecution) {
+        int updated =
+            tx.update(TABLE)
+                .set(TABLE.PHASE, Phase.OWNER_EXECUTION.name())
+                .set(TABLE.STATE, State.OWNER_EXECUTION_PENDING.name())
+                .set(OWNER_EXECUTION_HANDOFF_ID, handoffId)
+                .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+                .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
+                .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
+                .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
+                .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
+                .and(TABLE.STATE.eq(State.AUTHORIZED.name()))
+                .and(TABLE.RESERVATION_OWNER_ID.eq(reservationOwnerId))
+                .and(TABLE.RESERVATION_CLAIM_FENCE.eq(reservationClaimFence))
+                .and(TABLE.CLAIM_OWNER_ID.eq(currentClaimOwnerId))
+                .and(TABLE.CLAIM_FENCE.eq(currentClaimFence))
+                .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
+                .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
+                .and(POST_AUTHORIZATION_TUPLE_JSON.eq(postAuthorizationTupleJson))
+                .and(OWNER_EXECUTION_HANDOFF_ID.isNull())
+                .execute();
+        if (updated != 1) {
           throw stale(tuple);
-        });
+        }
+        return new OwnerExecutionTransitionResult(
+            toAuthorizedSnapshot(selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true)),
+            true);
+      }
+
+      if (mayReplayOwnerExecution) {
+        if (!handoffId.equals(row.get(OWNER_EXECUTION_HANDOFF_ID))) {
+          throw conflict(tuple);
+        }
+        return new OwnerExecutionTransitionResult(toAuthorizedSnapshot(row), false);
+      }
+      throw stale(tuple);
+    });
   }
 
   /** Read-only storage snapshot of the exact full post-authorization tuple and any handoff. */
@@ -495,36 +485,35 @@ public class StartSessionPreAuthorizationReservationRepository {
     Objects.requireNonNull(expectedPhase, "expectedPhase is required");
     Objects.requireNonNull(expectedState, "expectedState is required");
     requireBoundedClaim(ownerId, nowEpochMillis, expiresAtEpochMillis);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          int updated =
-              tx.update(TABLE)
-                  .set(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS, expiresAtEpochMillis)
-                  .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                  .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
-                  .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
-                  .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
-                  .and(TABLE.PHASE.eq(expectedPhase.name()))
-                  .and(TABLE.STATE.eq(expectedState.name()))
-                  .and(TABLE.CLAIM_OWNER_ID.eq(ownerId))
-                  .and(TABLE.CLAIM_FENCE.eq(claimFence))
-                  .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
-                  .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
-                  .execute();
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
-                tuple.controlPlaneRequestId());
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          if (updated != 1) {
-            throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
-                tuple.controlPlaneRequestId());
-          }
-          return snapshot;
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      int updated =
+          tx.update(TABLE)
+              .set(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS, expiresAtEpochMillis)
+              .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+              .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
+              .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
+              .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
+              .and(TABLE.PHASE.eq(expectedPhase.name()))
+              .and(TABLE.STATE.eq(expectedState.name()))
+              .and(TABLE.CLAIM_OWNER_ID.eq(ownerId))
+              .and(TABLE.CLAIM_FENCE.eq(claimFence))
+              .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
+              .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.gt(nowEpochMillis))
+              .execute();
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
+            tuple.controlPlaneRequestId());
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      if (updated != 1) {
+        throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
+            tuple.controlPlaneRequestId());
+      }
+      return snapshot;
+    });
   }
 
   public Snapshot expireClaim(
@@ -539,43 +528,42 @@ public class StartSessionPreAuthorizationReservationRepository {
     requireClaimOwner(ownerId, claimFence, nowEpochMillis);
     Objects.requireNonNull(expectedPhase, "expectedPhase is required");
     Objects.requireNonNull(expectedState, "expectedState is required");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          int updated =
-              tx.update(TABLE)
-                  .setNull(TABLE.CLAIM_OWNER_ID)
-                  .set(TABLE.CLAIM_FENCE, TABLE.CLAIM_FENCE.add(1L))
-                  .set(TABLE.CLAIM_STATE, ClaimState.EXPIRED.name())
-                  .set(CLAIM_PURPOSE, (String) null)
-                  .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                  .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
-                  .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
-                  .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
-                  .and(TABLE.PHASE.eq(expectedPhase.name()))
-                  .and(TABLE.STATE.eq(expectedState.name()))
-                  .and(TABLE.CLAIM_OWNER_ID.eq(ownerId))
-                  .and(TABLE.CLAIM_FENCE.eq(claimFence))
-                  .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
-                  .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.le(nowEpochMillis))
-                  .execute();
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
-                tuple.controlPlaneRequestId());
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          if (updated == 1) {
-            return snapshot;
-          }
-          if (isCurrentClaim(row, ownerId, claimFence, nowEpochMillis)) {
-            throw new StartSessionPreAuthorizationReservationService
-                .ReservationClaimNotExpiredException(tuple.controlPlaneRequestId());
-          }
-          throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
-              tuple.controlPlaneRequestId());
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      int updated =
+          tx.update(TABLE)
+              .setNull(TABLE.CLAIM_OWNER_ID)
+              .set(TABLE.CLAIM_FENCE, TABLE.CLAIM_FENCE.add(1L))
+              .set(TABLE.CLAIM_STATE, ClaimState.EXPIRED.name())
+              .set(CLAIM_PURPOSE, (String) null)
+              .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+              .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
+              .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
+              .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
+              .and(TABLE.PHASE.eq(expectedPhase.name()))
+              .and(TABLE.STATE.eq(expectedState.name()))
+              .and(TABLE.CLAIM_OWNER_ID.eq(ownerId))
+              .and(TABLE.CLAIM_FENCE.eq(claimFence))
+              .and(TABLE.CLAIM_STATE.eq(ClaimState.ACTIVE.name()))
+              .and(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.le(nowEpochMillis))
+              .execute();
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
+            tuple.controlPlaneRequestId());
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      if (updated == 1) {
+        return snapshot;
+      }
+      if (isCurrentClaim(row, ownerId, claimFence, nowEpochMillis)) {
+        throw new StartSessionPreAuthorizationReservationService
+            .ReservationClaimNotExpiredException(tuple.controlPlaneRequestId());
+      }
+      throw new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
+          tuple.controlPlaneRequestId());
+    });
   }
 
   public Optional<RecoveryClaimResult> acquireRecoveryClaim(
@@ -586,74 +574,72 @@ public class StartSessionPreAuthorizationReservationRepository {
     requireMutationCapability();
     requireBoundedClaim(recoveryOwnerId, nowEpochMillis, expiresAtEpochMillis);
     String mutationDigest = tuple.mutationDigest();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (row == null) {
-            return Optional.empty();
-          }
-          Snapshot snapshot = toSnapshot(row);
-          requireExactTuple(row, tuple, mutationDigest);
-          ClaimPurpose recoveryPurpose = recoveryPurpose(snapshot.phase(), snapshot.state());
-          if (recoveryPurpose == null) {
-            return Optional.empty();
-          }
-          UUID reservationOwnerId = row.get(TABLE.RESERVATION_OWNER_ID);
-          UUID previousOwnerId = row.get(TABLE.CLAIM_OWNER_ID);
-          String previousClaimState = row.get(TABLE.CLAIM_STATE);
-          long previousFence = row.get(TABLE.CLAIM_FENCE);
-          long previousExpiry = row.get(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS);
-          if (!ClaimState.EXPIRED.name().equals(previousClaimState)
-              && !(ClaimState.ACTIVE.name().equals(previousClaimState)
-                  && previousExpiry <= nowEpochMillis)) {
-            return Optional.empty();
-          }
-          if (reservationOwnerId.equals(recoveryOwnerId)
-              || recoveryOwnerId.equals(previousOwnerId)) {
-            return Optional.empty();
-          }
-          if (snapshot.state() == State.AUTHORIZED) {
-            toAuthorizedSnapshot(row);
-          }
-          long recoveryFence = Math.addExact(previousFence, 1L);
-          int updated =
-              tx.update(TABLE)
-                  .set(TABLE.CLAIM_OWNER_ID, recoveryOwnerId)
-                  .set(TABLE.CLAIM_FENCE, recoveryFence)
-                  .set(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS, expiresAtEpochMillis)
-                  .set(TABLE.CLAIM_STATE, ClaimState.ACTIVE.name())
-                  .set(CLAIM_PURPOSE, recoveryPurpose.name())
-                  .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
-                  .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
-                  .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
-                  .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
-                  .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
-                  .and(TABLE.STATE.eq(snapshot.state().name()))
-                  .and(TABLE.CLAIM_FENCE.eq(previousFence))
-                  .and(TABLE.CLAIM_STATE.eq(previousClaimState))
-                  .and(
-                      previousOwnerId == null
-                          ? TABLE.CLAIM_OWNER_ID.isNull()
-                          : TABLE.CLAIM_OWNER_ID.eq(previousOwnerId))
-                  .and(
-                      snapshot.claimPurpose() == null
-                          ? CLAIM_PURPOSE.isNull()
-                          : CLAIM_PURPOSE.eq(snapshot.claimPurpose().name()))
-                  .and(
-                      ClaimState.EXPIRED.name().equals(previousClaimState)
-                          ? DSL.trueCondition()
-                          : TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.le(nowEpochMillis))
-                  .execute();
-          if (updated != 1) {
-            return Optional.empty();
-          }
-          Record updatedRow = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
-          if (updatedRow == null) {
-            throw new IllegalStateException("recovery claim row disappeared after update");
-          }
-          return Optional.of(new RecoveryClaimResult(toSnapshot(updatedRow), reservationOwnerId));
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Record row = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (row == null) {
+        return Optional.empty();
+      }
+      Snapshot snapshot = toSnapshot(row);
+      requireExactTuple(row, tuple, mutationDigest);
+      ClaimPurpose recoveryPurpose = recoveryPurpose(snapshot.phase(), snapshot.state());
+      if (recoveryPurpose == null) {
+        return Optional.empty();
+      }
+      UUID reservationOwnerId = row.get(TABLE.RESERVATION_OWNER_ID);
+      UUID previousOwnerId = row.get(TABLE.CLAIM_OWNER_ID);
+      String previousClaimState = row.get(TABLE.CLAIM_STATE);
+      long previousFence = row.get(TABLE.CLAIM_FENCE);
+      long previousExpiry = row.get(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS);
+      if (!ClaimState.EXPIRED.name().equals(previousClaimState)
+          && !(ClaimState.ACTIVE.name().equals(previousClaimState)
+              && previousExpiry <= nowEpochMillis)) {
+        return Optional.empty();
+      }
+      if (reservationOwnerId.equals(recoveryOwnerId) || recoveryOwnerId.equals(previousOwnerId)) {
+        return Optional.empty();
+      }
+      if (snapshot.state() == State.AUTHORIZED) {
+        toAuthorizedSnapshot(row);
+      }
+      long recoveryFence = Math.addExact(previousFence, 1L);
+      int updated =
+          tx.update(TABLE)
+              .set(TABLE.CLAIM_OWNER_ID, recoveryOwnerId)
+              .set(TABLE.CLAIM_FENCE, recoveryFence)
+              .set(TABLE.CLAIM_EXPIRES_AT_EPOCH_MS, expiresAtEpochMillis)
+              .set(TABLE.CLAIM_STATE, ClaimState.ACTIVE.name())
+              .set(CLAIM_PURPOSE, recoveryPurpose.name())
+              .set(TABLE.UPDATED_AT_EPOCH_MS, nowEpochMillis)
+              .where(TABLE.CONTROL_PLANE_REQUEST_ID.eq(tuple.controlPlaneRequestId()))
+              .and(TABLE.PRE_AUTHORIZATION_TUPLE_JSON.eq(tuple.canonicalJson()))
+              .and(TABLE.MUTATION_DIGEST.eq(mutationDigest))
+              .and(TABLE.PHASE.eq(Phase.ACCOUNT_AUTHORIZATION.name()))
+              .and(TABLE.STATE.eq(snapshot.state().name()))
+              .and(TABLE.CLAIM_FENCE.eq(previousFence))
+              .and(TABLE.CLAIM_STATE.eq(previousClaimState))
+              .and(
+                  previousOwnerId == null
+                      ? TABLE.CLAIM_OWNER_ID.isNull()
+                      : TABLE.CLAIM_OWNER_ID.eq(previousOwnerId))
+              .and(
+                  snapshot.claimPurpose() == null
+                      ? CLAIM_PURPOSE.isNull()
+                      : CLAIM_PURPOSE.eq(snapshot.claimPurpose().name()))
+              .and(
+                  ClaimState.EXPIRED.name().equals(previousClaimState)
+                      ? DSL.trueCondition()
+                      : TABLE.CLAIM_EXPIRES_AT_EPOCH_MS.le(nowEpochMillis))
+              .execute();
+      if (updated != 1) {
+        return Optional.empty();
+      }
+      Record updatedRow = selectFullRowByRequestId(tx, tuple.controlPlaneRequestId(), true);
+      if (updatedRow == null) {
+        throw new IllegalStateException("recovery claim row disappeared after update");
+      }
+      return Optional.of(new RecoveryClaimResult(toSnapshot(updatedRow), reservationOwnerId));
+    });
   }
 
   private StartSessionPostAuthorizationExecutionTuple decodePostAuthorizationTuple(String json) {

@@ -223,31 +223,29 @@ public final class WorldCanonicalInstancePreparationService {
       WorldCanonicalInstanceExecutionIdentity originalIdentity) {
     return recoverExact(originalIdentity)
         .operation()
-        .filter(
-            operation ->
+        .filter(operation ->
+            operation.state()
+                    == WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED
+                || operation.state()
+                    == WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED)
+        .map(operation ->
+            new WorldStartSessionExecutionTerminal(
+                originalIdentity.originalPostAuthorizationTuple(),
+                originalIdentity.accountWorldParticipationId(),
+                originalIdentity.accountWorldParticipationFence(),
+                originalIdentity.gameSessionOwnerAttemptId(),
+                originalIdentity.gameSessionOwnerFence(),
+                originalIdentity.targetNamespace(),
+                originalIdentity.canonicalTenantId(),
+                originalIdentity.controlPlaneRequestId(),
+                originalIdentity.canonicalGameInstanceId(),
+                originalIdentity.preparationInputDigest(),
+                originalIdentity.preparationInputJson(),
+                operation.worldExecutionFence(),
                 operation.state()
                         == WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED
-                    || operation.state()
-                        == WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED)
-        .map(
-            operation ->
-                new WorldStartSessionExecutionTerminal(
-                    originalIdentity.originalPostAuthorizationTuple(),
-                    originalIdentity.accountWorldParticipationId(),
-                    originalIdentity.accountWorldParticipationFence(),
-                    originalIdentity.gameSessionOwnerAttemptId(),
-                    originalIdentity.gameSessionOwnerFence(),
-                    originalIdentity.targetNamespace(),
-                    originalIdentity.canonicalTenantId(),
-                    originalIdentity.controlPlaneRequestId(),
-                    originalIdentity.canonicalGameInstanceId(),
-                    originalIdentity.preparationInputDigest(),
-                    originalIdentity.preparationInputJson(),
-                    operation.worldExecutionFence(),
-                    operation.state()
-                            == WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED
-                        ? WorldStartSessionExecutionTerminal.Outcome.COMMITTED
-                        : WorldStartSessionExecutionTerminal.Outcome.ABORTED));
+                    ? WorldStartSessionExecutionTerminal.Outcome.COMMITTED
+                    : WorldStartSessionExecutionTerminal.Outcome.ABORTED));
   }
 
   private static void denyRecoveryByDefault(WorldCanonicalInstanceExecutionIdentity identity) {

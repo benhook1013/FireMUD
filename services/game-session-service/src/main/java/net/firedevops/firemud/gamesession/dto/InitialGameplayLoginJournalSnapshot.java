@@ -20,30 +20,24 @@ public record InitialGameplayLoginJournalSnapshot(
     Objects.requireNonNull(verifiedWitness, "verifiedWitness");
     Objects.requireNonNull(frozenRetirementRequest, "frozenRetirementRequest");
     Objects.requireNonNull(retainedReceipt, "retainedReceipt");
-    verifiedWitness.ifPresent(
-        witness ->
-            InitialGameplayLoginDisposalResult.requireOriginalRequest(
-                request(coordinates, witness)));
-    frozenRetirementRequest.ifPresent(
-        request -> {
-          InitialGameplayLoginDisposalResult.requireOriginalRequest(request);
-          requireOriginal(coordinates, request.getRequestId(), request.getCallerContextId());
-          if (!abandoned
-              || request.hasTokenWitness()
-                  && !verifiedWitness.filter(request.getTokenWitness()::equals).isPresent()) {
-            throw new IllegalArgumentException(
-                "Invalid retained original LOGIN retirement request");
-          }
-        });
-    retainedReceipt.ifPresent(
-        receipt -> {
-          requireOriginal(
-              coordinates, receipt.requestId().toString(), receipt.callerContextId().toString());
-          if (!abandoned || frozenRetirementRequest.isEmpty()) {
-            throw new IllegalArgumentException(
-                "Original LOGIN receipt requires frozen abandonment");
-          }
-        });
+    verifiedWitness.ifPresent(witness ->
+        InitialGameplayLoginDisposalResult.requireOriginalRequest(request(coordinates, witness)));
+    frozenRetirementRequest.ifPresent(request -> {
+      InitialGameplayLoginDisposalResult.requireOriginalRequest(request);
+      requireOriginal(coordinates, request.getRequestId(), request.getCallerContextId());
+      if (!abandoned
+          || request.hasTokenWitness()
+              && !verifiedWitness.filter(request.getTokenWitness()::equals).isPresent()) {
+        throw new IllegalArgumentException("Invalid retained original LOGIN retirement request");
+      }
+    });
+    retainedReceipt.ifPresent(receipt -> {
+      requireOriginal(
+          coordinates, receipt.requestId().toString(), receipt.callerContextId().toString());
+      if (!abandoned || frozenRetirementRequest.isEmpty()) {
+        throw new IllegalArgumentException("Original LOGIN receipt requires frozen abandonment");
+      }
+    });
   }
 
   public static RetireInitialGameplayLoginRequest request(

@@ -70,10 +70,9 @@ class AccountGameplayAdmissionLeaseEvidenceTest {
     rejects(c -> object(c, "membershipBaseline").put("membershipVersion", Map.of(TENANT, "01")));
     rejects(c -> object(c, "membershipBaseline").put("membershipVersion", Map.of(TENANT, 1L)));
     rejects(c -> object(c, "membershipBaseline").put("membershipAuthorityGeneration", "2"));
-    rejects(
-        c ->
-            object(c, "membershipBaseline")
-                .put("membershipVersion", Map.of(TENANT, "9223372036854775808")));
+    rejects(c ->
+        object(c, "membershipBaseline")
+            .put("membershipVersion", Map.of(TENANT, "9223372036854775808")));
   }
 
   @Test
@@ -120,11 +119,10 @@ class AccountGameplayAdmissionLeaseEvidenceTest {
         .isEqualTo(priorValue);
     rejects(c -> c.put("expectedOldBindingGeneration", "0"));
     rejects(c -> c.put("expectedOldBindingGeneration", null));
-    rejects(
-        c -> {
-          c.put("leaseKind", "RESUME");
-          c.put("resumeEpisodeId", OTHER);
-        });
+    rejects(c -> {
+      c.put("leaseKind", "RESUME");
+      c.put("resumeEpisodeId", OTHER);
+    });
   }
 
   @Test
@@ -142,12 +140,10 @@ class AccountGameplayAdmissionLeaseEvidenceTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> AccountGameplayAdmissionLeaseEvidence.parseCanonical(null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseEvidence.parseCanonical(
-                    json.replace(
-                        "\"schemaVersion\":\"1\"",
-                        "\"schemaVersion\":\"1\",\"schemaVersion\":\"1\"")))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseEvidence.parseCanonical(
+                json.replace(
+                    "\"schemaVersion\":\"1\"", "\"schemaVersion\":\"1\",\"schemaVersion\":\"1\"")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -215,32 +211,27 @@ class AccountGameplayAdmissionLeaseEvidenceTest {
 
   @Test
   void rejectsOversizedDeepCyclicAndNullCarriersBeforeBuildingUnboundedEvidence() {
-    rejects(
-        c ->
-            c.put(
-                "large", "a".repeat(AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES + 1)));
+    rejects(c ->
+        c.put("large", "a".repeat(AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES + 1)));
     rejects(c -> c.put("large", "界".repeat(22000)));
-    rejects(
-        c -> {
-          Map<String, Object> nested = Map.of("leaf", "value");
-          for (int index = 0; index < 10; index++) {
-            nested = Map.of("nested", nested);
-          }
-          c.put("nested", nested);
-        });
+    rejects(c -> {
+      Map<String, Object> nested = Map.of("leaf", "value");
+      for (int index = 0; index < 10; index++) {
+        nested = Map.of("nested", nested);
+      }
+      c.put("nested", nested);
+    });
     rejects(c -> c.put("cycle", c));
     rejects(c -> c.put("nullable", null));
     assertThatThrownBy(() -> AccountGameplayAdmissionLeaseEvidence.fromCarrier(null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseEvidence.parseCanonical(
-                    " ".repeat(AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES + 1)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseEvidence.parseCanonical(
+                " ".repeat(AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES + 1)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseEvidence.parseCanonical(
-                    "[".repeat(10) + "\"value\"" + "]".repeat(10)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseEvidence.parseCanonical(
+                "[".repeat(10) + "\"value\"" + "]".repeat(10)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

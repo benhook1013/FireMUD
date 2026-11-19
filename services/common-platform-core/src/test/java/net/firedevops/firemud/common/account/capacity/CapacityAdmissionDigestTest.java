@@ -248,15 +248,14 @@ class CapacityAdmissionDigestTest {
             TenantCapacityAdmission.State.RESERVED,
             denied.evidence().snapshotIdentity(),
             denied.evidence().evaluationIdentity());
-    assertThatThrownBy(
-            () ->
-                new OriginalNewCapacityExecution(
-                    denied,
-                    reservation,
-                    denied.identity().admissionId(),
-                    "sha256:" + "a".repeat(64),
-                    "owner-1",
-                    1))
+    assertThatThrownBy(() ->
+            new OriginalNewCapacityExecution(
+                denied,
+                reservation,
+                denied.identity().admissionId(),
+                "sha256:" + "a".repeat(64),
+                "owner-1",
+                1))
         .isInstanceOf(IllegalArgumentException.class);
 
     for (Request invalid :
@@ -316,15 +315,14 @@ class CapacityAdmissionDigestTest {
               request.evidence().snapshotIdentity(),
               request.evidence().evaluationIdentity());
       reservation.requireBinding(request);
-      assertThatThrownBy(
-              () ->
-                  new OriginalNewCapacityExecution(
-                      request,
-                      reservation,
-                      request.identity().admissionId(),
-                      "sha256:" + "a".repeat(64),
-                      "owner-1",
-                      1))
+      assertThatThrownBy(() ->
+              new OriginalNewCapacityExecution(
+                  request,
+                  reservation,
+                  request.identity().admissionId(),
+                  "sha256:" + "a".repeat(64),
+                  "owner-1",
+                  1))
           .as(state.name())
           .isInstanceOf(IllegalArgumentException.class);
     }
@@ -367,9 +365,8 @@ class CapacityAdmissionDigestTest {
             " " + json,
             json.replaceFirst("\"outboxSequence\":\"3\"", "\"outboxSequence\":\"4\""),
             "{\"bundleVersion\":\"1\"," + json.substring(1))) {
-      assertThatThrownBy(
-              () ->
-                  Evidence.parse(changed.getBytes(StandardCharsets.UTF_8), Owner.WORLD_MANAGEMENT))
+      assertThatThrownBy(() ->
+              Evidence.parse(changed.getBytes(StandardCharsets.UTF_8), Owner.WORLD_MANAGEMENT))
           .isInstanceOf(IllegalArgumentException.class);
     }
     Evidence changed =

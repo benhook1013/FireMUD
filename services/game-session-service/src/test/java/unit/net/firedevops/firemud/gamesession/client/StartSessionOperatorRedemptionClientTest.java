@@ -160,18 +160,17 @@ class StartSessionOperatorRedemptionClientTest {
     StartSessionOperatorRedemptionClient client = newClient(stub, CURRENT_CLOCK);
     StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID);
 
-    assertThatThrownBy(
-            () ->
-                client.redeem(
-                    tuple,
-                    OPAQUE_REFERENCE,
-                    new AttemptClaim(
-                        "another-namespace",
-                        REQUEST_ID,
-                        OWNER_ATTEMPT,
-                        OWNER_MUTATION,
-                        CLAIM_OWNER,
-                        37L)))
+    assertThatThrownBy(() ->
+            client.redeem(
+                tuple,
+                OPAQUE_REFERENCE,
+                new AttemptClaim(
+                    "another-namespace",
+                    REQUEST_ID,
+                    OWNER_ATTEMPT,
+                    OWNER_MUTATION,
+                    CLAIM_OWNER,
+                    37L)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("claim differs");
 
@@ -258,29 +257,27 @@ class StartSessionOperatorRedemptionClientTest {
   void refusesPlaintextOrMissingMutualTlsCredentialsAndDoesNotInitializeByConstruction() {
     CommonGrpcClientProperties plaintext = tlsProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new StartSessionOperatorRedemptionClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    mock(GrpcChannelFactory.class),
-                    BlockingGrpcStubCustomizer.noop(),
-                    NAMESPACE,
-                    CURRENT_CLOCK))
+    assertThatThrownBy(() ->
+            new StartSessionOperatorRedemptionClient(
+                new ServiceEndpointsProperties(),
+                plaintext,
+                mock(GrpcChannelFactory.class),
+                BlockingGrpcStubCustomizer.noop(),
+                NAMESPACE,
+                CURRENT_CLOCK))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mutual TLS");
 
     CommonGrpcClientProperties missingIdentity = new CommonGrpcClientProperties();
     missingIdentity.setCaCert("ca.pem");
-    assertThatThrownBy(
-            () ->
-                new StartSessionOperatorRedemptionClient(
-                    new ServiceEndpointsProperties(),
-                    missingIdentity,
-                    mock(GrpcChannelFactory.class),
-                    BlockingGrpcStubCustomizer.noop(),
-                    NAMESPACE,
-                    CURRENT_CLOCK))
+    assertThatThrownBy(() ->
+            new StartSessionOperatorRedemptionClient(
+                new ServiceEndpointsProperties(),
+                missingIdentity,
+                mock(GrpcChannelFactory.class),
+                BlockingGrpcStubCustomizer.noop(),
+                NAMESPACE,
+                CURRENT_CLOCK))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mutual TLS");
 
@@ -290,15 +287,14 @@ class StartSessionOperatorRedemptionClientTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("explicitly initialized");
 
-    assertThatThrownBy(
-            () ->
-                new StartSessionOperatorRedemptionClient(
-                    new ServiceEndpointsProperties(),
-                    tlsProperties(),
-                    mock(GrpcChannelFactory.class),
-                    BlockingGrpcStubCustomizer.noop(),
-                    "Invalid_Namespace",
-                    CURRENT_CLOCK))
+    assertThatThrownBy(() ->
+            new StartSessionOperatorRedemptionClient(
+                new ServiceEndpointsProperties(),
+                tlsProperties(),
+                mock(GrpcChannelFactory.class),
+                BlockingGrpcStubCustomizer.noop(),
+                "Invalid_Namespace",
+                CURRENT_CLOCK))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical DNS label");
   }

@@ -215,9 +215,8 @@ class CanonicalInitialAdmissionRepositoryTest {
       CanonicalInitialAdmissionRepository.CurrentOpenPointer pointer,
       CanonicalInitialAdmissionOwnerProof proof,
       Class<? extends Throwable> cause) {
-    assertThatThrownBy(
-            () ->
-                CanonicalInitialAdmissionRepository.snapshotDigestOrReconciliation(pointer, proof))
+    assertThatThrownBy(() ->
+            CanonicalInitialAdmissionRepository.snapshotDigestOrReconciliation(pointer, proof))
         .isInstanceOf(
             CanonicalInitialAdmissionRepository
                 .CanonicalInitialAdmissionReconciliationRequiredException.class)

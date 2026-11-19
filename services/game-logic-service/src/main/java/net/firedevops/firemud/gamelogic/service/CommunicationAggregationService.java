@@ -201,16 +201,15 @@ public class CommunicationAggregationService {
     roomEntities.getEntitiesList().stream()
         .filter(entity -> entity.getEntityType() == EntityType.PLAYER)
         .filter(entity -> !entity.getEntityId().equals(speakerId))
-        .forEach(
-            entity ->
-                recipientViews.add(
-                    recipientView(
-                        entity.getEntityId(),
-                        entity.getDisplayName(),
-                        CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
-                        CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-                        speakerName,
-                        "")));
+        .forEach(entity ->
+            recipientViews.add(
+                recipientView(
+                    entity.getEntityId(),
+                    entity.getDisplayName(),
+                    CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
+                    CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+                    speakerName,
+                    "")));
     return new CommunicationAudience(
         delivered,
         buildNpcEchoes(roomEntities),
@@ -323,18 +322,16 @@ public class CommunicationAggregationService {
     return roomEntities.getEntitiesList().stream()
         .filter(entity -> !entity.getEntityId().equals(speakerId))
         .filter(entity -> !entity.getEntityId().equals(targetId))
-        .filter(
-            entity ->
-                entity.getStateFlagsList().stream().anyMatch(OBSERVER_METADATA_ONLY_FLAG::equals))
-        .map(
-            entity ->
-                recipientView(
-                    entity.getEntityId(),
-                    entity.getDisplayName(),
-                    CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER,
-                    CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY,
-                    speakerName,
-                    targetName))
+        .filter(entity ->
+            entity.getStateFlagsList().stream().anyMatch(OBSERVER_METADATA_ONLY_FLAG::equals))
+        .map(entity ->
+            recipientView(
+                entity.getEntityId(),
+                entity.getDisplayName(),
+                CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER,
+                CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY,
+                speakerName,
+                targetName))
         .toList();
   }
 

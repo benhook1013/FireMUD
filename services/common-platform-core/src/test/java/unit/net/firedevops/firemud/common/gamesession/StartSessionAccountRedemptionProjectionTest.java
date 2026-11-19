@@ -42,17 +42,15 @@ class StartSessionAccountRedemptionProjectionTest {
               StartSessionAccountRedemptionProjection.decodeOwnerTuple(retained)
                   .reservationClaimFence())
           .isEqualTo(fence);
-      assertThatCode(
-              () ->
-                  StartSessionAccountRedemptionProjection.requireCurrentBinding(retained, original))
+      assertThatCode(() ->
+              StartSessionAccountRedemptionProjection.requireCurrentBinding(retained, original))
           .doesNotThrowAnyException();
       assertThat(StartSessionAccountRedemptionProjection.fromOriginalTuple(original))
           .containsExactly(retained);
 
       var changed = withReservationFence(baseline, fence == Long.MAX_VALUE ? fence - 1 : fence + 1);
-      assertThatThrownBy(
-              () ->
-                  StartSessionAccountRedemptionProjection.requireCurrentBinding(retained, changed))
+      assertThatThrownBy(() ->
+              StartSessionAccountRedemptionProjection.requireCurrentBinding(retained, changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -96,16 +94,14 @@ class StartSessionAccountRedemptionProjectionTest {
               original.reservationClaimFence(),
               original.authorityEvidenceBundleBytes(),
               changedReference);
-      assertThatThrownBy(
-              () ->
-                  StartSessionAccountRedemptionProjection.requireCurrentBinding(
-                      ownerEvidence, substituted))
+      assertThatThrownBy(() ->
+              StartSessionAccountRedemptionProjection.requireCurrentBinding(
+                  ownerEvidence, substituted))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("differs");
-      assertThatThrownBy(
-              () ->
-                  StartSessionAccountRedemptionProjection.requireHistoricalBinding(
-                      ownerEvidence, substituted))
+      assertThatThrownBy(() ->
+              StartSessionAccountRedemptionProjection.requireHistoricalBinding(
+                  ownerEvidence, substituted))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("differs");
     }
@@ -124,10 +120,8 @@ class StartSessionAccountRedemptionProjectionTest {
         }) {
       assertThat(changed).isNotEqualTo(json);
       byte[] candidate = Rfc8785CanonicalJson.canonicalizeUtf8(changed);
-      assertThatThrownBy(
-              () ->
-                  StartSessionAccountRedemptionProjection.requireCurrentBinding(
-                      candidate, original))
+      assertThatThrownBy(() ->
+              StartSessionAccountRedemptionProjection.requireCurrentBinding(candidate, original))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -157,10 +151,8 @@ class StartSessionAccountRedemptionProjectionTest {
                         "issuanceFence",
                         Long.parseLong(original.issuanceFence()))));
     byte[] before = oldBytes.clone();
-    assertThatCode(
-            () ->
-                StartSessionAccountRedemptionProjection.requireHistoricalBinding(
-                    oldBytes, original))
+    assertThatCode(() ->
+            StartSessionAccountRedemptionProjection.requireHistoricalBinding(oldBytes, original))
         .doesNotThrowAnyException();
     assertThat(oldBytes).containsExactly(before);
     assertThatThrownBy(

@@ -106,11 +106,10 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     Objects.requireNonNull(request, "request");
     requireNoActiveTransaction("World canonical lifecycle read");
     return Optional.ofNullable(
-        transaction.execute(
-            status -> {
-              requireReadOnlyRepeatableReadOwnerTransaction();
-              return readInCurrentOwnerTransaction(request, false);
-            }));
+        transaction.execute(status -> {
+          requireReadOnlyRepeatableReadOwnerTransaction();
+          return readInCurrentOwnerTransaction(request, false);
+        }));
   }
 
   /**
@@ -456,10 +455,9 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         }
       }
       if (expectedCounts.entrySet().stream()
-              .anyMatch(
-                  entry ->
-                      actualCounts.getOrDefault(entry.getKey(), 0).intValue()
-                          != entry.getValue().intValue())
+              .anyMatch(entry ->
+                  actualCounts.getOrDefault(entry.getKey(), 0).intValue()
+                      != entry.getValue().intValue())
           || rows.size() != expectedCounts.values().stream().mapToInt(Integer::intValue).sum()
           || expectedRegionTemplates.size()
               != required(preparation, "region_count", Integer.class)) {

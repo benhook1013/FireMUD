@@ -83,11 +83,9 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().pointerVersion()).isEqualTo("17");
     verify(repository)
         .save(
-            Mockito.argThat(
-                projection ->
-                    projection.getScriptPinEpoch() == 8L
-                        && Long.valueOf(7L)
-                            .equals(projection.getPinnedScriptPatchBaseVersionId())));
+            Mockito.argThat(projection ->
+                projection.getScriptPinEpoch() == 8L
+                    && Long.valueOf(7L).equals(projection.getPinnedScriptPatchBaseVersionId())));
   }
 
   @Test
@@ -219,18 +217,17 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.errorCode()).isBlank();
     assertThat(lookup.errorMessage()).isBlank();
     assertThat(lookup.summary())
-        .hasValueSatisfying(
-            summary -> {
-              assertThat(summary.observedPinnedScriptPatchVersion()).isBlank();
-              assertThat(summary.scriptPinEpoch()).isZero();
-              assertThat(summary.lastObservedControlPlaneRequestId()).isBlank();
-              assertThat(summary.observedAtMs()).isZero();
-              assertThat(summary.projectionAsOfMs()).isPositive();
-              assertThat(summary.projectionLagMs()).isZero();
-              assertThat(summary.projectionStale()).isFalse();
-              assertThat(summary.runtimeRegionId()).isEqualTo("region-1");
-              assertThat(summary.runtimeRegionEpoch()).isEqualTo(4L);
-            });
+        .hasValueSatisfying(summary -> {
+          assertThat(summary.observedPinnedScriptPatchVersion()).isBlank();
+          assertThat(summary.scriptPinEpoch()).isZero();
+          assertThat(summary.lastObservedControlPlaneRequestId()).isBlank();
+          assertThat(summary.observedAtMs()).isZero();
+          assertThat(summary.projectionAsOfMs()).isPositive();
+          assertThat(summary.projectionLagMs()).isZero();
+          assertThat(summary.projectionStale()).isFalse();
+          assertThat(summary.runtimeRegionId()).isEqualTo("region-1");
+          assertThat(summary.runtimeRegionEpoch()).isEqualTo(4L);
+        });
     verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
     verify(scheduleInstanceService).reconcileObservedRuntimeState("1", "game-1", unpinnedState);
     verify(repository).lockPinProjectionScope("1", "game-1");
@@ -289,12 +286,11 @@ class ScriptPatchPinProjectionServiceImplTest {
 
     assertThat(lookup.errorCode()).isBlank();
     assertThat(lookup.summary())
-        .hasValueSatisfying(
-            summary -> {
-              assertThat(summary.observedPinnedScriptPatchVersion()).isEqualTo("patch-7");
-              assertThat(summary.pinnedScriptPatchBaseVersionId()).isEqualTo(7L);
-              assertThat(summary.scriptPinEpoch()).isEqualTo(8L);
-            });
+        .hasValueSatisfying(summary -> {
+          assertThat(summary.observedPinnedScriptPatchVersion()).isEqualTo("patch-7");
+          assertThat(summary.pinnedScriptPatchBaseVersionId()).isEqualTo(7L);
+          assertThat(summary.scriptPinEpoch()).isEqualTo(8L);
+        });
     verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
     verify(repository).lockPinProjectionScope("1", "game-1");
     verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
@@ -336,23 +332,21 @@ class ScriptPatchPinProjectionServiceImplTest {
     Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenAnswer(invocation -> Optional.ofNullable(currentProjection[0]));
     Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
-        .thenAnswer(
-            invocation -> {
-              ScriptPatchPinProjection saved = invocation.getArgument(0);
-              saved.setId(1L);
-              currentProjection[0] = saved;
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          ScriptPatchPinProjection saved = invocation.getArgument(0);
+          saved.setId(1L);
+          currentProjection[0] = saved;
+          return saved;
+        });
     Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
-        .thenAnswer(
-            invocation -> {
-              // A concurrent owner observation saves a positive projection after this lookup's
-              // initial empty read but before the stale unpinned response is processed.
-              serviceReference[0].observeRuntimeState("1", "game-1", positiveState);
-              return GetGameInstanceRuntimeStateResponse.newBuilder()
-                  .setRuntimeState(unpinnedState)
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          // A concurrent owner observation saves a positive projection after this lookup's
+          // initial empty read but before the stale unpinned response is processed.
+          serviceReference[0].observeRuntimeState("1", "game-1", positiveState);
+          return GetGameInstanceRuntimeStateResponse.newBuilder()
+              .setRuntimeState(unpinnedState)
+              .build();
+        });
 
     serviceReference[0] =
         new ScriptPatchPinProjectionServiceImpl(
@@ -367,11 +361,10 @@ class ScriptPatchPinProjectionServiceImplTest {
 
     assertThat(lookup.errorCode()).isBlank();
     assertThat(lookup.summary())
-        .hasValueSatisfying(
-            summary -> {
-              assertThat(summary.observedPinnedScriptPatchVersion()).isEqualTo("patch-8");
-              assertThat(summary.scriptPinEpoch()).isEqualTo(8L);
-            });
+        .hasValueSatisfying(summary -> {
+          assertThat(summary.observedPinnedScriptPatchVersion()).isEqualTo("patch-8");
+          assertThat(summary.scriptPinEpoch()).isEqualTo(8L);
+        });
     verify(scheduleInstanceService).reconcileObservedRuntimeState("1", "game-1", positiveState);
     verify(scheduleInstanceService, never())
         .reconcileObservedRuntimeState("1", "game-1", unpinnedState);

@@ -257,9 +257,8 @@ public class AccountJoinOperationRepository {
             entitlementVersion);
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
 
     if (operation.requestDigest() != null) {
@@ -308,9 +307,8 @@ public class AccountJoinOperationRepository {
 
     CanonicalJoinOperationEvidence committed =
         readCanonicalEvidenceByRequestId(requestId, false)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Canonical JOIN policy binding readback is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Canonical JOIN policy binding readback is absent"));
     requireCanonicalIntentMatch(committed, requestId, callerBinding, intentDigest, scopeEvidence);
     requireCanonicalPolicyMatch(committed, requestDigest, allowPublicJoin, entitlementVersion);
     return committed;
@@ -348,9 +346,8 @@ public class AccountJoinOperationRepository {
     String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
     if (!"PENDING".equals(operation.status()))
       throw new CanonicalJoinOperationConflictException(
@@ -404,9 +401,8 @@ public class AccountJoinOperationRepository {
     String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
     if ("FAILED".equals(operation.status()) && outcome.equals(operation.outcome()))
       return operation;
@@ -478,9 +474,8 @@ public class AccountJoinOperationRepository {
     String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     boolean publicJoin = Boolean.TRUE.equals(operation.allowPublicJoin());
     if ("JOINED".equals(outcome) && !publicJoin) {
       throw new CanonicalJoinOperationConflictException(
@@ -707,9 +702,8 @@ public class AccountJoinOperationRepository {
     CanonicalConnectScopeEvidence scopeEvidence =
         connectScopes
             .findCanonicalEvidenceByTokenHash(scopeTokenHash)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Canonical JOIN operation scope evidence is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Canonical JOIN operation scope evidence is absent"));
     return Optional.of(toCanonicalOperationEvidence(row, scopeEvidence));
   }
 
@@ -728,10 +722,9 @@ public class AccountJoinOperationRepository {
     CanonicalJoinScopeV2 persisted =
         connectScopes
             .findCanonical(scope.connectScopeId())
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException(
-                        "Canonical JOIN scope evidence is absent"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException(
+                    "Canonical JOIN scope evidence is absent"));
     if (!persisted.equals(scope)) {
       throw new CanonicalJoinOperationConflictException(
           "Canonical JOIN scope differs from immutable token evidence");

@@ -309,10 +309,9 @@ public class WorldDesignPublicationFenceRepository {
                   binding.targetNamespace(), binding.intakeRequestId());
         };
     WorldAuthoredSourceIntakeReceipt receipt =
-        intake.orElseThrow(
-            () ->
-                new MissingIntakeException(
-                    "World publication fence requires an already committed authored-source intake"));
+        intake.orElseThrow(() ->
+            new MissingIntakeException(
+                "World publication fence requires an already committed authored-source intake"));
     requireExactIntake(binding, receipt);
 
     Record identity =

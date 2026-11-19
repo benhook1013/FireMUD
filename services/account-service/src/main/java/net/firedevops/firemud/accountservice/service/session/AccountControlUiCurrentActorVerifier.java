@@ -272,19 +272,18 @@ public final class AccountControlUiCurrentActorVerifier {
     String tokenHash = sha256(compactBytes);
     byte[] activeRegistry = registry.readActive(tokenHash);
     T result =
-        accountTransaction.execute(
-            ignored -> {
-              var issuance =
-                  verifyOwnerState(
-                      tokenHash,
-                      scopeKind,
-                      selectedTenant,
-                      signed,
-                      publicSourcePin,
-                      currentJwks,
-                      activeRegistry);
-              return action.apply(issuance, signed.claims());
-            });
+        accountTransaction.execute(ignored -> {
+          var issuance =
+              verifyOwnerState(
+                  tokenHash,
+                  scopeKind,
+                  selectedTenant,
+                  signed,
+                  publicSourcePin,
+                  currentJwks,
+                  activeRegistry);
+          return action.apply(issuance, signed.claims());
+        });
     if (result == null) throw denied();
     return result;
   }
@@ -679,17 +678,16 @@ public final class AccountControlUiCurrentActorVerifier {
     source
         .account()
         .accountSecurityCutoff()
-        .ifPresent(
-            cutoff ->
-                expectedTuple.put(
-                    "accountSecurityCutoff",
-                    Map.of(
-                        "accountAuthorityGeneration",
-                        cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey",
-                        cutoff.outboxStreamKey(),
-                        "outboxSequence",
-                        cutoff.outboxSequence())));
+        .ifPresent(cutoff ->
+            expectedTuple.put(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration",
+                    cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey",
+                    cutoff.outboxStreamKey(),
+                    "outboxSequence",
+                    cutoff.outboxSequence())));
     if (tenantEvent.tenantBillingSequence() > 0L) {
       expectedTuple.put(
           "tenantBillingCutoff",
@@ -784,13 +782,12 @@ public final class AccountControlUiCurrentActorVerifier {
       throw denied();
     }
     Map<String, Object> result = new LinkedHashMap<>();
-    map.forEach(
-        (key, item) -> {
-          if (!(key instanceof String text)) {
-            throw denied();
-          }
-          result.put(text, item);
-        });
+    map.forEach((key, item) -> {
+      if (!(key instanceof String text)) {
+        throw denied();
+      }
+      result.put(text, item);
+    });
     return result;
   }
 

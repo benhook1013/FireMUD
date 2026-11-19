@@ -83,10 +83,9 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
         response.set(null);
         assertThatThrownBy(() -> client.read(expectedIdentity))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
       }
     } finally {
       stopServer(server);
@@ -115,10 +114,9 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
           client.init();
           assertThatThrownBy(() -> client.read(identity))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.UNAUTHENTICATED));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.UNAUTHENTICATED));
         }
       } finally {
         stopServer(server);
@@ -146,10 +144,9 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
         client.init();
         assertThatThrownBy(() -> client.read(identity))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       }
       assertThat(calls).hasValue(1);
     } finally {

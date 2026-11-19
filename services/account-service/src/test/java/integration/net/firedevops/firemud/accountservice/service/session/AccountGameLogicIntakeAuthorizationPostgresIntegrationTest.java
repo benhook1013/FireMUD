@@ -120,10 +120,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
           new AccountGameLogicIntakeAuthorizationService(
               issued.actors(), f.fences, repository, sources, f.manager, "test");
       var order =
-          asGameDesign(
-              () ->
-                  authorizer.authorize(
-                      issued.compact(), UUID.randomUUID(), selected, issued.environment()));
+          asGameDesign(() ->
+              authorizer.authorize(
+                  issued.compact(), UUID.randomUUID(), selected, issued.environment()));
       var held = new AccountGameLogicIntakeAuthorizationReadService(repository, f.manager, "test");
       asPeer(
           "test",
@@ -139,22 +138,19 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       var wrongSettlement =
           new AccountGameLogicIntakeSettlementService(repository, terminals, f.manager, "other");
       var before = retainedIntakeRows(f.dsl);
-      assertThatThrownBy(
-              () ->
-                  asPeer(
-                      "other",
-                      "game-logic-service",
-                      () -> {
-                        wrongHeld.requireHeld(
-                            GameLogicIntakeAuthorizationReadEvidence.Request.create(
-                                "other", order));
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              asPeer(
+                  "other",
+                  "game-logic-service",
+                  () -> {
+                    wrongHeld.requireHeld(
+                        GameLogicIntakeAuthorizationReadEvidence.Request.create("other", order));
+                    return null;
+                  }))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(io.grpc.Status.fromThrowable(failure).getCode())
-                      .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                  .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
       assertThatThrownBy(
               () -> asPeer("other", "game-design-service", () -> wrongSettlement.settle(order)))
           .isInstanceOf(IllegalArgumentException.class)
@@ -163,10 +159,8 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       var wrongTerminal =
           GameLogicGameplayRuleIntakeTerminal.aborted(
               new GameLogicGameplayRuleIntakeOperation("other", order));
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> repository.settle(new AccountGameLogicIntakeSettlement(wrongTerminal))))
+      assertThatThrownBy(() ->
+              f.tx(() -> repository.settle(new AccountGameLogicIntakeSettlement(wrongTerminal))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Changed original source namespace");
       String genesis =
@@ -180,13 +174,11 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               new GameplayRuleSelectedSource(
                   source.snapshotJson().replace(genesis, UUID.randomUUID().toString())),
               order.sources());
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        repository.readHeld(changedOrder, "test");
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                repository.readHeld(changedOrder, "test");
+                return null;
+              }))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Original intake order absent or changed");
       assertThat(retainedIntakeRows(f.dsl)).isEqualTo(before);
@@ -196,10 +188,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       var terminal =
           GameLogicGameplayRuleIntakeTerminal.aborted(
               new GameLogicGameplayRuleIntakeOperation("test", order));
-      doAnswer(
-              call ->
-                  new GameLogicIntakeTerminalReadEvidence(
-                      call.getArgument(0), java.util.Optional.of(terminal)))
+      doAnswer(call ->
+              new GameLogicIntakeTerminalReadEvidence(
+                  call.getArgument(0), java.util.Optional.of(terminal)))
           .when(terminals)
           .read(any());
       var settlement =
@@ -287,42 +278,37 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               issued.actors(), f.fences, repository, gd, f.manager, "test");
       var requestId = UUID.randomUUID();
 
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  service.authorize(issued.compact(), requestId, selected, issued.environment())))
           .isInstanceOf(IllegalStateException.class);
       verifyNoInteractions(gd);
       assertThat(
               f.dsl.fetchCount(org.jooq.impl.DSL.table("account_game_logic_intake_authorizations")))
           .isZero();
-      f.tx(
-          () -> {
-            f.fences.recordOwnerReadback(
-                original,
-                new DraftAuthorizationFenceBinding.OwnerReadback(
-                    DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
-                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
-                    original.operationId(),
-                    original.commitId(),
-                    original.fenceId(),
-                    original.inputDigest(),
-                    original.canonicalBytes(),
-                    new byte[] {1}));
-            return null;
-          });
+      f.tx(() -> {
+        f.fences.recordOwnerReadback(
+            original,
+            new DraftAuthorizationFenceBinding.OwnerReadback(
+                DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+                DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                original.operationId(),
+                original.commitId(),
+                original.fenceId(),
+                original.inputDigest(),
+                original.canonicalBytes(),
+                new byte[] {1}));
+        return null;
+      });
       var order =
           asGameDesign(
               () -> service.authorize(issued.compact(), requestId, selected, issued.environment()));
       assertThat(order.source()).isEqualTo(source);
       assertThat(order.sources()).hasSize(captured.sources().size());
       assertThat(
-              asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment()))
+              asGameDesign(() ->
+                      service.authorize(
+                          issued.compact(), requestId, selected, issued.environment()))
                   .canonicalBytes())
           .isEqualTo(order.canonicalBytes());
       String genesis =
@@ -335,10 +321,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
           .read(any());
       clearInvocations(gd);
       assertThat(
-              asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment()))
+              asGameDesign(() ->
+                      service.authorize(
+                          issued.compact(), requestId, selected, issued.environment()))
                   .canonicalBytes())
           .isEqualTo(order.canonicalBytes());
       verifyNoInteractions(gd);
@@ -347,58 +332,51 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
           .read(any());
 
       UUID rolledBackRequest = UUID.randomUUID();
-      assertThatThrownBy(
-              () ->
-                  issued
-                      .actors()
-                      .withCurrent(
-                          issued.compact(),
-                          f.tenant,
-                          issued.environment(),
-                          current -> {
-                            f.fences.lockProducerSourcesNowait(current.source().sources());
-                            repository.reserveSourceRead(
-                                rolledBackRequest,
-                                selected,
-                                current,
-                                "test",
-                                () ->
-                                    f.fences.requireGameLogicIntakeAdmission(
-                                        current.source().sources(), selected));
-                            throw new IllegalStateException("rollback before owner commit");
-                          }))
+      assertThatThrownBy(() ->
+              issued
+                  .actors()
+                  .withCurrent(
+                      issued.compact(),
+                      f.tenant,
+                      issued.environment(),
+                      current -> {
+                        f.fences.lockProducerSourcesNowait(current.source().sources());
+                        repository.reserveSourceRead(
+                            rolledBackRequest,
+                            selected,
+                            current,
+                            "test",
+                            () ->
+                                f.fences.requireGameLogicIntakeAdmission(
+                                    current.source().sources(), selected));
+                        throw new IllegalStateException("rollback before owner commit");
+                      }))
           .isInstanceOf(IllegalStateException.class);
       assertThat(
               f.dsl.fetchOne(
                   "SELECT 1 FROM account_game_logic_intake_source_read_reservations WHERE intake_request_id = ?",
                   rolledBackRequest))
           .isNull();
-      f.tx(
-          () -> {
-            repository.readHeld(order, "test");
-            return null;
-          });
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.fences.requireDisclosurePreparation(order.sources());
-                        return null;
-                      }))
+      f.tx(() -> {
+        repository.readHeld(order, "test");
+        return null;
+      });
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.fences.requireDisclosurePreparation(order.sources());
+                return null;
+              }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("intake");
 
       // Only the distinct intake is pending; original Draft settlement is already COMMITTED.
       assertThat(f.tx(() -> f.fences.readSettlement(original)))
           .isEqualTo(DraftAuthorizationFenceRepository.Settlement.COMMITTED);
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.dsl.execute(
-                            "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId());
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.dsl.execute("UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId());
+                return null;
+              }))
           .hasStackTraceContaining("Distinct Game Logic intake remains pending");
 
       var change =
@@ -407,32 +385,24 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       assertThat(f.tx(() -> f.fences.requestSourceChange(change))).isFalse();
       assertThat(f.tx(() -> f.fences.sourceMutationPermitted(change))).isFalse();
       assertThat(f.tx(() -> f.fences.sourceAbortPermitted(change))).isFalse();
-      f.tx(
-          () -> {
-            repository.readHeld(order, "test");
-            return null;
-          });
+      f.tx(() -> {
+        repository.readHeld(order, "test");
+        return null;
+      });
 
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.dsl.execute(
-                            "UPDATE account_game_logic_intake_authorizations SET source_digest = ? WHERE operation_id = ?",
-                            "sha256:" + "0".repeat(64),
-                            order.operationId());
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.dsl.execute(
+                    "UPDATE account_game_logic_intake_authorizations SET source_digest = ? WHERE operation_id = ?",
+                    "sha256:" + "0".repeat(64),
+                    order.operationId());
+                return null;
+              }))
           .hasStackTraceContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorize(
-                              "invalid-credential",
-                              UUID.randomUUID(),
-                              selected,
-                              issued.environment())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  service.authorize(
+                      "invalid-credential", UUID.randomUUID(), selected, issued.environment())))
           .isInstanceOf(RuntimeException.class);
     }
   }
@@ -500,21 +470,17 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               })
           .when(gd)
           .read(any());
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  service.authorize(issued.compact(), requestId, selected, issued.environment())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
       var recovered = asGameDesign(() -> service.recover(issued.compact(), requestId, selected));
       assertThat(recovered.state())
           .isEqualTo(AccountGameLogicIntakeSourceReadRecovery.State.RESERVED);
       assertThat(
-              asGameDesign(
-                      () ->
-                          service.reserveSourceRead(
-                              issued.compact(), requestId, selected, issued.environment()))
+              asGameDesign(() ->
+                      service.reserveSourceRead(
+                          issued.compact(), requestId, selected, issued.environment()))
                   .canonicalBytes())
           .isEqualTo(recovered.scope().canonicalBytes());
       doAnswer(
@@ -523,74 +489,58 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               })
           .when(gd)
           .read(any());
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  service.authorize(issued.compact(), requestId, selected, issued.environment())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
           .hasMessageContaining("PERMISSION_DENIED");
       assertThat(asGameDesign(() -> service.recover(issued.compact(), requestId, selected)).scope())
           .isEqualTo(recovered.scope());
       var originalSources =
           f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment())).sources();
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.fences.requireDisclosurePreparation(originalSources);
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.fences.requireDisclosurePreparation(originalSources);
+                return null;
+              }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("intake");
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.dsl.execute(
-                            "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId());
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.dsl.execute("UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId());
+                return null;
+              }))
           .hasStackTraceContaining("Preliminary Game Logic source read remains pending");
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () -> service.recover("different-original-credential", requestId, selected)))
+      assertThatThrownBy(() ->
+              asGameDesign(
+                  () -> service.recover("different-original-credential", requestId, selected)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("conflicts");
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () -> service.recover(issued.compact(), requestId, selected(f.tenant))))
+      assertThatThrownBy(() ->
+              asGameDesign(() -> service.recover(issued.compact(), requestId, selected(f.tenant))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("conflicts");
       clearInvocations(gd);
       offsetSeconds.set(600);
       assertThat(asGameDesign(() -> service.recover(issued.compact(), requestId, selected)).scope())
           .isEqualTo(recovered.scope());
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  service.authorize(issued.compact(), requestId, selected, issued.environment())))
           .isInstanceOf(RuntimeException.class);
       verifyNoInteractions(gd);
       var aborted =
           asGameDesign(() -> service.abortSourceRead(issued.compact(), requestId, selected));
       assertThat(aborted.state()).isEqualTo(AccountGameLogicIntakeSourceReadRecovery.State.ABORTED);
       assertThat(asGameDesign(() -> service.abortSourceRead(recovered.scope()))).isEqualTo(aborted);
-      f.tx(
-          () -> {
-            f.fences.requireDisclosurePreparation(originalSources);
-            return null;
-          });
-      f.tx(
-          () -> {
-            f.changeRoleToAdmin();
-            return null;
-          });
+      f.tx(() -> {
+        f.fences.requireDisclosurePreparation(originalSources);
+        return null;
+      });
+      f.tx(() -> {
+        f.changeRoleToAdmin();
+        return null;
+      });
       assertThat(
               f.dsl.fetchOne(
                   "SELECT binding FROM account_game_logic_intake_authorizations WHERE operation_id = ?",
@@ -653,12 +603,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
           .read(any());
       var requestId = UUID.randomUUID();
       var inFlight =
-          java.util.concurrent.CompletableFuture.supplyAsync(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), requestId, selected, issued.environment())));
+          java.util.concurrent.CompletableFuture.supplyAsync(() ->
+              asGameDesign(() ->
+                  service.authorize(issued.compact(), requestId, selected, issued.environment())));
       assertThat(arrived.await(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
       var aborted =
           asGameDesign(() -> service.abortSourceRead(issued.compact(), requestId, selected));
@@ -676,10 +623,8 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
           .read(any());
       var finalRequest = UUID.randomUUID();
       var order =
-          asGameDesign(
-              () ->
-                  service.authorize(
-                      issued.compact(), finalRequest, selected, issued.environment()));
+          asGameDesign(() ->
+              service.authorize(issued.compact(), finalRequest, selected, issued.environment()));
       var recovery = asGameDesign(() -> service.recover(issued.compact(), finalRequest, selected));
       assertThat(order.operationId()).isEqualTo(recovery.scope().operationId());
       assertThat(order.fenceId()).isEqualTo(recovery.scope().fenceId());
@@ -691,33 +636,29 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               Clock.systemUTC(),
               "test");
       assertThat(
-              asGameDesign(
-                      () ->
-                          readOwner.readFinalizedIntake(
-                              order,
-                              "spiffe://firemud/ns/test/sa/game-logic-service",
-                              GameLogicIntakeSourceReadScope.PURPOSE))
+              asGameDesign(() ->
+                      readOwner.readFinalizedIntake(
+                          order,
+                          "spiffe://firemud/ns/test/sa/game-logic-service",
+                          GameLogicIntakeSourceReadScope.PURPOSE))
                   .canonicalBytes())
           .isEqualTo(order.canonicalBytes());
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.dsl.execute(
-                            "INSERT INTO account_game_logic_intake_source_read_aborts (operation_id) VALUES (?)",
-                            order.operationId());
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.dsl.execute(
+                    "INSERT INTO account_game_logic_intake_source_read_aborts (operation_id) VALUES (?)",
+                    order.operationId());
+                return null;
+              }))
           .hasStackTraceContaining("Finalized intake cannot be preliminarily aborted");
       assertThat(asGameDesign(() -> service.abortSourceRead(recovery.scope())).state())
           .isEqualTo(AccountGameLogicIntakeSourceReadRecovery.State.FINALIZED);
       offsetSeconds.set(600);
       clearInvocations(gd);
       assertThat(
-              asGameDesign(
-                      () ->
-                          service.authorize(
-                              issued.compact(), finalRequest, selected, issued.environment()))
+              asGameDesign(() ->
+                      service.authorize(
+                          issued.compact(), finalRequest, selected, issued.environment()))
                   .canonicalBytes())
           .isEqualTo(order.canonicalBytes());
       verifyNoInteractions(gd);
@@ -745,21 +686,20 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
                 captured.sources())
             .withRequiredOwners();
     issued.actors().claimOriginalDraft(issued.compact(), original, issued.environment());
-    f.tx(
-        () -> {
-          f.fences.recordOwnerReadback(
-              original,
-              new DraftAuthorizationFenceBinding.OwnerReadback(
-                  DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
-                  DraftAuthorizationFenceBinding.Outcome.COMMITTED,
-                  original.operationId(),
-                  original.commitId(),
-                  original.fenceId(),
-                  original.inputDigest(),
-                  original.canonicalBytes(),
-                  new byte[] {1}));
-          return null;
-        });
+    f.tx(() -> {
+      f.fences.recordOwnerReadback(
+          original,
+          new DraftAuthorizationFenceBinding.OwnerReadback(
+              DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+              DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+              original.operationId(),
+              original.commitId(),
+              original.fenceId(),
+              original.inputDigest(),
+              original.canonicalBytes(),
+              new byte[] {1}));
+      return null;
+    });
   }
 
   @Test
@@ -804,28 +744,21 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               issued.actors(), f.fences, repository, gd, f.manager, "test");
       var request = UUID.randomUUID();
       var scope =
-          asGameDesign(
-              () ->
-                  service.reserveSourceRead(
-                      issued.compact(), request, selected, issued.environment()));
+          asGameDesign(() ->
+              service.reserveSourceRead(issued.compact(), request, selected, issued.environment()));
       assertThat(
               asGameDesign(
                       () -> owner.readSourceScope(scope, scope.intendedReader(), scope.purpose()))
                   .canonicalBytes())
           .isEqualTo(scope.canonicalBytes());
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          owner.readSourceScope(
-                              scope,
-                              "spiffe://firemud/ns/test/sa/game-logic-service",
-                              scope.purpose())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  owner.readSourceScope(
+                      scope, "spiffe://firemud/ns/test/sa/game-logic-service", scope.purpose())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () -> owner.readSourceScope(scope, scope.intendedReader(), "PUBLICATION")))
+      assertThatThrownBy(() ->
+              asGameDesign(
+                  () -> owner.readSourceScope(scope, scope.intendedReader(), "PUBLICATION")))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
       var changed =
           new GameLogicIntakeSourceReadScope(
@@ -837,12 +770,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               scope.selected(),
               scope.intendedReader(),
               scope.purpose());
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          owner.readSourceScope(
-                              changed, changed.intendedReader(), changed.purpose())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  owner.readSourceScope(changed, changed.intendedReader(), changed.purpose())))
           .isInstanceOf(IllegalArgumentException.class);
       var expiredReader =
           new AccountGameLogicIntakeSourceReadService(
@@ -851,12 +781,9 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               f.manager,
               Clock.offset(Clock.systemUTC(), java.time.Duration.ofMinutes(10)),
               "test");
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          expiredReader.readSourceScope(
-                              scope, scope.intendedReader(), scope.purpose())))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  expiredReader.readSourceScope(scope, scope.intendedReader(), scope.purpose())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("current held");
       // Direct SQL cannot establish a changed purpose even with exact committed issuance bytes.
@@ -873,28 +800,26 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
       DraftAuthorizationFenceBinding.frame(changedPurpose, scope.intendedReader());
       DraftAuthorizationFenceBinding.frame(changedPurpose, "PUBLICATION");
       var malformed = changedPurpose.toByteArray();
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.dsl.execute(
-                            "INSERT INTO account_game_logic_intake_source_read_reservations "
-                                + "(operation_id, fence_id, intake_request_id, actor_account_uuid, tenant_uuid, version_uuid, scope_bytes, scope_digest, "
-                                + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
-                                + "SELECT ?, ?, ?, actor_account_uuid, tenant_uuid, version_uuid, ?, ?, issuance_operation_id, issuance_fence, source_payload, issuance_bundle, outbox_checkpoints "
-                                + "FROM account_game_logic_intake_source_read_reservations WHERE operation_id = ?",
-                            badOperation,
-                            badFence,
-                            badRequest,
-                            malformed,
-                            DraftAuthorizationFenceBinding.digest(malformed),
-                            scope.operationId());
-                        f.dsl.execute(
-                            "INSERT INTO account_game_logic_intake_source_read_sources SELECT ?, source_key, source_evidence FROM account_game_logic_intake_source_read_sources WHERE operation_id = ?",
-                            badOperation,
-                            scope.operationId());
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.dsl.execute(
+                    "INSERT INTO account_game_logic_intake_source_read_reservations "
+                        + "(operation_id, fence_id, intake_request_id, actor_account_uuid, tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                        + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
+                        + "SELECT ?, ?, ?, actor_account_uuid, tenant_uuid, version_uuid, ?, ?, issuance_operation_id, issuance_fence, source_payload, issuance_bundle, outbox_checkpoints "
+                        + "FROM account_game_logic_intake_source_read_reservations WHERE operation_id = ?",
+                    badOperation,
+                    badFence,
+                    badRequest,
+                    malformed,
+                    DraftAuthorizationFenceBinding.digest(malformed),
+                    scope.operationId());
+                f.dsl.execute(
+                    "INSERT INTO account_game_logic_intake_source_read_sources SELECT ?, source_key, source_evidence FROM account_game_logic_intake_source_read_sources WHERE operation_id = ?",
+                    badOperation,
+                    scope.operationId());
+                return null;
+              }))
           .hasStackTraceContaining("Invalid preliminary purpose");
       assertThat(
               f.dsl.fetchOne(
@@ -916,15 +841,13 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
               })
           .when(gd)
           .read(any());
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          service.authorizeWithEnvironmentCapture(
-                              issued.compact(),
-                              request,
-                              selected,
-                              f.terms::captureCurrentEnvironmentBoundary)))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  service.authorizeWithEnvironmentCapture(
+                      issued.compact(),
+                      request,
+                      selected,
+                      f.terms::captureCurrentEnvironmentBoundary)))
           .isInstanceOf(RuntimeException.class);
       assertThat(asGameDesign(() -> service.recover(issued.compact(), request, selected)).state())
           .isEqualTo(AccountGameLogicIntakeSourceReadRecovery.State.RESERVED);

@@ -165,28 +165,25 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
     SourceSelection original = c.select();
 
     // These corruptions cannot become committed source states under the production guards.
-    assertSqlState23514(
-        () ->
-            f.dsl()
-                .execute(
-                    "UPDATE account_tenant_entitlement_outbox_events SET payload = ? WHERE tenant_uuid = ?",
-                    "{\"schemaVersion\":\"unknown-source/v1\"}"
-                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    f.tenantId()));
-    assertSqlState23514(
-        () ->
-            f.dsl()
-                .execute(
-                    "UPDATE account_tenant_authority_source_records SET tenant_billing_event_digest = ? WHERE tenant_uuid = ?",
-                    "sha256:" + "f".repeat(64),
-                    f.tenantId()));
-    assertSqlState23514(
-        () ->
-            f.dsl()
-                .execute(
-                    "UPDATE subscription_lifecycle_receipts SET receipt_payload = ? WHERE tenant_id = ?",
-                    new byte[] {'{', '}'},
-                    f.tenantId()));
+    assertSqlState23514(() ->
+        f.dsl()
+            .execute(
+                "UPDATE account_tenant_entitlement_outbox_events SET payload = ? WHERE tenant_uuid = ?",
+                "{\"schemaVersion\":\"unknown-source/v1\"}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                f.tenantId()));
+    assertSqlState23514(() ->
+        f.dsl()
+            .execute(
+                "UPDATE account_tenant_authority_source_records SET tenant_billing_event_digest = ? WHERE tenant_uuid = ?",
+                "sha256:" + "f".repeat(64),
+                f.tenantId()));
+    assertSqlState23514(() ->
+        f.dsl()
+            .execute(
+                "UPDATE subscription_lifecycle_receipts SET receipt_payload = ? WHERE tenant_id = ?",
+                new byte[] {'{', '}'},
+                f.tenantId()));
 
     SourceSelection unchanged = c.select();
     assertThat(unchanged.kind()).isEqualTo(SourceKind.PAID_HOSTING);
@@ -217,11 +214,10 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
     var checkpoint =
         Objects.requireNonNull(
             f.transaction()
-                .execute(
-                    status ->
-                        new AccountAuthorityOutboxRepository(f.dsl())
-                            .readCheckpoint(TenantAuthorityEventV1Codec.streamKey(f.tenantId()))
-                            .orElseThrow()));
+                .execute(status ->
+                    new AccountAuthorityOutboxRepository(f.dsl())
+                        .readCheckpoint(TenantAuthorityEventV1Codec.streamKey(f.tenantId()))
+                        .orElseThrow()));
     assertThat(selected.checkpoint().outboxSequence()).isEqualTo(checkpoint.outboxSequence());
     assertThat(selected.checkpoint().eventId().toString()).isEqualTo(checkpoint.sourceEventId());
     assertThat(selected.checkpoint().eventDigest()).isEqualTo(checkpoint.sourceEventDigest());
@@ -302,28 +298,27 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
       return Objects.requireNonNull(
           fixture
               .transaction()
-              .execute(
-                  status -> {
-                    var source =
-                        new FreshTenantIdentityAssociationRepository(fixture.dsl(), "prod")
-                            .read(fixture.tenantId())
-                            .orElseThrow();
-                    return demos.provision(
-                        new DemoTenantEntitlementRequest(
-                            UUID.randomUUID(),
-                            fixture.tenantId(),
-                            source.creationRequestId(),
-                            source.requestDigest(),
-                            prior == null ? null : prior.entitlementVersion(),
-                            prior == null ? null : prior.tenantAuthorityGeneration(),
-                            prior == null ? null : prior.tenantAuthoritySourceVersion(),
-                            true,
-                            publicJoin,
-                            true,
-                            true,
-                            new DemoTenantEntitlementRequest.Quotas(3, 1, 1024)),
-                        source);
-                  }));
+              .execute(status -> {
+                var source =
+                    new FreshTenantIdentityAssociationRepository(fixture.dsl(), "prod")
+                        .read(fixture.tenantId())
+                        .orElseThrow();
+                return demos.provision(
+                    new DemoTenantEntitlementRequest(
+                        UUID.randomUUID(),
+                        fixture.tenantId(),
+                        source.creationRequestId(),
+                        source.requestDigest(),
+                        prior == null ? null : prior.entitlementVersion(),
+                        prior == null ? null : prior.tenantAuthorityGeneration(),
+                        prior == null ? null : prior.tenantAuthoritySourceVersion(),
+                        true,
+                        publicJoin,
+                        true,
+                        true,
+                        new DemoTenantEntitlementRequest.Quotas(3, 1, 1024)),
+                    source);
+              }));
     }
 
     private UUID activatePaid() {

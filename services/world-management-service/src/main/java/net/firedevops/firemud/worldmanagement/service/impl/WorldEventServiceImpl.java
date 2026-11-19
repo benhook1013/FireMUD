@@ -63,10 +63,9 @@ public class WorldEventServiceImpl implements WorldEventService {
       RegionInstance regionInstance =
           regionInstanceRepository
               .findById(dto.regionId())
-              .orElseThrow(
-                  () ->
-                      new IllegalArgumentException(
-                          "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
+              .orElseThrow(() ->
+                  new IllegalArgumentException(
+                      "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
       if (dto.tenantId() == null
           || dto.gameInstanceId() == null
           || regionInstance.getTenantId() == null

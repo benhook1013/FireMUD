@@ -84,9 +84,8 @@ class InitialGameplayLoginContextStateTest {
           case "noncanonical" -> " " + valid;
           default -> throw new AssertionError(kind);
         };
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginContextState.decode(malformed.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginContextState.decode(malformed.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Initial LOGIN context is invalid");
   }
@@ -96,10 +95,9 @@ class InitialGameplayLoginContextStateTest {
     assertThatThrownBy(
             () -> InitialGameplayLoginContextState.decode(new byte[] {(byte) 0xc0, (byte) 0xaf}))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginContextState.decode(
-                    new byte[InitialGameplayLoginContextState.MAX_BYTES + 1]))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginContextState.decode(
+                new byte[InitialGameplayLoginContextState.MAX_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

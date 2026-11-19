@@ -74,62 +74,54 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     UUID abandonment = UUID.randomUUID();
     context
         .transaction()
-        .executeWithoutResult(
-            status ->
-                new AccountGameplayAdmissionLeaseRepository(context.dsl())
-                    .recordAborted(lease, null, cleanup));
+        .executeWithoutResult(status ->
+            new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                .recordAborted(lease, null, cleanup));
     var terminal = operation(context, lease);
     var repository = new AccountGameplayAdmissionAbortResolutionRepository(context.dsl());
     var resolution =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.recordOrReplayNeverAdmitted(
-                        lease, cleanup, transition, abandonment, "a".repeat(64), "b".repeat(64)));
+            .execute(status ->
+                repository.recordOrReplayNeverAdmitted(
+                    lease, cleanup, transition, abandonment, "a".repeat(64), "b".repeat(64)));
     var retry =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.recordOrReplayNeverAdmitted(
-                        lease, cleanup, transition, abandonment, "a".repeat(64), "b".repeat(64)));
+            .execute(status ->
+                repository.recordOrReplayNeverAdmitted(
+                    lease, cleanup, transition, abandonment, "a".repeat(64), "b".repeat(64)));
     assertThat(retry).isEqualTo(resolution);
     assertThat(operation(context, lease)).isEqualTo(terminal);
     assertThat(resolution.bindingDecisionId()).isNull();
     assertThat(resolution.orphanCleanupId()).isEqualTo(cleanup);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(status -> repository.readExact(lease, cleanup, transition)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status -> repository.readExact(lease, cleanup, transition)))
         .hasMessageContaining("Abort resolution changed");
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository.recordOrReplayNeverAdmitted(
-                                lease,
-                                cleanup,
-                                transition,
-                                UUID.randomUUID(),
-                                "a".repeat(64),
-                                "b".repeat(64))))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.recordOrReplayNeverAdmitted(
+                        lease,
+                        cleanup,
+                        transition,
+                        UUID.randomUUID(),
+                        "a".repeat(64),
+                        "b".repeat(64))))
         .hasMessageContaining("Negative abort resolution changed");
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_gameplay_admission_abort_resolutions SET closure_readback_sha256 = ? WHERE request_id = ?",
-                                    "c".repeat(64),
-                                    request(lease))))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_gameplay_admission_abort_resolutions SET closure_readback_sha256 = ? WHERE request_id = ?",
+                            "c".repeat(64),
+                            request(lease))))
         .hasMessageContaining("Account abort resolution is immutable");
     assertThat(operation(context, lease)).isEqualTo(terminal);
   }
@@ -139,37 +131,32 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var context = context();
     var lease = pending(context, 15000);
     var repository = new AccountGameplayAdmissionAbortResolutionRepository(context.dsl());
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository.recordOrReplayNeverAdmitted(
-                                lease,
-                                UUID.randomUUID(),
-                                UUID.randomUUID(),
-                                UUID.randomUUID(),
-                                "a".repeat(64),
-                                "b".repeat(64))))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.recordOrReplayNeverAdmitted(
+                        lease,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        "a".repeat(64),
+                        "b".repeat(64))))
         .hasMessageContaining("Exact retained unknown-decision Account abort required");
     var committedContext = context();
     var committed = finalized(committedContext, 15000);
-    assertThatThrownBy(
-            () ->
-                committedContext
-                    .transaction()
-                    .execute(
-                        status ->
-                            new AccountGameplayAdmissionAbortResolutionRepository(
-                                    committedContext.dsl())
-                                .recordOrReplayNeverAdmitted(
-                                    committed.evidence(),
-                                    UUID.randomUUID(),
-                                    UUID.randomUUID(),
-                                    UUID.randomUUID(),
-                                    "a".repeat(64),
-                                    "b".repeat(64))))
+    assertThatThrownBy(() ->
+            committedContext
+                .transaction()
+                .execute(status ->
+                    new AccountGameplayAdmissionAbortResolutionRepository(committedContext.dsl())
+                        .recordOrReplayNeverAdmitted(
+                            committed.evidence(),
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "a".repeat(64),
+                            "b".repeat(64))))
         .hasMessageContaining("Exact retained unknown-decision Account abort required");
   }
 
@@ -223,11 +210,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
 
     // This controlled candidate is correlation only. The real in-transaction source readers
     // must refuse this storage fixture, which has no current player membership/tenant authority.
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-                    .executeWithCurrentSources(
-                        evidence, UUID.randomUUID(), "test", expectedCandidate))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                .executeWithCurrentSources(evidence, UUID.randomUUID(), "test", expectedCandidate))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(operation(context, evidence)).isEqualTo(originalOperation);
@@ -257,15 +242,14 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     assertThat(receipt.receiptXid()).isNotEqualTo(ack.finalizationXid());
     assertThat(receipt.operation().evidence()).isEqualTo(ack.evidence());
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isOne();
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .fetch(
-                        "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
-                        request(ack.evidence()),
-                        ack.evidence().sha256(),
-                        ack.decisionId()))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .fetch(
+                    "SELECT * FROM account_gameplay_admission_confirm_committed(?, ?, ?)",
+                    request(ack.evidence()),
+                    ack.evidence().sha256(),
+                    ack.decisionId()))
         .hasMessageContaining("Experimental Account admission confirmation writes are retired");
     assertThat(
             context.dsl().fetchCount(DSL.table("account_gameplay_admission_commit_confirmations")))
@@ -297,11 +281,8 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     java.util.concurrent.Callable<Object> duplicate =
         () -> {
           if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
-          return retrySerialization(
-              () ->
-                  context
-                      .transaction()
-                      .execute(status -> repository(context).create(ack).receipt()));
+          return retrySerialization(() ->
+              context.transaction().execute(status -> repository(context).create(ack).receipt()));
         };
     try (var executor = Executors.newFixedThreadPool(2)) {
       var left = executor.submit(duplicate);
@@ -400,29 +381,26 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       var context = context();
       var evidence = pending(context, 15000);
       UUID decision = UUID.randomUUID();
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(
-                          status -> {
-                            if (subtransaction)
-                              context.dsl().execute("SAVEPOINT original_finalization");
-                            new AccountGameplayAdmissionLeaseRepository(context.dsl())
-                                .recordCommitted(evidence, decision);
-                            if (subtransaction)
-                              context.dsl().execute("RELEASE SAVEPOINT original_finalization");
-                            context
-                                .dsl()
-                                .execute(
-                                    "INSERT INTO "
-                                        + RECEIPTS
-                                        + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, pg_current_xact_id()::text, ?)",
-                                    request(evidence),
-                                    evidence.sha256(),
-                                    decision,
-                                    Long.parseLong((String) evidence.carrier().get("evaluatedAt")));
-                          }))
+      assertThatThrownBy(() ->
+              context
+                  .transaction()
+                  .executeWithoutResult(status -> {
+                    if (subtransaction) context.dsl().execute("SAVEPOINT original_finalization");
+                    new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                        .recordCommitted(evidence, decision);
+                    if (subtransaction)
+                      context.dsl().execute("RELEASE SAVEPOINT original_finalization");
+                    context
+                        .dsl()
+                        .execute(
+                            "INSERT INTO "
+                                + RECEIPTS
+                                + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, pg_current_xact_id()::text, ?)",
+                            request(evidence),
+                            evidence.sha256(),
+                            decision,
+                            Long.parseLong((String) evidence.carrier().get("evaluatedAt")));
+                  }))
           .hasMessageContaining("requires independent transaction");
       assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
     }
@@ -433,18 +411,15 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     for (boolean subtransaction : List.of(false, true)) {
       var context = context();
       var ack = finalized(context, 15000);
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(
-                          status -> {
-                            if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
-                            repository(context).create(ack);
-                            if (subtransaction)
-                              context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
-                            repository(context).readDurably(ack.evidence(), ack.decisionId());
-                          }))
+      assertThatThrownBy(() ->
+              context
+                  .transaction()
+                  .executeWithoutResult(status -> {
+                    if (subtransaction) context.dsl().execute("SAVEPOINT receipt_creation");
+                    repository(context).create(ack);
+                    if (subtransaction) context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
+                    repository(context).readDurably(ack.evidence(), ack.decisionId());
+                  }))
           .hasMessageContaining("requires independent commit");
       assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
     }
@@ -462,23 +437,22 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         java.util.Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status -> {
-                      var captured =
-                          repository(context).captureHistorical(ack.evidence(), ack.decisionId());
-                      assertThat(captured.receipt()).isEqualTo(expected);
-                      // Actual capture locks append WAL after the original frozen upper fence.
-                      // That later insert position must never replace the SQL-issued proof fence.
-                      assertThat(
-                              context
-                                  .dsl()
-                                  .fetchSingle(
-                                      "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn",
-                                      captured.walUpperFence())
-                                  .get(0, Boolean.class))
-                          .isTrue();
-                      return captured;
-                    }));
+                .execute(status -> {
+                  var captured =
+                      repository(context).captureHistorical(ack.evidence(), ack.decisionId());
+                  assertThat(captured.receipt()).isEqualTo(expected);
+                  // Actual capture locks append WAL after the original frozen upper fence.
+                  // That later insert position must never replace the SQL-issued proof fence.
+                  assertThat(
+                          context
+                              .dsl()
+                              .fetchSingle(
+                                  "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn",
+                                  captured.walUpperFence())
+                              .get(0, Boolean.class))
+                      .isTrue();
+                  return captured;
+                }));
     String exactFrozenFence = pending.walUpperFence();
     // No SQL transaction/row lock remains open. Completion itself is not accepted as proof;
     // positively observe durable WAL coverage of precisely the captured fence.
@@ -511,34 +485,30 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var storageBefore = ackStorageSnapshot(context);
     var sourcesBefore = sourceSnapshot(context);
     for (boolean changedDigest : List.of(false, true)) {
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              context
-                                  .dsl()
-                                  .fetch(
-                                      "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
-                                      request(ack.evidence()),
-                                      changedDigest ? "0".repeat(64) : ack.evidence().sha256(),
-                                      changedDigest ? ack.decisionId() : UUID.randomUUID())))
+      assertThatThrownBy(() ->
+              context
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      context
+                          .dsl()
+                          .fetch(
+                              "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                              request(ack.evidence()),
+                              changedDigest ? "0".repeat(64) : ack.evidence().sha256(),
+                              changedDigest ? ack.decisionId() : UUID.randomUUID())))
           .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
     }
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .fetch(
-                                    "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
-                                    UUID.randomUUID(),
-                                    ack.evidence().sha256(),
-                                    ack.decisionId())))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .fetch(
+                            "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                            UUID.randomUUID(),
+                            ack.evidence().sha256(),
+                            ack.decisionId())))
         .hasMessageContaining("Original Account acknowledgement operation missing");
     assertThat(
             new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
@@ -560,14 +530,13 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
           new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
               .confirm(ack);
       var storageBefore = ackStorageSnapshot(context);
-      assertThatThrownBy(
-              () ->
-                  DSL.using(stale)
-                      .fetch(
-                          "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
-                          request(ack.evidence()),
-                          ack.evidence().sha256(),
-                          ack.decisionId()))
+      assertThatThrownBy(() ->
+              DSL.using(stale)
+                  .fetch(
+                      "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                      request(ack.evidence()),
+                      ack.evidence().sha256(),
+                      ack.decisionId()))
           .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
       stale.rollback();
       assertThat(
@@ -586,13 +555,11 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
     var storageBefore = ackStorageSnapshot(context);
     var sourcesBefore = sourceSnapshot(context);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository(context).readDurably(ack.evidence(), ack.decisionId())))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(
+                    status -> repository(context).readDurably(ack.evidence(), ack.decisionId())))
         .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
     Flyway.configure()
         .dataSource(context.admin())
@@ -641,53 +608,43 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
             case "receipt_xid" -> "'1'";
             default -> "1";
           };
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              context
-                                  .dsl()
-                                  .execute(
-                                      "INSERT INTO "
-                                          + RECEIPTS
-                                          + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms, "
-                                          + field
-                                          + ") VALUES (?, ?, ?, ?, ?, "
-                                          + value
-                                          + ")",
-                                      request(ack.evidence()),
-                                      ack.evidence().sha256(),
-                                      ack.decisionId(),
-                                      ack.finalizationXid(),
-                                      ack.committedBeforeMs())))
+      assertThatThrownBy(() ->
+              context
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      context
+                          .dsl()
+                          .execute(
+                              "INSERT INTO "
+                                  + RECEIPTS
+                                  + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms, "
+                                  + field
+                                  + ") VALUES (?, ?, ?, ?, ?, "
+                                  + value
+                                  + ")",
+                              request(ack.evidence()),
+                              ack.evidence().sha256(),
+                              ack.decisionId(),
+                              ack.finalizationXid(),
+                              ack.committedBeforeMs())))
           .hasMessageContaining("binding is database derived");
     }
     for (String changed : List.of("digest", "decision", "xid", "bound")) {
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              context
-                                  .dsl()
-                                  .execute(
-                                      "INSERT INTO "
-                                          + RECEIPTS
-                                          + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, ?, ?)",
-                                      request(ack.evidence()),
-                                      changed.equals("digest")
-                                          ? "b".repeat(64)
-                                          : ack.evidence().sha256(),
-                                      changed.equals("decision")
-                                          ? UUID.randomUUID()
-                                          : ack.decisionId(),
-                                      changed.equals("xid") ? "1" : ack.finalizationXid(),
-                                      changed.equals("bound")
-                                          ? expiry(ack)
-                                          : ack.committedBeforeMs())))
+      assertThatThrownBy(() ->
+              context
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      context
+                          .dsl()
+                          .execute(
+                              "INSERT INTO "
+                                  + RECEIPTS
+                                  + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, ?, ?)",
+                              request(ack.evidence()),
+                              changed.equals("digest") ? "b".repeat(64) : ack.evidence().sha256(),
+                              changed.equals("decision") ? UUID.randomUUID() : ack.decisionId(),
+                              changed.equals("xid") ? "1" : ack.finalizationXid(),
+                              changed.equals("bound") ? expiry(ack) : ack.committedBeforeMs())))
           .hasMessageContaining("Exact original Account COMMIT acknowledgement required");
     }
     var receipt =
@@ -700,11 +657,8 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
             "UPDATE " + RECEIPTS + " SET evidence_sha256 = '" + "b".repeat(64) + "'",
             "DELETE FROM " + RECEIPTS,
             "TRUNCATE " + RECEIPTS)) {
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(status -> context.dsl().execute(mutation)))
+      assertThatThrownBy(() ->
+              context.transaction().executeWithoutResult(status -> context.dsl().execute(mutation)))
           .hasMessageContaining("receipt is immutable");
     }
     assertThat(receipt(context)).isEqualTo(before);
@@ -752,10 +706,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
             }
           };
       var attempt =
-          executor.submit(
-              () ->
-                  new AccountGameplayAdmissionOriginalCommitExecutor(waitingSource)
-                      .execute(evidence, UUID.randomUUID()));
+          executor.submit(() ->
+              new AccountGameplayAdmissionOriginalCommitExecutor(waitingSource)
+                  .execute(evidence, UUID.randomUUID()));
       assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
       // Verify an actual independent lock wait before the original expiry is allowed to pass.
       boolean waiting = false;
@@ -829,17 +782,14 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
             }
           }
         };
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(delayed)
-                    .execute(evidence, decision))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(delayed).execute(evidence, decision))
         .hasMessageContaining("post-COMMIT clock bound unavailable");
     assertThat(physicalCommits.get()).isOne();
     assertThat(operation(context, evidence).get("status")).isEqualTo("COMMITTED");
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-                    .execute(evidence, decision))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                .execute(evidence, decision))
         .hasMessageContaining("Fresh owned Account original COMMIT required");
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
@@ -854,10 +804,8 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var physicalCommits = new java.util.concurrent.atomic.AtomicInteger();
     var source = loseCommitAcknowledgementAfter(context.admin(), physicalCommits, 1);
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(source)
-                    .execute(evidence, decision))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(source).execute(evidence, decision))
         .hasMessageContaining("physical COMMIT unavailable");
 
     assertThat(physicalCommits.get()).isOne();
@@ -881,10 +829,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
 
     // The physical COMMIT succeeded, but its missing JDBC acknowledgement never yielded the
     // opaque capability. A retained retry cannot stamp or reconstruct one.
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-                    .execute(evidence, decision))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                .execute(evidence, decision))
         .hasMessageContaining("Fresh owned Account original COMMIT required");
     assertThat(operation(context, evidence)).isEqualTo(committed);
     assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
@@ -898,10 +845,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var ack = finalized(original, 15000);
     var operationBefore = operation(original, ack.evidence());
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(other.admin())
-                    .confirm(ack))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(other.admin())
+                .confirm(ack))
         .hasMessageContaining("Fresh owned Account receipt COMMIT required");
 
     assertThat(operation(original, ack.evidence())).isEqualTo(operationBefore);
@@ -1009,10 +955,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
 
     assertThat(receipt.finalizationXid()).isEqualTo(ack.finalizationXid());
     assertThat(receipt.receiptXid()).isNotEqualTo(ack.finalizationXid());
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-                    .execute(ack.evidence(), ack.decisionId()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                .execute(ack.evidence(), ack.decisionId()))
         .hasMessageContaining("Fresh owned Account original COMMIT required");
     assertThat(receiptExecutor.read(ack.evidence(), ack.decisionId())).isEqualTo(receipt);
     assertThat(receiptExecutor.confirm(ack)).isEqualTo(receipt);
@@ -1040,42 +985,36 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       if (abort) {
         context
             .transaction()
-            .executeWithoutResult(
-                status ->
-                    new AccountGameplayAdmissionLeaseRepository(context.dsl())
-                        .recordAborted(evidence, null, decision));
+            .executeWithoutResult(status ->
+                new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                    .recordAborted(evidence, null, decision));
         assertThat(operation(context, evidence).get("status")).isEqualTo("ABORTED");
       } else {
-        assertThatThrownBy(
-                () ->
-                    context
-                        .transaction()
-                        .executeWithoutResult(
-                            status -> {
-                              new AccountGameplayAdmissionLeaseRepository(context.dsl())
-                                  .recordCommitted(evidence, decision);
-                              throw new IllegalStateException("rollback original finalization");
-                            }))
+        assertThatThrownBy(() ->
+                context
+                    .transaction()
+                    .executeWithoutResult(status -> {
+                      new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                          .recordCommitted(evidence, decision);
+                      throw new IllegalStateException("rollback original finalization");
+                    }))
             .hasMessageContaining("rollback original finalization");
         assertThat(operation(context, evidence)).isEqualTo(original);
       }
-      assertThatThrownBy(
-              () ->
-                  context
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              context
-                                  .dsl()
-                                  .execute(
-                                      "INSERT INTO "
-                                          + RECEIPTS
-                                          + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, '1', ?)",
-                                      request(evidence),
-                                      evidence.sha256(),
-                                      decision,
-                                      Long.parseLong(
-                                          (String) evidence.carrier().get("evaluatedAt")))))
+      assertThatThrownBy(() ->
+              context
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      context
+                          .dsl()
+                          .execute(
+                              "INSERT INTO "
+                                  + RECEIPTS
+                                  + "(request_id, evidence_sha256, binding_decision_id, finalization_xid, committed_before_ms) VALUES (?, ?, ?, '1', ?)",
+                              request(evidence),
+                              evidence.sha256(),
+                              decision,
+                              Long.parseLong((String) evidence.carrier().get("evaluatedAt")))))
           .hasMessageContaining("Exact original Account COMMIT acknowledgement required");
       assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
     }
@@ -1094,45 +1033,39 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       assertThatThrownBy(
               () -> unsupported.executeWithoutResult(status -> insertAck(context.dsl(), ack)))
           .hasMessageContaining("Writable SERIALIZABLE");
-      assertThatThrownBy(
-              () ->
-                  unsupported.executeWithoutResult(
-                      status ->
-                          context
-                              .dsl()
-                              .fetch(
-                                  "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
-                                  request(ack.evidence()),
-                                  ack.evidence().sha256(),
-                                  ack.decisionId())))
+      assertThatThrownBy(() ->
+              unsupported.executeWithoutResult(status ->
+                  context
+                      .dsl()
+                      .fetch(
+                          "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                          request(ack.evidence()),
+                          ack.evidence().sha256(),
+                          ack.decisionId())))
           .hasMessageContaining("Writable SERIALIZABLE");
     }
     var readOnly = new TransactionTemplate(new DataSourceTransactionManager(context.admin()));
     readOnly.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     readOnly.setReadOnly(true);
-    assertThatThrownBy(
-            () ->
-                readOnly.executeWithoutResult(
-                    status ->
-                        context
-                            .dsl()
-                            .fetch(
-                                "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
-                                request(ack.evidence()),
-                                ack.evidence().sha256(),
-                                ack.decisionId())))
-        .hasMessageContaining("Writable SERIALIZABLE");
-    assertThatThrownBy(
-            () ->
+    assertThatThrownBy(() ->
+            readOnly.executeWithoutResult(status ->
                 context
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_gameplay_admission_lease_operations SET finalization_xid = '1' WHERE request_id = ?",
-                                    request(ack.evidence()))))
+                    .dsl()
+                    .fetch(
+                        "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                        request(ack.evidence()),
+                        ack.evidence().sha256(),
+                        ack.decisionId())))
+        .hasMessageContaining("Writable SERIALIZABLE");
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_gameplay_admission_lease_operations SET finalization_xid = '1' WHERE request_id = ?",
+                            request(ack.evidence()))))
         .hasMessageContaining("finalization transaction is database stamped");
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
@@ -1151,16 +1084,15 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var created =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.beginGenesis(
-                        ack.evidence(),
-                        receipt,
-                        lineageId,
-                        tokenJti,
-                        nowSeconds,
-                        nowSeconds,
-                        nowSeconds + 300L));
+            .execute(status ->
+                repository.beginGenesis(
+                    ack.evidence(),
+                    receipt,
+                    lineageId,
+                    tokenJti,
+                    nowSeconds,
+                    nowSeconds,
+                    nowSeconds + 300L));
     assertThat(created.tokenGeneration()).isEqualTo(1L);
     assertThat(created.status())
         .isEqualTo(AccountOriginalNewBoundGameplayIssuanceRepository.Status.PENDING);
@@ -1179,16 +1111,15 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var retry =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.beginGenesis(
-                        ack.evidence(),
-                        receipt,
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        nowSeconds + 1L,
-                        nowSeconds + 1L,
-                        nowSeconds + 301L));
+            .execute(status ->
+                repository.beginGenesis(
+                    ack.evidence(),
+                    receipt,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    nowSeconds + 1L,
+                    nowSeconds + 1L,
+                    nowSeconds + 301L));
     assertThat(retry.lineageId()).isEqualTo(created.lineageId());
     assertThat(retry.tokenJti()).isEqualTo(created.tokenJti());
     assertThat(retry.issuedAtEpochSecond()).isEqualTo(created.issuedAtEpochSecond());
@@ -1212,35 +1143,32 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var bound =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.bindSignedResult(
-                        retry,
-                        tokenHash,
-                        "controlled-test-kid",
-                        "1",
-                        registryRecord,
-                        handleHash,
-                        protectedEnvelope));
+            .execute(status ->
+                repository.bindSignedResult(
+                    retry,
+                    tokenHash,
+                    "controlled-test-kid",
+                    "1",
+                    registryRecord,
+                    handleHash,
+                    protectedEnvelope));
     assertThat(bound.status())
         .isEqualTo(AccountOriginalNewBoundGameplayIssuanceRepository.Status.PENDING);
     assertThat(bound.rebindHandleSha256()).isEqualTo(handleHash);
     assertThat(bound.confirmedAdmissionAtMillis()).isNull();
     assertThat(bound.handleConsumedAtMillis()).isNull();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository.bindSignedResult(
-                                bound,
-                                "c".repeat(64),
-                                "controlled-test-kid",
-                                "1",
-                                registryRecord,
-                                handleHash,
-                                protectedEnvelope)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.bindSignedResult(
+                        bound,
+                        "c".repeat(64),
+                        "controlled-test-kid",
+                        "1",
+                        registryRecord,
+                        handleHash,
+                        protectedEnvelope)))
         .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
     assertThat(repositoryRead(context, repository, ack.evidence()).tokenHash())
         .isEqualTo(tokenHash);
@@ -1265,29 +1193,24 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var activeTokenFence =
         context
             .transaction()
-            .execute(
-                status ->
-                    new AccountGameplayTokenIdentityFenceRepository(context.dsl())
-                        .registerCommittedOriginalNewIssuance(tokenIdentity));
+            .execute(status ->
+                new AccountGameplayTokenIdentityFenceRepository(context.dsl())
+                    .registerCommittedOriginalNewIssuance(tokenIdentity));
     assertThat(activeTokenFence.identity().sourceKind()).isEqualTo(SourceKind.ORIGINAL_NEW);
     assertThat(activeTokenFence.tokenIdentityFence()).isEqualTo(1L);
     var recoveredActiveTokenFence =
         context
             .transaction()
-            .execute(
-                status ->
-                    new AccountGameplayTokenIdentityFenceRepository(context.dsl())
-                        .requireActiveForUpdate(tokenIdentity));
+            .execute(status ->
+                new AccountGameplayTokenIdentityFenceRepository(context.dsl())
+                    .requireActiveForUpdate(tokenIdentity));
     assertThat(recoveredActiveTokenFence).isEqualTo(activeTokenFence);
     UUID consumeRequest = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository.consumeOneUseHandle(
-                                committed, handleHash, consumeRequest, 1L)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.consumeOneUseHandle(committed, handleHash, consumeRequest, 1L)))
         .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
 
     long databaseNow =
@@ -1302,64 +1225,53 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var confirmed =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.confirmFinalAdmission(
-                        committed, actualAdmissionAt, continuityExpiresAt, authenticatedReadback));
+            .execute(status ->
+                repository.confirmFinalAdmission(
+                    committed, actualAdmissionAt, continuityExpiresAt, authenticatedReadback));
     assertThat(confirmed.confirmedAdmissionAtMillis()).isEqualTo(actualAdmissionAt);
     assertThat(confirmed.confirmedContinuityExpiresAtMillis()).isEqualTo(continuityExpiresAt);
     assertThat(confirmed.confirmationReadbackSha256()).isEqualTo(authenticatedReadback);
     var sameConfirmationRetry =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.confirmFinalAdmission(
-                        confirmed, actualAdmissionAt, continuityExpiresAt, authenticatedReadback));
+            .execute(status ->
+                repository.confirmFinalAdmission(
+                    confirmed, actualAdmissionAt, continuityExpiresAt, authenticatedReadback));
     assertThat(sameConfirmationRetry.confirmedAdmissionAtMillis()).isEqualTo(actualAdmissionAt);
     assertThat(sameConfirmationRetry.confirmationReadbackSha256()).isEqualTo(authenticatedReadback);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository.confirmFinalAdmission(
-                                confirmed,
-                                actualAdmissionAt + 1L,
-                                continuityExpiresAt + 1L,
-                                authenticatedReadback)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.confirmFinalAdmission(
+                        confirmed,
+                        actualAdmissionAt + 1L,
+                        continuityExpiresAt + 1L,
+                        authenticatedReadback)))
         .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
 
     var consumed =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.consumeOneUseHandle(
-                        confirmed, handleHash, consumeRequest, actualAdmissionAt));
+            .execute(status ->
+                repository.consumeOneUseHandle(
+                    confirmed, handleHash, consumeRequest, actualAdmissionAt));
     assertThat(consumed.handleConsumptionRequestId()).isEqualTo(consumeRequest);
     assertThat(consumed.handleConsumedAtMillis()).isBetween(actualAdmissionAt, continuityExpiresAt);
     var sameConsumeRetry =
         context
             .transaction()
-            .execute(
-                status ->
-                    repository.consumeOneUseHandle(
-                        consumed, handleHash, consumeRequest, actualAdmissionAt));
+            .execute(status ->
+                repository.consumeOneUseHandle(
+                    consumed, handleHash, consumeRequest, actualAdmissionAt));
     assertThat(sameConsumeRetry.handleConsumedAtMillis())
         .isEqualTo(consumed.handleConsumedAtMillis());
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            repository.consumeOneUseHandle(
-                                sameConsumeRetry,
-                                handleHash,
-                                UUID.randomUUID(),
-                                actualAdmissionAt)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.consumeOneUseHandle(
+                        sameConsumeRetry, handleHash, UUID.randomUUID(), actualAdmissionAt)))
         .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
 
     java.util.Arrays.fill(registryRecord, (byte) 0);
@@ -1398,10 +1310,8 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       AccountGameplayAdmissionLeaseEvidence evidence) {
     return context
         .transaction()
-        .execute(
-            status ->
-                repository.readByLease(
-                    UUID.fromString((String) evidence.carrier().get("leaseId"))));
+        .execute(status ->
+            repository.readByLease(UUID.fromString((String) evidence.carrier().get("leaseId"))));
   }
 
   private static String sha256(byte[] value) {
@@ -1520,34 +1430,30 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       Context context, long lifetime, long issuanceFence) {
     return context
         .transaction()
-        .execute(
-            status -> {
-              var authorities = new AccountAuthorityGenerationRepository(context.dsl());
-              var sources =
-                  new AccountAuthoritySourceEvidenceRepository(
-                      context.dsl(),
-                      authorities,
-                      new AccountAuthorityOutboxRepository(context.dsl()));
-              sources.initializeIssuerIfAbsent("firemud-account-service");
-              var account = new Account();
-              account.setUsername("protected-" + UUID.randomUUID());
-              account.setEmail(UUID.randomUUID() + "@example.test");
-              account.setPasswordHash("shape-fixture-only");
-              account.setLoginAuthModes("PASSWORD");
-              UUID accountId =
-                  new AccountRepository(context.dsl(), sources).save(account).getAccountUuid();
-              var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
-              var allocation = repository.allocate(accountId, UUID.randomUUID(), UUID.randomUUID());
-              long databaseNow =
-                  context
-                      .dsl()
-                      .fetchSingle(
-                          "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
-                      .get(0, Long.class);
-              var evidence = evidence(allocation, lifetime, databaseNow, issuanceFence);
-              repository.beginPending(evidence);
-              return evidence;
-            });
+        .execute(status -> {
+          var authorities = new AccountAuthorityGenerationRepository(context.dsl());
+          var sources =
+              new AccountAuthoritySourceEvidenceRepository(
+                  context.dsl(), authorities, new AccountAuthorityOutboxRepository(context.dsl()));
+          sources.initializeIssuerIfAbsent("firemud-account-service");
+          var account = new Account();
+          account.setUsername("protected-" + UUID.randomUUID());
+          account.setEmail(UUID.randomUUID() + "@example.test");
+          account.setPasswordHash("shape-fixture-only");
+          account.setLoginAuthModes("PASSWORD");
+          UUID accountId =
+              new AccountRepository(context.dsl(), sources).save(account).getAccountUuid();
+          var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
+          var allocation = repository.allocate(accountId, UUID.randomUUID(), UUID.randomUUID());
+          long databaseNow =
+              context
+                  .dsl()
+                  .fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+                  .get(0, Long.class);
+          var evidence = evidence(allocation, lifetime, databaseNow, issuanceFence);
+          repository.beginPending(evidence);
+          return evidence;
+        });
   }
 
   private static AccountGameplayAdmissionLeaseEvidence evidence(
@@ -1615,13 +1521,12 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                 "membership/" + account + "/" + TENANT,
                 "tenant/" + TENANT)
             .stream()
-            .map(
-                suffix ->
-                    Map.of(
-                        "outboxStreamKey",
-                        "account:auth-authority:v1:" + suffix,
-                        "outboxSequence",
-                        "1"))
+            .map(suffix ->
+                Map.of(
+                    "outboxStreamKey",
+                    "account:auth-authority:v1:" + suffix,
+                    "outboxSequence",
+                    "1"))
             .toList());
     Map<String, Object> token = new LinkedHashMap<>();
     token.put("accountId", account);

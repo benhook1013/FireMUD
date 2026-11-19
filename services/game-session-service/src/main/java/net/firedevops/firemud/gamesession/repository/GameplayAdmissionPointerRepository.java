@@ -165,18 +165,16 @@ public class GameplayAdmissionPointerRepository {
     }
     GameplayAdmissionPointer current =
         findByIdForUpdate(entity.getId())
-            .orElseThrow(
-                () ->
-                    new AdmissionPointerVersionMismatchException(
-                        "Admission pointer no longer exists: id=" + entity.getId()));
+            .orElseThrow(() ->
+                new AdmissionPointerVersionMismatchException(
+                    "Admission pointer no longer exists: id=" + entity.getId()));
     requireExpectedRevisions(current, expectedPointerVersion, expectedCatalogRevision);
     lockRuntimeTargets(current, entity);
     current =
         findByIdForUpdate(entity.getId())
-            .orElseThrow(
-                () ->
-                    new AdmissionPointerVersionMismatchException(
-                        "Admission pointer no longer exists: id=" + entity.getId()));
+            .orElseThrow(() ->
+                new AdmissionPointerVersionMismatchException(
+                    "Admission pointer no longer exists: id=" + entity.getId()));
     requireExpectedRevisions(current, expectedPointerVersion, expectedCatalogRevision);
     if (current.getPointerVersion() == null
         || current.getCatalogRevision() == null

@@ -74,12 +74,11 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         if (!acceptObservation(current.orElse(null), runtimeState)) {
           return current
               .map(value -> new PinConvergenceLookup(Optional.of(toSummary(value, now)), "", ""))
-              .orElseGet(
-                  () ->
-                      new PinConvergenceLookup(
-                          Optional.empty(),
-                          "INVALID_RUNTIME_PIN_TUPLE",
-                          "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
+              .orElseGet(() ->
+                  new PinConvergenceLookup(
+                      Optional.empty(),
+                      "INVALID_RUNTIME_PIN_TUPLE",
+                      "GetAutomationPinConvergence failed: invalid_runtime_pin_tuple"));
         }
         if (!hasPositiveScriptPinEpoch(runtimeState)) {
           if (hasLegacyPositivePinProjection(current.orElse(null))) {

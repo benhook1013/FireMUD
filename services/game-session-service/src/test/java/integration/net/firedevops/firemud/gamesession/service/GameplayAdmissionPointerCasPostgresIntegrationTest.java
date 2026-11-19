@@ -70,17 +70,12 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
     GameplayAdmissionPointerSnapshot initial =
         fixture
             .transactionTemplate()
-            .execute(
-                status ->
-                    fixture
-                        .service()
-                        .upsertPointer(
-                            mutation(
-                                "Initial World",
-                                INITIAL_GAME_INSTANCE_ID,
-                                0L,
-                                0L,
-                                "initial-pointer")));
+            .execute(status ->
+                fixture
+                    .service()
+                    .upsertPointer(
+                        mutation(
+                            "Initial World", INITIAL_GAME_INSTANCE_ID, 0L, 0L, "initial-pointer")));
     assertThat(initial).isNotNull();
     assertThat(initial.pointerVersion()).isEqualTo(1L);
     assertThat(initial.catalogRevision()).isEqualTo(1L);
@@ -100,81 +95,76 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
               return thread;
             });
     Future<MutationAttempt> first =
-        executor.submit(
-            () -> {
-              try {
-                GameplayAdmissionPointerSnapshot snapshot =
-                    fixture
-                        .transactionTemplate()
-                        .execute(
-                            status -> {
-                              fixture.dsl().execute("SET LOCAL statement_timeout = '30000ms'");
-                              var backendPidRecord =
-                                  Objects.requireNonNull(
-                                      fixture.dsl().fetchOne("select pg_backend_pid()"),
-                                      "Winning backend PID query returned no row");
-                              winningBackendPid.set(
-                                  Objects.requireNonNull(
-                                      backendPidRecord.get(0, Integer.class),
-                                      "Winning backend PID query returned no value"));
-                              GameplayAdmissionPointerSnapshot updated =
-                                  fixture
-                                      .service()
-                                      .upsertPointer(
-                                          mutation(
-                                              "Concurrent World A",
-                                              INITIAL_GAME_INSTANCE_ID,
-                                              1L,
-                                              1L,
-                                              "writer-a"));
-                              winningTransactionReady.countDown();
-                              awaitLatch(
-                                  releaseWinningTransaction,
-                                  "release of winning pointer transaction");
-                              return updated;
-                            });
-                return new MutationAttempt(snapshot, null);
-              } catch (Throwable failure) {
-                return new MutationAttempt(null, failure);
-              }
-            });
+        executor.submit(() -> {
+          try {
+            GameplayAdmissionPointerSnapshot snapshot =
+                fixture
+                    .transactionTemplate()
+                    .execute(status -> {
+                      fixture.dsl().execute("SET LOCAL statement_timeout = '30000ms'");
+                      var backendPidRecord =
+                          Objects.requireNonNull(
+                              fixture.dsl().fetchOne("select pg_backend_pid()"),
+                              "Winning backend PID query returned no row");
+                      winningBackendPid.set(
+                          Objects.requireNonNull(
+                              backendPidRecord.get(0, Integer.class),
+                              "Winning backend PID query returned no value"));
+                      GameplayAdmissionPointerSnapshot updated =
+                          fixture
+                              .service()
+                              .upsertPointer(
+                                  mutation(
+                                      "Concurrent World A",
+                                      INITIAL_GAME_INSTANCE_ID,
+                                      1L,
+                                      1L,
+                                      "writer-a"));
+                      winningTransactionReady.countDown();
+                      awaitLatch(
+                          releaseWinningTransaction, "release of winning pointer transaction");
+                      return updated;
+                    });
+            return new MutationAttempt(snapshot, null);
+          } catch (Throwable failure) {
+            return new MutationAttempt(null, failure);
+          }
+        });
     Future<MutationAttempt> second =
-        executor.submit(
-            () -> {
-              try {
-                GameplayAdmissionPointerSnapshot snapshot =
-                    fixture
-                        .transactionTemplate()
-                        .execute(
-                            status -> {
-                              fixture.dsl().execute("SET LOCAL statement_timeout = '30000ms'");
-                              var backendPidRecord =
-                                  Objects.requireNonNull(
-                                      fixture.dsl().fetchOne("select pg_backend_pid()"),
-                                      "Competing backend PID query returned no row");
-                              competingBackendPid.set(
-                                  Objects.requireNonNull(
-                                      backendPidRecord.get(0, Integer.class),
-                                      "Competing backend PID query returned no value"));
-                              competingTransactionReady.countDown();
-                              awaitLatch(
-                                  winningTransactionReady,
-                                  "winning pointer transaction to acquire and hold its row lock");
-                              return fixture
-                                  .service()
-                                  .upsertPointer(
-                                      mutation(
-                                          "Concurrent World B",
-                                          INITIAL_GAME_INSTANCE_ID,
-                                          1L,
-                                          1L,
-                                          "writer-b"));
-                            });
-                return new MutationAttempt(snapshot, null);
-              } catch (Throwable failure) {
-                return new MutationAttempt(null, failure);
-              }
-            });
+        executor.submit(() -> {
+          try {
+            GameplayAdmissionPointerSnapshot snapshot =
+                fixture
+                    .transactionTemplate()
+                    .execute(status -> {
+                      fixture.dsl().execute("SET LOCAL statement_timeout = '30000ms'");
+                      var backendPidRecord =
+                          Objects.requireNonNull(
+                              fixture.dsl().fetchOne("select pg_backend_pid()"),
+                              "Competing backend PID query returned no row");
+                      competingBackendPid.set(
+                          Objects.requireNonNull(
+                              backendPidRecord.get(0, Integer.class),
+                              "Competing backend PID query returned no value"));
+                      competingTransactionReady.countDown();
+                      awaitLatch(
+                          winningTransactionReady,
+                          "winning pointer transaction to acquire and hold its row lock");
+                      return fixture
+                          .service()
+                          .upsertPointer(
+                              mutation(
+                                  "Concurrent World B",
+                                  INITIAL_GAME_INSTANCE_ID,
+                                  1L,
+                                  1L,
+                                  "writer-b"));
+                    });
+            return new MutationAttempt(snapshot, null);
+          } catch (Throwable failure) {
+            return new MutationAttempt(null, failure);
+          }
+        });
 
     try {
       assertThat(winningTransactionReady.await(10, TimeUnit.SECONDS)).isTrue();
@@ -220,17 +210,12 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
     GameplayAdmissionPointerSnapshot initial =
         fixture
             .transactionTemplate()
-            .execute(
-                status ->
-                    fixture
-                        .service()
-                        .upsertPointer(
-                            mutation(
-                                "Initial World",
-                                INITIAL_GAME_INSTANCE_ID,
-                                0L,
-                                0L,
-                                "initial-pointer")));
+            .execute(status ->
+                fixture
+                    .service()
+                    .upsertPointer(
+                        mutation(
+                            "Initial World", INITIAL_GAME_INSTANCE_ID, 0L, 0L, "initial-pointer")));
     assertThat(initial).isNotNull();
     List<GameplayAdmissionPointerAuditEntry> initialAudit =
         fixture.service().listPointerAudit(TENANT_ID, WORLD_SLUG, REALM_SLUG);
@@ -249,21 +234,19 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
                 + "gameplay_admission_pointer_event FOR EACH ROW EXECUTE FUNCTION "
                 + "reject_gameplay_admission_audit()");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transactionTemplate()
-                    .execute(
-                        status ->
-                            fixture
-                                .service()
-                                .upsertPointer(
-                                    mutation(
-                                        "Initial World",
-                                        INITIAL_GAME_INSTANCE_ID + 1L,
-                                        initial.pointerVersion(),
-                                        initial.catalogRevision(),
-                                        "failed-audit"))))
+    assertThatThrownBy(() ->
+            fixture
+                .transactionTemplate()
+                .execute(status ->
+                    fixture
+                        .service()
+                        .upsertPointer(
+                            mutation(
+                                "Initial World",
+                                INITIAL_GAME_INSTANCE_ID + 1L,
+                                initial.pointerVersion(),
+                                initial.catalogRevision(),
+                                "failed-audit"))))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("forced admission audit insert failure");
 

@@ -112,34 +112,30 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
       assertRetiredInsertAtCreationIsRefused(
           fixture, pending.operationId(), pendingRow, retainedBefore, physicalBefore);
 
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            // Only manufacture the malformed preimage as the disposable PG
-                            // superuser. Restore normal triggers before the real INSERT. The
-                            // expected refusal rolls back this deletion and lineage corruption.
-                            transaction.execute("SET LOCAL session_replication_role = replica");
-                            assertThat(
-                                    transaction.execute(
-                                        "DELETE FROM "
-                                            + RETIREMENT
-                                            + " WHERE retirement_operation_id = ?",
-                                        pending.operationId()))
-                                .isOne();
-                            corruptMutationLineage(transaction, pending, wrongBootstrapId);
-                            transaction.execute("SET LOCAL session_replication_role = origin");
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transaction(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    // Only manufacture the malformed preimage as the disposable PG
+                    // superuser. Restore normal triggers before the real INSERT. The
+                    // expected refusal rolls back this deletion and lineage corruption.
+                    transaction.execute("SET LOCAL session_replication_role = replica");
+                    assertThat(
                             transaction.execute(
-                                "INSERT INTO "
-                                    + RETIREMENT
-                                    + " SELECT (jsonb_populate_record(NULL::"
-                                    + RETIREMENT
-                                    + ", ?::jsonb)).*",
-                                pendingRow);
-                          }))
+                                "DELETE FROM " + RETIREMENT + " WHERE retirement_operation_id = ?",
+                                pending.operationId()))
+                        .isOne();
+                    corruptMutationLineage(transaction, pending, wrongBootstrapId);
+                    transaction.execute("SET LOCAL session_replication_role = origin");
+                    transaction.execute(
+                        "INSERT INTO "
+                            + RETIREMENT
+                            + " SELECT (jsonb_populate_record(NULL::"
+                            + RETIREMENT
+                            + ", ?::jsonb)).*",
+                        pendingRow);
+                  }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .rootCause()
           .isInstanceOfSatisfying(
@@ -156,35 +152,31 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
       byte[] retiredPhysical = physicalFieldSet(fixture.issuerPartitionKey());
       assertThat(retiredPhysical).isNotEqualTo(physicalBefore);
       Map<String, List<String>> beforeCommitRefusal = retainedRows(fixture.dsl(), true);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(
-                                transaction);
-                            CanonicalGameplayIssuerPartitionMutationRepository
-                                .completeInTransaction(
-                                    transaction, pending.physicalMutation(), retiredPhysical);
-                            // All committed proof bytes and revisions are genuine. Corrupt only
-                            // bootstrap lineage, then restore all guards for the real UPDATE.
-                            transaction.execute("SET LOCAL session_replication_role = replica");
-                            corruptMutationLineage(transaction, pending, wrongBootstrapId);
-                            transaction.execute("SET LOCAL session_replication_role = origin");
-                            transaction.execute(
-                                "UPDATE "
-                                    + RETIREMENT
-                                    + " SET status = 'RETIRED',"
-                                    + " exact_absence_readback_field_set_bytes = ?,"
-                                    + " exact_absence_readback_field_set_digest = ?,"
-                                    + " completed_at = CURRENT_TIMESTAMP"
-                                    + " WHERE retirement_operation_id = ?",
-                                retiredPhysical,
-                                CanonicalGameplayIssuerMemberV2Codec.sha256(retiredPhysical),
-                                pending.operationId());
-                          }))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transaction(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+                    CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                        transaction, pending.physicalMutation(), retiredPhysical);
+                    // All committed proof bytes and revisions are genuine. Corrupt only
+                    // bootstrap lineage, then restore all guards for the real UPDATE.
+                    transaction.execute("SET LOCAL session_replication_role = replica");
+                    corruptMutationLineage(transaction, pending, wrongBootstrapId);
+                    transaction.execute("SET LOCAL session_replication_role = origin");
+                    transaction.execute(
+                        "UPDATE "
+                            + RETIREMENT
+                            + " SET status = 'RETIRED',"
+                            + " exact_absence_readback_field_set_bytes = ?,"
+                            + " exact_absence_readback_field_set_digest = ?,"
+                            + " completed_at = CURRENT_TIMESTAMP"
+                            + " WHERE retirement_operation_id = ?",
+                        retiredPhysical,
+                        CanonicalGameplayIssuerMemberV2Codec.sha256(retiredPhysical),
+                        pending.operationId());
+                  }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .rootCause()
           .isInstanceOfSatisfying(
@@ -261,32 +253,28 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
                 pendingRow)
             .get(0, String.class);
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .transaction(
-                        configuration -> {
-                          DSLContext transaction = DSL.using(configuration);
-                          // Replace only the existing pending preimage under disabled triggers;
-                          // restore origin before testing the actual INSERT guard.
-                          transaction.execute("SET LOCAL session_replication_role = replica");
-                          assertThat(
-                                  transaction.execute(
-                                      "DELETE FROM "
-                                          + RETIREMENT
-                                          + " WHERE retirement_operation_id = ?",
-                                      retirementOperationId))
-                              .isOne();
-                          transaction.execute("SET LOCAL session_replication_role = origin");
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .transaction(configuration -> {
+                  DSLContext transaction = DSL.using(configuration);
+                  // Replace only the existing pending preimage under disabled triggers;
+                  // restore origin before testing the actual INSERT guard.
+                  transaction.execute("SET LOCAL session_replication_role = replica");
+                  assertThat(
                           transaction.execute(
-                              "INSERT INTO "
-                                  + RETIREMENT
-                                  + " SELECT (jsonb_populate_record(NULL::"
-                                  + RETIREMENT
-                                  + ", ?::jsonb)).*",
-                              forgedRetiredRow);
-                        }))
+                              "DELETE FROM " + RETIREMENT + " WHERE retirement_operation_id = ?",
+                              retirementOperationId))
+                      .isOne();
+                  transaction.execute("SET LOCAL session_replication_role = origin");
+                  transaction.execute(
+                      "INSERT INTO "
+                          + RETIREMENT
+                          + " SELECT (jsonb_populate_record(NULL::"
+                          + RETIREMENT
+                          + ", ?::jsonb)).*",
+                      forgedRetiredRow);
+                }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .rootCause()
         .isInstanceOfSatisfying(
@@ -419,22 +407,21 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
     UUID cleanupId = UUID.randomUUID();
     UUID resolutionId = UUID.randomUUID();
     when(account.abortNeverAdmitted(anyString(), any(), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              var source = fixture.abandonmentSource();
-              // The actual closure and terminal SQL write run. A controlled incarnation change
-              // stops automatic issuer cleanup so this test can exercise its SQL boundaries.
-              fixture.moveIssuerIncarnation();
-              return new AbortEvidence(
-                  lease,
-                  fixture.transitionId(),
-                  source.abandonmentId(),
-                  CanonicalGameplayIssuerMemberV2Codec.sha256(source.candidate().canonicalBytes())
-                      .substring(7),
-                  source.closureDigest().substring(7),
-                  cleanupId,
-                  resolutionId);
-            });
+        .thenAnswer(invocation -> {
+          var source = fixture.abandonmentSource();
+          // The actual closure and terminal SQL write run. A controlled incarnation change
+          // stops automatic issuer cleanup so this test can exercise its SQL boundaries.
+          fixture.moveIssuerIncarnation();
+          return new AbortEvidence(
+              lease,
+              fixture.transitionId(),
+              source.abandonmentId(),
+              CanonicalGameplayIssuerMemberV2Codec.sha256(source.candidate().canonicalBytes())
+                  .substring(7),
+              source.closureDigest().substring(7),
+              cleanupId,
+              resolutionId);
+        });
     assertThatThrownBy(
             () -> fixture.neverAdmittedOwner(account).abort(fixture.transitionId(), "controlled"))
         .isInstanceOf(IllegalStateException.class);

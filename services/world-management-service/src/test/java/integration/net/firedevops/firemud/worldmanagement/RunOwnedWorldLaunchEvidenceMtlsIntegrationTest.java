@@ -411,15 +411,14 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       gameSessionChannel.shutdownNow();
       assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       gameSessionChannel = channelWithoutClientIdentity("localhost", worldServer.getPort());
-      assertThatThrownBy(
-              () ->
-                  authenticatedGameSessionStub()
-                      .activatePreparedWorldInstance(
-                          ActivatePreparedWorldInstanceRequest.newBuilder()
-                              .setTenantId("42")
-                              .setGameInstanceId("101")
-                              .setExpectedLifecycleEpoch(1L)
-                              .build()))
+      assertThatThrownBy(() ->
+              authenticatedGameSessionStub()
+                  .activatePreparedWorldInstance(
+                      ActivatePreparedWorldInstanceRequest.newBuilder()
+                          .setTenantId("42")
+                          .setGameInstanceId("101")
+                          .setExpectedLifecycleEpoch(1L)
+                          .build()))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(worldSaves).hasValue(writesAfterActivation);
       assertThat(descriptorReads).hasValue(4);
@@ -460,15 +459,14 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       gameSessionChannel =
           channel("localhost", worldServer.getPort(), pki.wrongCaGameSessionClient());
-      assertThatThrownBy(
-              () ->
-                  authenticatedGameSessionStub()
-                      .activatePreparedWorldInstance(
-                          ActivatePreparedWorldInstanceRequest.newBuilder()
-                              .setTenantId("42")
-                              .setGameInstanceId("101")
-                              .setExpectedLifecycleEpoch(1L)
-                              .build()))
+      assertThatThrownBy(() ->
+              authenticatedGameSessionStub()
+                  .activatePreparedWorldInstance(
+                      ActivatePreparedWorldInstanceRequest.newBuilder()
+                          .setTenantId("42")
+                          .setGameInstanceId("101")
+                          .setExpectedLifecycleEpoch(1L)
+                          .build()))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(worldSaves).hasValue(writesAfterActivation);
       assertThat(descriptorReads).hasValue(4);
@@ -751,9 +749,8 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
 
     gameSessionChannel = channel("localhost", gameDesignServer.getPort(), pki.worldManagement());
     var missingJwtStub = GameDesignServiceGrpc.newBlockingStub(gameSessionChannel);
-    assertThatThrownBy(
-            () ->
-                missingJwtStub.getLaunchDescriptor(GetLaunchDescriptorRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            missingJwtStub.getLaunchDescriptor(GetLaunchDescriptorRequest.getDefaultInstance()))
         .isInstanceOfSatisfying(
             StatusRuntimeException.class,
             failure ->
@@ -937,47 +934,43 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       AtomicReference<WorldInstance> storedWorld, AtomicInteger worldSaves) {
     WorldInstanceRepository repository = mock(WorldInstanceRepository.class);
     when(repository.findByTenantIdAndGameInstanceId(anyLong(), anyLong()))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance instance = storedWorld.get();
-              return instance != null
-                      && instance.getTenantId().equals(invocation.getArgument(0))
-                      && instance.getGameInstanceId().equals(invocation.getArgument(1))
-                  ? java.util.Optional.of(instance)
-                  : java.util.Optional.empty();
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance instance = storedWorld.get();
+          return instance != null
+                  && instance.getTenantId().equals(invocation.getArgument(0))
+                  && instance.getGameInstanceId().equals(invocation.getArgument(1))
+              ? java.util.Optional.of(instance)
+              : java.util.Optional.empty();
+        });
     when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance instance = storedWorld.get();
-              return instance != null
-                      && instance.getTenantId().equals(invocation.getArgument(0))
-                      && instance.getGameInstanceId().equals(invocation.getArgument(1))
-                  ? java.util.Optional.of(instance)
-                  : java.util.Optional.empty();
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance instance = storedWorld.get();
+          return instance != null
+                  && instance.getTenantId().equals(invocation.getArgument(0))
+                  && instance.getGameInstanceId().equals(invocation.getArgument(1))
+              ? java.util.Optional.of(instance)
+              : java.util.Optional.empty();
+        });
     when(repository.findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
             anyLong(), any(String.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance instance = storedWorld.get();
-              return instance != null
-                      && instance.getTenantId().equals(invocation.getArgument(0))
-                      && instance.getControlPlaneRequestId().equals(invocation.getArgument(1))
-                  ? java.util.Optional.of(instance)
-                  : java.util.Optional.empty();
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance instance = storedWorld.get();
+          return instance != null
+                  && instance.getTenantId().equals(invocation.getArgument(0))
+                  && instance.getControlPlaneRequestId().equals(invocation.getArgument(1))
+              ? java.util.Optional.of(instance)
+              : java.util.Optional.empty();
+        });
     when(repository.save(any(WorldInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance instance = invocation.getArgument(0);
-              if (instance.getId() == null) {
-                instance.setId(101L);
-              }
-              worldSaves.incrementAndGet();
-              storedWorld.set(instance);
-              return instance;
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance instance = invocation.getArgument(0);
+          if (instance.getId() == null) {
+            instance.setId(101L);
+          }
+          worldSaves.incrementAndGet();
+          storedWorld.set(instance);
+          return instance;
+        });
     return repository;
   }
 
@@ -1006,11 +999,10 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     EntityManagementClient entityManagementClient = mock(EntityManagementClient.class);
     when(entityManagementClient.cleanupRuntimeInstance(anyLong(), anyLong(), anyString()))
-        .thenAnswer(
-            invocation -> {
-              entityCleanupCalls.incrementAndGet();
-              return CleanupRuntimeInstanceResponse.newBuilder().build();
-            });
+        .thenAnswer(invocation -> {
+          entityCleanupCalls.incrementAndGet();
+          return CleanupRuntimeInstanceResponse.newBuilder().build();
+        });
     WorldProperties properties = new WorldProperties();
     properties.setLocalShardId(7);
     WorldLifecycleCommandServiceImpl commandService =
@@ -1340,8 +1332,8 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private static String capabilityJson(
       RunOwnedInitialAdmissionFixtureWireCodec.Capability capability) {
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"%s","worldDisplayName":"%s","realmSlug":"%s","realmDisplayName":"%s","visible":%s,"publicProductionRealm":%s,"requiresCharacterSelection":%s,"stateScope":"%s","characterCreationPolicy":"%s","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
-        """
+    {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"%s","worldDisplayName":"%s","realmSlug":"%s","realmDisplayName":"%s","visible":%s,"publicProductionRealm":%s,"requiresCharacterSelection":%s,"stateScope":"%s","characterCreationPolicy":"%s","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
+    """
         .formatted(
             capability.schema(),
             capability.runId(),
@@ -1409,8 +1401,8 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       TestPki pki)
       throws Exception {
     return """
-        {"schema":"firemud.run-owned-authored-world-source-receipt.v1","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"game-design-service","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":1,"targetNamespace":"dev","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"firemud.run-owned-v1-launch-read-evidence.v1","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"},"creationEvidence":{"schemaVersion":%d,"targetNamespace":"%s","creationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"fixturePolicySeal":{"schema":"%s","ownerService":"%s","operationId":"%s","requestDigest":"%s","evidenceDigest":"%s"}}\
-        """
+    {"schema":"firemud.run-owned-authored-world-source-receipt.v1","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"game-design-service","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":1,"targetNamespace":"dev","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"firemud.run-owned-v1-launch-read-evidence.v1","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"},"creationEvidence":{"schemaVersion":%d,"targetNamespace":"%s","creationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"fixturePolicySeal":{"schema":"%s","ownerService":"%s","operationId":"%s","requestDigest":"%s","evidenceDigest":"%s"}}\
+    """
         .formatted(
             RUN_ID,
             PROJECT,

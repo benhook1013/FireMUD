@@ -157,21 +157,20 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
               original.inputDigest());
       var appliedEpochs =
           draft.affectedUnits().stream()
-              .map(
-                  unit ->
-                      Map.of(
-                          "aggregateType",
-                          unit.aggregateType(),
-                          "aggregateId",
-                          unit.aggregateId(),
-                          "scopeType",
-                          unit.scopeType(),
-                          "scopeId",
-                          unit.scopeId(),
-                          "expectedEpoch",
-                          unit.expectedEpoch(),
-                          "resultingEpoch",
-                          new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+              .map(unit ->
+                  Map.of(
+                      "aggregateType",
+                      unit.aggregateType(),
+                      "aggregateId",
+                      unit.aggregateId(),
+                      "scopeType",
+                      unit.scopeType(),
+                      "scopeId",
+                      unit.scopeId(),
+                      "expectedEpoch",
+                      unit.expectedEpoch(),
+                      "resultingEpoch",
+                      new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
               .toList();
       String vector =
           new String(
@@ -223,30 +222,28 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
               new AccountPublicationAuthorizationBinding.PreallocationInput(
                   original.actorAccountId(), selected),
               java.util.Arrays.stream(SourceKind.values())
-                  .flatMap(
-                      kind -> {
-                        if (kind == SourceKind.RECENT_REAUTH_POLICY) {
-                          return java.util.stream.Stream.of(
-                              recentReauthenticationPolicyEvidence("PLATFORM", 300L, 30L),
-                              recentReauthenticationPolicyEvidence("DEPLOYMENT", 240L, 30L));
-                        }
-                        return java.util.stream.Stream.of(
-                            new SourceEvidence(
-                                kind,
-                                switch (kind) {
-                                  case ACCOUNT, GLOBAL_ROLES ->
-                                      original.actorAccountId().toString();
-                                  case TENANT -> source.canonicalTenantId().toString();
-                                  case MEMBERSHIP ->
-                                      original.actorAccountId() + "/" + source.canonicalTenantId();
-                                  default -> "TEST_ONLY-" + kind;
-                                },
-                                "1",
-                                "1",
-                                null,
-                                null,
-                                ("TEST_ONLY-" + kind).getBytes(StandardCharsets.UTF_8)));
-                      })
+                  .flatMap(kind -> {
+                    if (kind == SourceKind.RECENT_REAUTH_POLICY) {
+                      return java.util.stream.Stream.of(
+                          recentReauthenticationPolicyEvidence("PLATFORM", 300L, 30L),
+                          recentReauthenticationPolicyEvidence("DEPLOYMENT", 240L, 30L));
+                    }
+                    return java.util.stream.Stream.of(
+                        new SourceEvidence(
+                            kind,
+                            switch (kind) {
+                              case ACCOUNT, GLOBAL_ROLES -> original.actorAccountId().toString();
+                              case TENANT -> source.canonicalTenantId().toString();
+                              case MEMBERSHIP ->
+                                  original.actorAccountId() + "/" + source.canonicalTenantId();
+                              default -> "TEST_ONLY-" + kind;
+                            },
+                            "1",
+                            "1",
+                            null,
+                            null,
+                            ("TEST_ONLY-" + kind).getBytes(StandardCharsets.UTF_8)));
+                  })
                   .toList());
       String workflow =
           PublicationDigestRequestBinding.full(
@@ -319,22 +316,20 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
       var capture = new RealmPolicySnapshot(draft, "1", policySources);
       var participants =
           AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-              .map(
-                  owner ->
-                      new GameDesignPublicationTerminalEvidence.Participant(
-                          owner,
-                          Long.toString(versionRowId),
-                          null,
-                          draft.commitId().toString(),
-                          "WORLD_MANAGEMENT".equals(owner)
-                              ? world.request().contentDigest()
-                              : "c".repeat(64),
-                          AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                              owner,
-                              AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                          "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
-                          null,
-                          null))
+              .map(owner ->
+                  new GameDesignPublicationTerminalEvidence.Participant(
+                      owner,
+                      Long.toString(versionRowId),
+                      null,
+                      draft.commitId().toString(),
+                      "WORLD_MANAGEMENT".equals(owner)
+                          ? world.request().contentDigest()
+                          : "c".repeat(64),
+                      AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                          owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                      "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
+                      null,
+                      null))
               .toList();
       var release =
           new GameDesignPublicationTerminalEvidence.ReleaseContent(
@@ -360,27 +355,25 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
               publicationVersionStateEpoch);
       var policies =
           policySources.stream()
-              .map(
-                  policySource -> {
-                    String policyIdentitySuffix =
-                        policySource.policy().realmSlug().equals(request.realmSlug())
-                            ? ""
-                            : ":" + policySource.policy().realmSlug();
-                    UUID policyId =
-                        id("policy-identity:" + request.requestId() + policyIdentitySuffix);
-                    return new RealmPolicyPublishedEvidence.Policy(
+              .map(policySource -> {
+                String policyIdentitySuffix =
+                    policySource.policy().realmSlug().equals(request.realmSlug())
+                        ? ""
+                        : ":" + policySource.policy().realmSlug();
+                UUID policyId = id("policy-identity:" + request.requestId() + policyIdentitySuffix);
+                return new RealmPolicyPublishedEvidence.Policy(
+                    policyId,
+                    policySource,
+                    RealmPolicyPublishedEvidence.policyDigest(
                         policyId,
-                        policySource,
-                        RealmPolicyPublishedEvidence.policyDigest(
-                            policyId,
-                            target,
-                            1,
-                            bundleRef,
-                            release.contentDigest(),
-                            workflow,
-                            release.manifestHash(),
-                            policySource));
-                  })
+                        target,
+                        1,
+                        bundleRef,
+                        release.contentDigest(),
+                        workflow,
+                        release.manifestHash(),
+                        policySource));
+              })
               .toList();
       var frame = new ByteArrayOutputStream();
       DraftAuthorizationFenceBinding.frame(frame, "game-design-realm-policy-source-capture/v1");
@@ -460,19 +453,18 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
     var release = terminal.releaseContent();
     var participants =
         release.participantDigests().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        publishedSet.sourceCommitId().toString(),
-                        participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant.participantKey()),
-                        participant.abilitySchemaDigest() != null,
-                        participant.abilitySchemaDigest()))
+            .map(participant ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    participant.participantKey(),
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    publishedSet.sourceCommitId().toString(),
+                    participant.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        participant.participantKey()),
+                    participant.abilitySchemaDigest() != null,
+                    participant.abilitySchemaDigest()))
             .toList();
     var evidence =
         AuthoredWorldReleaseAttestationEvidence.create(
@@ -686,19 +678,18 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
             .setCanonicalVersionId(publishedSet.target().canonicalVersionId().toString());
     release
         .participantDigests()
-        .forEach(
-            participant -> {
-              var item =
-                  net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
-                      .setParticipantKey(participant.participantKey())
-                      .setScopeValue(participant.scopeValue())
-                      .setAppliedCommitId(participant.appliedCommitId())
-                      .setContentDigest(participant.contentDigest())
-                      .setDigestSchemaVersion(participant.digestSchemaVersion());
-              if (participant.abilitySchemaDigest() != null)
-                item.setAbilitySchemaDigest(participant.abilitySchemaDigest());
-              proto.addParticipantDigests(item);
-            });
+        .forEach(participant -> {
+          var item =
+              net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
+                  .setParticipantKey(participant.participantKey())
+                  .setScopeValue(participant.scopeValue())
+                  .setAppliedCommitId(participant.appliedCommitId())
+                  .setContentDigest(participant.contentDigest())
+                  .setDigestSchemaVersion(participant.digestSchemaVersion());
+          if (participant.abilitySchemaDigest() != null)
+            item.setAbilitySchemaDigest(participant.abilitySchemaDigest());
+          proto.addParticipantDigests(item);
+        });
     var initialRequest =
         new net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence
             .Request(
@@ -778,15 +769,14 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
                       .thenComparing(AffectedUnit::scopeType)
                       .thenComparing(AffectedUnit::scopeId)
                       .thenComparing(AffectedUnit::expectedEpoch))
-              .map(
-                  u ->
-                      new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                          u.owner().name(),
-                          u.aggregateType(),
-                          u.aggregateId(),
-                          u.scopeType(),
-                          u.scopeId(),
-                          u.expectedEpoch()))
+              .map(u ->
+                  new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                      u.owner().name(),
+                      u.aggregateType(),
+                      u.aggregateId(),
+                      u.scopeType(),
+                      u.scopeId(),
+                      u.expectedEpoch()))
               .toList();
       var request =
           new WorldPublishedStartLocationEvidence.Request(
@@ -891,23 +881,22 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
       result.put(
           "appliedEpochs",
           draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-              .map(
-                  unit ->
-                      Map.of(
-                          "aggregateType",
-                          unit.aggregateType(),
-                          "aggregateId",
-                          unit.aggregateId(),
-                          "scopeType",
-                          unit.scopeType(),
-                          "scopeId",
-                          unit.scopeId(),
-                          "expectedEpoch",
-                          unit.expectedEpoch(),
-                          "resultingEpoch",
-                          new java.math.BigInteger(unit.expectedEpoch())
-                              .add(java.math.BigInteger.ONE)
-                              .toString()))
+              .map(unit ->
+                  Map.of(
+                      "aggregateType",
+                      unit.aggregateType(),
+                      "aggregateId",
+                      unit.aggregateId(),
+                      "scopeType",
+                      unit.scopeType(),
+                      "scopeId",
+                      unit.scopeId(),
+                      "expectedEpoch",
+                      unit.expectedEpoch(),
+                      "resultingEpoch",
+                      new java.math.BigInteger(unit.expectedEpoch())
+                          .add(java.math.BigInteger.ONE)
+                          .toString()))
               .toList());
       return new DraftAuthorizationFenceBinding.OwnerReadback(
           Owner.WORLD,

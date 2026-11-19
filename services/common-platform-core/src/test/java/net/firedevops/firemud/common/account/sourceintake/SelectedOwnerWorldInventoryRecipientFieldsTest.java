@@ -69,18 +69,16 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
       assertThatThrownBy(() -> SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(base))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("freeze evidence");
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(
-                      base.toBuilder()
-                          .setIntendedReader("spiffe://firemud/ns/test/sa/world-management-service")
-                          .build()))
+      assertThatThrownBy(() ->
+              SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(
+                  base.toBuilder()
+                      .setIntendedReader("spiffe://firemud/ns/test/sa/world-management-service")
+                      .build()))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("recipient differs");
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(
-                      base.toBuilder().setClosureReadPurpose("ENTITY_INTAKE_RETENTION").build()))
+      assertThatThrownBy(() ->
+              SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(
+                  base.toBuilder().setClosureReadPurpose("ENTITY_INTAKE_RETENTION").build()))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("closure read purpose differs");
     }
@@ -150,16 +148,12 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
                     : zeroDigest)
             .build();
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerWorldInventoryReadGrpcCodec.fromResponse(
-                    fixture.request(), changedEcho))
+    assertThatThrownBy(() ->
+            SelectedOwnerWorldInventoryReadGrpcCodec.fromResponse(fixture.request(), changedEcho))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact selected-owner inventory read request");
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerWorldInventoryReadGrpcCodec.fromResponse(
-                    fixture.request(), changedDigest))
+    assertThatThrownBy(() ->
+            SelectedOwnerWorldInventoryReadGrpcCodec.fromResponse(fixture.request(), changedDigest))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -216,10 +210,9 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
     var changedRequest = SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(changedRequestWire);
 
     assertThat(changedRequest.freezeEvidence()).isNotEqualTo(fixture.freezeEvidence());
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerWorldInventoryReadGrpcCodec.toResponse(
-                    changedRequest, fixture.inventory()))
+    assertThatThrownBy(() ->
+            SelectedOwnerWorldInventoryReadGrpcCodec.toResponse(
+                changedRequest, fixture.inventory()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact selected-owner freeze");
   }
@@ -384,15 +377,14 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
             0,
             0,
             selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList(),
             inboundClosure);
     var selection = account.input().selection();

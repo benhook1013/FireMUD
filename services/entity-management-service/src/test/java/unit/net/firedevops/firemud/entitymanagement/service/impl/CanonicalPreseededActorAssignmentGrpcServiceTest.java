@@ -570,19 +570,18 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
     var malformed = invokeRuntimeRead(handler, wire.toBuilder().setSchemaVersion(2).build());
     assertThat(malformed.errorCode).isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(malformed.terminalCount).isEqualTo(1);
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromRuntimeReferenceRequest(
-                    wire.toBuilder()
-                        .setUnknownFields(
-                            com.google.protobuf.UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99,
-                                    com.google.protobuf.UnknownFieldSet.Field.newBuilder()
-                                        .addVarint(1)
-                                        .build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromRuntimeReferenceRequest(
+                wire.toBuilder()
+                    .setUnknownFields(
+                        com.google.protobuf.UnknownFieldSet.newBuilder()
+                            .addField(
+                                99,
+                                com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                    .addVarint(1)
+                                    .build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

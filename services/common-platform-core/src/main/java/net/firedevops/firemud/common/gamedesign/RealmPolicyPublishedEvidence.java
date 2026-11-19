@@ -247,18 +247,17 @@ public final class RealmPolicyPublishedEvidence {
         policies.stream().collect(java.util.stream.Collectors.toMap(Policy::source, p -> p));
     var orderedEvidence =
         ordered.stream()
-            .map(
-                source -> {
-                  Policy policy = bySource.get(source);
-                  return Map.of(
-                      "policyId", policy.policyId().toString(),
-                      "sourceCommitId", source.commitId().toString(),
-                      "sourceRevisionId", source.revisionId().toString(),
-                      "logicalRevisionId", source.logicalRevisionId(),
-                      "worldSlug", source.policy().worldSlug(),
-                      "realmSlug", source.policy().realmSlug(),
-                      "policyDigest", policy.policyDigest());
-                })
+            .map(source -> {
+              Policy policy = bySource.get(source);
+              return Map.of(
+                  "policyId", policy.policyId().toString(),
+                  "sourceCommitId", source.commitId().toString(),
+                  "sourceRevisionId", source.revisionId().toString(),
+                  "logicalRevisionId", source.logicalRevisionId(),
+                  "worldSlug", source.policy().worldSlug(),
+                  "realmSlug", source.policy().realmSlug(),
+                  "policyDigest", policy.policyDigest());
+            })
             .toList();
     String evidence =
         RealmPolicySource.canonical(
