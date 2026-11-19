@@ -509,8 +509,11 @@ const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request") {
   let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0, refreshInventoryReads = 0;
+  const liveFallback = kind.startsWith("trusted-current-base");
+  const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
+  const tupleAdvanced = () => kind === "trusted-current-base-advances" && currentRunReads >= 2;
   const failures = [], refs = [], info = [];
-  const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
+  const context = {repo: {owner: "example", repo: "firemud"}, sha: liveFallback ? null : merge, payload: {
     repository: {default_branch: "develop"},
     pull_request: {number: 42, head: {sha: head, repo: {full_name: repository}},
       base: {ref: "develop", sha: base}, created_at: "2026-09-01T00:00:00Z"},
@@ -546,10 +549,11 @@ async function scenario(kind, event = "pull_request") {
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: base}, merge_commit_sha: merge}};
+      return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: tupleAdvanced() ? nextBase : base}, merge_commit_sha: tupleAdvanced() ? nextMerge : merge}};
     }},
+    git: {getRef: async () => ({data: {object: {sha: tupleAdvanced() ? nextBase : base}}})},
     repos: {
-      getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: kind === "bad-parents" ? defaultSha : base}, {sha: head}]}}),
+      getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: kind === "bad-parents" ? defaultSha : ref === nextMerge ? nextBase : base}, {sha: head}]}}),
       getContent: async ({ref, path}) => {
         refs.push(ref);
         assert.equal(path, source.path);
@@ -639,6 +643,12 @@ async function scenario(kind, event = "pull_request") {
     assert.equal((await scenario(kind)).failures.length, 1, `${kind} must not supply successful proof`);
   }
   assert.equal((await scenario("wrong-dispatch-branch", "repository_dispatch")).failures.length, 1);
+  const stableFallback = await scenario("trusted-current-base-stable", "repository_dispatch");
+  assert.deepEqual(stableFallback.failures, [], "unchanged current-base tuple still accepts exact refresh proof");
+  const advancedFallback = await scenario("trusted-current-base-advances", "repository_dispatch");
+  assert(advancedFallback.info.some(line => line.includes("identity changed after the final runtime attempt lookup")),
+    "late base movement cannot accept the old trusted refresh");
+  assert.match(advancedFallback.failures[0], /Timed out waiting for the exact runtime-images/);
   const stale = await scenario("stale-final");
   assert.deepEqual(stale.failures, [], "obsolete gate exits without publishing proof for changed base ref");
   console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");

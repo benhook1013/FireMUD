@@ -1480,6 +1480,18 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
+                if (currentIdentity.sourceEvent === "repository_dispatch") {
+                  // A trusted refresh follows the live base, unlike immutable event proof.
+                  const acceptanceIdentity = await resolveCurrentIdentity(
+                    "Stopping stale current-base smoke gate after the final run lookup"
+                  );
+                  if (acceptanceIdentity?.obsolete) return;
+                  if (!acceptanceIdentity || identityKey(acceptanceIdentity) !== identityKey(currentIdentity)) {
+                    currentIdentity = acceptanceIdentity;
+                    core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
+                    continue smokeGatePolling;
+                  }
+                }
                 return;
               }
 
