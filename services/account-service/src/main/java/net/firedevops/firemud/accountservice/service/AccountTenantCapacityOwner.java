@@ -148,7 +148,7 @@ public final class AccountTenantCapacityOwner {
         || !Objects.equals(
             prior.evidence().fields().get("authorityTuple"),
             next.evidence().fields().get("authorityTuple"))) throw conflict();
-    return inTransaction(
+    return commitWithFreshSnapshot(
         () -> {
           lockPlayerAccount(next);
           Record row = capacity.find(prior.identity());

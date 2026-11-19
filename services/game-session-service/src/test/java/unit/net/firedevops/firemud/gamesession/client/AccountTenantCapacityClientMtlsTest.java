@@ -283,7 +283,8 @@ class AccountTenantCapacityClientMtlsTest {
     var incoming = Deadline.after(incomingMillis, TimeUnit.MILLISECONDS, ticker);
     var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
     var selected =
-        AccountTenantCapacityClient.selectDeadline(maximum, sample, incoming, explicitMillis, 0);
+        AccountTenantCapacityClient.selectDeadline(
+            maximum, sample, incoming, explicitMillis, java.time.Instant.EPOCH);
     assertThat(selected.timeRemaining(TimeUnit.MILLISECONDS)).isEqualTo(expectedMillis);
   }
 
@@ -302,9 +303,30 @@ class AccountTenantCapacityClientMtlsTest {
     var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
     assertThat(
             AccountTenantCapacityClient.selectDeadline(
-                    maximum, sample, null, absoluteMillis, sampledMillis)
+                    maximum,
+                    sample,
+                    null,
+                    absoluteMillis,
+                    java.time.Instant.ofEpochMilli(sampledMillis))
                 .timeRemaining(TimeUnit.MILLISECONDS))
         .isEqualTo(expectedMillis);
+  }
+
+  @Test
+  void fractionalWallClockSampleDoesNotExtendTheCallerBudget() {
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return 0;
+          }
+        };
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    var selected =
+        AccountTenantCapacityClient.selectDeadline(
+            maximum, sample, null, 1001, java.time.Instant.ofEpochMilli(1000).plusNanos(900_000));
+    assertThat(selected.timeRemaining(TimeUnit.NANOSECONDS)).isEqualTo(100_000);
   }
 
   @Test
@@ -321,16 +343,19 @@ class AccountTenantCapacityClientMtlsTest {
     nanos.set(TimeUnit.SECONDS.toNanos(1)); // Pause before the paired conversion samples.
     var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
     assertThat(
-            AccountTenantCapacityClient.selectDeadline(maximum, sample, null, 3000, 1000)
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, 3000, java.time.Instant.ofEpochMilli(1000))
                 .timeRemaining(TimeUnit.MILLISECONDS))
         .isEqualTo(2000);
     assertThat(
-            AccountTenantCapacityClient.selectDeadline(maximum, sample, null, 60000, 1000)
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, 60000, java.time.Instant.ofEpochMilli(1000))
                 .timeRemaining(TimeUnit.MILLISECONDS))
         .isEqualTo(4000);
     nanos.addAndGet(TimeUnit.MILLISECONDS.toNanos(200)); // Delay after sampling consumes budget.
     assertThat(
-            AccountTenantCapacityClient.selectDeadline(maximum, sample, null, 3000, 1000)
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, 3000, java.time.Instant.ofEpochMilli(1000))
                 .timeRemaining(TimeUnit.MILLISECONDS))
         .isEqualTo(1800);
   }

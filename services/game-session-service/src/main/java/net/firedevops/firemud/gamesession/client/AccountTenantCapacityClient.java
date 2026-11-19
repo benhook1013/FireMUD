@@ -7,6 +7,8 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -71,7 +73,7 @@ public final class AccountTenantCapacityClient
     // Anchor conversion near the wall-clock sample, not at invocation entry. A pause
     // during sampling can only shorten the bound; it must never extend the caller budget.
     Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
-    long sampledMillis = clock.millis();
+    Instant sampledInstant = clock.instant();
     request.requireStructurallyValid();
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
@@ -82,7 +84,7 @@ public final class AccountTenantCapacityClient
             sampledAt,
             Context.current().getDeadline(),
             absoluteDeadlineMillis,
-            sampledMillis);
+            sampledInstant);
     var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     CommitTenantCapacityAdmissionResponse response;
     try {
@@ -119,19 +121,17 @@ public final class AccountTenantCapacityClient
       Deadline sampledAt,
       Deadline incoming,
       long absoluteDeadlineMillis,
-      long sampledMillis) {
-    long maximumMillis =
-        TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
-    long remainingMillis = 0;
-    if (absoluteDeadlineMillis > sampledMillis) {
-      // A positive difference can overflow only across the signed long boundary.
-      // Such a future deadline is beyond the invocation cap, not an expired budget.
-      long difference = absoluteDeadlineMillis - sampledMillis;
-      remainingMillis = difference < 0 ? maximumMillis : Math.min(maximumMillis, difference);
-    }
-    Deadline absoluteDeadline =
-        sampledAt.offset(
-            Math.max(0L, Math.min(maximumMillis, remainingMillis)), TimeUnit.MILLISECONDS);
+      Instant sampledInstant) {
+    Duration maximumBudget =
+        Duration.ofSeconds(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
+    Duration remaining =
+        Duration.between(sampledInstant, Instant.ofEpochMilli(absoluteDeadlineMillis));
+    // Cap before converting to nanos: extreme epoch-millisecond deadlines may exceed long nanos.
+    long remainingNanos =
+        remaining.isNegative()
+            ? 0
+            : (remaining.compareTo(maximumBudget) > 0 ? maximumBudget : remaining).toNanos();
+    Deadline absoluteDeadline = sampledAt.offset(remainingNanos, TimeUnit.NANOSECONDS);
     Deadline selected = maximum.minimum(absoluteDeadline);
     return incoming == null ? selected : selected.minimum(incoming);
   }

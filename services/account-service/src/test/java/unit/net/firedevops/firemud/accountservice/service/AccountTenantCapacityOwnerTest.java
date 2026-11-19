@@ -336,6 +336,37 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
+  void rearmRetriesSerializationInFreshTransactionThenRechecksAccount() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    var next =
+        new Request(
+                f.request.identity(),
+                UUID.randomUUID(),
+                2,
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                f.request.capacityDelta(),
+                null)
+            .withDigest();
+    var aborted = serializationFailure();
+    when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
+        .thenThrow(aborted)
+        .thenReturn(java.util.Optional.empty());
+    var rearm =
+        AccountTenantCapacityOwner.class.getDeclaredMethod(
+            "rearm", Request.class, Request.class, UUID.class, long.class);
+    rearm.setAccessible(true);
+    assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, UUID.randomUUID(), 7L))
+        .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
+    verify(f.accounts, times(2)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
   void repeatedSerializationFailuresRetryAndReplayInAFreshTransaction() throws Exception {
     var f = new Fixture(true);
     f.existing = false;
