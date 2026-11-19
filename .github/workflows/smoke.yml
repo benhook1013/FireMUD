@@ -521,6 +521,7 @@ jobs:
             const pullRequestCheckInterval = 2;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
+            let retryPrimary = null;
             let identityDiagnostic = "current PR identity has not been resolved";
 
             class TerminalGitHubRequestError extends Error {}
@@ -935,7 +936,13 @@ jobs:
                 await verifyCanonicalSmokeProducer(run, producers[0], identity);
             }
 
-            async function findMatchingRuntimeImagesRun(sourceEvent, expectedDisplayTitle, identity) {
+            function isRetryPrimary(selection, run) {
+              return selection.retryPrimary?.id === run?.id &&
+                selection.retryPrimary?.run_attempt === run?.run_attempt &&
+                selection.retryPrimary != null;
+            }
+
+            async function findMatchingRuntimeImagesRun(sourceEvent, expectedDisplayTitle, identity, selection = {}) {
               const workflowRunQuery = {
                 owner,
                 repo,
@@ -1003,13 +1010,14 @@ jobs:
                   newestPreExecutionCancellation ??= run;
                   continue;
                 }
-                if (run.status !== "completed") {
+                if (run.status !== "completed" && !isRetryPrimary(selection, run)) {
                   const completed = matchingRuns.filter(({run: older}) =>
                     older.id !== run.id && older.status === "completed" && older.conclusion === "success");
                   for (const {run: older} of completed.slice(0, 3)) {
                     try {
                       if (await verifyCompletedCanonicalRuntime(older, identity)) {
                         core.info("A verified completed exact runtime producer precedes the pending duplicate.");
+                        selection.pendingPrimary = run;
                         return older;
                       }
                     } catch (error) {
@@ -1159,10 +1167,15 @@ jobs:
                 `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${currentIdentity.baseSha} head-${currentIdentity.headSha} ` +
                 `merge-${currentIdentity.mergeSha} mode-required`;
+              const selection = {
+                retryPrimary: retryPrimary?.identity === identityKey(currentIdentity) ? retryPrimary : null,
+              };
+              retryPrimary = null;
               let matching = await findMatchingRuntimeImagesRun(
                 currentIdentity.sourceEvent,
                 expectedDisplayTitle,
-                currentIdentity
+                currentIdentity,
+                selection
               );
               if (
                 currentIdentity.sourceEvent === "pull_request" &&
@@ -1212,8 +1225,8 @@ jobs:
               }
               // A queued native run can share a tuple with a completed trusted refresh.
               // It must not hide already verified smoke proof or cause a second dispatch.
-              if (currentIdentity.sourceEvent === "pull_request" && matching?.event === "pull_request" &&
-                  matching.status !== "completed") {
+              if (!isRetryPrimary(selection, matching) && currentIdentity.sourceEvent === "pull_request" &&
+                  matching?.event === "pull_request" && matching.status !== "completed") {
                 let replacement;
                 try {
                   replacement = await findMatchingRuntimeImagesRun(
@@ -1232,6 +1245,7 @@ jobs:
                 try {
                   if (replacement && await verifyCompletedCanonicalRuntime(replacement, currentIdentity)) {
                     core.info("A completed verified exact trusted refresh supersedes the pending native wait.");
+                    selection.pendingPrimary = matching;
                     matching = replacement;
                   }
                 } catch (error) {
@@ -1325,19 +1339,37 @@ jobs:
                     await failNonTerminalSnapshot("before the workflow deadline");
                     return;
                   }
-                  const jobs = await withTransientGitHubRetry(
-                    "runtime-images job lookup",
-                    () => github.paginate(
-                      "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
-                      {
-                        owner,
-                        repo,
-                        run_id: matching.id,
-                        attempt_number: matching.run_attempt,
-                        per_page: 100,
-                      }
-                    )
-                  );
+                  let jobs;
+                  try {
+                    jobs = await withTransientGitHubRetry(
+                      "runtime-images job lookup",
+                      () => github.paginate(
+                        "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                        {
+                          owner,
+                          repo,
+                          run_id: matching.id,
+                          attempt_number: matching.run_attempt,
+                          per_page: 100,
+                        }
+                      )
+                    );
+                  } catch (error) {
+                    const status = error?.status ?? error?.response?.status;
+                    if (!selection.pendingPrimary || !retryableStatuses.has(status)) throw error;
+                    // Re-read the pending comparison on the next bounded poll. No
+                    // partial evidence from this alternative carries into that poll.
+                    core.warning(
+                      `Runtime alternative ${matching.id} jobs are temporarily unavailable; retry exact primary selection.`
+                    );
+                    retryPrimary = {
+                      id: selection.pendingPrimary.id,
+                      run_attempt: selection.pendingPrimary.run_attempt,
+                      identity: identityKey(currentIdentity),
+                    };
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
                   if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
                     return;
                   }

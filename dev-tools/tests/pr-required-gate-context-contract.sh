@@ -601,9 +601,16 @@ const execute = new Function("github", "context", "core", "Date", "setTimeout", 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), defaultSha = "d".repeat(40);
 const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
-async function scenario(kind, event = "pull_request") {
+async function scenario(kind, event = "pull_request", captureLookupFailure = false) {
   let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0, refreshInventoryReads = 0;
   const liveFallback = kind.startsWith("trusted-current-base");
+  const h0 = kind.startsWith("optional-final-read-");
+  const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
+  const duplicatePrimary = kind === "optional-final-read-duplicate";
+  const badStatus = kind.endsWith("-forbidden") ? 403 : kind.endsWith("-missing") ? 404 : 503;
+  const primaryCanRecover = h0 && !cancelledPrimary && badStatus === 503;
+  const primaryReady = () => primaryCanRecover && primaryInventoryReads > 1;
+  let alternativeJobsReads = 0, primaryInventoryReads = 0, lookupFailure;
   const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
   const tupleAdvanced = () => kind === "trusted-current-base-advances" && currentRunReads >= 2;
   let rerunStartedDuringLatestIdentityRead = false;
@@ -618,6 +625,8 @@ async function scenario(kind, event = "pull_request") {
     head_repository: {full_name: repository}, path: ".github/workflows/runtime-images.yml",
     event, head_sha: event === "pull_request" ? head : defaultSha, head_branch: "develop", display_title: title,
     status: "completed", conclusion: "success", pull_requests: []};
+  const exactPrimary = {...source, id: 43, event: "pull_request", head_sha: head,
+    created_at: "2026-09-01T00:00:01Z"};
   const incompleteSnapshot = kind.startsWith("incomplete-snapshot-");
   let snapshotRerunVisible = false;
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
@@ -665,7 +674,8 @@ async function scenario(kind, event = "pull_request") {
     actions: {
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => {
+      getWorkflowRun: async ({run_id: runId}) => {
+        if (runId === 43 && primaryReady()) return {data: exactPrimary};
         currentRunReads += 1;
         if (incompleteSnapshot) {
           snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
@@ -677,12 +687,24 @@ async function scenario(kind, event = "pull_request") {
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
+    if (input.run_id === 43 && primaryReady()) return {data: exactPrimary};
+    if (cancelledPrimary && input.run_id === 43) {
+      return {data: {...source, id: 43, event: "pull_request", status: "completed", conclusion: "cancelled"}};
+    }
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
     return {data: {...source, ...(sourceMutations[kind] || {})}};
   }, paginate: async (method, input) => {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    if (input.run_id === 43 && primaryReady()) {
+      return [{...job, run_id: 43, head_sha: head, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
     assert.equal(input.run_id, 42);
+    if (h0 && ++alternativeJobsReads > (cancelledPrimary ? 0 : 2)) {
+      if (kind.endsWith("-malformed")) return null;
+      throw Object.assign(new Error(`H0 alternative final attempt jobs HTTP ${badStatus}`), {status: badStatus});
+    }
     if (incompleteSnapshot) {
       snapshots += 1;
       if (input.attempt_number === 1) return [];
@@ -702,6 +724,13 @@ async function scenario(kind, event = "pull_request") {
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
+    if (h0 && input.event === "pull_request") {
+      primaryInventoryReads += 1;
+      const primary = {...exactPrimary, status: cancelledPrimary || primaryReady() ? "completed" : "queued",
+        conclusion: cancelledPrimary ? "cancelled" : primaryReady() ? "success" : null};
+      yield {data: duplicatePrimary ? [primary, source] : [primary]};
+      return;
+    }
     if (event === "repository_dispatch" && input.event === "pull_request") {
       yield {data: [{...source, id: kind.startsWith("pending-native") ? 43 : source.id, event: "pull_request", head_sha: head,
         status: kind.startsWith("pending-native") ? "queued" : "completed",
@@ -720,9 +749,14 @@ async function scenario(kind, event = "pull_request") {
       ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
   };
   const clock = {now: () => now, parse: Date.parse};
-  await execute(github, context, {info: message => info.push(message), warning: () => {}, setFailed: message => failures.push(message)},
-    clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots, info, refreshInventoryReads};
+  try {
+    await execute(github, context, {info: message => info.push(message), warning: () => {}, setFailed: message => failures.push(message)},
+      clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
+  } catch (error) {
+    if (!captureLookupFailure) throw error;
+    lookupFailure = error;
+  }
+  return {failures, refs, snapshots, info, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads, lookupFailure};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -739,6 +773,29 @@ async function scenario(kind, event = "pull_request") {
       `${kind} must leave the native run selected`);
     assert(!result.info.some(line => line.startsWith("Found runtime-images run 42 with status=")),
       `${kind} must not select the refresh`);
+  }
+  for (const [kind, event, selectionMessage] of [
+    ["optional-final-read-refresh", "repository_dispatch", "supersedes the pending native wait"],
+    ["optional-final-read-duplicate", "pull_request", "precedes the pending duplicate"],
+  ]) {
+    const result = await scenario(kind, event);
+    assert(result.info.some(line => line.includes(selectionMessage)), kind);
+    assert.equal(result.alternativeJobsReads, 6, kind);
+    assert.equal(result.primaryInventoryReads, 2, kind);
+    assert(result.info.some(line => line.includes("Found runtime-images run 43 with status=completed")), kind);
+    assert.deepEqual(result.failures, [], kind);
+  }
+  for (const [kind, expectedReads, status] of [
+    ["optional-final-read-cancelled-primary", 4, 503],
+    ["optional-final-read-forbidden", 3, 403],
+    ["optional-final-read-missing", 3, 404],
+    ["optional-final-read-malformed", 3, undefined],
+  ]) {
+    const result = await scenario(kind, "repository_dispatch", true);
+    assert.equal(result.alternativeJobsReads, expectedReads, kind);
+    assert.equal(result.primaryInventoryReads, 1, kind);
+    assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, status, kind);
+    if (status === undefined) assert(result.lookupFailure instanceof TypeError, kind);
   }
   const unavailable = await scenario("pending-native-inventory-unavailable", "repository_dispatch");
   assert(unavailable.refreshInventoryReads >= 4, "temporary inventory errors exhaust the normal retries");
