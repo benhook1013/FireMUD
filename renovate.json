@@ -391,26 +391,10 @@
         "minor",
         "patch"
       ],
-      "matchPackageNames": [
-        "!com.google.googlejavaformat:google-java-format"
-      ],
       "groupName": "gradle non-major updates",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": false
-    },
-    {
-      "description": "Review formatter updates separately from routine Gradle dependencies",
-      "matchManagers": [
-        "gradle"
-      ],
-      "matchPackageNames": [
-        "com.google.googlejavaformat:google-java-format"
-      ],
-      "automerge": false,
-      "prBodyNotes": [
-        "A formatter version can change repository-wide formatting. Run Spotless and review any formatting changes before merging."
-      ]
     },
     {
       "description": "Keep Fabric8 on the Java Operator SDK-supported client line",
@@ -554,13 +538,9 @@
       ]
     },
     {
-      "description": "Keep the Testcontainers and ERD database image inputs grouped separately from deployment pins",
+      "description": "Keep Testcontainers database image updates reviewable",
       "matchManagers": [
         "custom.regex"
-      ],
-      "matchFileNames": [
-        "services/common-test-support/src/testFixtures/resources/net/firedevops/firemud/test/container-images.properties",
-        "dev-tools/docs/generate-erd.sh"
       ],
       "matchDepNames": [
         "postgres",
