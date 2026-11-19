@@ -700,9 +700,9 @@ if "github.sha" in concurrency_group.split("github.event_name == 'repository_dis
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
 # Execute the workflow-level selector before its dispatcher can classify a CI
 # callback. A title/body CI completion must not evict substantive reconciliation.
-assert runtime["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
+assert runtime["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
 
-def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40):
+def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40, conclusion="success", selector=concurrency_group):
     values = {
         "github.workflow": "Build Runtime Images",
         "github.event_name": "workflow_run",
@@ -710,6 +710,7 @@ def callback_group(branch, source_id, source_attempt, source_event="pull_request
         "github.event.workflow_run.id": source_id,
         "github.event.workflow_run.run_attempt": source_attempt,
         "github.event.workflow_run.head_branch": branch,
+        "github.event.workflow_run.conclusion": conclusion,
         "github.event.workflow_run.head_sha": head,
         "github.ref": "refs/heads/develop",
         "github.run_id": 9000 + source_id,
@@ -721,7 +722,7 @@ def callback_group(branch, source_id, source_attempt, source_event="pull_request
         expression = expression.replace("&&", " and ").replace("||", " or ").replace("null", "None")
         return str(eval(expression, {"__builtins__": {}, "format": lambda pattern, *args: pattern.format(*args)}))
 
-    return re.sub(r"\$\{\{(.*?)\}\}", evaluate, concurrency_group)
+    return re.sub(r"\$\{\{(.*?)\}\}", evaluate, selector)
 
 for branch in ("main", "develop", "feature/parent"):
     substantive = callback_group(branch, 7001, 1)
@@ -741,7 +742,17 @@ for branch in ("main", "develop", "feature/parent"):
     assert callback_group(branch, 7003, 1, "push") not in (substantive, metadata), "PR callback must not cancel branch publication"
 
 for branch in ("main", "develop"):
-    assert callback_group(branch, 7101, 1, "push") == callback_group(branch, 7102, 2, "push", "b" * 40), "protected push publication must retain branch serialization"
+    publisher = callback_group(branch, 7101, 1, "push")
+    assert publisher == callback_group(branch, 7102, 2, "push", "b" * 40), "protected push publication must retain branch serialization"
+    assert callback_group(branch, 7101, 1, "push", selector=runtime["concurrency"]["cancel-in-progress"]) == "True"
+    for conclusion in ("failure", "cancelled", "timed_out", "skipped", ""):
+        nonpublisher = callback_group(branch, 7101, 1, "push", conclusion=conclusion)
+        assert nonpublisher != publisher, "a non-publishing callback must not displace an active or pending publisher"
+        assert nonpublisher != callback_group(branch, 7101, 2, "push", conclusion=conclusion)
+        assert callback_group(branch, 7101, 1, "push", conclusion=conclusion,
+                              selector=runtime["concurrency"]["cancel-in-progress"]) == "False"
+assert callback_group("feature/parent", 7101, 1, "push") != callback_group("feature/parent", 7102, 1, "push")
+assert callback_group("feature/parent", 7101, 1, "push", selector=runtime["concurrency"]["cancel-in-progress"]) == "False"
 assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7102, 1, "push"), "protected publication branches must remain separate"
 
 PY
@@ -1579,7 +1590,7 @@ require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, 
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
-require_contains "$runtime_images_path" "  cancel-in-progress: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
+require_contains "$runtime_images_path" "  cancel-in-progress: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'

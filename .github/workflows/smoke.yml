@@ -561,7 +561,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "4b97e52230413781c32db8fea21f94e46d7e2610346508cfc60adc972eb7dc7c";
+            const canonicalRuntimeWorkflowSha256 = "d104522a14446575e61675897a300e387b2f50f3d1c918509751aad3a150b057";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
               "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
               "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
