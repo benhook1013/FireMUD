@@ -43,6 +43,8 @@ class GatewayAuthRoutesTest {
                     r -> java.util.Objects.requireNonNull(r.getId()).startsWith("account-auth")))
         .hasSize(ENDPOINTS.size());
     assertNoConfiguredPath(properties, "/api/account/auth/**");
+    assertNoConfiguredPathStartsWith(properties, "/verify-email");
+    assertNoConfiguredPathStartsWith(properties, "/reset-password");
     for (Endpoint endpoint : ENDPOINTS) {
       String id = "account-auth-" + endpoint.id();
       assertHasPath(properties, id, "/api/account/auth/" + endpoint.path());
