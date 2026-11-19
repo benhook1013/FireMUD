@@ -622,7 +622,7 @@ assert.equal(cancellationInventory.length, 13);
 assert.deepEqual([...cancellationInventory].sort(), canonicalCancellationInventory.sort(),
   "bounded cancellation inventory must match all canonical runtime workflow job names");
 const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
-  payload: { pull_request: { number: 42, head: { sha: head, repo: {full_name: "example/firemud"}},
+  payload: { pull_request: { number: 42, head: { sha: head, ref: "feature", repo: {full_name: "example/firemud"}},
     base: { ref: "develop", sha: base }, created_at: "2026-09-01T00:00:00Z" } } };
 const execute = new Function("github", "context", "core", "Date", "setTimeout", `return (async () => {\n${script}\n})()`);
 async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
@@ -666,12 +666,21 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
     assert.equal(input.workflow_id, "runtime-images.yml");
-    if (input.event === "repository_dispatch") { yield { data: [] }; return; }
+    if (input.event === "repository_dispatch") {
+      const ready = selectionCase === "recoverable-delayed" && now - start >= 6 * 60 * 1000;
+      yield {data: ready ? [{id: 44, workflow_id: 7, run_attempt: 1, event: "repository_dispatch",
+        head_sha: "d".repeat(40), head_branch: "develop", display_title: title,
+        status: "completed", conclusion: "success", created_at: "2026-09-01T00:00:01Z"}] : []};
+      return;
+    }
     assert.equal(input.head_sha, head);
     const complete = now - start >= completedAtMinutes * 60 * 1000;
     const makeRun = (id, createdAt, status, conclusion) => ({id, workflow_id: 7, run_attempt: 1,
       event: "pull_request", head_sha: head, display_title: title, created_at: createdAt,
-      pull_requests: [{number: 42, head: {sha: head}}], status, conclusion});
+      pull_requests: [{number: 42, head: {sha: head}}], status, conclusion,
+      ...(selectionCase.startsWith("recoverable-") ? {repository: {full_name: "example/firemud"},
+        head_repository: {full_name: "example/firemud"}, head_branch: "feature",
+        path: ".github/workflows/runtime-images.yml"} : {})});
     const active = makeRun(42, "2026-09-01T00:00:00Z", complete ? "completed" : "in_progress", complete ? outcome : null);
     const cancelled = makeRun(43, "2026-09-01T00:00:00Z", "completed", "cancelled");
     if (selectionCase === "duplicate" || selectionCase === "cancelled-higher-id") {
@@ -753,6 +762,15 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   assert.equal(cancelled.failures.length, 1);
   assert.match(cancelled.failures[0], /cancelled/i);
   assert.ok(cancelled.minutes <= 5.25, "cancelled source without an exact replacement remains bounded");
+  const recoverable = await scenario("cancelled", 0, "recoverable-missing");
+  assert.equal(recoverable.minutes, 45, "eligible cancellation reuses existing prerequisite allowance only");
+  assert.equal(recoverable.failures.length, 1);
+  const delayedRecovery = await scenario("cancelled", 0, "recoverable-delayed");
+  assert.deepEqual(delayedRecovery.failures, []);
+  assert.equal(delayedRecovery.minutes, 6, "Validation may dispatch an exact replacement after five minutes");
+  const lateCancellation = await scenario("cancelled", 80, "recoverable-missing");
+  assert.equal(lateCancellation.minutes, 90, "late cancellation cannot extend global deadline");
+  assert.match(lateCancellation.failures[0], /Timed out waiting for the exact/);
   const deadline = await scenario("success", Infinity);
   assert.equal(deadline.failures.length, 1);
   assert.match(deadline.failures[0], /Timed out waiting for the exact/);
@@ -3805,7 +3823,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         assert.equal(event, "repository_dispatch");
         assert.equal(selected.baseSha, options.finalIdentity.baseSha);
         assert.equal(selected.mergeSha, options.finalIdentity.mergeSha);
-        return {...source, event: "repository_dispatch", status: "completed", conclusion: options.directSnapshots ? "failure" : "success"};
+        return {...source, event: "repository_dispatch", status: "completed", conclusion: options.successfulSnapshots ? "success" : options.directSnapshots ? "failure" : "success"};
       }
       return original;
     }, "3390", "test identity", 60,
@@ -3824,7 +3842,9 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   if (options.ordinaryAfterDrift) {
     assert.deepEqual(failures, []); assert.deepEqual(outputs, []); assert.equal(writes, 0);
   } else if (options.directInvalid) {
-    assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
+    assert.deepEqual(failures, [options.successfulSnapshots
+      ? "Canonical PLAY transition exception could not be verified; runtime qualification remains blocked."
+      : "Runtime images run 99 did not complete successfully: run=failure"]);
     assert.deepEqual(outputs, []); assert.equal(writes, 0);
   } else if (options.rejectedObject) {
     assert.deepEqual(failures, ["Runtime images run 98 did not complete successfully: run=failure"]);
@@ -3954,6 +3974,11 @@ function markerAccepted(overrides = {}) {
       recoverDrift: true, finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)}, directSnapshots,
       snapshotExpires: directSnapshots.length === 4, directInvalid: directSnapshots[0] === "invalid",
     });
+    await pendingRefreshCaller(["completed", "completed", "completed", "completed"], false, {
+      recoverDrift: true, finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)}, directSnapshots,
+      successfulSnapshots: true,
+      snapshotExpires: directSnapshots.length === 4, directInvalid: directSnapshots[0] === "invalid",
+    });
   }
   await pendingRefreshCaller(["missing-step", "completed"]);
   await pendingRefreshCaller(["nonterminal-step", "completed"]);
@@ -4029,6 +4054,31 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["missing-job", "pending-job", "completed"]);
   await pendingRefreshCaller(["absent", "absent"], true);
   await pendingRefreshCaller(["completed"], false, {originalError: Object.assign(new Error("missing"), {status: 404})});
+  for (const change of [
+    data => {data.jobs = [];},
+    data => {data.jobs[0].status = "in_progress"; data.jobs[0].conclusion = null;},
+  ]) {
+    assert.equal(await verify(change, "repository_dispatch", true, true), "snapshot-pending");
+    assert.equal(await verify(change, "repository_dispatch", true, false), false);
+    for (const invalidate of [
+      data => {data.currentPullRequest.labels = [];},
+      data => {data.currentPullRequest.head.sha = "e".repeat(40);},
+      data => {data.currentBase.object.sha = "e".repeat(40);},
+      data => {data.latest.run_attempt++;},
+      data => {data.definitions[workflowPath].size++;},
+    ]) {
+      assert.equal(await verify(data => {change(data); invalidate(data);}, "repository_dispatch", true, true), false,
+        "incomplete producer must not hide failed identity/definition/currentness");
+    }
+  }
+  for (const invalidate of [
+    data => {data.jobs.push({...data.jobs[0], id: 124});},
+    data => {data.jobs[0].head_sha = "e".repeat(40);},
+    data => {data.jobs[0].conclusion = "failure";},
+    data => {data.jobs[0].status = "unrecognized";},
+    data => {data.jobs[0].status = "in_progress";},
+  ]) assert.equal(await verify(invalidate, "repository_dispatch", true, true), false,
+    "duplicates, provenance, terminal mismatch and contradictory nonterminal conclusion never become pending");
   await refreshFinalIdentity();
   await refreshFinalIdentity(true);
   for (const event of ["pull_request", "repository_dispatch"]) {

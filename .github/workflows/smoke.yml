@@ -854,27 +854,32 @@ jobs:
                 )
               );
               const producers = jobs.filter((job) => job.name === canonicalSmokeJobName);
-              if (producers.length !== 1) return false;
+              if (producers.length > 1 || (producers.length === 0 && !allowIncompleteSteps)) return false;
               const job = producers[0];
-              if (
-                !positiveInteger(job.id) || job.id !== candidate.id ||
-                job.run_id !== source.id || job.run_attempt !== source.run_attempt ||
-                job.head_sha !== source.head_sha || job.status !== "completed" || job.conclusion !== source.conclusion ||
-                job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`
-              ) return false;
+              let incompleteSteps = !job || job.status !== "completed";
+              if (job) {
+                if (!positiveInteger(job.id) || job.id !== candidate?.id ||
+                    job.run_id !== source.id || job.run_attempt !== source.run_attempt ||
+                    job.head_sha !== source.head_sha ||
+                    job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`) return false;
+                if (job.status === "completed") {
+                  if (job.conclusion !== source.conclusion) return false;
+                } else if (!allowIncompleteSteps ||
+                    !["queued", "in_progress", "waiting", "pending", "requested"].includes(job.status) ||
+                    job.conclusion != null) return false;
+              }
               const expectedSuccessfulSteps = [
                 "Run credential-free full-stack smoke",
                 "Require successful runtime smoke and authenticated cleanup",
               ];
               const markerName = "Known canonical transition PLAY failure with successful authenticated cleanup";
-              const steps = job.steps ?? [];
+              const steps = job?.steps ?? [];
               const requiredSteps = new Map([
                 [markerName, "success"], ["Stop smoke stack", "success"],
                 ["Export fixed-tag preview image artifact", "skipped"],
                 ["Upload preview image artifact", "skipped"],
                 ...expectedSuccessfulSteps.map((name) => [name, source.conclusion]),
               ]);
-              let incompleteSteps = false;
               for (const [name, conclusion] of requiredSteps) {
                 const matches = steps.filter((step) => step.name === name);
                 if (matches.length > 1) return false;
@@ -889,7 +894,7 @@ jobs:
                     expectedSuccessfulSteps.includes(step.name)))) return false;
               }
               for (const other of jobs) {
-                if (other.id === job.id) continue;
+                if (other.id === job?.id) continue;
                 if (["queued", "in_progress", "waiting", "pending", "requested"].includes(other.status)) incompleteSteps = true;
                 else if (other.status !== "completed" || !["success", "skipped"].includes(other.conclusion)) return false;
               }
@@ -1293,13 +1298,25 @@ jobs:
                   currentIdentity
                 );
                 if (!replacement) {
-                  if (Date.now() - cancelledRunObservedAt >= cancelledReplacementTimeoutMs) {
+                  // Only native same-repository originals eligible for the trusted
+                  // Validation dispatcher reuse its existing prerequisite allowance.
+                  const recoverableCancellation = matching.event === "pull_request" &&
+                    matching.repository?.full_name === repositoryName &&
+                    matching.head_repository?.full_name === repositoryName &&
+                    matching.path === workflowPath && positiveInteger(matching.workflow_id) &&
+                    positiveInteger(matching.id) && positiveInteger(matching.run_attempt) &&
+                    matching.head_sha === currentIdentity.headSha && matching.display_title === expectedDisplayTitle &&
+                    typeof matching.head_branch === "string" && matching.head_branch.length > 0 &&
+                    matching.head_branch === context.payload.pull_request.head.ref;
+                  const cancellationDiscoveryMs = recoverableCancellation
+                    ? refreshDiscoveryTimeoutMs : cancelledReplacementTimeoutMs;
+                  if (Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
                     if (await isCurrentPullRequestObsolete("Stopping obsolete cancelled-run smoke gate for")) {
                       return;
                     }
                     core.setFailed(
                       `Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement ` +
-                      `after ${cancelledReplacementTimeoutMs / 60000} minutes`
+                      `after ${cancellationDiscoveryMs / 60000} minutes`
                     );
                     return;
                   }
@@ -1610,12 +1627,26 @@ jobs:
                       markers[0].conclusion === "success") {
                     let knownPlayVerified = false;
                     try {
-                      knownPlayVerified = await verifyKnownPlayFailure(matching, fullSmokeJob, currentIdentity);
+                      knownPlayVerified = await verifyKnownPlayFailure(
+                        matching, fullSmokeJob, currentIdentity, matching.event === "repository_dispatch");
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
                     }
-                    if (!knownPlayVerified) {
+                    if (knownPlayVerified === "snapshot-pending") {
+                      const snapshotKey = `successful:${matching.id}:${matching.run_attempt}:${identityKey(currentIdentity)}`;
+                      if (incompleteRefreshKey !== snapshotKey) {
+                        incompleteRefreshKey = snapshotKey;
+                        incompleteRefreshObservedAt = Date.now();
+                      }
+                      if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                        core.setFailed("Terminal canonical refresh did not expose complete smoke-job proof within the snapshot convergence allowance.");
+                        return;
+                      }
+                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                      continue smokeGatePolling;
+                    }
+                    if (knownPlayVerified !== true) {
                       core.setFailed("Canonical PLAY transition exception could not be verified; runtime qualification remains blocked.");
                       return;
                     }
