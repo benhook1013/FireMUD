@@ -144,31 +144,28 @@ class JwtUsageTest {
     try (Stream<Path> paths = Files.walk(Path.of("src/main/java"))) {
       paths
           .filter(p -> p.toString().endsWith(".java"))
-          .filter(
-              p ->
-                  !p.endsWith(
-                      Path.of(
-                          "net",
-                          "firedevops",
-                          "firemud",
-                          "gamelogic",
-                          "config",
-                          "InternalGrpcClientAuthConfig.java")))
-          .forEach(
-              p -> {
-                try {
-                  String content = Files.readString(p, StandardCharsets.UTF_8);
-                  assertFalse(content.contains("JwtUtil"), p + " should not reference JwtUtil");
-                  assertFalse(
-                      content.contains("SessionContext"),
-                      p + " should not reference SessionContext");
-                  assertFalse(
-                      containsAuthorizationHeaderReference(content),
-                      p + " should not reference the Authorization HTTP header");
-                } catch (IOException e) {
-                  throw new RuntimeException(e);
-                }
-              });
+          .filter(p ->
+              !p.endsWith(
+                  Path.of(
+                      "net",
+                      "firedevops",
+                      "firemud",
+                      "gamelogic",
+                      "config",
+                      "InternalGrpcClientAuthConfig.java")))
+          .forEach(p -> {
+            try {
+              String content = Files.readString(p, StandardCharsets.UTF_8);
+              assertFalse(content.contains("JwtUtil"), p + " should not reference JwtUtil");
+              assertFalse(
+                  content.contains("SessionContext"), p + " should not reference SessionContext");
+              assertFalse(
+                  containsAuthorizationHeaderReference(content),
+                  p + " should not reference the Authorization HTTP header");
+            } catch (IOException e) {
+              throw new RuntimeException(e);
+            }
+          });
     }
   }
 

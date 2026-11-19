@@ -219,18 +219,16 @@ final class WorldPlayerAdmissionEntitlementComposition {
             fixture.assertAdmittingEvidence(joined);
             var journal = new InitialGameplayLoginCoordinationJournalRepository(gs);
             var beforeCustodyRefusal = journal.readCommitted(coordinates).orElseThrow();
-            assertThatThrownBy(
-                    () ->
-                        entitlementClient.read(
-                            lobby, coordinates, transport, UUID.randomUUID(), login, () -> false))
+            assertThatThrownBy(() ->
+                    entitlementClient.read(
+                        lobby, coordinates, transport, UUID.randomUUID(), login, () -> false))
                 .isExactlyInstanceOf(StatusRuntimeException.class)
-                .satisfies(
-                    failure -> {
-                      var status = ((StatusRuntimeException) failure).getStatus();
-                      assertThat(status.getCode()).isEqualTo(Status.Code.CANCELLED);
-                      assertThat(status.getDescription())
-                          .isEqualTo("Account player-admission entitlement read did not complete");
-                    });
+                .satisfies(failure -> {
+                  var status = ((StatusRuntimeException) failure).getStatus();
+                  assertThat(status.getCode()).isEqualTo(Status.Code.CANCELLED);
+                  assertThat(status.getDescription())
+                      .isEqualTo("Account player-admission entitlement read did not complete");
+                });
             fixture.assertAdmittingEvidence(joined);
             assertThat(login.evidence()).isEqualTo(evidence);
             assertThat(journal.readCommitted(coordinates)).contains(beforeCustodyRefusal);
@@ -241,10 +239,9 @@ final class WorldPlayerAdmissionEntitlementComposition {
             var beforeClosedResultRefusal = journal.readCommitted(coordinates).orElseThrow();
             // Cleanup has closed the private result. This proves local disposal refusal,
             // not an Account-side retired-token read over the wire.
-            assertThatThrownBy(
-                    () ->
-                        entitlementClient.read(
-                            lobby, coordinates, transport, UUID.randomUUID(), login, () -> true))
+            assertThatThrownBy(() ->
+                    entitlementClient.read(
+                        lobby, coordinates, transport, UUID.randomUUID(), login, () -> true))
                 .isExactlyInstanceOf(IllegalStateException.class)
                 .hasMessage("Canonical LOGIN private result is closed");
             fixture.assertAdmittingEvidence(joined);

@@ -130,12 +130,11 @@ class AccountSelectedOwnerIntakeAuthorizationProducerGrpcServiceTest {
             eq(decoded.owner()),
             eq(decoded.selected()),
             any()))
-        .thenAnswer(
-            call -> {
-              Supplier<?> capture = call.getArgument(4);
-              assertThat(capture.get()).isSameAs(captured);
-              return binding;
-            });
+        .thenAnswer(call -> {
+          Supplier<?> capture = call.getArgument(4);
+          assertThat(capture.get()).isSameAs(captured);
+          return binding;
+        });
 
     var first = authorized(() -> invokeAuthorize(wire));
     var retry = authorized(() -> invokeAuthorize(wire));

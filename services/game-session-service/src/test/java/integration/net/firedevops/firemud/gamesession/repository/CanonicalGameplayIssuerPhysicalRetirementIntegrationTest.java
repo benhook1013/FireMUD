@@ -93,63 +93,59 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       var observed =
           DSL.using(
               fixture.dsl().configuration().derive(new DefaultExecuteListenerProvider(listener)));
-      observed.transaction(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-            var anchor =
-                CanonicalGameplayIssuerBootstrapCoverageRepository
-                    .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-            var plan =
-                new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                    .readInstalledPlanForAnchorInTransaction(
-                        transaction, anchor.bootstrapOperationId(), anchor.bootstrapRequestId());
-            var originals =
-                transaction.fetch(
-                    "SELECT original.* FROM game_session_canonical_issuer_bootstrap_member_operation original"
-                        + " WHERE bootstrap_operation_id = ? AND binding_lifecycle = 'CANDIDATE_PREPARED'"
-                        + " ORDER BY work_ordinal",
-                    anchor.bootstrapOperationId());
-            assertThat(originals).hasSize(1);
-            proofReads.set(0);
-            var partitionProofs =
-                new CanonicalGameplayIssuerOriginalMemberSourceRepository.InstalledPartitionProofs(
-                    transaction, anchor);
-            for (var row : originals) {
-              var original =
-                  CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
-                      transaction, anchor, current, row, plan, partitionProofs);
-              assertThat(original.operationId())
-                  .isEqualTo(row.get("member_operation_id", UUID.class));
+      observed.transaction(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+        var anchor =
+            CanonicalGameplayIssuerBootstrapCoverageRepository
+                .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+        var plan =
+            new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                .readInstalledPlanForAnchorInTransaction(
+                    transaction, anchor.bootstrapOperationId(), anchor.bootstrapRequestId());
+        var originals =
+            transaction.fetch(
+                "SELECT original.* FROM game_session_canonical_issuer_bootstrap_member_operation original"
+                    + " WHERE bootstrap_operation_id = ? AND binding_lifecycle = 'CANDIDATE_PREPARED'"
+                    + " ORDER BY work_ordinal",
+                anchor.bootstrapOperationId());
+        assertThat(originals).hasSize(1);
+        proofReads.set(0);
+        var partitionProofs =
+            new CanonicalGameplayIssuerOriginalMemberSourceRepository.InstalledPartitionProofs(
+                transaction, anchor);
+        for (var row : originals) {
+          var original =
               CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
                   transaction, anchor, current, row, plan, partitionProofs);
-            }
-            assertThat(proofReads.get()).isOne();
+          assertThat(original.operationId()).isEqualTo(row.get("member_operation_id", UUID.class));
+          CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
+              transaction, anchor, current, row, plan, partitionProofs);
+        }
+        assertThat(proofReads.get()).isOne();
 
-            // Reusing the partition proof must never skip an individual member's byte check.
-            var corrupted = originals.get(0);
-            var digestField =
-                Objects.requireNonNull(corrupted.field("member_value_digest", String.class));
-            String originalDigest = corrupted.get(digestField);
-            corrupted.set(digestField, "sha256:" + "0".repeat(64));
-            assertThatThrownBy(
-                    () ->
-                        CanonicalGameplayIssuerOriginalMemberSourceRepository
-                            .readInstalledInTransaction(
-                                transaction, anchor, current, corrupted, plan, partitionProofs))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("member value digest differs");
-            corrupted.set(digestField, originalDigest);
+        // Reusing the partition proof must never skip an individual member's byte check.
+        var corrupted = originals.get(0);
+        var digestField =
+            Objects.requireNonNull(corrupted.field("member_value_digest", String.class));
+        String originalDigest = corrupted.get(digestField);
+        corrupted.set(digestField, "sha256:" + "0".repeat(64));
+        assertThatThrownBy(() ->
+                CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
+                    transaction, anchor, current, corrupted, plan, partitionProofs))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("member value digest differs");
+        corrupted.set(digestField, originalDigest);
 
-            var freshProofs =
-                new CanonicalGameplayIssuerOriginalMemberSourceRepository.InstalledPartitionProofs(
-                    transaction, anchor);
-            for (var row : originals) {
-              CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
-                  transaction, anchor, current, row, plan, freshProofs);
-            }
-            assertThat(proofReads.get()).isEqualTo(2);
-          });
+        var freshProofs =
+            new CanonicalGameplayIssuerOriginalMemberSourceRepository.InstalledPartitionProofs(
+                transaction, anchor);
+        for (var row : originals) {
+          CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
+              transaction, anchor, current, row, plan, freshProofs);
+        }
+        assertThat(proofReads.get()).isEqualTo(2);
+      });
       assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(physicalBefore);
     }
   }
@@ -266,17 +262,14 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
               "operation_id",
               pendingAdd.physicalMutation().ownerOperationId());
       byte[] partitionBeforeStaleReadback = physicalFieldSet(partitionKey);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transactionResult(
-                          configuration ->
-                              CanonicalGameplayIssuerPartitionMutationRepository
-                                  .completeInTransaction(
-                                      org.jooq.impl.DSL.using(configuration),
-                                      pendingAdd.physicalMutation(),
-                                      staleReadback)))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transactionResult(configuration ->
+                      CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                          org.jooq.impl.DSL.using(configuration),
+                          pendingAdd.physicalMutation(),
+                          staleReadback)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("exact current physical mutation revision");
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(partitionBeforeStaleReadback);
@@ -387,39 +380,33 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
 
       // Exercise the actual SQL completion and automatic membership removal, then abort the
       // transaction. Physical absence alone must not make the original cease to be current.
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(
-                                transaction);
-                            CanonicalGameplayIssuerPartitionMutationRepository
-                                .completeInTransaction(
-                                    transaction,
-                                    pendingOldestRetirement.physicalMutation(),
-                                    afterUncommittedRetirement);
-                            assertThat(
-                                    transaction.execute(
-                                        "UPDATE game_session_canonical_issuer_binding_local_retirement"
-                                            + " SET status = 'RETIRED',"
-                                            + " exact_absence_readback_field_set_bytes = ?,"
-                                            + " exact_absence_readback_field_set_digest = ?,"
-                                            + " completed_at = CURRENT_TIMESTAMP"
-                                            + " WHERE retirement_operation_id = ?",
-                                        afterUncommittedRetirement,
-                                        CanonicalGameplayIssuerMemberV2Codec.sha256(
-                                            afterUncommittedRetirement),
-                                        pendingOldestRetirement.operationId()))
-                                .isOne();
-                            assertThat(currentOperationIds(transaction))
-                                .containsExactlyInAnyOrder(
-                                    newerOperationId, neverProjectedOperationId);
-                            throw new IllegalStateException(
-                                "controlled retirement completion rollback");
-                          }))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transaction(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+                    CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                        transaction,
+                        pendingOldestRetirement.physicalMutation(),
+                        afterUncommittedRetirement);
+                    assertThat(
+                            transaction.execute(
+                                "UPDATE game_session_canonical_issuer_binding_local_retirement"
+                                    + " SET status = 'RETIRED',"
+                                    + " exact_absence_readback_field_set_bytes = ?,"
+                                    + " exact_absence_readback_field_set_digest = ?,"
+                                    + " completed_at = CURRENT_TIMESTAMP"
+                                    + " WHERE retirement_operation_id = ?",
+                                afterUncommittedRetirement,
+                                CanonicalGameplayIssuerMemberV2Codec.sha256(
+                                    afterUncommittedRetirement),
+                                pendingOldestRetirement.operationId()))
+                        .isOne();
+                    assertThat(currentOperationIds(transaction))
+                        .containsExactlyInAnyOrder(newerOperationId, neverProjectedOperationId);
+                    throw new IllegalStateException("controlled retirement completion rollback");
+                  }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("controlled retirement completion rollback");
       assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBeforeRetirement);
@@ -812,13 +799,12 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
           fixture.readPreparedPartitionWork(release.originalOperation()).baselineFields();
       var baselineCapacity =
           baseline.entrySet().stream()
-              .filter(
-                  entry ->
-                      entry
-                          .getKey()
-                          .startsWith(
-                              CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
-                                  .RESERVATION_FIELD_PREFIX))
+              .filter(entry ->
+                  entry
+                      .getKey()
+                      .startsWith(
+                          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
+                              .RESERVATION_FIELD_PREFIX))
               .findFirst()
               .orElseThrow();
       byte[] baselineCapacityField = baselineCapacity.getKey().getBytes(StandardCharsets.US_ASCII);
@@ -911,9 +897,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       String retiredAuditBefore = retirementImage(fixture.dsl(), fixture.transitionId());
       long reservationsBefore = reservationCount(fixture.dsl());
 
-      assertThatThrownBy(
-              () ->
-                  insertUnaccountedCurrentReservation(fixture, otherPartitionSeed, otherPartition))
+      assertThatThrownBy(() ->
+              insertUnaccountedCurrentReservation(fixture, otherPartitionSeed, otherPartition))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining(
               "Installed issuer reservation requires exact bootstrap or current local-operation membership");
@@ -1134,22 +1119,20 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
     parent.fetch(
         "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
 
-    assertThatThrownBy(
-            () ->
-                parent.transaction(
-                    configuration -> {
-                      DSLContext transaction = DSL.using(configuration);
-                      assertThat(
-                              transaction.execute(
-                                  "UPDATE game_session_canonical_issuer_partition_reservation"
-                                      + " SET coverage_fence = coverage_fence + 1"
-                                      + " WHERE reservation_id = ?",
-                                  baselineReservationId))
-                          .isOne();
-                      transaction.fetch(
-                          "SELECT gs_require_issuer_reservation_current_membership(?)",
-                          baselineReservationId);
-                    }))
+    assertThatThrownBy(() ->
+            parent.transaction(configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              assertThat(
+                      transaction.execute(
+                          "UPDATE game_session_canonical_issuer_partition_reservation"
+                              + " SET coverage_fence = coverage_fence + 1"
+                              + " WHERE reservation_id = ?",
+                          baselineReservationId))
+                  .isOne();
+              transaction.fetch(
+                  "SELECT gs_require_issuer_reservation_current_membership(?)",
+                  baselineReservationId);
+            }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .rootCause()
         .isInstanceOf(org.postgresql.util.PSQLException.class)
@@ -1209,48 +1192,45 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
         for (String byteaOutput : List.of("hex", "escape")) {
           fixture
               .dsl()
-              .transaction(
-                  configuration -> {
-                    DSLContext transaction = DSL.using(configuration);
-                    // LOCAL settings and the guard use this transaction's same owned connection.
-                    transaction.execute("SET LOCAL TimeZone = '" + timeZone + "'");
-                    transaction.execute("SET LOCAL bytea_output = '" + byteaOutput + "'");
-                    var rendered =
-                        transaction.fetchSingle(
-                            "SELECT to_jsonb(created_at)::text, to_jsonb(binding_ref)::text FROM"
-                                + " game_session_canonical_issuer_partition_reservation"
-                                + " WHERE reservation_id = ?",
-                            baselineReservationId);
-                    timestampRenderings.put(timeZone, rendered.get(0, String.class));
-                    binaryRenderings.put(byteaOutput, rendered.get(1, String.class));
-                    transaction.fetch(
-                        "SELECT gs_require_issuer_reservation_current_membership(?)",
+              .transaction(configuration -> {
+                DSLContext transaction = DSL.using(configuration);
+                // LOCAL settings and the guard use this transaction's same owned connection.
+                transaction.execute("SET LOCAL TimeZone = '" + timeZone + "'");
+                transaction.execute("SET LOCAL bytea_output = '" + byteaOutput + "'");
+                var rendered =
+                    transaction.fetchSingle(
+                        "SELECT to_jsonb(created_at)::text, to_jsonb(binding_ref)::text FROM"
+                            + " game_session_canonical_issuer_partition_reservation"
+                            + " WHERE reservation_id = ?",
                         baselineReservationId);
-                  });
+                timestampRenderings.put(timeZone, rendered.get(0, String.class));
+                binaryRenderings.put(byteaOutput, rendered.get(1, String.class));
+                transaction.fetch(
+                    "SELECT gs_require_issuer_reservation_current_membership(?)",
+                    baselineReservationId);
+              });
         }
       }
       assertThat(timestampRenderings.values()).doesNotHaveDuplicates();
       assertThat(binaryRenderings.values()).doesNotHaveDuplicates();
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            transaction.execute("SET LOCAL TimeZone = 'Pacific/Auckland'");
-                            transaction.execute("SET LOCAL bytea_output = 'escape'");
-                            assertThat(
-                                    transaction.execute(
-                                        "UPDATE game_session_canonical_issuer_partition_reservation"
-                                            + " SET coverage_fence = coverage_fence + 1"
-                                            + " WHERE reservation_id = ?",
-                                        baselineReservationId))
-                                .isOne();
-                            transaction.fetch(
-                                "SELECT gs_require_issuer_reservation_current_membership(?)",
-                                baselineReservationId);
-                          }))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transaction(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    transaction.execute("SET LOCAL TimeZone = 'Pacific/Auckland'");
+                    transaction.execute("SET LOCAL bytea_output = 'escape'");
+                    assertThat(
+                            transaction.execute(
+                                "UPDATE game_session_canonical_issuer_partition_reservation"
+                                    + " SET coverage_fence = coverage_fence + 1"
+                                    + " WHERE reservation_id = ?",
+                                baselineReservationId))
+                        .isOne();
+                    transaction.fetch(
+                        "SELECT gs_require_issuer_reservation_current_membership(?)",
+                        baselineReservationId);
+                  }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .rootCause()
           .isInstanceOf(org.postgresql.util.PSQLException.class)
@@ -1372,91 +1352,83 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
       String originalBefore = localOperationImage(fixture.dsl(), originalId);
       String historyBefore = durableHistoryImage(fixture.dsl(), NIL_UUID);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "DELETE FROM game_session_canonical_issuer_current_local_operation WHERE operation_id = ?",
-                          originalId))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "DELETE FROM game_session_canonical_issuer_current_local_operation WHERE operation_id = ?",
+                      originalId))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("exact committed original retirement");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_current_local_operation"
-                              + " SET partition_id = partition_id WHERE operation_id = ?",
-                          originalId))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_current_local_operation"
+                          + " SET partition_id = partition_id WHERE operation_id = ?",
+                      originalId))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("cannot be updated or truncated");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute("TRUNCATE game_session_canonical_issuer_current_local_operation"))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute("TRUNCATE game_session_canonical_issuer_current_local_operation"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("cannot be updated or truncated");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "INSERT INTO game_session_canonical_issuer_current_local_operation"
-                              + " (operation_id, issuer_id, anchor_bootstrap_operation_id, partition_id)"
-                              + " SELECT operation_id, issuer_id, anchor_bootstrap_operation_id, partition_id + 1"
-                              + " FROM game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
-                          originalId))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "INSERT INTO game_session_canonical_issuer_current_local_operation"
+                          + " (operation_id, issuer_id, anchor_bootstrap_operation_id, partition_id)"
+                          + " SELECT operation_id, issuer_id, anchor_bootstrap_operation_id, partition_id + 1"
+                          + " FROM game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+                      originalId))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("exact unretired immutable source");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            // The write itself succeeds; the reverse guard checks the committed
-                            // postimage.
-                            assertThat(
-                                    transaction.execute(
-                                        "UPDATE game_session_canonical_issuer_partition_reservation reservation"
-                                            + " SET coverage_fence = reservation.coverage_fence + 1"
-                                            + " FROM game_session_canonical_issuer_binding_local_operation original"
-                                            + " WHERE original.operation_id = ?"
-                                            + " AND reservation.reservation_id = original.reservation_id",
-                                        originalId))
-                                .isOne();
-                          }))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transaction(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    // The write itself succeeds; the reverse guard checks the committed
+                    // postimage.
+                    assertThat(
+                            transaction.execute(
+                                "UPDATE game_session_canonical_issuer_partition_reservation reservation"
+                                    + " SET coverage_fence = reservation.coverage_fence + 1"
+                                    + " FROM game_session_canonical_issuer_binding_local_operation original"
+                                    + " WHERE original.operation_id = ?"
+                                    + " AND reservation.reservation_id = original.reservation_id",
+                                originalId))
+                        .isOne();
+                  }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .rootCause()
           .isInstanceOf(org.postgresql.util.PSQLException.class)
           .hasMessageContaining("exact installed local-operation source");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            // A seeded bootstrap reservation is also bound to its complete frozen
-                            // owner
-                            // and coverage tuple, rather than being admitted by reservation
-                            // identity alone.
-                            assertThat(
-                                    transaction.execute(
-                                        "UPDATE game_session_canonical_issuer_partition_reservation reservation"
-                                            + " SET coverage_fence = reservation.coverage_fence + 1"
-                                            + " FROM game_session_canonical_issuer_installed_anchor anchor"
-                                            + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
-                                            + " ON cohort.build_operation_id = anchor.build_operation_id"
-                                            + " AND cohort.source_operation_id = anchor.bootstrap_operation_id"
-                                            + " AND cohort.issuer_id = anchor.issuer_id"
-                                            + " AND cohort.source_kind = 'RESERVATION'"
-                                            + " WHERE reservation.reservation_id::text = cohort.source_key"))
-                                .isOne();
-                          }))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .transaction(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    // A seeded bootstrap reservation is also bound to its complete frozen
+                    // owner
+                    // and coverage tuple, rather than being admitted by reservation
+                    // identity alone.
+                    assertThat(
+                            transaction.execute(
+                                "UPDATE game_session_canonical_issuer_partition_reservation reservation"
+                                    + " SET coverage_fence = reservation.coverage_fence + 1"
+                                    + " FROM game_session_canonical_issuer_installed_anchor anchor"
+                                    + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
+                                    + " ON cohort.build_operation_id = anchor.build_operation_id"
+                                    + " AND cohort.source_operation_id = anchor.bootstrap_operation_id"
+                                    + " AND cohort.issuer_id = anchor.issuer_id"
+                                    + " AND cohort.source_kind = 'RESERVATION'"
+                                    + " WHERE reservation.reservation_id::text = cohort.source_key"))
+                        .isOne();
+                  }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .rootCause()
           .isInstanceOf(org.postgresql.util.PSQLException.class)

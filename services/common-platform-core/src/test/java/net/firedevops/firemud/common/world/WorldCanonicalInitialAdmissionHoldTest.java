@@ -263,140 +263,132 @@ class WorldCanonicalInitialAdmissionHoldTest {
 
   @Test
   void rejectsNilNoncanonicalAndInvalidScopeOrOriginInputs() {
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    NIL_UUID,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    "gs-initial-admission-17",
-                    REQUEST_DIGEST,
-                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
-                    12L,
-                    null))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                NIL_UUID,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                "gs-initial-admission-17",
+                REQUEST_DIGEST,
+                InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                12L,
+                null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    "gs-initial-admission-17",
-                    REQUEST_DIGEST,
-                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
-                    12L,
-                    null,
-                    "PRIVATE"))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                "gs-initial-admission-17",
+                REQUEST_DIGEST,
+                InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                12L,
+                null,
+                "PRIVATE"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SHARED");
     assertThatThrownBy(
             () -> Request.fromStored(utf8Bytes(NO_PRIOR_VECTOR.replace("SHARED", "ISOLATED"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SHARED");
-    assertThatThrownBy(
-            () ->
-                Request.fromStored(
-                    utf8Bytes(NO_PRIOR_VECTOR.replace("NO_PRIOR_POINTER", "FIRST_OPEN"))))
+    assertThatThrownBy(() ->
+            Request.fromStored(
+                utf8Bytes(NO_PRIOR_VECTOR.replace("NO_PRIOR_POINTER", "FIRST_OPEN"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("initialAdmissionOrigin");
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    "gs-initial-admission-17",
-                    REQUEST_DIGEST,
-                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
-                    12L,
-                    1L))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                "gs-initial-admission-17",
+                REQUEST_DIGEST,
+                InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                12L,
+                1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("NO_PRIOR_POINTER");
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    "gs-initial-admission-17",
-                    REQUEST_DIGEST,
-                    InitialAdmissionOrigin.EXPECT_CLOSED,
-                    12L,
-                    null))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                "gs-initial-admission-17",
+                REQUEST_DIGEST,
+                InitialAdmissionOrigin.EXPECT_CLOSED,
+                12L,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires");
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    "gs-initial-admission-17",
-                    "A".repeat(64),
-                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
-                    12L,
-                    null))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                "gs-initial-admission-17",
+                "A".repeat(64),
+                InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                12L,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("lowercase");
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    " ",
-                    REQUEST_DIGEST,
-                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
-                    12L,
-                    null))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                " ",
+                REQUEST_DIGEST,
+                InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                12L,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nonempty");
-    assertThatThrownBy(
-            () ->
-                request(
-                    "prod",
-                    TENANT,
-                    "green-hollow",
-                    REALM,
-                    PLAYABLE_NAMESPACE,
-                    GAME_INSTANCE,
-                    VERSION,
-                    7L,
-                    "r".repeat(129),
-                    REQUEST_DIGEST,
-                    InitialAdmissionOrigin.NO_PRIOR_POINTER,
-                    12L,
-                    null))
+    assertThatThrownBy(() ->
+            request(
+                "prod",
+                TENANT,
+                "green-hollow",
+                REALM,
+                PLAYABLE_NAMESPACE,
+                GAME_INSTANCE,
+                VERSION,
+                7L,
+                "r".repeat(129),
+                REQUEST_DIGEST,
+                InitialAdmissionOrigin.NO_PRIOR_POINTER,
+                12L,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bounded");
     assertThatThrownBy(() -> new HoldIdentity(noPriorRequest(), NIL_UUID, HOLD_FENCE))
@@ -452,22 +444,20 @@ class WorldCanonicalInitialAdmissionHoldTest {
 
     String identity =
         utf8(new HoldIdentity(noPriorRequest(), HOLD_ID, HOLD_FENCE).canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                HoldIdentity.fromStored(
-                    utf8Bytes(
-                        identity.replace(
-                            "\"holdBindingDigest\":\"" + noPriorRequest().holdBindingDigest(),
-                            "\"holdBindingDigest\":\"sha256:" + "0".repeat(64)))))
+    assertThatThrownBy(() ->
+            HoldIdentity.fromStored(
+                utf8Bytes(
+                    identity.replace(
+                        "\"holdBindingDigest\":\"" + noPriorRequest().holdBindingDigest(),
+                        "\"holdBindingDigest\":\"sha256:" + "0".repeat(64)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
-    assertThatThrownBy(
-            () ->
-                HoldIdentity.fromStored(
-                    utf8Bytes(
-                        identity.replace(
-                            "\"holdId\":",
-                            "\"legacyHoldId\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"holdId\":"))))
+    assertThatThrownBy(() ->
+            HoldIdentity.fromStored(
+                utf8Bytes(
+                    identity.replace(
+                        "\"holdId\":",
+                        "\"legacyHoldId\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"holdId\":"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("closed object shape");
   }

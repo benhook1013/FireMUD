@@ -176,13 +176,9 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
 
     assertThat(creationEvidence().provenanceKind()).isEqualTo("NEW_GAME_ROW");
     assertThat(retainedSourceEvidence.provenanceKind()).isEqualTo("RETAINED_GAME_V29");
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
-                    capability(),
-                    creationEvidence(),
-                    retainedSourceEvidence,
-                    retainedSourceLaunchRead))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
+                capability(), creationEvidence(), retainedSourceEvidence, retainedSourceLaunchRead))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureWireCodec.InvalidWireDataException.class);
   }
 
@@ -214,16 +210,14 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
         validSourceReceiptJson()
             .replace(
                 creationEvidence().creationRequestId().toString(), UUID.randomUUID().toString()));
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(
-                    Arrays.copyOf(request, request.length + 1)))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(
+                Arrays.copyOf(request, request.length + 1)))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureWireCodec.InvalidWireDataException.class);
     byte[] badLength = request.clone();
     ByteBuffer.wrap(badLength).putInt(Integer.MAX_VALUE);
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(badLength))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(badLength))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureWireCodec.InvalidWireDataException.class);
   }
 
@@ -268,28 +262,23 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
           response.toBuilder().setPlayableStateScopeValue(999).build(),
           response.toBuilder().setGameSessionTenantId(0L).build()
         }) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
-                      result.request(), wrong))
+      assertThatThrownBy(() ->
+              CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+                  result.request(), wrong))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureRequest(
-                    request.toBuilder().setUnknownFields(UNKNOWN_FIELD_SET).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureRequest(
+                request.toBuilder().setUnknownFields(UNKNOWN_FIELD_SET).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
-                    result.request(),
-                    response.toBuilder().setUnknownFields(UNKNOWN_FIELD_SET).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+                result.request(), response.toBuilder().setUnknownFields(UNKNOWN_FIELD_SET).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
-                    result.request(),
-                    response.toBuilder().setCurrentGameInstanceStatus("RUNNING").build()))
+    assertThatThrownBy(() ->
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+                result.request(),
+                response.toBuilder().setCurrentGameInstanceStatus("RUNNING").build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -357,8 +346,8 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
 
   private static String validCapabilityJson() {
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":7,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
-        """
+    {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":7,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
+    """
         .formatted(
             RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,
             RUN_ID,

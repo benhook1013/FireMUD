@@ -516,16 +516,15 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   private VersionAssetArtifact findOrCreate(String tenantId, long versionId) {
     return repository
         .findByTenantIdAndVersionId(tenantId, versionId)
-        .orElseGet(
-            () -> {
-              VersionAssetArtifact created = new VersionAssetArtifact();
-              created.setTenantId(tenantId);
-              created.setVersionId(versionId);
-              created.setExportedVersionNumber(0);
-              created.setArtifactState(VersionAssetArtifactState.STAGED);
-              created.setStateEpoch(0);
-              return created;
-            });
+        .orElseGet(() -> {
+          VersionAssetArtifact created = new VersionAssetArtifact();
+          created.setTenantId(tenantId);
+          created.setVersionId(versionId);
+          created.setExportedVersionNumber(0);
+          created.setArtifactState(VersionAssetArtifactState.STAGED);
+          created.setStateEpoch(0);
+          return created;
+        });
   }
 
   private void requireEpoch(VersionAssetArtifact artifact, long expectedStateEpoch) {

@@ -248,12 +248,11 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       }
 
       CompletableFuture<WebSocket> connection = builder.buildAsync(gatewayUri, releasingListener);
-      connection.whenComplete(
-          (ignored, error) -> {
-            if (error != null && !connection.isCancelled()) {
-              recordFailure(classifyFailure(error));
-            }
-          });
+      connection.whenComplete((ignored, error) -> {
+        if (error != null && !connection.isCancelled()) {
+          recordFailure(classifyFailure(error));
+        }
+      });
       return new ConnectionFuture(connection, releasingListener);
     } catch (RuntimeException error) {
       if (releasingListener == null) {
@@ -288,32 +287,30 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       return CompletableFuture.completedFuture(false);
     }
     CompletableFuture<Boolean> readiness = new CompletableFuture<>();
-    responseFuture.whenComplete(
-        (response, error) -> {
-          boolean ready = false;
-          try {
-            try {
-              if (error == null) {
-                ready =
-                    response.statusCode() >= 200
-                        && response.statusCode() < 300
-                        && hasUsableCertificateWatcher();
-              } else if (!readiness.isCancelled()) {
-                recordFailure(classifyFailure(error));
-              }
-            } finally {
-              readiness.complete(ready);
-            }
-          } finally {
-            generation.release();
+    responseFuture.whenComplete((response, error) -> {
+      boolean ready = false;
+      try {
+        try {
+          if (error == null) {
+            ready =
+                response.statusCode() >= 200
+                    && response.statusCode() < 300
+                    && hasUsableCertificateWatcher();
+          } else if (!readiness.isCancelled()) {
+            recordFailure(classifyFailure(error));
           }
-        });
-    readiness.whenComplete(
-        (ignored, error) -> {
-          if (readiness.isCancelled()) {
-            responseFuture.cancel(true);
-          }
-        });
+        } finally {
+          readiness.complete(ready);
+        }
+      } finally {
+        generation.release();
+      }
+    });
+    readiness.whenComplete((ignored, error) -> {
+      if (readiness.isCancelled()) {
+        responseFuture.cancel(true);
+      }
+    });
     return readiness;
   }
 
@@ -958,18 +955,17 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         CompletableFuture<WebSocket> handshake, ReleasingWebSocketListener releasingListener) {
       this.handshake = Objects.requireNonNull(handshake, "handshake");
       this.releasingListener = Objects.requireNonNull(releasingListener, "releasingListener");
-      handshake.whenComplete(
-          (webSocket, error) -> {
-            if (error != null) {
-              releasingListener.release();
-              completeExceptionally(error);
-              return;
-            }
-            WebSocket wrapped = releasingListener.wrap(webSocket);
-            if (!complete(wrapped)) {
-              wrapped.abort();
-            }
-          });
+      handshake.whenComplete((webSocket, error) -> {
+        if (error != null) {
+          releasingListener.release();
+          completeExceptionally(error);
+          return;
+        }
+        WebSocket wrapped = releasingListener.wrap(webSocket);
+        if (!complete(wrapped)) {
+          wrapped.abort();
+        }
+      });
     }
 
     @Override

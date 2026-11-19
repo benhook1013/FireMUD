@@ -64,11 +64,10 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
       try (Fixture f = fixture(null, history)) {
         var evidence = f.owner().read(request());
         assertThat(evidence.catalog().families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(history);
-                  assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(history);
+              assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
+            });
         assertThat(f.owner().readExact(evidence.request())).isEqualTo(evidence);
         assertThat(
                 f.dsl
@@ -101,32 +100,28 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
               "script_work_items",
               "plugin_runtime_states")) {
         assertThat(catalog.families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(name);
-                  assertThat(family.stateClass()).isEqualTo(StateClass.UNKNOWN);
-                  assertThat(family.freshDisposition())
-                      .isEqualTo(FreshDisposition.STATE_CLASS_UNKNOWN_BLOCKING);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(name);
+              assertThat(family.stateClass()).isEqualTo(StateClass.UNKNOWN);
+              assertThat(family.freshDisposition())
+                  .isEqualTo(FreshDisposition.STATE_CLASS_UNKNOWN_BLOCKING);
+            });
       }
       assertThat(catalog.families())
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("faction_standing");
-                assertThat(family.stateClass()).isEqualTo(StateClass.UNRESOLVED);
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.OWNERSHIP_DRIFT_BLOCKING);
-                assertThat(family.ownerConsequence())
-                    .contains(
-                        "Social", "retained-row disposition", "not Automation FRESH ownership");
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("script_schedule_instances");
-                assertThat(family.stateClass()).isEqualTo(StateClass.S2);
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.NAMESPACE_MAPPING_BLOCKING);
-              });
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("faction_standing");
+            assertThat(family.stateClass()).isEqualTo(StateClass.UNRESOLVED);
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.OWNERSHIP_DRIFT_BLOCKING);
+            assertThat(family.ownerConsequence())
+                .contains("Social", "retained-row disposition", "not Automation FRESH ownership");
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("script_schedule_instances");
+            assertThat(family.stateClass()).isEqualTo(StateClass.S2);
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.NAMESPACE_MAPPING_BLOCKING);
+          });
       assertThat(catalog.families())
           .anyMatch(family -> family.familyId().equals("saga_instance"))
           .anyMatch(family -> family.familyId().equals("saga_step"))
@@ -142,11 +137,10 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
               GapId.QUEUE_DISCOVERY_AND_ENCODING,
               GapId.QUEUE_POINTER_RETENTION);
       assertThat(catalog.families())
-          .noneMatch(
-              family ->
-                  family.familyId().contains("charge_record")
-                      || family.familyId().equals("redis_queue")
-                      || family.familyId().equals("script_firing_claims"));
+          .noneMatch(family ->
+              family.familyId().contains("charge_record")
+                  || family.familyId().equals("redis_queue")
+                  || family.familyId().equals("script_firing_claims"));
       assertThat(catalog.schemaFacts())
           .anyMatch(fact -> fact.kind() == FactKind.ROUTINE)
           .anyMatch(fact -> fact.kind() == FactKind.MIGRATION)
@@ -225,10 +219,9 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThatThrownBy(
               () -> f.dsl.execute("DELETE FROM automation_empty_source_numeric_key_reservation"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO scripts(tenant_id,name,version,definition) VALUES(1,'forbidden','patch','{}')"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO scripts(tenant_id,name,version,definition) VALUES(1,'forbidden','patch','{}')"))
           .hasMessageContaining("reserved by an immutable empty-source receipt");
       migration(f.source, f.schema, f.history, null).validate();
     }
@@ -332,10 +325,9 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
                       read.readRequestId())
                   .get(0, byte[].class))
           .isEqualTo(AutomationRuntimeFamilyCatalogCodec.evidenceBytes(original));
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE automation_runtime_catalog_non_sql_gap SET disposition='UNRESOLVED_BLOCKING'"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE automation_runtime_catalog_non_sql_gap SET disposition='UNRESOLVED_BLOCKING'"))
           .hasMessageContaining("immutable");
     }
   }
@@ -404,13 +396,12 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var original = f.owner().read(request());
       for (String consequence : List.of(" ", "\t")) {
-        assertThatThrownBy(
-                () ->
-                    f.dsl.execute(
-                        "INSERT INTO automation_runtime_family_classification VALUES"
-                            + " ('npc_memory.value','npc_memory','value','RUNTIME_PAYLOAD','UNKNOWN',"
-                            + "'STATE_CLASS_UNKNOWN_BLOCKING','UNRESOLVED_RETAINED',?)",
-                        consequence))
+        assertThatThrownBy(() ->
+                f.dsl.execute(
+                    "INSERT INTO automation_runtime_family_classification VALUES"
+                        + " ('npc_memory.value','npc_memory','value','RUNTIME_PAYLOAD','UNKNOWN',"
+                        + "'STATE_CLASS_UNKNOWN_BLOCKING','UNRESOLVED_RETAINED',?)",
+                    consequence))
             .hasMessageContaining("ck_automation_runtime_family_consequence");
       }
       for (String table :
@@ -423,35 +414,32 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
             .hasMessageContaining("immutable");
         assertThatThrownBy(() -> f.dsl.execute("TRUNCATE " + table + " CASCADE"))
             .hasMessageContaining("immutable");
-        assertThatThrownBy(
-                () ->
-                    f.dsl.execute(
-                        "UPDATE "
-                            + table
-                            + " SET "
-                            + (table.equals("automation_runtime_family_classification")
-                                ? "family_id=family_id"
-                                : table.equals("automation_runtime_catalog_non_sql_gap")
-                                    ? "gap_id=gap_id"
-                                    : "catalog_epoch=catalog_epoch")))
+        assertThatThrownBy(() ->
+                f.dsl.execute(
+                    "UPDATE "
+                        + table
+                        + " SET "
+                        + (table.equals("automation_runtime_family_classification")
+                            ? "family_id=family_id"
+                            : table.equals("automation_runtime_catalog_non_sql_gap")
+                                ? "gap_id=gap_id"
+                                : "catalog_epoch=catalog_epoch")))
             .hasMessageContaining("immutable");
       }
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO automation_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 3,catalog_bytes,catalog_digest FROM automation_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO automation_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
+                      + " SELECT 3,catalog_bytes,catalog_digest FROM automation_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
           .hasMessageContaining("exact classified installed schema");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO automation_runtime_family_catalog_snapshot"
-                          + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
-                          + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest"
-                          + " FROM automation_runtime_family_catalog_snapshot WHERE read_request_id=?",
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      original.request().readRequestId()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO automation_runtime_family_catalog_snapshot"
+                      + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
+                      + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest"
+                      + " FROM automation_runtime_family_catalog_snapshot WHERE read_request_id=?",
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  original.request().readRequestId()))
           .hasMessageContaining("complete exact request and evidence");
       assertThat(f.count("automation_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
@@ -469,10 +457,9 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
               .orElseThrow();
       Context.current()
           .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-          .run(
-              () ->
-                  service.readAutomationRuntimeFamilyCatalog(
-                      AutomationRuntimeFamilyCatalogCodec.toRequest(read), collector));
+          .run(() ->
+              service.readAutomationRuntimeFamilyCatalog(
+                  AutomationRuntimeFamilyCatalogCodec.toRequest(read), collector));
       assertThat(collector.error).isNull();
       assertThat(collector.completed).isTrue();
       var evidence = AutomationRuntimeFamilyCatalogCodec.fromResponse(read, collector.value);
@@ -505,21 +492,20 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
         var original = f.owner().read(read);
         assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
         assertThat(original.catalog().schemaFacts())
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.VIEW);
-                  assertThat(fact.identity()).isEqualTo("catalog_security_probe");
-                  assertThat(fact.definitionDigest())
-                      .isEqualTo(
-                          f.dsl
-                              .fetchSingle(
-                                  "SELECT 'sha256:'||encode(sha256(convert_to("
-                                      + "jsonb_build_array(pg_get_viewdef(c.oid,true),c.reloptions)::text,'UTF8')),'hex')"
-                                      + " FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
-                                      + " WHERE n.nspname=? AND c.relname='catalog_security_probe'",
-                                  f.schema)
-                              .get(0, String.class));
-                });
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.VIEW);
+              assertThat(fact.identity()).isEqualTo("catalog_security_probe");
+              assertThat(fact.definitionDigest())
+                  .isEqualTo(
+                      f.dsl
+                          .fetchSingle(
+                              "SELECT 'sha256:'||encode(sha256(convert_to("
+                                  + "jsonb_build_array(pg_get_viewdef(c.oid,true),c.reloptions)::text,'UTF8')),'hex')"
+                                  + " FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+                                  + " WHERE n.nspname=? AND c.relname='catalog_security_probe'",
+                              f.schema)
+                          .get(0, String.class));
+            });
         assertThat(f.owner().read(read)).isEqualTo(original);
         assertThat(f.owner().readExact(read)).isEqualTo(original);
         String definition =
@@ -597,15 +583,14 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
                 ? "V1004__automation_owner_runtime_family_catalog.sql"
                 : "V1005__automation_catalog_view_options.sql";
         assertThat(current.catalog().schemaFacts())
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
-                  assertThat(fact.identity()).isEqualTo("catalog-installation:" + version);
-                  assertThat(fact.definitionDigest())
-                      .isEqualTo(
-                          AutomationRuntimeFamilyCatalog.sha256(
-                              script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-                });
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+              assertThat(fact.identity()).isEqualTo("catalog-installation:" + version);
+              assertThat(fact.definitionDigest())
+                  .isEqualTo(
+                      AutomationRuntimeFamilyCatalog.sha256(
+                          script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            });
       }
       migration(f.source, f.schema, f.history, null).validate();
     }

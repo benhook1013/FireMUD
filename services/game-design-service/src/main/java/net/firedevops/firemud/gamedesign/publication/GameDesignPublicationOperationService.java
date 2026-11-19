@@ -35,12 +35,11 @@ public final class GameDesignPublicationOperationService {
     if (retained.isPresent()) {
       var original = retained.orElseThrow();
       if ("PENDING".equals(original.outcome())) {
-        read.executeWithoutResult(
-            status ->
-                repository
-                    .readSourceCapture(operation)
-                    .orElseThrow(
-                        () -> new IllegalStateException("PUBLICATION_SOURCE_CAPTURE_UNAVAILABLE")));
+        read.executeWithoutResult(status ->
+            repository
+                .readSourceCapture(operation)
+                .orElseThrow(
+                    () -> new IllegalStateException("PUBLICATION_SOURCE_CAPTURE_UNAVAILABLE")));
       }
       return original;
     }
@@ -52,15 +51,13 @@ public final class GameDesignPublicationOperationService {
   public Optional<GameDesignPublicationOperationRepository.Readback> readExact(
       GameDesignPublicationOperation operation) {
     requireIndependent();
-    return read.execute(
-        status ->
-            repository
-                .read(operation.workflowId())
-                .map(
-                    result -> {
-                      GameDesignPublicationOperationRepository.exact(result.operation(), operation);
-                      return result;
-                    }));
+    return read.execute(status ->
+        repository
+            .read(operation.workflowId())
+            .map(result -> {
+              GameDesignPublicationOperationRepository.exact(result.operation(), operation);
+              return result;
+            }));
   }
 
   /** Independently resolves the complete retained owner identity, never a workflow-only result. */
@@ -76,22 +73,19 @@ public final class GameDesignPublicationOperationService {
         || !selectionDigest.matches("sha256:[0-9a-f]{64}")) {
       throw new IllegalArgumentException("Complete publication owner scope required");
     }
-    return read.execute(
-        status ->
-            repository
-                .read(workflow)
-                .map(
-                    result -> {
-                      var operation = result.operation();
-                      if (!tenant.equals(operation.tenantKey())
-                          || !workflow.equals(operation.workflowId())
-                          || version != operation.versionId()
-                          || !selectionDigest.equals(operation.selectionDigest())) {
-                        throw new IllegalArgumentException(
-                            "PUBLICATION_OPERATION_IDENTITY_CONFLICT");
-                      }
-                      return result;
-                    }));
+    return read.execute(status ->
+        repository
+            .read(workflow)
+            .map(result -> {
+              var operation = result.operation();
+              if (!tenant.equals(operation.tenantKey())
+                  || !workflow.equals(operation.workflowId())
+                  || version != operation.versionId()
+                  || !selectionDigest.equals(operation.selectionDigest())) {
+                throw new IllegalArgumentException("PUBLICATION_OPERATION_IDENTITY_CONFLICT");
+              }
+              return result;
+            }));
   }
 
   private static void requireIndependent() {

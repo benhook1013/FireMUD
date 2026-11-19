@@ -201,20 +201,18 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         .isEqualTo(1L);
     assertThat(read(firstRequestId)).contains(first);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
-                    first.localTenantKey(),
-                    "cannot-claim-canonical-selector"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
+                first.localTenantKey(),
+                "cannot-claim-canonical-selector"))
         .isInstanceOf(DataIntegrityViolationException.class)
         .satisfies(this::assertReservedCanonicalSelectorRejected);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE region SET tenant_id = ? WHERE id = ?",
-                    first.localTenantKey(),
-                    legacyRegionId))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE region SET tenant_id = ? WHERE id = ?",
+                first.localTenantKey(),
+                legacyRegionId))
         .isInstanceOf(DataIntegrityViolationException.class)
         .satisfies(this::assertReservedCanonicalSelectorRejected);
     assertThat(
@@ -350,42 +348,37 @@ class WorldAuthoredSourceIntakeIntegrationTest {
             tenant, tenantSlug(tenant), "malformed-read-world", sourceRowId(tenant), "Malformed");
     UUID nilUuid = new UUID(0L, 0L);
 
-    assertThatThrownBy(
-            () ->
-                repository.readBySource(
-                    "FireMud",
-                    tenant,
-                    source.worldSlug(),
-                    source.operationId(),
-                    source.evidenceDigest()))
+    assertThatThrownBy(() ->
+            repository.readBySource(
+                "FireMud",
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readBySource(
-                    NAMESPACE,
-                    nilUuid,
-                    source.worldSlug(),
-                    source.operationId(),
-                    source.evidenceDigest()))
+    assertThatThrownBy(() ->
+            repository.readBySource(
+                NAMESPACE,
+                nilUuid,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readBySource(
-                    NAMESPACE,
-                    tenant,
-                    "Malformed-World",
-                    source.operationId(),
-                    source.evidenceDigest()))
+    assertThatThrownBy(() ->
+            repository.readBySource(
+                NAMESPACE,
+                tenant,
+                "Malformed-World",
+                source.operationId(),
+                source.evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readBySource(
-                    NAMESPACE, tenant, source.worldSlug(), nilUuid, source.evidenceDigest()))
+    assertThatThrownBy(() ->
+            repository.readBySource(
+                NAMESPACE, tenant, source.worldSlug(), nilUuid, source.evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readBySource(
-                    NAMESPACE, tenant, source.worldSlug(), source.operationId(), "sha256:BAD"))
+    assertThatThrownBy(() ->
+            repository.readBySource(
+                NAMESPACE, tenant, source.worldSlug(), source.operationId(), "sha256:BAD"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -402,19 +395,18 @@ class WorldAuthoredSourceIntakeIntegrationTest {
             "Uncommitted");
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
 
-    transactionTemplate.execute(
-        status -> {
-          repository.acceptFresh(NAMESPACE, requestId, source);
-          assertThat(
-                  repository.readBySource(
-                      NAMESPACE,
-                      tenant,
-                      source.worldSlug(),
-                      source.operationId(),
-                      source.evidenceDigest()))
-              .isEmpty();
-          return null;
-        });
+    transactionTemplate.execute(status -> {
+      repository.acceptFresh(NAMESPACE, requestId, source);
+      assertThat(
+              repository.readBySource(
+                  NAMESPACE,
+                  tenant,
+                  source.worldSlug(),
+                  source.operationId(),
+                  source.evidenceDigest()))
+          .isEmpty();
+      return null;
+    });
 
     assertThat(
             repository.readBySource(
@@ -440,16 +432,15 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         source(tenant, tenantSlug, "amber-coast", sourceRowId, "Amber Coast");
     assertThatThrownBy(() -> accept(requestId, changedRequestSource))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
-    assertThatThrownBy(
-            () ->
-                accept(
-                    requestId,
-                    source(
-                        UUID.randomUUID(),
-                        "unrelated-tenant-selector",
-                        "violet-wilds",
-                        7_456_321_987L,
-                        "Violet Wilds")))
+    assertThatThrownBy(() ->
+            accept(
+                requestId,
+                source(
+                    UUID.randomUUID(),
+                    "unrelated-tenant-selector",
+                    "violet-wilds",
+                    7_456_321_987L,
+                    "Violet Wilds")))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
 
     AuthoredWorldSourceEvidence changedWorldSource =
@@ -497,13 +488,11 @@ class WorldAuthoredSourceIntakeIntegrationTest {
             "Rolled Back World");
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
 
-    assertThatThrownBy(
-            () ->
-                transactionTemplate.execute(
-                    status -> {
-                      repository.acceptFresh(NAMESPACE, requestId, source);
-                      throw new ForcedOwnerRollbackException();
-                    }))
+    assertThatThrownBy(() ->
+            transactionTemplate.execute(status -> {
+              repository.acceptFresh(NAMESPACE, requestId, source);
+              throw new ForcedOwnerRollbackException();
+            }))
         .isInstanceOf(ForcedOwnerRollbackException.class);
 
     assertThat(read(requestId)).isEmpty();
@@ -520,57 +509,51 @@ class WorldAuthoredSourceIntakeIntegrationTest {
             tenant, tenantSlug(tenant), "immutable-world", sourceRowId(tenant), "Immutable World");
     WorldAuthoredSourceIntakeReceipt receipt = accept(requestId, source);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE world_authored_source_intake SET world_display_name = ? "
-                        + "WHERE operation_id = ?",
-                    "substituted",
-                    receipt.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE world_authored_source_intake SET world_display_name = ? "
+                    + "WHERE operation_id = ?",
+                "substituted",
+                receipt.operationId()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_authored_source_intake WHERE operation_id = ?",
-                    receipt.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_authored_source_intake WHERE operation_id = ?",
+                receipt.operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> dsl.execute("TRUNCATE world_authored_source_intake CASCADE"))
         .isInstanceOf(DataAccessException.class);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE world_authored_source_tenant_association SET tenant_slug = ? "
-                        + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
-                    "changed-selector",
-                    NAMESPACE,
-                    tenant))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE world_authored_source_tenant_association SET tenant_slug = ? "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                "changed-selector",
+                NAMESPACE,
+                tenant))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_authored_source_tenant_association "
-                        + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
-                    NAMESPACE,
-                    tenant))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_authored_source_tenant_association "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                tenant))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
             () -> dsl.execute("TRUNCATE world_authored_source_tenant_association CASCADE"))
         .isInstanceOf(DataAccessException.class);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE world_authored_source_tenant_key_reservation "
-                        + "SET claim_kind = 'LEGACY_NUMERIC' WHERE tenant_key = ?",
-                    receipt.localTenantKey()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE world_authored_source_tenant_key_reservation "
+                    + "SET claim_kind = 'LEGACY_NUMERIC' WHERE tenant_key = ?",
+                receipt.localTenantKey()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_authored_source_tenant_key_reservation "
-                        + "WHERE tenant_key = ?",
-                    receipt.localTenantKey()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_authored_source_tenant_key_reservation "
+                    + "WHERE tenant_key = ?",
+                receipt.localTenantKey()))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
             () -> dsl.execute("TRUNCATE world_authored_source_tenant_key_reservation CASCADE"))
@@ -668,34 +651,30 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<?> first =
-          executor.submit(
-              () ->
-                  firstTransaction.execute(
-                      status -> {
-                        dsl.execute(
-                            "UPDATE region SET name = ? WHERE id = ?",
-                            "first-uncommitted-update",
-                            firstRegionId);
-                        firstUpdateFinished.countDown();
-                        await(allowFirstCommit, 20);
-                        return null;
-                      }));
+          executor.submit(() ->
+              firstTransaction.execute(status -> {
+                dsl.execute(
+                    "UPDATE region SET name = ? WHERE id = ?",
+                    "first-uncommitted-update",
+                    firstRegionId);
+                firstUpdateFinished.countDown();
+                await(allowFirstCommit, 20);
+                return null;
+              }));
 
       try {
         assertThat(firstUpdateFinished.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(first.isDone()).isFalse();
 
         Future<?> second =
-            executor.submit(
-                () ->
-                    secondTransaction.execute(
-                        status -> {
-                          dsl.execute(
-                              "UPDATE region SET name = ? WHERE id = ?",
-                              "second-committed-update",
-                              secondRegionId);
-                          return null;
-                        }));
+            executor.submit(() ->
+                secondTransaction.execute(status -> {
+                  dsl.execute(
+                      "UPDATE region SET name = ? WHERE id = ?",
+                      "second-committed-update",
+                      secondRegionId);
+                  return null;
+                }));
         second.get(5, TimeUnit.SECONDS);
         assertThat(first.isDone()).isFalse();
       } finally {
@@ -728,33 +707,30 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<?> legacyWrite =
-          executor.submit(
-              () ->
-                  legacyTransaction.execute(
-                      status -> {
-                        dsl.execute(
-                            "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
-                            legacyTenantKey,
-                            "lock-timeout-writer");
-                        legacyInserted.countDown();
-                        await(allowLegacyCommit, 20);
-                        return null;
-                      }));
+          executor.submit(() ->
+              legacyTransaction.execute(status -> {
+                dsl.execute(
+                    "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
+                    legacyTenantKey,
+                    "lock-timeout-writer");
+                legacyInserted.countDown();
+                await(allowLegacyCommit, 20);
+                return null;
+              }));
 
       try {
         assertThat(legacyInserted.await(5, TimeUnit.SECONDS)).isTrue();
         long attemptStartedNanos = System.nanoTime();
         Future<RuntimeException> failedIntake =
-            executor.submit(
-                () -> {
-                  try {
-                    intakeTransaction.execute(
-                        status -> repository.acceptFresh(NAMESPACE, requestId, source));
-                    return null;
-                  } catch (RuntimeException exception) {
-                    return exception;
-                  }
-                });
+            executor.submit(() -> {
+              try {
+                intakeTransaction.execute(
+                    status -> repository.acceptFresh(NAMESPACE, requestId, source));
+                return null;
+              } catch (RuntimeException exception) {
+                return exception;
+              }
+            });
         RuntimeException lockTimeout = failedIntake.get(5, TimeUnit.SECONDS);
         long attemptDurationNanos = System.nanoTime() - attemptStartedNanos;
 
@@ -795,20 +771,19 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     TransactionTemplate intakeTransaction = new TransactionTemplate(transactionManager);
 
     WorldAuthoredSourceIntakeReceipt receipt =
-        intakeTransaction.execute(
-            status -> {
-              dsl.fetchOne("SELECT set_config('lock_timeout', '250ms', true)");
-              WorldAuthoredSourceIntakeReceipt accepted =
-                  repository.acceptFresh(NAMESPACE, requestId, source);
-              Integer activeTimeoutMillis =
-                  Objects.requireNonNull(
-                          dsl.fetchOne(
-                              "SELECT setting::integer FROM pg_settings WHERE name = 'lock_timeout'"),
-                          "PostgreSQL lock_timeout setting query returned no row")
-                      .get(0, Integer.class);
-              assertThat(activeTimeoutMillis).isEqualTo(250);
-              return accepted;
-            });
+        intakeTransaction.execute(status -> {
+          dsl.fetchOne("SELECT set_config('lock_timeout', '250ms', true)");
+          WorldAuthoredSourceIntakeReceipt accepted =
+              repository.acceptFresh(NAMESPACE, requestId, source);
+          Integer activeTimeoutMillis =
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT setting::integer FROM pg_settings WHERE name = 'lock_timeout'"),
+                      "PostgreSQL lock_timeout setting query returned no row")
+                  .get(0, Integer.class);
+          assertThat(activeTimeoutMillis).isEqualTo(250);
+          return accepted;
+        });
 
     assertThat(receipt).isNotNull();
     var lockTimeoutSettings =
@@ -843,10 +818,8 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
     TransactionTemplate repeatableRead = new TransactionTemplate(transactionManager);
     repeatableRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-    assertThatThrownBy(
-            () ->
-                repeatableRead.execute(
-                    status -> repository.acceptFresh(NAMESPACE, requestId, source)))
+    assertThatThrownBy(() ->
+            repeatableRead.execute(status -> repository.acceptFresh(NAMESPACE, requestId, source)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("READ COMMITTED");
     assertThat(countForCanonicalTenant(tenant)).isZero();
@@ -912,27 +885,24 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<?> legacyWrite =
-          executor.submit(
-              () ->
-                  legacyTransaction.execute(
-                      status -> {
-                        dsl.execute(
-                            "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
-                            legacyTenantKey,
-                            "concurrent-legacy-selector");
-                        legacyInserted.countDown();
-                        await(allowLegacyCommit, 20);
-                        return null;
-                      }));
+          executor.submit(() ->
+              legacyTransaction.execute(status -> {
+                dsl.execute(
+                    "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
+                    legacyTenantKey,
+                    "concurrent-legacy-selector");
+                legacyInserted.countDown();
+                await(allowLegacyCommit, 20);
+                return null;
+              }));
       assertThat(legacyInserted.await(5, TimeUnit.SECONDS)).isTrue();
 
       Future<WorldAuthoredSourceIntakeReceipt> intake =
-          executor.submit(
-              () -> {
-                intakeStarted.countDown();
-                return intakeTransaction.execute(
-                    status -> repository.acceptFresh(NAMESPACE, requestId, source));
-              });
+          executor.submit(() -> {
+            intakeStarted.countDown();
+            return intakeTransaction.execute(
+                status -> repository.acceptFresh(NAMESPACE, requestId, source));
+          });
       assertThat(intakeStarted.await(5, TimeUnit.SECONDS)).isTrue();
       awaitAllocatorLockWait();
       allowLegacyCommit.countDown();
@@ -980,39 +950,35 @@ class WorldAuthoredSourceIntakeIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldAuthoredSourceIntakeReceipt> intake =
-          executor.submit(
-              () ->
-                  ownerTransaction.execute(
-                      status -> {
-                        WorldAuthoredSourceIntakeReceipt receipt =
-                            repository.acceptFresh(NAMESPACE, requestId, source);
-                        preparedReceipt.set(receipt);
-                        intakePrepared.countDown();
-                        await(allowIntakeCommit, 20);
-                        return receipt;
-                      }));
+          executor.submit(() ->
+              ownerTransaction.execute(status -> {
+                WorldAuthoredSourceIntakeReceipt receipt =
+                    repository.acceptFresh(NAMESPACE, requestId, source);
+                preparedReceipt.set(receipt);
+                intakePrepared.countDown();
+                await(allowIntakeCommit, 20);
+                return receipt;
+              }));
       assertThat(intakePrepared.await(5, TimeUnit.SECONDS)).isTrue();
       WorldAuthoredSourceIntakeReceipt receipt = preparedReceipt.get();
       assertThat(receipt).isNotNull();
 
       Future<Boolean> legacyWrite =
-          executor.submit(
-              () -> {
-                try {
-                  legacyTransaction.execute(
-                      status -> {
-                        dsl.execute(
-                            "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
-                            receipt.localTenantKey(),
-                            "cannot-race-private-selector");
-                        return null;
-                      });
-                  return true;
-                } catch (DataIntegrityViolationException expectedReservedKeyRejection) {
-                  assertReservedCanonicalSelectorRejected(expectedReservedKeyRejection);
-                  return false;
-                }
+          executor.submit(() -> {
+            try {
+              legacyTransaction.execute(status -> {
+                dsl.execute(
+                    "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
+                    receipt.localTenantKey(),
+                    "cannot-race-private-selector");
+                return null;
               });
+              return true;
+            } catch (DataIntegrityViolationException expectedReservedKeyRejection) {
+              assertReservedCanonicalSelectorRejected(expectedReservedKeyRejection);
+              return false;
+            }
+          });
 
       awaitLegacyWriterLockWait();
       allowIntakeCommit.countDown();

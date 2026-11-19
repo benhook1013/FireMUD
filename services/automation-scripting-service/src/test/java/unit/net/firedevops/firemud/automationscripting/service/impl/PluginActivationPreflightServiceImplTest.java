@@ -38,9 +38,8 @@ class PluginActivationPreflightServiceImplTest {
             gameSessionClient,
             new ObjectMapper());
 
-    assertThatThrownBy(
-            () ->
-                service.validateActivation("0", "game-1", "patch-1", "town-crier", "town-crier-v2"))
+    assertThatThrownBy(() ->
+            service.validateActivation("0", "game-1", "patch-1", "town-crier", "town-crier-v2"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tenantId must be positive");
     verifyNoInteractions(
@@ -78,9 +77,8 @@ class PluginActivationPreflightServiceImplTest {
             gameSessionClient,
             new ObjectMapper());
 
-    assertThatThrownBy(
-            () ->
-                service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2"))
+    assertThatThrownBy(() ->
+            service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("PLUGIN_COMMAND_ALIAS_INVALID");
   }
@@ -125,9 +123,8 @@ class PluginActivationPreflightServiceImplTest {
             gameSessionClient,
             new ObjectMapper());
 
-    assertThatThrownBy(
-            () ->
-                service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2"))
+    assertThatThrownBy(() ->
+            service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("PLUGIN_COMMAND_ALIAS_CONFLICT");
   }
@@ -167,9 +164,8 @@ class PluginActivationPreflightServiceImplTest {
             gameSessionClient,
             new ObjectMapper());
 
-    assertThatThrownBy(
-            () ->
-                service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2"))
+    assertThatThrownBy(() ->
+            service.validateActivation("1", "game-1", "patch-1", "town-crier", "town-crier-v2"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("PLUGIN_INSTANCE_BINDING_CONFLICT");
   }

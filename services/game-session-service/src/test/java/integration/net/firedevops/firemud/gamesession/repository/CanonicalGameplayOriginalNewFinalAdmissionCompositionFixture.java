@@ -395,15 +395,14 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec.decode(retained);
     var policies =
         published.policies().stream()
-            .map(
-                policy ->
-                    new net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence(
-                        policy.policyId(),
-                        policy.source().commitId(),
-                        policy.source().revisionId(),
-                        policy.source().logicalRevisionId(),
-                        policy.source().policy(),
-                        policy.policyDigest()))
+            .map(policy ->
+                new net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence(
+                    policy.policyId(),
+                    policy.source().commitId(),
+                    policy.source().revisionId(),
+                    policy.source().logicalRevisionId(),
+                    policy.source().policy(),
+                    policy.policyDigest()))
             .toList();
     var complete =
         new net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence(
@@ -467,19 +466,18 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var worldSelector = publishedRelease.worldStartLocationEvidence();
     var participants =
         publishedRelease.participantDigests().stream()
-            .map(
-                participant ->
-                    new net.firedevops.firemud.common.gamedesign
-                        .AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        false,
-                        null,
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        participant.digestSchemaVersion(),
-                        participant.abilitySchemaDigest() != null,
-                        participant.abilitySchemaDigest()))
+            .map(participant ->
+                new net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
+                    .Participant(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    false,
+                    null,
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    participant.digestSchemaVersion(),
+                    participant.abilitySchemaDigest() != null,
+                    participant.abilitySchemaDigest()))
             .toList();
     var release =
         net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.create(

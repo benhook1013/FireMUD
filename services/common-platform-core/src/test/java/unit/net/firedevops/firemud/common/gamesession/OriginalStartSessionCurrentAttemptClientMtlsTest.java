@@ -110,10 +110,9 @@ class OriginalStartSessionCurrentAttemptClientMtlsTest {
       assertThatThrownBy(
               () -> client.read(OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest.request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       assertThat(lastPeerUri).hasValue(OTHER_CLIENT_URI);
       assertThat(calls).hasValue(1);
     }
@@ -126,10 +125,9 @@ class OriginalStartSessionCurrentAttemptClientMtlsTest {
       assertThatThrownBy(
               () -> client.read(OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest.request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(calls).hasValue(callsBeforeWrongServer);
     }
   }
@@ -197,10 +195,9 @@ class OriginalStartSessionCurrentAttemptClientMtlsTest {
       assertThatThrownBy(
               () -> client.read(OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest.request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
     }
   }
 
@@ -209,10 +206,9 @@ class OriginalStartSessionCurrentAttemptClientMtlsTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = pki.clientProperties(tempDirectory, pki.accountClient());
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcOriginalStartSessionCurrentAttemptClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcOriginalStartSessionCurrentAttemptClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 

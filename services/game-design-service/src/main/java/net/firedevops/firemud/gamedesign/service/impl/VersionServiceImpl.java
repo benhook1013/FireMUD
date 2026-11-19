@@ -162,10 +162,8 @@ public class VersionServiceImpl implements VersionService {
     ScriptPatchReservation reservation;
     try {
       reservation =
-          publishAttemptService.executeScriptPatchTransaction(
-              () ->
-                  reserveScriptPatch(
-                      patchBinding, tenantId, baseVersionId, scriptPatchVersion, notes));
+          publishAttemptService.executeScriptPatchTransaction(() ->
+              reserveScriptPatch(patchBinding, tenantId, baseVersionId, scriptPatchVersion, notes));
     } catch (PublishAttemptService.ScriptPatchTransactionException ex) {
       throw ex.causeException();
     }
@@ -363,10 +361,9 @@ public class VersionServiceImpl implements VersionService {
     Version draft =
         versionRepository
             .findByTenantIdAndIdForUpdate(patchBinding.tenantId(), attempt.getVersionId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a missing version"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a missing version"));
     if (draft.getVersionState() != VersionLifecycleState.DRAFT) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
@@ -419,10 +416,9 @@ public class VersionServiceImpl implements VersionService {
     Version version =
         versionRepository
             .findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "PUBLISH_ATTEMPT_INCOMPLETE: referenced version is not available"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "PUBLISH_ATTEMPT_INCOMPLETE: referenced version is not available"));
     if (!Objects.equals(version.getTenantId(), patchBinding.tenantId())
         || version.getVersionNumber() != attempt.getVersionNumber()
         || !version.isScriptOnly()
@@ -651,11 +647,10 @@ public class VersionServiceImpl implements VersionService {
     requireText(pluginVersionId, "pluginVersionId");
     return publishedPluginVersionRepository
         .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
-        .filter(
-            entity ->
-                entity.getPublicationState() == VersionLifecycleState.PUBLISHED
-                    || entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
-                    || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN)
+        .filter(entity ->
+            entity.getPublicationState() == VersionLifecycleState.PUBLISHED
+                || entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
+                || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN)
         .map(this::toPublishedPluginVersionDto)
         .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
   }
@@ -815,11 +810,10 @@ public class VersionServiceImpl implements VersionService {
     if (version.getVersionState() == newState) {
       return toVersionStateDto(version);
     }
-    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(
-        () ->
-            new MutationOwnerProofUnavailableException(
-                "VERSION_STATE_MUTATION_UNAVAILABLE",
-                "Canonical lifecycle transition and owner proof are unavailable"));
+    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(() ->
+        new MutationOwnerProofUnavailableException(
+            "VERSION_STATE_MUTATION_UNAVAILABLE",
+            "Canonical lifecycle transition and owner proof are unavailable"));
   }
 
   private int calculateNextNumber(String tenantId) {
@@ -943,16 +937,14 @@ public class VersionServiceImpl implements VersionService {
 
   private String requiredAutomationAbilitySchemaDigest(PublishedReleaseBundleDto bundle) {
     return bundle.participantDigests().stream()
-        .filter(
-            digest ->
-                PublishParticipantKey.AUTOMATION_SCRIPTING.name().equals(digest.participantKey()))
+        .filter(digest ->
+            PublishParticipantKey.AUTOMATION_SCRIPTING.name().equals(digest.participantKey()))
         .map(PublishParticipantDigestDto::contentDigest)
         .filter(digest -> digest != null && !digest.isBlank())
         .findFirst()
-        .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "INVALID_ARGUMENT: published release bundle is missing the Automation ability-schema digest"));
+        .orElseThrow(() ->
+            new IllegalArgumentException(
+                "INVALID_ARGUMENT: published release bundle is missing the Automation ability-schema digest"));
   }
 
   private void markValidationFailed(PublishedPluginVersion entity, String statusReason) {

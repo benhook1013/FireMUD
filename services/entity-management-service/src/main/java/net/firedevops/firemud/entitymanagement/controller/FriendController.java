@@ -34,20 +34,15 @@ public class FriendController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          Page<CharacterFriendDto> list =
-              friendService.listFriends(
-                  scope.tenantId(),
-                  scope.characterId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  pageable);
-          return ResponseEntity.ok(ApiResponse.success(list));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      Page<CharacterFriendDto> list =
+          friendService.listFriends(
+              scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, pageable);
+      return ResponseEntity.ok(ApiResponse.success(list));
+    });
   }
 
   @PostMapping
@@ -57,22 +52,20 @@ public class FriendController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody AddFriendRequest request) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          long parsedFriendId =
-              RequestIdValidation.requirePositiveLong(request.friendId(), "friendId");
-          SessionContext.requireTenantAccess(scope.tenantId());
-          CharacterFriendDto dto =
-              friendService.addFriend(
-                  scope.tenantId(),
-                  scope.characterId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  parsedFriendId);
-          return ResponseEntity.ok(ApiResponse.success(dto));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      long parsedFriendId = RequestIdValidation.requirePositiveLong(request.friendId(), "friendId");
+      SessionContext.requireTenantAccess(scope.tenantId());
+      CharacterFriendDto dto =
+          friendService.addFriend(
+              scope.tenantId(),
+              scope.characterId(),
+              gameInstanceId,
+              playableStateScope,
+              parsedFriendId);
+      return ResponseEntity.ok(ApiResponse.success(dto));
+    });
   }
 
   @DeleteMapping("/{friendId}")
@@ -82,19 +75,18 @@ public class FriendController {
       @PathVariable String friendId,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          long parsedFriendId = RequestIdValidation.requirePositiveLong(friendId, "friendId");
-          SessionContext.requireTenantAccess(scope.tenantId());
-          friendService.removeFriend(
-              scope.tenantId(),
-              scope.characterId(),
-              gameInstanceId,
-              playableStateScope,
-              parsedFriendId);
-          return ResponseEntity.ok(ApiResponse.success(null));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      long parsedFriendId = RequestIdValidation.requirePositiveLong(friendId, "friendId");
+      SessionContext.requireTenantAccess(scope.tenantId());
+      friendService.removeFriend(
+          scope.tenantId(),
+          scope.characterId(),
+          gameInstanceId,
+          playableStateScope,
+          parsedFriendId);
+      return ResponseEntity.ok(ApiResponse.success(null));
+    });
   }
 }

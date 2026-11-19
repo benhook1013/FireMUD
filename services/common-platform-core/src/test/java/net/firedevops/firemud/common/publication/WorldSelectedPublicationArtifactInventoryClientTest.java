@@ -33,16 +33,14 @@ class WorldSelectedPublicationArtifactInventoryClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldSelectedPublicationArtifactInventoryClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldSelectedPublicationArtifactInventoryClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
-    assertThatThrownBy(
-            () ->
-                new WorldSelectedPublicationArtifactInventoryClient(
-                    new ServiceEndpointsProperties(), tls(directory), factory, "Test"))
+    assertThatThrownBy(() ->
+            new WorldSelectedPublicationArtifactInventoryClient(
+                new ServiceEndpointsProperties(), tls(directory), factory, "Test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }

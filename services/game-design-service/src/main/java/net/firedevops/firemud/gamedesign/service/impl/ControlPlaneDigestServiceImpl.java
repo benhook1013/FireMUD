@@ -68,38 +68,34 @@ public class ControlPlaneDigestServiceImpl implements ControlPlaneDigestService 
       List<Map<String, Object>> templates =
           gameTemplateRepository.findByTenantId(version.tenantId(), Pageable.unpaged()).stream()
               .sorted(Comparator.comparing(entity -> entity.getName().toLowerCase()))
-              .map(
-                  entity ->
-                      Map.<String, Object>of(
-                          "name", entity.getName(),
-                          "description",
-                              entity.getDescription() == null ? "" : entity.getDescription(),
-                          "config", entity.getConfig()))
+              .map(entity ->
+                  Map.<String, Object>of(
+                      "name", entity.getName(),
+                      "description", entity.getDescription() == null ? "" : entity.getDescription(),
+                      "config", entity.getConfig()))
               .toList();
       List<Map<String, Object>> assets =
           gameAssetRepository.findByTenantId(version.tenantId()).stream()
               .sorted(Comparator.comparing(entity -> entity.getFileName().toLowerCase()))
-              .map(
-                  entity ->
-                      Map.<String, Object>of(
-                          "fileName", entity.getFileName(),
-                          "contentType", entity.getContentType(),
-                          "byteLength", entity.getData() == null ? 0 : entity.getData().length))
+              .map(entity ->
+                  Map.<String, Object>of(
+                      "fileName", entity.getFileName(),
+                      "contentType", entity.getContentType(),
+                      "byteLength", entity.getData() == null ? 0 : entity.getData().length))
               .toList();
       List<Map<String, Object>> commandDefinitions =
           revisionRepository
               .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
                   version.tenantId(), version.id(), "COMMAND_DEFINITION")
               .stream()
-              .map(
-                  revision ->
-                      Map.<String, Object>of(
-                          "logicalRevisionId",
-                          revision.getLogicalRevisionId() == null
-                              ? ""
-                              : revision.getLogicalRevisionId(),
-                          "data",
-                          revision.getData()))
+              .map(revision ->
+                  Map.<String, Object>of(
+                      "logicalRevisionId",
+                      revision.getLogicalRevisionId() == null
+                          ? ""
+                          : revision.getLogicalRevisionId(),
+                      "data",
+                      revision.getData()))
               .toList();
       String canonicalJson =
           objectMapper.writeValueAsString(

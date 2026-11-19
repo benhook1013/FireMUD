@@ -165,24 +165,22 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
     UUID registrationRequestId = uuid("22222222-2222-4222-8222-222222222222");
     AtomicReference<AuthoredWorldSourceEvidence> sourceRef = new AtomicReference<>();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transactionTemplate()
-                    .execute(
-                        status -> {
-                          sourceRef.set(
-                              fixture
-                                  .sourceRepository()
-                                  .register(
-                                      NAMESPACE,
-                                      registrationRequestId,
-                                      fixture.freshGame().getCanonicalTenantId(),
-                                      "rollback-tenant",
-                                      "rollback-world",
-                                      "Rollback World"));
-                          throw new IllegalStateException("simulate failed source owner commit");
-                        }))
+    assertThatThrownBy(() ->
+            fixture
+                .transactionTemplate()
+                .execute(status -> {
+                  sourceRef.set(
+                      fixture
+                          .sourceRepository()
+                          .register(
+                              NAMESPACE,
+                              registrationRequestId,
+                              fixture.freshGame().getCanonicalTenantId(),
+                              "rollback-tenant",
+                              "rollback-world",
+                              "Rollback World"));
+                  throw new IllegalStateException("simulate failed source owner commit");
+                }))
         .hasMessageContaining("simulate failed source owner commit");
 
     AuthoredWorldSourceEvidence attempted = sourceRef.get();
@@ -215,26 +213,24 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
             .execute(status -> fixture.deliveryRepository().acknowledge(pending, receipt));
     assertThat(acknowledged).isNotNull();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_authored_world_source_deliveries "
-                            + "SET source_evidence_digest = ? WHERE source_operation_id = ?",
-                        digest('d'),
-                        source.operationId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_design_authored_world_source_deliveries "
+                        + "SET source_evidence_digest = ? WHERE source_operation_id = ?",
+                    digest('d'),
+                    source.operationId()))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("claim cannot be rebound");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_authored_world_source_deliveries "
-                            + "SET world_receipt_digest = ? WHERE source_operation_id = ?",
-                        digest('e'),
-                        source.operationId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_design_authored_world_source_deliveries "
+                        + "SET world_receipt_digest = ? WHERE source_operation_id = ?",
+                    digest('e'),
+                    source.operationId()))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("acknowledgement is immutable");
     assertThat(fixture.deliveryRepository().read(source.operationId()).orElseThrow())
@@ -462,45 +458,44 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
 
     fixture
         .transactionTemplate()
-        .execute(
-            status -> {
-              fixture
-                  .dsl()
-                  .execute(
-                      "INSERT INTO game_design_tenant_slug_binding "
-                          + "(target_namespace, canonical_tenant_id, tenant_slug, "
-                          + "source_game_row_id, source_game_tenant_key, provenance_kind) "
-                          + "VALUES (?, ?, ?, ?, ?, ?)",
-                      source.targetNamespace(),
-                      source.canonicalTenantId(),
-                      source.tenantSlug(),
-                      source.sourceGameRowId(),
-                      source.sourceGameTenantKey(),
-                      source.provenanceKind());
-              fixture
-                  .dsl()
-                  .execute(
-                      "INSERT INTO game_design_authored_world_source_operations "
-                          + "(operation_id, schema_version, target_namespace, "
-                          + "registration_request_id, request_digest, canonical_tenant_id, "
-                          + "tenant_slug, world_slug, world_display_name, source_game_row_id, "
-                          + "source_game_tenant_key, provenance_kind, evidence_digest) "
-                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      source.operationId(),
-                      source.schemaVersion(),
-                      source.targetNamespace(),
-                      source.registrationRequestId(),
-                      source.requestDigest(),
-                      source.canonicalTenantId(),
-                      source.tenantSlug(),
-                      source.worldSlug(),
-                      source.worldDisplayName(),
-                      source.sourceGameRowId(),
-                      source.sourceGameTenantKey(),
-                      source.provenanceKind(),
-                      source.evidenceDigest());
-              return null;
-            });
+        .execute(status -> {
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO game_design_tenant_slug_binding "
+                      + "(target_namespace, canonical_tenant_id, tenant_slug, "
+                      + "source_game_row_id, source_game_tenant_key, provenance_kind) "
+                      + "VALUES (?, ?, ?, ?, ?, ?)",
+                  source.targetNamespace(),
+                  source.canonicalTenantId(),
+                  source.tenantSlug(),
+                  source.sourceGameRowId(),
+                  source.sourceGameTenantKey(),
+                  source.provenanceKind());
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO game_design_authored_world_source_operations "
+                      + "(operation_id, schema_version, target_namespace, "
+                      + "registration_request_id, request_digest, canonical_tenant_id, "
+                      + "tenant_slug, world_slug, world_display_name, source_game_row_id, "
+                      + "source_game_tenant_key, provenance_kind, evidence_digest) "
+                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  source.operationId(),
+                  source.schemaVersion(),
+                  source.targetNamespace(),
+                  source.registrationRequestId(),
+                  source.requestDigest(),
+                  source.canonicalTenantId(),
+                  source.tenantSlug(),
+                  source.worldSlug(),
+                  source.worldDisplayName(),
+                  source.sourceGameRowId(),
+                  source.sourceGameTenantKey(),
+                  source.provenanceKind(),
+                  source.evidenceDigest());
+          return null;
+        });
     return source;
   }
 
@@ -579,15 +574,14 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
         String tenantSlug,
         String worldSlug) {
       AuthoredWorldSourceEvidence source =
-          transactionTemplate.execute(
-              status ->
-                  sourceRepository.register(
-                      targetNamespace,
-                      registrationRequestId,
-                      sourceGame.getCanonicalTenantId(),
-                      tenantSlug,
-                      worldSlug,
-                      "Authored World " + worldSlug));
+          transactionTemplate.execute(status ->
+              sourceRepository.register(
+                  targetNamespace,
+                  registrationRequestId,
+                  sourceGame.getCanonicalTenantId(),
+                  tenantSlug,
+                  worldSlug,
+                  "Authored World " + worldSlug));
       return java.util.Objects.requireNonNull(source);
     }
 
@@ -607,15 +601,14 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
         String worldSlug,
         String worldDisplayName) {
       AuthoredWorldSourceEvidence source =
-          transactionTemplate.execute(
-              status ->
-                  sourceRepository.register(
-                      NAMESPACE,
-                      registrationRequestId,
-                      canonicalTenantId,
-                      tenantSlug,
-                      worldSlug,
-                      worldDisplayName));
+          transactionTemplate.execute(status ->
+              sourceRepository.register(
+                  NAMESPACE,
+                  registrationRequestId,
+                  canonicalTenantId,
+                  tenantSlug,
+                  worldSlug,
+                  worldDisplayName));
       return java.util.Objects.requireNonNull(source);
     }
 

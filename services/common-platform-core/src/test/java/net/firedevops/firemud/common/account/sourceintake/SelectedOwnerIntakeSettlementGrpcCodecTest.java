@@ -46,10 +46,9 @@ class SelectedOwnerIntakeSettlementGrpcCodecTest {
 
   @Test
   void rejectsDefaultUnknownAndChangedDigestRequestsWhileAcceptingClosedEntityOwner() {
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSettlementGrpcCodec.fromRequest(
-                    SelectedOwnerIntakeSettlementRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSettlementGrpcCodec.fromRequest(
+                SelectedOwnerIntakeSettlementRequest.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var binding =

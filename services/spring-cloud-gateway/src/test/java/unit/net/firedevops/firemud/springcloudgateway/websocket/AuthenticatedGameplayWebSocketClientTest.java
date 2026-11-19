@@ -90,11 +90,10 @@ class AuthenticatedGameplayWebSocketClientTest {
               "test",
               "wss://localhost:8444/ws/game/tcp")) {
         assertThatThrownBy(client::initialize).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(
-                () ->
-                    client
-                        .execute(new HttpHeaders(), socket -> Mono.empty())
-                        .block(Duration.ofSeconds(5)))
+        assertThatThrownBy(() ->
+                client
+                    .execute(new HttpHeaders(), socket -> Mono.empty())
+                    .block(Duration.ofSeconds(5)))
             .isInstanceOf(IllegalStateException.class);
       }
     }
@@ -114,10 +113,9 @@ class AuthenticatedGameplayWebSocketClientTest {
       for (Mono<Void> execution :
           List.of(assembled, client.execute(new HttpHeaders(), socket -> Mono.empty()))) {
         StepVerifier.create(execution)
-            .expectErrorMatches(
-                error ->
-                    error instanceof IllegalStateException
-                        && "Authenticated gameplay client unavailable".equals(error.getMessage()))
+            .expectErrorMatches(error ->
+                error instanceof IllegalStateException
+                    && "Authenticated gameplay client unavailable".equals(error.getMessage()))
             .verify(Duration.ofSeconds(5));
       }
     }
@@ -149,14 +147,13 @@ class AuthenticatedGameplayWebSocketClientTest {
       client.initialize();
       AtomicReference<Exception> reloadFailure = new AtomicReference<>();
       Thread lateReload =
-          new Thread(
-              () -> {
-                try {
-                  client.reload();
-                } catch (Exception failure) {
-                  reloadFailure.set(failure);
-                }
-              });
+          new Thread(() -> {
+            try {
+              client.reload();
+            } catch (Exception failure) {
+              reloadFailure.set(failure);
+            }
+          });
       lateReload.start();
       try {
         assertThat(candidateBuilt.await(5, TimeUnit.SECONDS)).isTrue();
@@ -170,10 +167,9 @@ class AuthenticatedGameplayWebSocketClientTest {
       assertThat(lateReload.isAlive()).isFalse();
       assertThat(reloadFailure.get()).isNull();
       StepVerifier.create(client.execute(new HttpHeaders(), socket -> Mono.empty()))
-          .expectErrorMatches(
-              error ->
-                  error instanceof IllegalStateException
-                      && "Authenticated gameplay client unavailable".equals(error.getMessage()))
+          .expectErrorMatches(error ->
+              error instanceof IllegalStateException
+                  && "Authenticated gameplay client unavailable".equals(error.getMessage()))
           .verify(Duration.ofSeconds(5));
     }
   }
@@ -204,11 +200,10 @@ class AuthenticatedGameplayWebSocketClientTest {
       when(downstream.receive())
           .thenReturn(closed.asMono().thenMany(Flux.<WebSocketMessage>empty()));
       when(downstream.close(any(CloseStatus.class)))
-          .thenAnswer(
-              invocation -> {
-                closed.tryEmitEmpty();
-                return Mono.empty();
-              });
+          .thenAnswer(invocation -> {
+            closed.tryEmitEmpty();
+            return Mono.empty();
+          });
       GameplayWebSocketBridgeHandler bridge =
           new GameplayWebSocketBridgeHandler(
               ordinaryClient,
@@ -243,13 +238,11 @@ class AuthenticatedGameplayWebSocketClientTest {
             .host("127.0.0.1")
             .port(0)
             .secure(spec -> spec.sslContext(tls))
-            .handle(
-                (request, response) -> {
-                  requests.incrementAndGet();
-                  return response.sendWebsocket(
-                      (inbound, outbound) ->
-                          outbound.sendString(reactor.core.publisher.Mono.just("ready")));
-                })
+            .handle((request, response) -> {
+              requests.incrementAndGet();
+              return response.sendWebsocket((inbound, outbound) ->
+                  outbound.sendString(reactor.core.publisher.Mono.just("ready")));
+            })
             .bindNow();
     try (var client =
         new AuthenticatedGameplayWebSocketClient(

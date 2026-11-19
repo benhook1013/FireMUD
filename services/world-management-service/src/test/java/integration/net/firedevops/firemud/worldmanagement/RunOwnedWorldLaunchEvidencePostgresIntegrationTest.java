@@ -172,10 +172,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       when(changedProvider.requireAuthenticatedEvidence()).thenReturn(changedEvidence);
       when(changedEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
           .thenReturn("b".repeat(64));
-      assertThatThrownBy(
-              () ->
-                  restartedLifecycleService(new WorldInstanceRepository(dsl), changedProvider)
-                      .activatePreparedWorldInstance(tenantId, gameInstanceId, 1L))
+      assertThatThrownBy(() ->
+              restartedLifecycleService(new WorldInstanceRepository(dsl), changedProvider)
+                  .activatePreparedWorldInstance(tenantId, gameInstanceId, 1L))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:");
       assertThat(
@@ -197,29 +196,26 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
       verify(fixtureProvider, org.mockito.Mockito.atLeast(3)).requireAuthenticatedEvidence();
 
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE world_instance SET run_owned_fixture_preparing_lifecycle_epoch = 0 "
-                          + "WHERE tenant_id = ? AND game_instance_id = ?",
-                      tenantId,
-                      gameInstanceId))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE world_instance SET run_owned_fixture_preparing_lifecycle_epoch = 0 "
+                      + "WHERE tenant_id = ? AND game_instance_id = ?",
+                  tenantId,
+                  gameInstanceId))
           .isInstanceOf(RuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE world_instance SET run_owned_fixture_preparing_lifecycle_epoch = NULL "
-                          + "WHERE tenant_id = ? AND game_instance_id = ?",
-                      tenantId,
-                      gameInstanceId))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE world_instance SET run_owned_fixture_preparing_lifecycle_epoch = NULL "
+                      + "WHERE tenant_id = ? AND game_instance_id = ?",
+                  tenantId,
+                  gameInstanceId))
           .isInstanceOf(RuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE world_instance SET run_owned_fixture_binding_sha256 = NULL "
-                          + "WHERE tenant_id = ? AND game_instance_id = ?",
-                      tenantId,
-                      gameInstanceId))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE world_instance SET run_owned_fixture_binding_sha256 = NULL "
+                      + "WHERE tenant_id = ? AND game_instance_id = ?",
+                  tenantId,
+                  gameInstanceId))
           .isInstanceOf(RuntimeException.class);
 
       WorldInstance fixtureBeforeMetadataMutation =
@@ -324,23 +320,19 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     CountDownLatch secondHasLock = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<?> first =
-          executor.submit(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> {
-                        repository.lockRunOwnedFixtureOperation(tenantId, operation);
-                        firstHasLock.countDown();
-                        await(releaseFirst);
-                      }));
+          executor.submit(() ->
+              transaction.executeWithoutResult(status -> {
+                repository.lockRunOwnedFixtureOperation(tenantId, operation);
+                firstHasLock.countDown();
+                await(releaseFirst);
+              }));
       assertThat(firstHasLock.await(5, TimeUnit.SECONDS)).isTrue();
       Future<?> second =
-          executor.submit(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> {
-                        repository.lockRunOwnedFixtureOperation(tenantId, operation);
-                        secondHasLock.countDown();
-                      }));
+          executor.submit(() ->
+              transaction.executeWithoutResult(status -> {
+                repository.lockRunOwnedFixtureOperation(tenantId, operation);
+                secondHasLock.countDown();
+              }));
       assertThat(secondHasLock.await(200, TimeUnit.MILLISECONDS)).isFalse();
       releaseFirst.countDown();
       first.get(10, TimeUnit.SECONDS);
@@ -368,10 +360,8 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
 
       when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
           .thenReturn("d".repeat(64));
-      assertThatThrownBy(
-              () ->
-                  lifecycleService.failPreparedWorldInstance(
-                      tenantId, gameInstanceId, 1L, "failed"))
+      assertThatThrownBy(() ->
+              lifecycleService.failPreparedWorldInstance(tenantId, gameInstanceId, 1L, "failed"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:");
       WorldInstance unchanged =
@@ -408,13 +398,12 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     configureEvidence(binding);
     AtomicBoolean failEntityCleanup = new AtomicBoolean(true);
     when(entityManagementClient.cleanupRuntimeInstance(anyLong(), anyLong(), anyString()))
-        .thenAnswer(
-            invocation -> {
-              if (failEntityCleanup.getAndSet(false)) {
-                throw new IllegalStateException("Entity cleanup unavailable");
-              }
-              return CleanupRuntimeInstanceResponse.newBuilder().build();
-            });
+        .thenAnswer(invocation -> {
+          if (failEntityCleanup.getAndSet(false)) {
+            throw new IllegalStateException("Entity cleanup unavailable");
+          }
+          return CleanupRuntimeInstanceResponse.newBuilder().build();
+        });
     try {
       lifecycleService.prepareWorldInstance(request);
       var active = lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L);
@@ -441,10 +430,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
           operationId(),
           "a".repeat(64));
 
-      assertThatThrownBy(
-              () ->
-                  lifecycleService.terminateWorldInstance(
-                      tenantId, gameInstanceId, 2L, "term-fixture", "stop"))
+      assertThatThrownBy(() ->
+              lifecycleService.terminateWorldInstance(
+                  tenantId, gameInstanceId, 2L, "term-fixture", "stop"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageStartingWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:");
       WorldInstance held =
@@ -456,10 +444,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
           .cleanupRuntimeInstance(tenantId, gameInstanceId, "term-fixture");
       dsl.execute("DELETE FROM initial_admission_bind_hold WHERE hold_id = ?", holdId);
 
-      assertThatThrownBy(
-              () ->
-                  lifecycleService.terminateWorldInstance(
-                      tenantId, gameInstanceId, 2L, "term-fixture", "stop"))
+      assertThatThrownBy(() ->
+              lifecycleService.terminateWorldInstance(
+                  tenantId, gameInstanceId, 2L, "term-fixture", "stop"))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Entity cleanup unavailable");
       WorldInstance terminating =
@@ -490,10 +477,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
                   .orElseThrow()
                   .getRowVersion())
           .isEqualTo(3L);
-      assertThatThrownBy(
-              () ->
-                  lifecycleService.terminateWorldInstance(
-                      tenantId, gameInstanceId, 2L, "term-other", "stop"))
+      assertThatThrownBy(() ->
+              lifecycleService.terminateWorldInstance(
+                  tenantId, gameInstanceId, 2L, "term-other", "stop"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("terminated under a different request id");
       verify(entityManagementClient, org.mockito.Mockito.times(2))
@@ -516,17 +502,15 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       assertThat(prepared.status()).isEqualTo("PREPARING");
 
       TransactionTemplate callerTransaction = new TransactionTemplate(transactionManager);
-      assertThatThrownBy(
-              () ->
-                  callerTransaction.executeWithoutResult(
-                      status -> {
-                        var failed =
-                            lifecycleService.failPreparedWorldInstance(
-                                tenantId, gameInstanceId, 1L, "caller will roll back");
-                        assertThat(failed.status()).isEqualTo("FAILED_PRE_ACTIVATION");
-                        assertThat(failed.lifecycleEpoch()).isEqualTo(2L);
-                        throw new IllegalStateException("rollback ordinary caller");
-                      }))
+      assertThatThrownBy(() ->
+              callerTransaction.executeWithoutResult(status -> {
+                var failed =
+                    lifecycleService.failPreparedWorldInstance(
+                        tenantId, gameInstanceId, 1L, "caller will roll back");
+                assertThat(failed.status()).isEqualTo("FAILED_PRE_ACTIVATION");
+                assertThat(failed.lifecycleEpoch()).isEqualTo(2L);
+                throw new IllegalStateException("rollback ordinary caller");
+              }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("rollback ordinary caller");
 
@@ -550,19 +534,17 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     CountDownLatch start = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldInstanceLifecycleSnapshotDto> first =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return lifecycleService.prepareWorldInstance(request);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return lifecycleService.prepareWorldInstance(request);
+          });
       Future<WorldInstanceLifecycleSnapshotDto> second =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return lifecycleService.prepareWorldInstance(request);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return lifecycleService.prepareWorldInstance(request);
+          });
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
 

@@ -48,17 +48,15 @@ class GameTenantCreationRepositoryIntegrationTest {
   void exactRetryReturnsCommittedReceiptWithoutSecondGameWrite() {
     Fixture fixture = fixture();
     FreshTenantCreationEvidence first =
-        fixture.inTransaction(
-            () ->
-                fixture.repository.createCandidate(
-                    NAMESPACE, REQUEST_ID, SOURCE_KEY, "The First World", "A description"));
+        fixture.inTransaction(() ->
+            fixture.repository.createCandidate(
+                NAMESPACE, REQUEST_ID, SOURCE_KEY, "The First World", "A description"));
 
     assertThat(fixture.repository.read(REQUEST_ID, NAMESPACE)).contains(first);
     FreshTenantCreationEvidence exactRetry =
-        fixture.inTransaction(
-            () ->
-                fixture.repository.createCandidate(
-                    NAMESPACE, REQUEST_ID, SOURCE_KEY, "The First World", "A description"));
+        fixture.inTransaction(() ->
+            fixture.repository.createCandidate(
+                NAMESPACE, REQUEST_ID, SOURCE_KEY, "The First World", "A description"));
 
     assertThat(exactRetry).isEqualTo(first);
     assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
@@ -69,28 +67,24 @@ class GameTenantCreationRepositoryIntegrationTest {
   void completedCreationEvidenceCannotBeChangedOrDeleted() {
     Fixture fixture = fixture();
     FreshTenantCreationEvidence receipt =
-        fixture.inTransaction(
-            () ->
-                fixture.repository.createCandidate(
-                    NAMESPACE, REQUEST_ID, SOURCE_KEY, "World", null));
+        fixture.inTransaction(() ->
+            fixture.repository.createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, "World", null));
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .update(OPERATIONS)
-                    .set(DSL.field(DSL.name("name"), String.class), "Changed")
-                    .where(OPERATION_ID.eq(receipt.operationId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .update(OPERATIONS)
+                .set(DSL.field(DSL.name("name"), String.class), "Changed")
+                .where(OPERATION_ID.eq(receipt.operationId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .deleteFrom(OPERATIONS)
-                    .where(OPERATION_ID.eq(receipt.operationId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .deleteFrom(OPERATIONS)
+                .where(OPERATION_ID.eq(receipt.operationId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
 
@@ -131,16 +125,15 @@ class GameTenantCreationRepositoryIntegrationTest {
       GameTenantCreationRepository repository,
       TransactionTemplate transactionTemplate) {
     private <T> T inTransaction(java.util.concurrent.Callable<T> work) {
-      return transactionTemplate.execute(
-          status -> {
-            try {
-              return work.call();
-            } catch (RuntimeException exception) {
-              throw exception;
-            } catch (Exception exception) {
-              throw new IllegalStateException(exception);
-            }
-          });
+      return transactionTemplate.execute(status -> {
+        try {
+          return work.call();
+        } catch (RuntimeException exception) {
+          throw exception;
+        } catch (Exception exception) {
+          throw new IllegalStateException(exception);
+        }
+      });
     }
   }
 }

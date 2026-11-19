@@ -20,12 +20,11 @@ class CanonicalGameInstanceLaunchAssociationReadConfigurationTest {
     new ApplicationContextRunner()
         .withUserConfiguration(
             CanonicalGameInstanceLaunchAssociationReadConfiguration.class, Dependencies.class)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context)
-                  .doesNotHaveBean(CanonicalGameInstanceLaunchAssociationRepository.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context)
+              .doesNotHaveBean(CanonicalGameInstanceLaunchAssociationRepository.class);
+        });
   }
 
   @Test
@@ -34,12 +33,10 @@ class CanonicalGameInstanceLaunchAssociationReadConfigurationTest {
         .withUserConfiguration(
             CanonicalGameInstanceLaunchAssociationReadConfiguration.class, Dependencies.class)
         .withPropertyValues(OWNER_OPT_IN + "=true", "firemud.grpc.workload-namespace=gameplay")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context)
-                  .hasSingleBean(CanonicalGameInstanceLaunchAssociationRepository.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(CanonicalGameInstanceLaunchAssociationRepository.class);
+        });
 
     new ApplicationContextRunner()
         .withUserConfiguration(

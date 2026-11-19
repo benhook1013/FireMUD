@@ -118,14 +118,13 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     String installedAnchorImage = anchorStorageImage(fixture.dsl());
     String installedProofImage = proofStorageImage(fixture.dsl());
     var installedPhysicalImage = physicalPartitionImages(fixture);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayIssuerLayoutBootstrapRepository(fixture.dsl())
-                    .supersedeStaleInitialBootstrapIntent(
-                        fixture.intent().operationId(),
-                        UUID.randomUUID(),
-                        descriptor(PARTITION_COUNT, PARTITION_CAPACITY),
-                        fixture.currentAccountCheckpoint()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayIssuerLayoutBootstrapRepository(fixture.dsl())
+                .supersedeStaleInitialBootstrapIntent(
+                    fixture.intent().operationId(),
+                    UUID.randomUUID(),
+                    descriptor(PARTITION_COUNT, PARTITION_CAPACITY),
+                    fixture.currentAccountCheckpoint()))
         .hasMessageContaining("installed issuer anchor forbids");
     assertThat(anchorStorageImage(fixture.dsl())).isEqualTo(installedAnchorImage);
     assertThat(proofStorageImage(fixture.dsl())).isEqualTo(installedProofImage);
@@ -281,11 +280,10 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     missingKeyArguments[0] = missingKey;
     administratorCommands.del(missingKeyArguments);
 
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> current)
-                    .verifyInstalledPhysicalCoverage(
-                        fixture.intent().operationId(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> current)
+                .verifyInstalledPhysicalCoverage(
+                    fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.type(missingKey)).isEqualTo("none");
     assertThat(
@@ -360,32 +358,28 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     String counterImage = coverageCounterImage(fixture.dsl());
     List<Map<String, String>> physicalImage = physicalPartitionImages(fixture);
 
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> current)
-                    .completeInitialBootstrap(UUID.randomUUID(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> current)
+                .completeInitialBootstrap(UUID.randomUUID(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> current)
-                    .completeInitialBootstrap(fixture.intent().operationId(), UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> current)
+                .completeInitialBootstrap(fixture.intent().operationId(), UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class);
 
     var changedSource =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             checkpointShape(BigInteger.valueOf(8)), current.incarnation());
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> changedSource)
-                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> changedSource)
+                .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     var changedIncarnation =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             current.accountCheckpoint(), changedIncarnation(current.incarnation()));
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> changedIncarnation)
-                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> changedIncarnation)
+                .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(anchorStorageImage(fixture.dsl())).isEqualTo(anchorImage);
@@ -408,11 +402,10 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                         ? changedCheckpoint
                         : sourceFixture.intent().sourceCheckpoint(),
                     sourceIncarnation);
-    assertThatThrownBy(
-            () ->
-                owner(sourceFixture, changedAfterReadback)
-                    .completeInitialBootstrap(
-                        sourceFixture.intent().operationId(), sourceFixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(sourceFixture, changedAfterReadback)
+                .completeInitialBootstrap(
+                    sourceFixture.intent().operationId(), sourceFixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertNoInstalledCoverage(sourceFixture);
     assertThat(fixtureProofCount(sourceFixture)).isZero();
@@ -429,11 +422,10 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                     incarnationCalls.incrementAndGet() == 5
                         ? changedIncarnation
                         : initialIncarnation);
-    assertThatThrownBy(
-            () ->
-                owner(incarnationFixture, changedIncarnationAfterReadback)
-                    .completeInitialBootstrap(
-                        incarnationFixture.intent().operationId(), incarnationFixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(incarnationFixture, changedIncarnationAfterReadback)
+                .completeInitialBootstrap(
+                    incarnationFixture.intent().operationId(), incarnationFixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertNoInstalledCoverage(incarnationFixture);
     assertThat(fixtureProofCount(incarnationFixture)).isZero();
@@ -446,10 +438,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     administratorCommands.set(partitionKey, ascii("retained-wrong-type"));
     var current = currentState(fixture, stableIncarnation("wrong-type"));
 
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> current)
-                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> current)
+                .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertNoInstalledCoverage(fixture);
     assertThat(administratorCommands.type(partitionKey)).isEqualTo("string");
@@ -469,10 +460,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.BLOCKED);
     var current = currentState(fixture, stableIncarnation("capacity-conflict"));
 
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> current)
-                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> current)
+                .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("blockers");
     assertNoInstalledCoverage(fixture);
@@ -531,10 +521,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                 expected.reservation().reservationId())),
         changedBytes);
 
-    assertThatThrownBy(
-            () ->
-                owner(fixture, () -> current)
-                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+    assertThatThrownBy(() ->
+            owner(fixture, () -> current)
+                .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertNoInstalledCoverage(fixture);
     assertThat(fixtureProofCount(fixture)).isZero();
@@ -852,11 +841,10 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         partitionId = partitionId.add(BigInteger.ONE)) {
       Map<byte[], byte[]> raw = administratorCommands.hgetall(key(fixture, partitionId));
       Map<String, String> image = new LinkedHashMap<>();
-      raw.forEach(
-          (field, value) ->
-              image.put(
-                  Base64.getEncoder().encodeToString(field),
-                  Base64.getEncoder().encodeToString(value)));
+      raw.forEach((field, value) ->
+          image.put(
+              Base64.getEncoder().encodeToString(field),
+              Base64.getEncoder().encodeToString(value)));
       images.add(Map.copyOf(image));
     }
     return List.copyOf(images);

@@ -320,9 +320,8 @@ public final class CommandSourceRepository {
     var retainedOperation =
         new GameDesignPublicationOperationRepository(dsl)
             .read(operation.workflowId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("COMMAND_SOURCE_PUBLICATION_OPERATION_UNAVAILABLE"));
+            .orElseThrow(() ->
+                new IllegalStateException("COMMAND_SOURCE_PUBLICATION_OPERATION_UNAVAILABLE"));
     GameDesignPublicationOperationRepository.exact(retainedOperation.operation(), operation);
     if (!"PENDING".equals(retainedOperation.outcome())) {
       throw new IllegalStateException("COMMAND_SOURCE_PUBLICATION_OPERATION_SEALED");

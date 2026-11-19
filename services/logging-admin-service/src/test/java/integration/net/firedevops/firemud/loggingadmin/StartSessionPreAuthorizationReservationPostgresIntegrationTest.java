@@ -109,14 +109,13 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     try {
       for (int index = 0; index < callerCount; index++) {
         futures.add(
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  if (!start.await(5, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("concurrent acquire gate timed out");
-                  }
-                  return acquire(tuple, UUID.randomUUID());
-                }));
+            executor.submit(() -> {
+              ready.countDown();
+              if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent acquire gate timed out");
+              }
+              return acquire(tuple, UUID.randomUUID());
+            }));
       }
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
@@ -247,35 +246,33 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         tuple("postgres-null-purpose-insert", "active claim purpose insert guard");
     UUID rejectedOwner = UUID.fromString("cd2900f9-2a8b-4dd3-a495-15180eb78f67");
 
-    assertThatThrownBy(
-        () ->
-            dsl.execute(
-                "INSERT INTO start_session_pre_authorization_reservations ("
-                    + "control_plane_request_id, pre_authorization_tuple_json, mutation_digest, phase, state, "
-                    + "reservation_owner_id, reservation_claim_fence, claim_owner_id, claim_fence, "
-                    + "claim_expires_at_epoch_ms, claim_state, claim_purpose, created_at_epoch_ms, "
-                    + "updated_at_epoch_ms, post_authorization_execution_tuple_json, owner_execution_handoff_id) "
-                    + "VALUES (?, ?, ?, 'ACCOUNT_AUTHORIZATION', 'RESERVED', ?, 1, ?, 1, ?, 'ACTIVE', NULL, ?, ?, NULL, NULL)",
-                rejectedInsertTuple.controlPlaneRequestId(),
-                rejectedInsertTuple.canonicalJson(),
-                rejectedInsertTuple.mutationDigest(),
-                rejectedOwner,
-                rejectedOwner,
-                NOW_EPOCH_MILLIS + 30_000L,
-                NOW_EPOCH_MILLIS,
-                NOW_EPOCH_MILLIS));
+    assertThatThrownBy(() ->
+        dsl.execute(
+            "INSERT INTO start_session_pre_authorization_reservations ("
+                + "control_plane_request_id, pre_authorization_tuple_json, mutation_digest, phase, state, "
+                + "reservation_owner_id, reservation_claim_fence, claim_owner_id, claim_fence, "
+                + "claim_expires_at_epoch_ms, claim_state, claim_purpose, created_at_epoch_ms, "
+                + "updated_at_epoch_ms, post_authorization_execution_tuple_json, owner_execution_handoff_id) "
+                + "VALUES (?, ?, ?, 'ACCOUNT_AUTHORIZATION', 'RESERVED', ?, 1, ?, 1, ?, 'ACTIVE', NULL, ?, ?, NULL, NULL)",
+            rejectedInsertTuple.controlPlaneRequestId(),
+            rejectedInsertTuple.canonicalJson(),
+            rejectedInsertTuple.mutationDigest(),
+            rejectedOwner,
+            rejectedOwner,
+            NOW_EPOCH_MILLIS + 30_000L,
+            NOW_EPOCH_MILLIS,
+            NOW_EPOCH_MILLIS));
     assertThat(dsl.fetchCount(START_SESSION_PRE_AUTHORIZATION_RESERVATIONS)).isZero();
 
     StartSessionPreAuthorizationReservationTuple tuple =
         tuple("postgres-null-purpose-update", "active claim purpose update guard");
     UUID owner = UUID.fromString("dd58a5f2-c3b9-4b95-b9f8-396dece825b8");
     repository.acquire(tuple, owner, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE start_session_pre_authorization_reservations SET claim_purpose = NULL "
-                        + "WHERE control_plane_request_id = ?",
-                    tuple.controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE start_session_pre_authorization_reservations SET claim_purpose = NULL "
+                    + "WHERE control_plane_request_id = ?",
+                tuple.controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(repository.findExact(tuple).orElseThrow().claimPurpose())
         .isEqualTo(ClaimPurpose.ORIGINAL);
@@ -360,17 +357,16 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     assertThat(expired.reservationClaimFence()).isEqualTo(1L);
     assertThat(expired.state()).isEqualTo(State.AUTHORIZATION_PENDING);
 
-    assertThatThrownBy(
-            () ->
-                repository.renew(
-                    tuple,
-                    tuple.mutationDigest(),
-                    originalOwner,
-                    1L,
-                    Phase.ACCOUNT_AUTHORIZATION,
-                    State.AUTHORIZATION_PENDING,
-                    NOW_EPOCH_MILLIS + 30_001L,
-                    NOW_EPOCH_MILLIS + 60_001L))
+    assertThatThrownBy(() ->
+            repository.renew(
+                tuple,
+                tuple.mutationDigest(),
+                originalOwner,
+                1L,
+                Phase.ACCOUNT_AUTHORIZATION,
+                State.AUTHORIZATION_PENDING,
+                NOW_EPOCH_MILLIS + 30_001L,
+                NOW_EPOCH_MILLIS + 60_001L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
 
@@ -457,16 +453,15 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     assertThat(issueEvidence.snapshot().state()).isEqualTo(State.AUTHORIZATION_PENDING);
     assertThat(issueEvidence.snapshot().claimPurpose())
         .isEqualTo(ClaimPurpose.RESERVED_RECOVERY_ISSUE);
-    assertThatThrownBy(
-            () ->
-                repository.readCurrentClaim(
-                    tuple,
-                    reservationOwner,
-                    1L,
-                    recoveryOwner,
-                    3L,
-                    ReadPurpose.RECOVER,
-                    NOW_EPOCH_MILLIS + 30_003L))
+    assertThatThrownBy(() ->
+            repository.readCurrentClaim(
+                tuple,
+                reservationOwner,
+                1L,
+                recoveryOwner,
+                3L,
+                ReadPurpose.RECOVER,
+                NOW_EPOCH_MILLIS + 30_003L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
     assertThat(
@@ -510,15 +505,14 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
       for (int index = 0; index < contenders; index++) {
         UUID recoveryOwner = UUID.randomUUID();
         futures.add(
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  if (!start.await(5, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("concurrent recovery gate timed out");
-                  }
-                  return repository.acquireRecoveryClaim(
-                      tuple, recoveryOwner, NOW_EPOCH_MILLIS + 30_001L, NOW_EPOCH_MILLIS + 60_001L);
-                }));
+            executor.submit(() -> {
+              ready.countDown();
+              if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent recovery gate timed out");
+              }
+              return repository.acquireRecoveryClaim(
+                  tuple, recoveryOwner, NOW_EPOCH_MILLIS + 30_001L, NOW_EPOCH_MILLIS + 60_001L);
+            }));
       }
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
@@ -588,30 +582,28 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     assertThat(originalResponseLookup.snapshot().state()).isEqualTo(State.AUTHORIZED);
     assertThat(originalResponseLookup.snapshot().claimPurpose())
         .isEqualTo(ClaimPurpose.AUTHORIZED_RESPONSE_RECOVERY);
-    assertThatThrownBy(
-            () ->
-                repository.readCurrentClaim(
-                    tuple,
-                    reservationOwner,
-                    1L,
-                    recoveryOwner,
-                    recovery.snapshot().claimFence(),
-                    ReadPurpose.ISSUE,
-                    NOW_EPOCH_MILLIS + 30_002L))
+    assertThatThrownBy(() ->
+            repository.readCurrentClaim(
+                tuple,
+                reservationOwner,
+                1L,
+                recoveryOwner,
+                recovery.snapshot().claimFence(),
+                ReadPurpose.ISSUE,
+                NOW_EPOCH_MILLIS + 30_002L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
-    assertThatThrownBy(
-            () ->
-                repository.completeAuthorization(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    recoveryOwner,
-                    recovery.snapshot().claimFence(),
-                    postTuple(tuple, reservationOwner, 1L, "arfp/v1/other-key/" + "c".repeat(64))
-                        .canonicalJson(),
-                    NOW_EPOCH_MILLIS + 30_003L))
+    assertThatThrownBy(() ->
+            repository.completeAuthorization(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                recoveryOwner,
+                recovery.snapshot().claimFence(),
+                postTuple(tuple, reservationOwner, 1L, "arfp/v1/other-key/" + "c".repeat(64))
+                    .canonicalJson(),
+                NOW_EPOCH_MILLIS + 30_003L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
 
@@ -744,60 +736,55 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     assertThat(repository.findAuthorizedExact(tuple))
         .isPresent()
         .get()
-        .satisfies(
-            snapshot -> {
-              assertThat(snapshot.postAuthorizationTuple().canonicalBytes())
-                  .containsExactly(postTuple.canonicalBytes());
-              assertThat(snapshot.handoff()).isEqualTo(firstHandoff.snapshot().handoff());
-              assertThat(snapshot.reservationOwnerId()).isEqualTo(reservationOwner);
-              assertThat(snapshot.currentClaimOwnerId()).isEqualTo(reservationOwner);
-            });
+        .satisfies(snapshot -> {
+          assertThat(snapshot.postAuthorizationTuple().canonicalBytes())
+              .containsExactly(postTuple.canonicalBytes());
+          assertThat(snapshot.handoff()).isEqualTo(firstHandoff.snapshot().handoff());
+          assertThat(snapshot.reservationOwnerId()).isEqualTo(reservationOwner);
+          assertThat(snapshot.currentClaimOwnerId()).isEqualTo(reservationOwner);
+        });
 
-    assertThatThrownBy(
-            () ->
-                repository.beginOwnerExecution(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    postTuple.canonicalJson(),
-                    UUID.fromString("53d31d97-a8c3-48a1-9815-b3e3228bb6f2"),
-                    NOW_EPOCH_MILLIS + 5_500L))
+    assertThatThrownBy(() ->
+            repository.beginOwnerExecution(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                postTuple.canonicalJson(),
+                UUID.fromString("53d31d97-a8c3-48a1-9815-b3e3228bb6f2"),
+                NOW_EPOCH_MILLIS + 5_500L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
     StartSessionPostAuthorizationExecutionTuple changedFingerprint =
         postTuple(tuple, reservationOwner, 1L, "arfp/v1/other-key/" + "c".repeat(64));
-    assertThatThrownBy(
-            () ->
-                repository.beginOwnerExecution(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    changedFingerprint.canonicalJson(),
-                    handoffId,
-                    NOW_EPOCH_MILLIS + 6_000L))
+    assertThatThrownBy(() ->
+            repository.beginOwnerExecution(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                changedFingerprint.canonicalJson(),
+                handoffId,
+                NOW_EPOCH_MILLIS + 6_000L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE start_session_pre_authorization_reservations "
-                        + "SET post_authorization_execution_tuple_json = ? "
-                        + "WHERE control_plane_request_id = ?",
-                    postTuple.canonicalJson() + " ",
-                    tuple.controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE start_session_pre_authorization_reservations "
+                    + "SET post_authorization_execution_tuple_json = ? "
+                    + "WHERE control_plane_request_id = ?",
+                postTuple.canonicalJson() + " ",
+                tuple.controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM start_session_pre_authorization_reservations "
-                        + "WHERE control_plane_request_id = ?",
-                    tuple.controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM start_session_pre_authorization_reservations "
+                    + "WHERE control_plane_request_id = ?",
+                tuple.controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThatThrownBy(
             () -> dsl.execute("TRUNCATE TABLE start_session_pre_authorization_reservations"))
@@ -813,33 +800,31 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         postTuple(tuple, reservationOwner, 1L, FINGERPRINT);
     repository.acquire(tuple, reservationOwner, NOW_EPOCH_MILLIS, NOW_EPOCH_MILLIS + 30_000L);
 
-    assertThatThrownBy(
-            () ->
-                repository.completeAuthorization(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    postTuple.canonicalJson(),
-                    NOW_EPOCH_MILLIS + 1_000L))
+    assertThatThrownBy(() ->
+            repository.completeAuthorization(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                postTuple.canonicalJson(),
+                NOW_EPOCH_MILLIS + 1_000L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
 
     repository.markAuthorizationPending(
         tuple, tuple.mutationDigest(), reservationOwner, 1L, NOW_EPOCH_MILLIS + 2_000L);
-    assertThatThrownBy(
-            () ->
-                repository.completeAuthorization(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    postTuple.canonicalJson(),
-                    NOW_EPOCH_MILLIS + 30_000L))
+    assertThatThrownBy(() ->
+            repository.completeAuthorization(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                postTuple.canonicalJson(),
+                NOW_EPOCH_MILLIS + 30_000L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
 
@@ -847,31 +832,29 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         tuple(tuple.controlPlaneRequestId(), "changed action tuple");
     StartSessionPostAuthorizationExecutionTuple changedPostTuple =
         postTuple(changedTuple, reservationOwner, 1L, FINGERPRINT);
-    assertThatThrownBy(
-            () ->
-                repository.completeAuthorization(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    changedPostTuple.canonicalJson(),
-                    NOW_EPOCH_MILLIS + 3_000L))
+    assertThatThrownBy(() ->
+            repository.completeAuthorization(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                changedPostTuple.canonicalJson(),
+                NOW_EPOCH_MILLIS + 3_000L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                repository.beginOwnerExecution(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    postTuple.canonicalJson(),
-                    UUID.fromString("f80cc7af-327c-44ab-96cc-23a84ff0ab4a"),
-                    NOW_EPOCH_MILLIS + 4_000L))
+    assertThatThrownBy(() ->
+            repository.beginOwnerExecution(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                postTuple.canonicalJson(),
+                UUID.fromString("f80cc7af-327c-44ab-96cc-23a84ff0ab4a"),
+                NOW_EPOCH_MILLIS + 4_000L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
     assertThat(repository.findExact(tuple).orElseThrow().state())
@@ -939,32 +922,30 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
         .isEqualTo(1L);
     assertThat(recoveryHandoff.snapshot().reservationSnapshot().claimFence()).isEqualTo(3L);
 
-    assertThatThrownBy(
-            () ->
-                repository.beginOwnerExecution(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    reservationOwner,
-                    1L,
-                    postTuple.canonicalJson(),
-                    UUID.fromString("d3f21a41-f718-4d82-9438-411377a10852"),
-                    NOW_EPOCH_MILLIS + 30_003L))
+    assertThatThrownBy(() ->
+            repository.beginOwnerExecution(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                reservationOwner,
+                1L,
+                postTuple.canonicalJson(),
+                UUID.fromString("d3f21a41-f718-4d82-9438-411377a10852"),
+                NOW_EPOCH_MILLIS + 30_003L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
-    assertThatThrownBy(
-            () ->
-                repository.beginOwnerExecution(
-                    tuple,
-                    tuple.mutationDigest(),
-                    reservationOwner,
-                    1L,
-                    recoveryOwner,
-                    recovery.snapshot().claimFence() - 1L,
-                    postTuple.canonicalJson(),
-                    UUID.fromString("d3f21a41-f718-4d82-9438-411377a10852"),
-                    NOW_EPOCH_MILLIS + 30_005L))
+    assertThatThrownBy(() ->
+            repository.beginOwnerExecution(
+                tuple,
+                tuple.mutationDigest(),
+                reservationOwner,
+                1L,
+                recoveryOwner,
+                recovery.snapshot().claimFence() - 1L,
+                postTuple.canonicalJson(),
+                UUID.fromString("d3f21a41-f718-4d82-9438-411377a10852"),
+                NOW_EPOCH_MILLIS + 30_005L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
   }
@@ -999,28 +980,27 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     try {
       for (int index = 0; index < contenders; index++) {
         futures.add(
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  try {
-                    if (!start.await(5, TimeUnit.SECONDS)) {
-                      throw new IllegalStateException("owner handoff gate timed out");
-                    }
-                  } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw interrupted;
-                  }
-                  return repository.beginOwnerExecution(
-                      tuple,
-                      tuple.mutationDigest(),
-                      reservationOwner,
-                      1L,
-                      reservationOwner,
-                      1L,
-                      postTuple.canonicalJson(),
-                      handoffId,
-                      NOW_EPOCH_MILLIS + 3_000L);
-                }));
+            executor.submit(() -> {
+              ready.countDown();
+              try {
+                if (!start.await(5, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("owner handoff gate timed out");
+                }
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw interrupted;
+              }
+              return repository.beginOwnerExecution(
+                  tuple,
+                  tuple.mutationDigest(),
+                  reservationOwner,
+                  1L,
+                  reservationOwner,
+                  1L,
+                  postTuple.canonicalJson(),
+                  handoffId,
+                  NOW_EPOCH_MILLIS + 3_000L);
+            }));
       }
       boolean allReady;
       try {
@@ -1117,56 +1097,52 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     assertThat(recoveryRead.snapshot().claimPurpose())
         .isEqualTo(ClaimPurpose.AUTHORIZATION_RECOVERY);
 
-    assertThatThrownBy(
-            () ->
-                repository.readCurrentClaim(
-                    tuple,
-                    originalOwner,
-                    1L,
-                    recoveryOwner,
-                    3L,
-                    ReadPurpose.ISSUE,
-                    NOW_EPOCH_MILLIS + 30_003L))
+    assertThatThrownBy(() ->
+            repository.readCurrentClaim(
+                tuple,
+                originalOwner,
+                1L,
+                recoveryOwner,
+                3L,
+                ReadPurpose.ISSUE,
+                NOW_EPOCH_MILLIS + 30_003L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
 
-    assertThatThrownBy(
-            () ->
-                repository.readCurrentClaim(
-                    tuple,
-                    originalOwner,
-                    1L,
-                    originalOwner,
-                    1L,
-                    ReadPurpose.ISSUE,
-                    NOW_EPOCH_MILLIS + 30_002L))
+    assertThatThrownBy(() ->
+            repository.readCurrentClaim(
+                tuple,
+                originalOwner,
+                1L,
+                originalOwner,
+                1L,
+                ReadPurpose.ISSUE,
+                NOW_EPOCH_MILLIS + 30_002L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readCurrentClaim(
-                    tuple,
-                    originalOwner,
-                    1L,
-                    recoveryOwner,
-                    3L,
-                    ReadPurpose.RECOVER,
-                    NOW_EPOCH_MILLIS + 60_001L))
+    assertThatThrownBy(() ->
+            repository.readCurrentClaim(
+                tuple,
+                originalOwner,
+                1L,
+                recoveryOwner,
+                3L,
+                ReadPurpose.RECOVER,
+                NOW_EPOCH_MILLIS + 60_001L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
 
     StartSessionPreAuthorizationReservationTuple tamperedTuple =
         tuple(requestId, "tampered tuple fixture");
-    assertThatThrownBy(
-            () ->
-                repository.readCurrentClaim(
-                    tamperedTuple,
-                    originalOwner,
-                    1L,
-                    recoveryOwner,
-                    3L,
-                    ReadPurpose.RECOVER,
-                    NOW_EPOCH_MILLIS + 30_002L))
+    assertThatThrownBy(() ->
+            repository.readCurrentClaim(
+                tamperedTuple,
+                originalOwner,
+                1L,
+                recoveryOwner,
+                3L,
+                ReadPurpose.RECOVER,
+                NOW_EPOCH_MILLIS + 30_002L))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
   }
@@ -1176,13 +1152,12 @@ class StartSessionPreAuthorizationReservationPostgresIntegrationTest {
     StartSessionPreAuthorizationReservationTuple tuple =
         tuple("postgres-integrity-04", "integrity fixture");
     acquire(tuple, UUID.randomUUID());
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE start_session_pre_authorization_reservations SET mutation_digest = ? "
-                        + "WHERE control_plane_request_id = ?",
-                    "0".repeat(64),
-                    tuple.controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE start_session_pre_authorization_reservations SET mutation_digest = ? "
+                    + "WHERE control_plane_request_id = ?",
+                "0".repeat(64),
+                tuple.controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(repository.find(tuple.controlPlaneRequestId()).orElseThrow().mutationDigest())
         .isEqualTo(tuple.mutationDigest());

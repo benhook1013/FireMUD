@@ -35,19 +35,17 @@ class AccountSelectedPublicationOrderClientTest {
   @Test
   void requiresReadableFileBackedMutualTlsAndNamespace(@TempDir Path directory) throws Exception {
     var factory = mock(GrpcChannelFactory.class);
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationOrderClient(
-                    new ServiceEndpointsProperties(), null, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationOrderClient(
+                new ServiceEndpointsProperties(), null, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account selected-publication")
         .hasNoCause();
     var tls = tls(directory);
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationOrderClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationOrderClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account selected-publication");
     tls.setPlaintext(false);
@@ -61,10 +59,9 @@ class AccountSelectedPublicationOrderClientTest {
         }) {
       tls.setCertChain(bad);
       Throwable failure =
-          catchThrowable(
-              () ->
-                  new AccountSelectedPublicationOrderClient(
-                      new ServiceEndpointsProperties(), tls, factory, "test"));
+          catchThrowable(() ->
+              new AccountSelectedPublicationOrderClient(
+                  new ServiceEndpointsProperties(), tls, factory, "test"));
       assertThat(failure)
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Account selected-publication")
@@ -74,10 +71,9 @@ class AccountSelectedPublicationOrderClientTest {
       }
     }
     var valid = tls(directory);
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationOrderClient(
-                    new ServiceEndpointsProperties(), valid, factory, "Test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationOrderClient(
+                new ServiceEndpointsProperties(), valid, factory, "Test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }
@@ -91,10 +87,9 @@ class AccountSelectedPublicationOrderClientTest {
     certChainTls.setCertChain(certChainTls.getCertChain() + " ");
     assertThat(Files.exists(Path.of(certChainTls.getCertChain()))).isFalse();
     assertThat(Files.isReadable(Path.of(certChainTls.getCertChain().trim()))).isTrue();
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationOrderClient(
-                    new ServiceEndpointsProperties(), certChainTls, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationOrderClient(
+                new ServiceEndpointsProperties(), certChainTls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account selected-publication")
         .hasMessageNotContaining(certChainTls.getCertChain())
@@ -104,10 +99,9 @@ class AccountSelectedPublicationOrderClientTest {
     privateKeyTls.setPrivateKey(privateKeyTls.getPrivateKey() + " ");
     assertThat(Files.exists(Path.of(privateKeyTls.getPrivateKey()))).isFalse();
     assertThat(Files.isReadable(Path.of(privateKeyTls.getPrivateKey().trim()))).isTrue();
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationOrderClient(
-                    new ServiceEndpointsProperties(), privateKeyTls, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationOrderClient(
+                new ServiceEndpointsProperties(), privateKeyTls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account selected-publication")
         .hasMessageNotContaining(privateKeyTls.getPrivateKey())
@@ -117,10 +111,9 @@ class AccountSelectedPublicationOrderClientTest {
     caCertTls.setCaCert(caCertTls.getCaCert() + " ");
     assertThat(Files.exists(Path.of(caCertTls.getCaCert()))).isFalse();
     assertThat(Files.isReadable(Path.of(caCertTls.getCaCert().trim()))).isTrue();
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationOrderClient(
-                    new ServiceEndpointsProperties(), caCertTls, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationOrderClient(
+                new ServiceEndpointsProperties(), caCertTls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account selected-publication")
         .hasMessageNotContaining(caCertTls.getCaCert())

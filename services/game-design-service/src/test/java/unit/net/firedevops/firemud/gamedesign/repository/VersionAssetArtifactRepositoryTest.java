@@ -88,12 +88,11 @@ class VersionAssetArtifactRepositoryTest {
       assertThat(executedSql)
           .filteredOn(sql -> sql.toLowerCase().contains(" where "))
           .singleElement()
-          .satisfies(
-              sql -> {
-                assertThat(sql.toLowerCase()).contains("where \"id\" = ");
-                assertThat(sql.toLowerCase()).doesNotContain("tenant_id");
-                assertThat(sql.toLowerCase()).doesNotContain("version_id");
-              });
+          .satisfies(sql -> {
+            assertThat(sql.toLowerCase()).contains("where \"id\" = ");
+            assertThat(sql.toLowerCase()).doesNotContain("tenant_id");
+            assertThat(sql.toLowerCase()).doesNotContain("version_id");
+          });
 
       VersionAssetArtifactRepository repository = new VersionAssetArtifactRepository(dsl);
       VersionAssetArtifact stale =

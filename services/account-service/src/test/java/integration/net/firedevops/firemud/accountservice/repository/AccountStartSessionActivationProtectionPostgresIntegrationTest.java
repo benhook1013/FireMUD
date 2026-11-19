@@ -107,18 +107,16 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .configuration()
         .setAppending(
             new DefaultExecuteListenerProvider(
-                ExecuteListener.onExecuteStart(
-                    context -> {
-                      String sql = context.sql();
-                      var query = context.query();
-                      if (sql == null || query == null || !sql.contains("FOR UPDATE NOWAIT"))
-                        return;
-                      if (sql.contains("account_draft_authorization_source_locks")) {
-                        sourceLocks.add((String) query.getBindValues().getFirst());
-                      } else if (sql.contains("account_start_session_activation_protections")) {
-                        protectionLocks.add(query.getBindValues().getFirst());
-                      }
-                    })));
+                ExecuteListener.onExecuteStart(context -> {
+                  String sql = context.sql();
+                  var query = context.query();
+                  if (sql == null || query == null || !sql.contains("FOR UPDATE NOWAIT")) return;
+                  if (sql.contains("account_draft_authorization_source_locks")) {
+                    sourceLocks.add((String) query.getBindValues().getFirst());
+                  } else if (sql.contains("account_start_session_activation_protections")) {
+                    protectionLocks.add(query.getBindValues().getFirst());
+                  }
+                })));
     for (var contended : List.of(first, last)) {
       sourceLocks.clear();
       protectionLocks.clear();
@@ -132,19 +130,17 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             assertThat(rows.next()).isTrue();
           }
         }
-        assertThatThrownBy(
-                () ->
-                    fixture
-                        .transaction()
-                        .executeWithoutResult(ignored -> repository.settleExact(terminal)))
+        assertThatThrownBy(() ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(ignored -> repository.settleExact(terminal)))
             .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
-            .satisfies(
-                failure -> {
-                  Throwable root = failure;
-                  while (root.getCause() != null) root = root.getCause();
-                  assertThat(((org.postgresql.util.PSQLException) root).getSQLState())
-                      .isEqualTo("55P03");
-                });
+            .satisfies(failure -> {
+              Throwable root = failure;
+              while (root.getCause() != null) root = root.getCause();
+              assertThat(((org.postgresql.util.PSQLException) root).getSQLState())
+                  .isEqualTo("55P03");
+            });
         assertThat(protectionLocks).isEmpty();
         assertThat(sourceLocks)
             .containsExactlyElementsOf(
@@ -162,11 +158,8 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     protectionLocks.clear();
     // Once both sources are available, row lookup follows them; no parent is manufactured by this
     // test.
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(ignored -> repository.settleExact(terminal)))
+    assertThatThrownBy(() ->
+            fixture.transaction().executeWithoutResult(ignored -> repository.settleExact(terminal)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Exact original StartSession activation protection unavailable");
     assertThat(sourceLocks).containsExactly(first.key(), last.key());
@@ -278,24 +271,21 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       var changed = readJson(canonicalTerminal);
       changed.put("activationResultSha256", invalidDigest);
       byte[] invalidTerminal = jsonBytes(changed);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              insertActivationSettlement(
-                                  fixture, id, fence, activationId, evidence, invalidTerminal)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      insertActivationSettlement(
+                          fixture, id, fence, activationId, evidence, invalidTerminal)))
           .isInstanceOf(RuntimeException.class)
-          .satisfies(
-              failure -> {
-                Throwable root = failure;
-                while (root.getCause() != null) root = root.getCause();
-                assertThat(root)
-                    .isInstanceOfSatisfying(
-                        org.postgresql.util.PSQLException.class,
-                        rejected -> assertThat(rejected.getSQLState()).isEqualTo("23514"));
-              });
+          .satisfies(failure -> {
+            Throwable root = failure;
+            while (root.getCause() != null) root = root.getCause();
+            assertThat(root)
+                .isInstanceOfSatisfying(
+                    org.postgresql.util.PSQLException.class,
+                    rejected -> assertThat(rejected.getSQLState()).isEqualTo("23514"));
+          });
       assertThat(retainedActivationRows(fixture)).isEqualTo(parents);
       assertThat(
               fixture
@@ -305,10 +295,9 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     }
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                insertActivationSettlement(
-                    fixture, id, fence, activationId, evidence, canonicalTerminal));
+        .executeWithoutResult(status ->
+            insertActivationSettlement(
+                fixture, id, fence, activationId, evidence, canonicalTerminal));
     assertThat(retainedActivationRows(fixture)).isEqualTo(parents);
     var settlement =
         fixture
@@ -452,33 +441,29 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     assertThat(stored.get("activation_protection_fence", Long.class)).isPositive();
     assertThat(stored.get("acquired_at", OffsetDateTime.class)).isNotNull();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_start_session_activation_protections "
-                                        + "SET acquired_at = acquired_at "
-                                        + "WHERE activation_protection_id = ?",
-                                    id)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "UPDATE account_start_session_activation_protections "
+                                + "SET acquired_at = acquired_at "
+                                + "WHERE activation_protection_id = ?",
+                            id)))
         .hasMessageContaining("immutable; terminal settlement is separate");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT account_control_ui_hold_required_sources("
-                                        + "ARRAY[?]::text[])",
-                                    sourceKey)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_control_ui_hold_required_sources("
+                                + "ARRAY[?]::text[])",
+                            sourceKey)))
         .hasMessageContaining("Original StartSession activation protection remains pending");
 
     assertThat(
@@ -737,17 +722,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                   .dsl()
                   .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
           .isZero();
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              fixture
-                                  .dsl()
-                                  .execute(
-                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                      sourceKey)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      fixture
+                          .dsl()
+                          .execute(
+                              "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                              sourceKey)))
           .hasMessageContaining("Original StartSession activation protection remains pending");
     }
 
@@ -775,17 +758,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                   .dsl()
                   .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
           .isZero();
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              fixture
-                                  .dsl()
-                                  .execute(
-                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                      sourceKey)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      fixture
+                          .dsl()
+                          .execute(
+                              "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                              sourceKey)))
           .hasMessageContaining("Original StartSession activation protection remains pending");
     }
 
@@ -857,73 +838,65 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             activationResultBytes);
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                insert(
-                    fixture.dsl(),
-                    "account_start_session_activation_protection_settlements",
-                    "activation_protection_id",
-                    id,
-                    "activation_protection_fence",
-                    protectionFence,
-                    "world_activation_request_id",
-                    activationRequestId,
-                    "world_activation_fence",
-                    29L,
-                    "outcome",
-                    "COMMITTED",
-                    "account_protection_evidence_bytes",
-                    accountEvidenceBytes,
-                    "terminal_bytes",
-                    terminalBytes,
-                    "terminal_digest",
-                    "sha256:" + hash(terminalBytes)));
+        .executeWithoutResult(status ->
+            insert(
+                fixture.dsl(),
+                "account_start_session_activation_protection_settlements",
+                "activation_protection_id",
+                id,
+                "activation_protection_fence",
+                protectionFence,
+                "world_activation_request_id",
+                activationRequestId,
+                "world_activation_fence",
+                29L,
+                "outcome",
+                "COMMITTED",
+                "account_protection_evidence_bytes",
+                accountEvidenceBytes,
+                "terminal_bytes",
+                terminalBytes,
+                "terminal_digest",
+                "sha256:" + hash(terminalBytes)));
 
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                        sourceKey));
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_start_session_activation_protection_settlements "
-                                        + "SET outcome = outcome WHERE activation_protection_id = ?",
-                                    id)))
+        .executeWithoutResult(status ->
+            fixture
+                .dsl()
+                .execute(
+                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                    sourceKey));
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "UPDATE account_start_session_activation_protection_settlements "
+                                + "SET outcome = outcome WHERE activation_protection_id = ?",
+                            id)))
         .hasMessageContaining("activation settlement is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "DELETE FROM account_start_session_activation_protection_settlements "
-                                        + "WHERE activation_protection_id = ?",
-                                    id)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "DELETE FROM account_start_session_activation_protection_settlements "
+                                + "WHERE activation_protection_id = ?",
+                            id)))
         .hasMessageContaining("activation settlement is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "TRUNCATE account_start_session_activation_protection_settlements")))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "TRUNCATE account_start_session_activation_protection_settlements")))
         .hasMessageContaining("activation settlement is immutable");
 
     for (String guard :
@@ -1017,17 +990,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       assertThat(pendingRows).hasSize(1);
       assertThat(retainedSources).hasSize(2);
 
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              fixture
-                                  .dsl()
-                                  .execute(
-                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                      sourceKey)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      fixture
+                          .dsl()
+                          .execute(
+                              "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                              sourceKey)))
           .hasMessageContaining("Original StartSession activation protection remains pending");
 
       Flyway v1004 = activationFlyway(fixture.dataSource(), "1004");
@@ -1057,17 +1028,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                       "SELECT world_preparing_evidence FROM account_start_session_activation_protections")
                   .get(0, byte[].class))
           .isEqualTo(malformedPreparingBytes);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              fixture
-                                  .dsl()
-                                  .execute(
-                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                      sourceKey)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      fixture
+                          .dsl()
+                          .execute(
+                              "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                              sourceKey)))
           .hasMessageContaining("Original StartSession activation protection remains pending");
 
       UUID activationRequestId = UUID.fromString((String) request.get("worldActivationRequestId"));
@@ -1103,17 +1072,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                   .dsl()
                   .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
           .isZero();
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status ->
-                              fixture
-                                  .dsl()
-                                  .execute(
-                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                      sourceKey)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status ->
+                      fixture
+                          .dsl()
+                          .execute(
+                              "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                              sourceKey)))
           .hasMessageContaining("Original StartSession activation protection remains pending");
     }
   }
@@ -1144,17 +1111,16 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining(
             "Activation protection does not retain its exact canonical request fields")
-        .satisfies(
-            failure -> {
-              Throwable postgresFailure = failure;
-              while (postgresFailure.getCause() != null) {
-                postgresFailure = postgresFailure.getCause();
-              }
-              assertThat(postgresFailure)
-                  .isInstanceOfSatisfying(
-                      org.postgresql.util.PSQLException.class,
-                      sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
-            });
+        .satisfies(failure -> {
+          Throwable postgresFailure = failure;
+          while (postgresFailure.getCause() != null) {
+            postgresFailure = postgresFailure.getCause();
+          }
+          assertThat(postgresFailure)
+              .isInstanceOfSatisfying(
+                  org.postgresql.util.PSQLException.class,
+                  sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
+        });
     assertThat(fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
         .isZero();
     assertThat(
@@ -1171,13 +1137,12 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             .get("source_key", String.class);
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                        sourceKey));
+        .executeWithoutResult(status ->
+            fixture
+                .dsl()
+                .execute(
+                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                    sourceKey));
   }
 
   @Test
@@ -1222,17 +1187,16 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             .isInstanceOf(RuntimeException.class)
             .hasMessageContaining(
                 "Activation protection Base64 fields must use canonical encodings")
-            .satisfies(
-                failure -> {
-                  Throwable postgresFailure = failure;
-                  while (postgresFailure.getCause() != null) {
-                    postgresFailure = postgresFailure.getCause();
-                  }
-                  assertThat(postgresFailure)
-                      .isInstanceOfSatisfying(
-                          org.postgresql.util.PSQLException.class,
-                          sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
-                });
+            .satisfies(failure -> {
+              Throwable postgresFailure = failure;
+              while (postgresFailure.getCause() != null) {
+                postgresFailure = postgresFailure.getCause();
+              }
+              assertThat(postgresFailure)
+                  .isInstanceOfSatisfying(
+                      org.postgresql.util.PSQLException.class,
+                      sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
+            });
         assertThat(
                 fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
             .isZero();
@@ -1250,13 +1214,12 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                 .get("source_key", String.class);
         fixture
             .transaction()
-            .executeWithoutResult(
-                status ->
-                    fixture
-                        .dsl()
-                        .execute(
-                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                            sourceKey));
+            .executeWithoutResult(status ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                        sourceKey));
       }
     }
   }
@@ -1340,17 +1303,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     // 128 Unicode code points occupy 129 Java UTF-16 units.
     oversizedLifecycleRequest.put("controlPlaneRequestId", "a".repeat(127) + "\uD83D\uDE00");
     byte[] oversizedRequestIdBytes = jsonBytes(oversizedRequestId);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT account_ss_activation_validate_lifecycle(?, 'PREPARING')",
-                                    oversizedRequestIdBytes)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_ss_activation_validate_lifecycle(?, 'PREPARING')",
+                            oversizedRequestIdBytes)))
         .hasMessageContaining("Activation lifecycle request text is invalid");
     malformed.add(oversizedRequestIdBytes);
     String sourceKey =
@@ -1374,19 +1335,17 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
               current.expiryText());
       assertThatThrownBy(() -> acquireProtection(fixture, changed))
           .isInstanceOf(RuntimeException.class)
-          .satisfies(
-              failure -> {
-                Throwable postgresFailure = failure;
-                while (postgresFailure.getCause() != null)
-                  postgresFailure = postgresFailure.getCause();
-                assertThat(postgresFailure)
-                    .isInstanceOfSatisfying(
-                        org.postgresql.util.PSQLException.class,
-                        sqlFailure ->
-                            assertThat(sqlFailure.getSQLState())
-                                .as(sqlFailure.getMessage())
-                                .isEqualTo("23514"));
-              });
+          .satisfies(failure -> {
+            Throwable postgresFailure = failure;
+            while (postgresFailure.getCause() != null) postgresFailure = postgresFailure.getCause();
+            assertThat(postgresFailure)
+                .isInstanceOfSatisfying(
+                    org.postgresql.util.PSQLException.class,
+                    sqlFailure ->
+                        assertThat(sqlFailure.getSQLState())
+                            .as(sqlFailure.getMessage())
+                            .isEqualTo("23514"));
+          });
       assertThat(
               fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
           .isZero();
@@ -1397,28 +1356,25 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
           .isZero();
       fixture
           .transaction()
-          .executeWithoutResult(
-              status ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                          sourceKey));
+          .executeWithoutResult(status ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                      sourceKey));
     }
     acquireProtection(fixture, current);
     assertThat(fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
         .isEqualTo(1);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                    sourceKey)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                            sourceKey)))
         .hasMessageContaining("Original StartSession activation protection remains pending");
   }
 
@@ -1428,15 +1384,14 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     CurrentnessCase valid = currentnessCase(fixture, Instant.now().plusSeconds(60));
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
-                        valid.requestBytes(),
-                        valid.operationIdentityBytes(),
-                        valid.operationIdentityDigest()));
+        .executeWithoutResult(status ->
+            fixture
+                .dsl()
+                .execute(
+                    "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                    valid.requestBytes(),
+                    valid.operationIdentityBytes(),
+                    valid.operationIdentityDigest()));
 
     Map<String, Object> changedProjectionRequest =
         JSON.readValue(valid.requestBytes(), new tools.jackson.core.type.TypeReference<>() {});
@@ -1450,19 +1405,17 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         "accountRedemptionProjectionBytesBase64",
         Base64.getEncoder().encodeToString(differentSpelling));
     byte[] changedProjection = jsonBytes(changedProjectionRequest);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
-                                    changedProjection,
-                                    valid.operationIdentityBytes(),
-                                    valid.operationIdentityDigest())))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                            changedProjection,
+                            valid.operationIdentityBytes(),
+                            valid.operationIdentityDigest())))
         .hasMessageContaining(
             "Activation protection differs from original Account redemption or capture");
 
@@ -1495,33 +1448,31 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
 
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
-                        current.requestBytes(),
-                        current.operationIdentityBytes(),
-                        current.operationIdentityDigest()));
+        .executeWithoutResult(status ->
+            fixture
+                .dsl()
+                .execute(
+                    "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                    current.requestBytes(),
+                    current.operationIdentityBytes(),
+                    current.operationIdentityDigest()));
     // Stipulate one contradictory retained owner row to isolate the independent SQL conjunct.
     // Current activation/acquisition guards stay enabled; this is not authenticated producer proof.
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              assertThat(
-                      fixture
-                          .dsl()
-                          .execute(
-                              "UPDATE account_start_session_operator_authorizations SET issuance_operation_id = ? "
-                                  + "WHERE control_plane_request_id = ?",
-                              UUID.randomUUID(),
-                              requestId))
-                  .isEqualTo(1);
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+        .executeWithoutResult(status -> {
+          fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+          assertThat(
+                  fixture
+                      .dsl()
+                      .execute(
+                          "UPDATE account_start_session_operator_authorizations SET issuance_operation_id = ? "
+                              + "WHERE control_plane_request_id = ?",
+                          UUID.randomUUID(),
+                          requestId))
+              .isEqualTo(1);
+          fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
     assertThatThrownBy(() -> acquireProtection(fixture, current))
         .hasMessageContaining(
             "Activation protection differs from original Account redemption or capture");
@@ -1583,36 +1534,34 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     byte[] terminal = terminalBytes(fixture, id, fence, activationId, evidence, jsonBytes(result));
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                insert(
-                    fixture.dsl(),
-                    "account_start_session_activation_protection_settlements",
-                    "activation_protection_id",
-                    id,
-                    "activation_protection_fence",
-                    fence,
-                    "world_activation_request_id",
-                    activationId,
-                    "world_activation_fence",
-                    29L,
-                    "outcome",
-                    "ABORTED",
-                    "account_protection_evidence_bytes",
-                    evidence,
-                    "terminal_bytes",
-                    terminal,
-                    "terminal_digest",
-                    "sha256:" + hash(terminal)));
+        .executeWithoutResult(status ->
+            insert(
+                fixture.dsl(),
+                "account_start_session_activation_protection_settlements",
+                "activation_protection_id",
+                id,
+                "activation_protection_fence",
+                fence,
+                "world_activation_request_id",
+                activationId,
+                "world_activation_fence",
+                29L,
+                "outcome",
+                "ABORTED",
+                "account_protection_evidence_bytes",
+                evidence,
+                "terminal_bytes",
+                terminal,
+                "terminal_digest",
+                "sha256:" + hash(terminal)));
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                        sources.get(0).get("source_key", String.class)));
+        .executeWithoutResult(status ->
+            fixture
+                .dsl()
+                .execute(
+                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                    sources.get(0).get("source_key", String.class)));
   }
 
   private static void assertSettlementInsertRejected(
@@ -1668,47 +1617,44 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             activationRequestId,
             protectionEvidenceBytes,
             activationResultBytes);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            insert(
-                                fixture.dsl(),
-                                "account_start_session_activation_protection_settlements",
-                                "activation_protection_id",
-                                protectionId,
-                                "activation_protection_fence",
-                                protectionFence,
-                                "world_activation_request_id",
-                                activationRequestId,
-                                "world_activation_fence",
-                                29L,
-                                "outcome",
-                                outcome,
-                                "account_protection_evidence_bytes",
-                                protectionEvidenceBytes,
-                                "terminal_bytes",
-                                terminalBytes,
-                                "terminal_digest",
-                                "sha256:" + hash(terminalBytes))))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    insert(
+                        fixture.dsl(),
+                        "account_start_session_activation_protection_settlements",
+                        "activation_protection_id",
+                        protectionId,
+                        "activation_protection_fence",
+                        protectionFence,
+                        "world_activation_request_id",
+                        activationRequestId,
+                        "world_activation_fence",
+                        29L,
+                        "outcome",
+                        outcome,
+                        "account_protection_evidence_bytes",
+                        protectionEvidenceBytes,
+                        "terminal_bytes",
+                        terminalBytes,
+                        "terminal_digest",
+                        "sha256:" + hash(terminalBytes))))
         .as(assertionDescription)
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable postgresFailure = failure;
-              while (postgresFailure.getCause() != null) {
-                postgresFailure = postgresFailure.getCause();
-              }
-              assertThat(postgresFailure)
-                  .isInstanceOfSatisfying(
-                      org.postgresql.util.PSQLException.class,
-                      sqlFailure ->
-                          assertThat(sqlFailure.getSQLState())
-                              .as(sqlFailure.getMessage())
-                              .isEqualTo("23514"));
-            });
+        .satisfies(failure -> {
+          Throwable postgresFailure = failure;
+          while (postgresFailure.getCause() != null) {
+            postgresFailure = postgresFailure.getCause();
+          }
+          assertThat(postgresFailure)
+              .isInstanceOfSatisfying(
+                  org.postgresql.util.PSQLException.class,
+                  sqlFailure ->
+                      assertThat(sqlFailure.getSQLState())
+                          .as(sqlFailure.getMessage())
+                          .isEqualTo("23514"));
+        });
   }
 
   private static byte[] accountEvidence(
@@ -1823,34 +1769,31 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   private static void assertCurrentnessRejected(
       Fixture fixture, byte[] requestBytes, byte[] operationIdentityBytes) {
     String operationDigest = "sha256:" + hash(operationIdentityBytes);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
-                                    requestBytes,
-                                    operationIdentityBytes,
-                                    operationDigest)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                            requestBytes,
+                            operationIdentityBytes,
+                            operationDigest)))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable postgresFailure = failure;
-              while (postgresFailure.getCause() != null) {
-                postgresFailure = postgresFailure.getCause();
-              }
-              assertThat(postgresFailure)
-                  .isInstanceOfSatisfying(
-                      org.postgresql.util.PSQLException.class,
-                      sqlFailure ->
-                          assertThat(sqlFailure.getSQLState())
-                              .as(sqlFailure.getMessage())
-                              .isEqualTo("23514"));
-            });
+        .satisfies(failure -> {
+          Throwable postgresFailure = failure;
+          while (postgresFailure.getCause() != null) {
+            postgresFailure = postgresFailure.getCause();
+          }
+          assertThat(postgresFailure)
+              .isInstanceOfSatisfying(
+                  org.postgresql.util.PSQLException.class,
+                  sqlFailure ->
+                      assertThat(sqlFailure.getSQLState())
+                          .as(sqlFailure.getMessage())
+                          .isEqualTo("23514"));
+        });
   }
 
   private static CurrentnessCase currentnessCase(Fixture fixture, Instant originalLease)
@@ -1980,207 +1923,206 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     String operationDigest = "sha256:" + hash(operationIdentity);
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
-                      sourceEvidence.get(0).key());
-              fixture
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
-                      sourceEvidence.get(1).key());
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              insert(
-                  fixture.dsl(),
-                  "account_canonical_tenant_identity_claims",
-                  "canonical_tenant_id",
-                  tenantId,
-                  "identity_kind",
-                  "APPROVED_RETAINED",
-                  "source_operation_id",
-                  UUID.randomUUID(),
-                  "source_account_legacy_tenant_id",
-                  1L,
-                  "source_target_namespace",
-                  "test",
-                  "source_game_row_id",
-                  1L,
-                  "source_game_tenant_key",
-                  tenantId.toString());
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_authority_captures",
-                  "control_plane_request_id",
-                  requestId,
-                  "account_uuid",
-                  accountId,
-                  "tenant_uuid",
-                  tenantId,
-                  "target_owner",
-                  "game-session-service",
-                  "logging_workload_uri",
-                  "spiffe://firemud/ns/test/sa/logging-admin-service",
-                  "reservation_owner_id",
-                  UUID.randomUUID(),
-                  "reservation_claim_fence",
-                  7L,
-                  "pre_authorization_tuple",
-                  preAuthorization,
-                  "mutation_digest",
-                  "c".repeat(64),
-                  "control_ui_operation_id",
-                  UUID.randomUUID(),
-                  "control_ui_token_jti",
-                  UUID.randomUUID(),
-                  "control_ui_token_hash",
-                  "d".repeat(64),
-                  "control_ui_signer_receipt_sha256",
-                  "e".repeat(64),
-                  "issuance_fence",
-                  issuanceFence,
-                  "issuance_fence_source_version",
-                  sourceVersion,
-                  "captured_at",
-                  OffsetDateTime.ofInstant(
-                      normalizedNow.truncatedTo(ChronoUnit.MILLIS), ZoneOffset.UTC),
-                  "snapshot_sha256",
-                  snapshotDigest,
-                  "canonical_snapshot_bytes",
-                  snapshot,
-                  "source_version",
-                  sourceVersion,
-                  "source_fence",
-                  sourceFence,
-                  "linearization",
-                  "19",
-                  "canonical_sha256",
-                  captureDigest,
-                  "canonical_capture_bytes",
-                  captureReference);
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_operator_authorizations",
-                  "control_plane_request_id",
-                  requestId,
-                  "pre_authorization_tuple",
-                  preAuthorization,
-                  "mutation_digest",
-                  "c".repeat(64),
-                  "issuance_workload_uri",
-                  "spiffe://firemud/ns/test/sa/logging-admin-service",
-                  "reservation_owner_id",
-                  UUID.randomUUID(),
-                  "reservation_claim_fence",
-                  7L,
-                  "issuance_operation_id",
-                  issuanceOperationId,
-                  "issuance_fence",
-                  issuanceFence,
-                  "bundle_version",
-                  "authorityEvidenceBundle/v1",
-                  "bundle_source_version",
-                  Long.toString(sourceVersion),
-                  "bundle_source_fence",
-                  Long.toString(sourceFence),
-                  "bundle_linearization",
-                  "19",
-                  "authority_evidence_bundle",
-                  authorityBundle,
-                  "authorization_reference_fingerprint",
-                  fingerprint,
-                  "encrypted_response_envelope",
-                  bytes("synthetic response"),
-                  "issued_at",
-                  OffsetDateTime.ofInstant(issuedAt, ZoneOffset.UTC),
-                  "reference_expires_at",
-                  OffsetDateTime.ofInstant(referenceExpiry, ZoneOffset.UTC),
-                  "response_envelope_expires_at",
-                  OffsetDateTime.ofInstant(responseExpiry, ZoneOffset.UTC),
-                  "status",
-                  "REDEEMED",
-                  "redemption_redeemer_workload_uri",
-                  "spiffe://firemud/ns/test/sa/game-session-service",
-                  "redemption_owner_attempt_id",
-                  ownerAttemptId,
-                  "redemption_owner_fence",
-                  ownerFence,
-                  "redeemed_at",
-                  OffsetDateTime.ofInstant(redeemedAt, ZoneOffset.UTC),
-                  "redemption_reference_fingerprint",
-                  fingerprint,
-                  "redemption_authority_evidence_bundle",
-                  authorityBundle);
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_world_participations",
-                  "participation_id",
-                  participationId,
-                  "control_plane_request_id",
-                  requestId,
-                  "original_post_authorization_tuple",
-                  tuple,
-                  "target_namespace",
-                  "test",
-                  "canonical_tenant_id",
-                  tenantId,
-                  "canonical_game_instance_id",
-                  gameInstanceId,
-                  "game_session_owner_attempt_id",
-                  ownerAttemptId,
-                  "game_session_owner_fence",
-                  ownerFence,
-                  "preparation_input_json",
-                  preparationInput,
-                  "preparation_input_digest",
-                  preparationDigest);
-              for (SourceEvidence source : sourceEvidence) {
-                insert(
-                    fixture.dsl(),
-                    "account_start_session_world_participation_sources",
-                    "participation_id",
-                    participationId,
-                    "source_key",
-                    source.key(),
-                    "source_evidence",
-                    source.canonicalBytes());
-              }
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_world_original_attempt_evidence",
-                  "participation_id",
-                  participationId,
-                  "target_namespace",
-                  "test",
-                  "game_session_owner_mutation_id",
-                  ownerMutationId,
-                  "game_session_owner_attempt_id",
-                  ownerAttemptId,
-                  "game_session_owner_fence",
-                  ownerFence,
-                  "original_lease_expires_at",
-                  OffsetDateTime.ofInstant(normalizedLease, ZoneOffset.UTC),
-                  "original_response_bytes",
-                  attemptBytes,
-                  "original_response_digest",
-                  "sha256:" + hash(attemptBytes));
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_world_participation_settlements",
-                  "participation_id",
-                  participationId,
-                  "outcome",
-                  "COMMITTED",
-                  "world_execution_fence",
-                  3L,
-                  "terminal_bytes",
-                  bytes("synthetic committed preparation"),
-                  "terminal_digest",
-                  "sha256:" + hash(bytes("synthetic committed preparation")));
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+        .executeWithoutResult(status -> {
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                  sourceEvidence.get(0).key());
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                  sourceEvidence.get(1).key());
+          fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+          insert(
+              fixture.dsl(),
+              "account_canonical_tenant_identity_claims",
+              "canonical_tenant_id",
+              tenantId,
+              "identity_kind",
+              "APPROVED_RETAINED",
+              "source_operation_id",
+              UUID.randomUUID(),
+              "source_account_legacy_tenant_id",
+              1L,
+              "source_target_namespace",
+              "test",
+              "source_game_row_id",
+              1L,
+              "source_game_tenant_key",
+              tenantId.toString());
+          insert(
+              fixture.dsl(),
+              "account_start_session_authority_captures",
+              "control_plane_request_id",
+              requestId,
+              "account_uuid",
+              accountId,
+              "tenant_uuid",
+              tenantId,
+              "target_owner",
+              "game-session-service",
+              "logging_workload_uri",
+              "spiffe://firemud/ns/test/sa/logging-admin-service",
+              "reservation_owner_id",
+              UUID.randomUUID(),
+              "reservation_claim_fence",
+              7L,
+              "pre_authorization_tuple",
+              preAuthorization,
+              "mutation_digest",
+              "c".repeat(64),
+              "control_ui_operation_id",
+              UUID.randomUUID(),
+              "control_ui_token_jti",
+              UUID.randomUUID(),
+              "control_ui_token_hash",
+              "d".repeat(64),
+              "control_ui_signer_receipt_sha256",
+              "e".repeat(64),
+              "issuance_fence",
+              issuanceFence,
+              "issuance_fence_source_version",
+              sourceVersion,
+              "captured_at",
+              OffsetDateTime.ofInstant(
+                  normalizedNow.truncatedTo(ChronoUnit.MILLIS), ZoneOffset.UTC),
+              "snapshot_sha256",
+              snapshotDigest,
+              "canonical_snapshot_bytes",
+              snapshot,
+              "source_version",
+              sourceVersion,
+              "source_fence",
+              sourceFence,
+              "linearization",
+              "19",
+              "canonical_sha256",
+              captureDigest,
+              "canonical_capture_bytes",
+              captureReference);
+          insert(
+              fixture.dsl(),
+              "account_start_session_operator_authorizations",
+              "control_plane_request_id",
+              requestId,
+              "pre_authorization_tuple",
+              preAuthorization,
+              "mutation_digest",
+              "c".repeat(64),
+              "issuance_workload_uri",
+              "spiffe://firemud/ns/test/sa/logging-admin-service",
+              "reservation_owner_id",
+              UUID.randomUUID(),
+              "reservation_claim_fence",
+              7L,
+              "issuance_operation_id",
+              issuanceOperationId,
+              "issuance_fence",
+              issuanceFence,
+              "bundle_version",
+              "authorityEvidenceBundle/v1",
+              "bundle_source_version",
+              Long.toString(sourceVersion),
+              "bundle_source_fence",
+              Long.toString(sourceFence),
+              "bundle_linearization",
+              "19",
+              "authority_evidence_bundle",
+              authorityBundle,
+              "authorization_reference_fingerprint",
+              fingerprint,
+              "encrypted_response_envelope",
+              bytes("synthetic response"),
+              "issued_at",
+              OffsetDateTime.ofInstant(issuedAt, ZoneOffset.UTC),
+              "reference_expires_at",
+              OffsetDateTime.ofInstant(referenceExpiry, ZoneOffset.UTC),
+              "response_envelope_expires_at",
+              OffsetDateTime.ofInstant(responseExpiry, ZoneOffset.UTC),
+              "status",
+              "REDEEMED",
+              "redemption_redeemer_workload_uri",
+              "spiffe://firemud/ns/test/sa/game-session-service",
+              "redemption_owner_attempt_id",
+              ownerAttemptId,
+              "redemption_owner_fence",
+              ownerFence,
+              "redeemed_at",
+              OffsetDateTime.ofInstant(redeemedAt, ZoneOffset.UTC),
+              "redemption_reference_fingerprint",
+              fingerprint,
+              "redemption_authority_evidence_bundle",
+              authorityBundle);
+          insert(
+              fixture.dsl(),
+              "account_start_session_world_participations",
+              "participation_id",
+              participationId,
+              "control_plane_request_id",
+              requestId,
+              "original_post_authorization_tuple",
+              tuple,
+              "target_namespace",
+              "test",
+              "canonical_tenant_id",
+              tenantId,
+              "canonical_game_instance_id",
+              gameInstanceId,
+              "game_session_owner_attempt_id",
+              ownerAttemptId,
+              "game_session_owner_fence",
+              ownerFence,
+              "preparation_input_json",
+              preparationInput,
+              "preparation_input_digest",
+              preparationDigest);
+          for (SourceEvidence source : sourceEvidence) {
+            insert(
+                fixture.dsl(),
+                "account_start_session_world_participation_sources",
+                "participation_id",
+                participationId,
+                "source_key",
+                source.key(),
+                "source_evidence",
+                source.canonicalBytes());
+          }
+          insert(
+              fixture.dsl(),
+              "account_start_session_world_original_attempt_evidence",
+              "participation_id",
+              participationId,
+              "target_namespace",
+              "test",
+              "game_session_owner_mutation_id",
+              ownerMutationId,
+              "game_session_owner_attempt_id",
+              ownerAttemptId,
+              "game_session_owner_fence",
+              ownerFence,
+              "original_lease_expires_at",
+              OffsetDateTime.ofInstant(normalizedLease, ZoneOffset.UTC),
+              "original_response_bytes",
+              attemptBytes,
+              "original_response_digest",
+              "sha256:" + hash(attemptBytes));
+          insert(
+              fixture.dsl(),
+              "account_start_session_world_participation_settlements",
+              "participation_id",
+              participationId,
+              "outcome",
+              "COMMITTED",
+              "world_execution_fence",
+              3L,
+              "terminal_bytes",
+              bytes("synthetic committed preparation"),
+              "terminal_digest",
+              "sha256:" + hash(bytes("synthetic committed preparation")));
+          fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
     byte[] requestBytes =
         activationRequest(
             tuple,
@@ -2207,55 +2149,54 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   private static void acquireProtection(Fixture fixture, CurrentnessCase current) {
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture
-                  .dsl()
-                  .execute(
-                      """
-          INSERT INTO account_start_session_activation_protections(
-              control_plane_request_id, account_world_participation_id, account_world_participation_fence,
-              original_post_authorization_tuple, account_redemption_projection,
-              game_session_owner_mutation_id, game_session_owner_attempt_id, game_session_owner_fence,
-              original_lease_expires_at, target_namespace, canonical_tenant_id, canonical_game_instance_id,
-              world_activation_request_id, game_session_launch_read_evidence, world_preparing_evidence,
-              capture_source_version, capture_source_fence, capture_sha256,
-              capture_reference_bytes, capture_reference_sha256, operation_identity_bytes,
-              operation_identity_digest, request_binding_bytes, request_binding_digest)
-          SELECT w.control_plane_request_id, w.participation_id, w.participation_fence,
-              w.original_post_authorization_tuple, w.original_post_authorization_tuple,
-              o.game_session_owner_mutation_id, o.game_session_owner_attempt_id, o.game_session_owner_fence,
-              o.original_lease_expires_at, w.target_namespace, w.canonical_tenant_id, w.canonical_game_instance_id,
-              (r.value->>'worldActivationRequestId')::uuid,
-              decode(r.value->>'gameSessionLaunchReadEvidenceBytesBase64', 'base64'),
-              decode(r.value->>'preparingEvidenceBytesBase64', 'base64'),
-              c.source_version, c.source_fence, c.canonical_sha256,
-              c.canonical_capture_bytes, c.canonical_sha256, ?, ?, ?, ?
-          FROM account_start_session_world_participations w
-          JOIN account_start_session_world_original_attempt_evidence o USING(participation_id)
-          JOIN account_start_session_authority_captures c USING(control_plane_request_id)
-          CROSS JOIN (SELECT convert_from(?::bytea, 'UTF8')::jsonb AS value) r
-          WHERE w.participation_id = (r.value->>'accountWorldParticipationId')::uuid
-          """,
-                      current.operationIdentityBytes(),
-                      current.operationIdentityDigest(),
-                      current.requestBytes(),
-                      "sha256:" + hash(current.requestBytes()),
-                      current.requestBytes());
-              fixture
-                  .dsl()
-                  .execute(
-                      """
-          INSERT INTO account_start_session_activation_protection_sources(
-              activation_protection_id, source_key, source_evidence)
-          SELECT p.activation_protection_id, s.source_key, s.source_evidence
-          FROM account_start_session_activation_protections p
-          JOIN account_start_session_world_participation_sources s
-              ON s.participation_id = p.account_world_participation_id
-          WHERE p.operation_identity_digest = ?
-          """,
-                      current.operationIdentityDigest());
-            });
+        .executeWithoutResult(status -> {
+          fixture
+              .dsl()
+              .execute(
+                  """
+                  INSERT INTO account_start_session_activation_protections(
+                      control_plane_request_id, account_world_participation_id, account_world_participation_fence,
+                      original_post_authorization_tuple, account_redemption_projection,
+                      game_session_owner_mutation_id, game_session_owner_attempt_id, game_session_owner_fence,
+                      original_lease_expires_at, target_namespace, canonical_tenant_id, canonical_game_instance_id,
+                      world_activation_request_id, game_session_launch_read_evidence, world_preparing_evidence,
+                      capture_source_version, capture_source_fence, capture_sha256,
+                      capture_reference_bytes, capture_reference_sha256, operation_identity_bytes,
+                      operation_identity_digest, request_binding_bytes, request_binding_digest)
+                  SELECT w.control_plane_request_id, w.participation_id, w.participation_fence,
+                      w.original_post_authorization_tuple, w.original_post_authorization_tuple,
+                      o.game_session_owner_mutation_id, o.game_session_owner_attempt_id, o.game_session_owner_fence,
+                      o.original_lease_expires_at, w.target_namespace, w.canonical_tenant_id, w.canonical_game_instance_id,
+                      (r.value->>'worldActivationRequestId')::uuid,
+                      decode(r.value->>'gameSessionLaunchReadEvidenceBytesBase64', 'base64'),
+                      decode(r.value->>'preparingEvidenceBytesBase64', 'base64'),
+                      c.source_version, c.source_fence, c.canonical_sha256,
+                      c.canonical_capture_bytes, c.canonical_sha256, ?, ?, ?, ?
+                  FROM account_start_session_world_participations w
+                  JOIN account_start_session_world_original_attempt_evidence o USING(participation_id)
+                  JOIN account_start_session_authority_captures c USING(control_plane_request_id)
+                  CROSS JOIN (SELECT convert_from(?::bytea, 'UTF8')::jsonb AS value) r
+                  WHERE w.participation_id = (r.value->>'accountWorldParticipationId')::uuid
+                  """,
+                  current.operationIdentityBytes(),
+                  current.operationIdentityDigest(),
+                  current.requestBytes(),
+                  "sha256:" + hash(current.requestBytes()),
+                  current.requestBytes());
+          fixture
+              .dsl()
+              .execute(
+                  """
+                  INSERT INTO account_start_session_activation_protection_sources(
+                      activation_protection_id, source_key, source_evidence)
+                  SELECT p.activation_protection_id, s.source_key, s.source_evidence
+                  FROM account_start_session_activation_protections p
+                  JOIN account_start_session_world_participation_sources s
+                      ON s.participation_id = p.account_world_participation_id
+                  WHERE p.operation_identity_digest = ?
+                  """,
+                  current.operationIdentityDigest());
+        });
   }
 
   private static byte[] activationRequest(

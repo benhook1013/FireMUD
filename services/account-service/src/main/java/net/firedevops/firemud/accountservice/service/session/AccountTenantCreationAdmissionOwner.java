@@ -115,16 +115,15 @@ public final class AccountTenantCreationAdmissionOwner {
     // rows, the original issuance bytes, and their binding have survived the first transaction.
     Frozen frozen =
         Objects.requireNonNull(
-            readTransaction.execute(
-                ignored -> {
-                  Persisted persisted = readPersisted(initial.binding, false);
-                  requireSameFrozen(initial, persisted, true);
-                  if (initial.admitted != null && persisted.admitted == null) throw denied();
-                  if (persisted.admitted != null && initial.admitted != null) {
-                    requireSameAdmitted(initial.admitted, persisted.admitted);
-                  }
-                  return initial.withPersisted(persisted);
-                }));
+            readTransaction.execute(ignored -> {
+              Persisted persisted = readPersisted(initial.binding, false);
+              requireSameFrozen(initial, persisted, true);
+              if (initial.admitted != null && persisted.admitted == null) throw denied();
+              if (persisted.admitted != null && initial.admitted != null) {
+                requireSameAdmitted(initial.admitted, persisted.admitted);
+              }
+              return initial.withPersisted(persisted);
+            }));
 
     String originalKid =
         AccountTenantCreationOwnerChecks.originalKid(
@@ -178,12 +177,11 @@ public final class AccountTenantCreationAdmissionOwner {
 
     Persisted original =
         Objects.requireNonNull(
-            readTransaction.execute(
-                ignored -> {
-                  Persisted stored = readPersisted(null, true, creationOperationId);
-                  requireRecoveryEvidenceIdentity(stored.intent, recentReauthentication);
-                  return stored;
-                }));
+            readTransaction.execute(ignored -> {
+              Persisted stored = readPersisted(null, true, creationOperationId);
+              requireRecoveryEvidenceIdentity(stored.intent, recentReauthentication);
+              return stored;
+            }));
     if (original.admitted == null) throw denied();
     if (!configuredNamespace.equals(original.intent.targetNamespace())) throw denied();
 
@@ -587,9 +585,8 @@ public final class AccountTenantCreationAdmissionOwner {
     if (!sources.equals(sorted)
         || sources.stream().map(SourceEvidence::key).distinct().count() != sources.size()
         || sources.stream()
-            .anyMatch(
-                source ->
-                    source.kind() == SourceKind.TENANT || source.kind() == SourceKind.MEMBERSHIP)) {
+            .anyMatch(source ->
+                source.kind() == SourceKind.TENANT || source.kind() == SourceKind.MEMBERSHIP)) {
       throw denied();
     }
   }

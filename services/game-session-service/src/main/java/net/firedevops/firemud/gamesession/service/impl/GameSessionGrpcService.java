@@ -673,12 +673,11 @@ public final class GameSessionGrpcService
           ListGameplayWorldsResponse.newBuilder()
               .addAllWorlds(
                   gameplayWorldCatalog.publicWorldsFromAuthoritySnapshot().stream()
-                      .map(
-                          world ->
-                              net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
-                                  .setWorldSlug(world.slug())
-                                  .setDisplayName(world.displayName())
-                                  .build())
+                      .map(world ->
+                          net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                              .setWorldSlug(world.slug())
+                              .setDisplayName(world.displayName())
+                              .build())
                       .toList())
               .build();
       responseObserver.onNext(response);

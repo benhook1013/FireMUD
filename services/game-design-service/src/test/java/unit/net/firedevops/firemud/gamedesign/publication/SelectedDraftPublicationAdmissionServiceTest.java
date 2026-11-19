@@ -55,12 +55,11 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var deliveryRepository = mock(GameAuthoredWorldSourceDeliveryRepository.class);
     var sourceFixture = sourceFixture(fixture.worldRequest());
     when(sourceIntake.readById(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return sourceReceipt(invocation.getArgument(0), sourceFixture);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return sourceReceipt(invocation.getArgument(0), sourceFixture);
+        });
     when(sourceRepository.read(
             sourceFixture.source().operationId(),
             sourceFixture.source().canonicalTenantId(),
@@ -81,30 +80,27 @@ class SelectedDraftPublicationAdmissionServiceTest {
             fixture.operation().account().input().selection().digest());
     when(reader.read(fixture.intent())).thenReturn(Optional.of(retained));
     when(account.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
-              when(evidence.request()).thenReturn(invocation.getArgument(0));
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+          when(evidence.request()).thenReturn(invocation.getArgument(0));
+          return evidence;
+        });
     when(world.read(fixture.worldRequest()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return fixture.operation().world();
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return fixture.operation().world();
+        });
     var reservation = mock(SelectedDraftPublicationOwner.Reservation.class);
     // Request.binding() reconstructs the exact Account bytes; its nested selection does not use
     // value equality. Match the complete canonical binding rather than decoded object identity.
     when(owner.reserve(
             eq(fixture.intent()),
-            argThat(
-                binding ->
-                    Arrays.equals(
-                        binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
+            argThat(binding ->
+                Arrays.equals(
+                    binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
             same(fixture.operation().world()),
             same(fixture.operation().inventory()),
             any()))
@@ -145,17 +141,14 @@ class SelectedDraftPublicationAdmissionServiceTest {
     order
         .verify(sourceIntake)
         .readById(
-            argThat(
-                request ->
-                    request.schemaVersion() == 1
-                        && request.targetNamespace().equals(NAMESPACE)
-                        && request
-                            .intakeRequestId()
-                            .equals(fixture.worldRequest().intakeRequestId())
-                        && request
-                            .canonicalTenantId()
-                            .equals(fixture.worldRequest().canonicalTenantId())
-                        && !request.readRequestId().equals(request.intakeRequestId())));
+            argThat(request ->
+                request.schemaVersion() == 1
+                    && request.targetNamespace().equals(NAMESPACE)
+                    && request.intakeRequestId().equals(fixture.worldRequest().intakeRequestId())
+                    && request
+                        .canonicalTenantId()
+                        .equals(fixture.worldRequest().canonicalTenantId())
+                    && !request.readRequestId().equals(request.intakeRequestId())));
     order
         .verify(sourceRepository)
         .read(
@@ -169,10 +162,9 @@ class SelectedDraftPublicationAdmissionServiceTest {
         .verify(owner)
         .reserve(
             eq(fixture.intent()),
-            argThat(
-                binding ->
-                    Arrays.equals(
-                        binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
+            argThat(binding ->
+                Arrays.equals(
+                    binding.canonicalBytes(), fixture.operation().account().canonicalBytes())),
             same(fixture.operation().world()),
             same(fixture.operation().inventory()),
             any());
@@ -225,12 +217,11 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var fixture = fixture();
     var account = mock(AccountPublicationAuthorizationReadClient.class);
     when(account.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
-              when(evidence.request()).thenReturn(invocation.getArgument(0));
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+          when(evidence.request()).thenReturn(invocation.getArgument(0));
+          return evidence;
+        });
     var sourceFixture = sourceFixture(fixture.worldRequest());
     var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
     when(sourceIntake.readById(any()))
@@ -330,12 +321,11 @@ class SelectedDraftPublicationAdmissionServiceTest {
                         selection.canonicalJson(), selection.digest())),
             NAMESPACE);
     when(account.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
-              when(evidence.request()).thenReturn(invocation.getArgument(0));
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+          when(evidence.request()).thenReturn(invocation.getArgument(0));
+          return evidence;
+        });
     var failure = Status.UNAVAILABLE.asRuntimeException();
     when(freeze.begin(any())).thenThrow(failure);
 
@@ -358,12 +348,11 @@ class SelectedDraftPublicationAdmissionServiceTest {
     var fixture = fixture();
     var account = mock(AccountPublicationAuthorizationReadClient.class);
     when(account.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
-              when(evidence.request()).thenReturn(invocation.getArgument(0));
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+          when(evidence.request()).thenReturn(invocation.getArgument(0));
+          return evidence;
+        });
     var inventory = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     var world = mock(WorldPublishedStartLocationClient.class);
     var sourceIntake = mock(WorldAuthoredSourceIntakeClient.class);
@@ -489,12 +478,11 @@ class SelectedDraftPublicationAdmissionServiceTest {
     // The client is a transport double here; the mock evidence is never accepted as proof because
     // the World read fails before the reservation boundary.
     when(accountClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
-              when(evidence.request()).thenReturn(invocation.getArgument(0));
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+          when(evidence.request()).thenReturn(invocation.getArgument(0));
+          return evidence;
+        });
     var failure = Status.UNAVAILABLE.asRuntimeException();
     when(worldClient.read(fixture.worldRequest())).thenThrow(failure);
 
@@ -533,39 +521,35 @@ class SelectedDraftPublicationAdmissionServiceTest {
   private static WorldSelectedPublicationArtifactInventoryClient inventoryClient(Fixture fixture) {
     var client = mock(WorldSelectedPublicationArtifactInventoryClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return fixture.operation().inventory();
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return fixture.operation().inventory();
+        });
     return client;
   }
 
   private static WorldSelectedDraftPublicationFreezeClient freezeClient(Fixture fixture) {
     var client = mock(WorldSelectedDraftPublicationFreezeClient.class);
     when(client.begin(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              WorldSelectedDraftPublicationFreezeEvidence.Request request =
-                  invocation.getArgument(0);
-              var world = fixture.worldRequest();
-              var acknowledgement =
-                  new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
-                      request,
-                      world.intakeRequestId(),
-                      world.versionStateEpoch(),
-                      world.publicationFence(),
-                      WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
-                      world.appliedCommitId(),
-                      world.contentDigest(),
-                      world.digestSchemaVersion());
-              return WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          WorldSelectedDraftPublicationFreezeEvidence.Request request = invocation.getArgument(0);
+          var world = fixture.worldRequest();
+          var acknowledgement =
+              new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
                   request,
-                  WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
-            });
+                  world.intakeRequestId(),
+                  world.versionStateEpoch(),
+                  world.publicationFence(),
+                  WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+                  world.appliedCommitId(),
+                  world.contentDigest(),
+                  world.digestSchemaVersion());
+          return WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+              request, WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
+        });
     return client;
   }
 

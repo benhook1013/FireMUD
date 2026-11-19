@@ -242,14 +242,13 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     assertThat(unchangedReceipt).isNotNull();
     assertThat(unchangedReceipt.get(0, byte[].class)).containsExactly(first.canonicalBytes());
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE automation_empty_selected_source_receipt SET receipt_bytes = ? "
-                        + "WHERE target_namespace = ? AND intake_request_id = ?",
-                    first.canonicalBytes(),
-                    first.targetNamespace(),
-                    first.intakeRequestId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE automation_empty_selected_source_receipt SET receipt_bytes = ? "
+                    + "WHERE target_namespace = ? AND intake_request_id = ?",
+                first.canonicalBytes(),
+                first.targetNamespace(),
+                first.intakeRequestId()))
         .rootCause()
         .hasMessageContaining("Automation empty-source intake records are immutable");
 
@@ -276,12 +275,11 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     }
     assertThatThrownBy(() -> repository.readCommittedTerminal(fixture.authorization()))
         .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
-    assertThatThrownBy(
-            () ->
-                repository.readPublicationScope(
-                    AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
-                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
-                    fixture.authorization().selected().target().gameDesignVersionRowId()))
+    assertThatThrownBy(() ->
+            repository.readPublicationScope(
+                AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+                fixture.authorization().selected().target().gameDesignVersionRowId()))
         .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
   }
 
@@ -325,10 +323,8 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
         90003L,
         90004L);
 
-    assertThatThrownBy(
-            () ->
-                repository.retainFresh(
-                    conflictingFixture.inputs(), requestDigest(conflictingFixture)))
+    assertThatThrownBy(() ->
+            repository.retainFresh(conflictingFixture.inputs(), requestDigest(conflictingFixture)))
         .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.IntakeConflictException.class)
         .hasMessage("Automation canonical scope or owner operation is already associated");
   }
@@ -350,12 +346,11 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                     gameDesignVersionRowId)
                 .canonicalBytes())
         .containsExactly(receipt.canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                repository.readPublicationScope(
-                    AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
-                    AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
-                    gameDesignVersionRowId + 1L))
+    assertThatThrownBy(() ->
+            repository.readPublicationScope(
+                AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+                gameDesignVersionRowId + 1L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("missing or ambiguous");
 
@@ -394,15 +389,14 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                 receipt.targetNamespace(),
                 receipt.intakeRequestId())
             .get(0, String.class);
-    assertThatThrownBy(
-            () ->
-                new AutomationSelectedEmptyPublicationDigestService(
-                        AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE, repository)
-                    .getDraftDesignDigest(
-                        PublicationDigestRequestBinding.full(
-                            AutomationEmptySelectedSourceIntakePostgresFixture.TENANT.toString(),
-                            Long.toString(gameDesignVersionRowId),
-                            "publish-request-2")))
+    assertThatThrownBy(() ->
+            new AutomationSelectedEmptyPublicationDigestService(
+                    AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE, repository)
+                .getDraftDesignDigest(
+                    PublicationDigestRequestBinding.full(
+                        AutomationEmptySelectedSourceIntakePostgresFixture.TENANT.toString(),
+                        Long.toString(gameDesignVersionRowId),
+                        "publish-request-2")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("original retained World freeze");
     String rowAfterMismatchedPublicationRead =

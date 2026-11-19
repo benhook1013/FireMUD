@@ -203,9 +203,8 @@ class CanonicalPlayerRouteReadServiceTest {
     when(catalogRepository.readVisiblePublicProductionSnapshots(NAMESPACE))
         .thenReturn(List.of(catalogSnapshot()));
     when(admissionRepository.readCurrentOpenSnapshotForRealm(NAMESPACE, TENANT, REALM))
-        .thenAnswer(
-            invocation ->
-                new CanonicalInitialAdmissionRepository.CurrentOpenSnapshot(proof, "d".repeat(64)));
+        .thenAnswer(invocation ->
+            new CanonicalInitialAdmissionRepository.CurrentOpenSnapshot(proof, "d".repeat(64)));
     var service = routeReadService(catalogRepository, admissionRepository, launchRepository);
 
     assertThatThrownBy(service::readVisiblePublicProductionTargets)

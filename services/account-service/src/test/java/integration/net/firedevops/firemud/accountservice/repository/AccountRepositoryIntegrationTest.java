@@ -195,20 +195,18 @@ class AccountRepositoryIntegrationTest {
     UUID auditEventId = UUID.randomUUID();
     Account account = new Account();
     account.setId(accountId);
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        commitJoinOutcome(
-                            joinOperations,
-                            memberships,
-                            outbox,
-                            account,
-                            requestId,
-                            scope,
-                            policyDigest,
-                            auditEventId,
-                            true)))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                commitJoinOutcome(
+                    joinOperations,
+                    memberships,
+                    outbox,
+                    account,
+                    requestId,
+                    scope,
+                    policyDigest,
+                    auditEventId,
+                    true)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("simulate second-transaction rollback");
 
@@ -229,18 +227,17 @@ class AccountRepositoryIntegrationTest {
                 auditEventId))
         .isZero();
 
-    transaction.executeWithoutResult(
-        status ->
-            commitJoinOutcome(
-                joinOperations,
-                memberships,
-                outbox,
-                account,
-                requestId,
-                scope,
-                policyDigest,
-                auditEventId,
-                false));
+    transaction.executeWithoutResult(status ->
+        commitJoinOutcome(
+            joinOperations,
+            memberships,
+            outbox,
+            account,
+            requestId,
+            scope,
+            policyDigest,
+            auditEventId,
+            false));
 
     assertThat(joinOperation(joinOperations, requestId).status()).isEqualTo("COMMITTED");
     assertThat(joinOperation(joinOperations, requestId).outcome()).isEqualTo("JOINED");
@@ -289,9 +286,8 @@ class AccountRepositoryIntegrationTest {
             () -> outbox.markDelivered(minimizedEventId, "receipt-minimized", "other-log", true))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
-    assertThatThrownBy(
-            () ->
-                outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", false))
+    assertThatThrownBy(() ->
+            outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", false))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
     assertThatThrownBy(
@@ -430,13 +426,12 @@ class AccountRepositoryIntegrationTest {
 
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-    transaction.executeWithoutResult(
-        status ->
-            outbox.appendCanonicalTenant(
-                canonicalEventId,
-                "ba819905-1a20-48a0-b9de-7f34f8b8ad3d",
-                "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
-                canonicalPayload));
+    transaction.executeWithoutResult(status ->
+        outbox.appendCanonicalTenant(
+            canonicalEventId,
+            "ba819905-1a20-48a0-b9de-7f34f8b8ad3d",
+            "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+            canonicalPayload));
     outbox.append(legacyEventId, "platform", null, "ACCOUNT_REGISTERED", legacyPayload);
 
     assertThat(outbox.pending(1, Instant.now()))
@@ -474,51 +469,47 @@ class AccountRepositoryIntegrationTest {
     UUID appendedEventId = UUID.randomUUID();
     UUID defaultedEventId = UUID.randomUUID();
 
-    transaction.executeWithoutResult(
-        status -> {
-          transactionJdbc.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
-          assertThat(
-                  transactionJdbc.queryForObject(
-                      "SELECT current_setting('TimeZone')", String.class))
-              .isEqualTo("Pacific/Auckland");
+    transaction.executeWithoutResult(status -> {
+      transactionJdbc.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+      assertThat(transactionJdbc.queryForObject("SELECT current_setting('TimeZone')", String.class))
+          .isEqualTo("Pacific/Auckland");
 
-          outbox.append(appendedEventId, "platform", null, "ACCOUNT_REGISTERED", "{}");
-          LocalDateTime occurredAt =
-              transactionJdbc.queryForObject(
-                  "SELECT occurred_at FROM account_audit_outbox WHERE audit_event_id = ?",
-                  LocalDateTime.class,
-                  appendedEventId);
-          LocalDateTime retryAt =
+      outbox.append(appendedEventId, "platform", null, "ACCOUNT_REGISTERED", "{}");
+      LocalDateTime occurredAt =
+          transactionJdbc.queryForObject(
+              "SELECT occurred_at FROM account_audit_outbox WHERE audit_event_id = ?",
+              LocalDateTime.class,
+              appendedEventId);
+      LocalDateTime retryAt =
+          transactionJdbc.queryForObject(
+              "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+              LocalDateTime.class,
+              appendedEventId);
+      assertThat(retryAt).isEqualTo(occurredAt);
+
+      Instant beforeDefaultInsert = Instant.now();
+      transactionJdbc.update(
+          "INSERT INTO account_audit_outbox "
+              + "(audit_event_id, scope, producer_service, event_type, occurred_at, "
+              + "tenant_identity_version, schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
+              + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, 1, ?, '{}', 'PENDING')",
+          defaultedEventId,
+          LocalDateTime.ofInstant(beforeDefaultInsert, ZoneOffset.UTC),
+          AccountAuditDigest.ofPayload("{}"));
+      LocalDateTime defaultRetryAt =
+          Objects.requireNonNull(
               transactionJdbc.queryForObject(
                   "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
                   LocalDateTime.class,
-                  appendedEventId);
-          assertThat(retryAt).isEqualTo(occurredAt);
-
-          Instant beforeDefaultInsert = Instant.now();
-          transactionJdbc.update(
-              "INSERT INTO account_audit_outbox "
-                  + "(audit_event_id, scope, producer_service, event_type, occurred_at, "
-                  + "tenant_identity_version, schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
-                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, 1, ?, '{}', 'PENDING')",
-              defaultedEventId,
-              LocalDateTime.ofInstant(beforeDefaultInsert, ZoneOffset.UTC),
-              AccountAuditDigest.ofPayload("{}"));
-          LocalDateTime defaultRetryAt =
-              Objects.requireNonNull(
-                  transactionJdbc.queryForObject(
-                      "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
-                      LocalDateTime.class,
-                      defaultedEventId),
-                  "next_attempt_at database default should be populated");
-          assertThat(
-                  Duration.between(beforeDefaultInsert, defaultRetryAt.toInstant(ZoneOffset.UTC)))
-              .isLessThan(Duration.ofSeconds(10));
-          assertThat(
-                  Duration.between(defaultRetryAt, LocalDateTime.now(ZoneId.of("Pacific/Auckland")))
-                      .abs())
-              .isGreaterThan(Duration.ofHours(1));
-        });
+                  defaultedEventId),
+              "next_attempt_at database default should be populated");
+      assertThat(Duration.between(beforeDefaultInsert, defaultRetryAt.toInstant(ZoneOffset.UTC)))
+          .isLessThan(Duration.ofSeconds(10));
+      assertThat(
+              Duration.between(defaultRetryAt, LocalDateTime.now(ZoneId.of("Pacific/Auckland")))
+                  .abs())
+          .isGreaterThan(Duration.ofHours(1));
+    });
   }
 
   @Test
@@ -558,30 +549,26 @@ class AccountRepositoryIntegrationTest {
     CountDownLatch releaseSubscriptionLock = new CountDownLatch(1);
     ExecutorService executor = Executors.newSingleThreadExecutor();
     Future<?> lockHolder =
-        executor.submit(
-            () ->
-                lockTransaction.executeWithoutResult(
-                    status -> {
-                      assertThat(
-                              fixture
-                                  .intents()
-                                  .lockForLifecycle(
-                                      fixture.creation().requestId(),
-                                      receipt.current().rowVersion()))
-                          .isEqualTo(receipt.current());
-                      assertThat(fixture.intents().findCreation(fixture.creation().requestId()))
-                          .contains(fixture.creation());
-                      subscriptionLocked.countDown();
-                      try {
-                        if (!releaseSubscriptionLock.await(10, TimeUnit.SECONDS)) {
-                          throw new IllegalStateException(
-                              "Timed out holding subscription row lock");
-                        }
-                      } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("Interrupted while holding row lock", ex);
-                      }
-                    }));
+        executor.submit(() ->
+            lockTransaction.executeWithoutResult(status -> {
+              assertThat(
+                      fixture
+                          .intents()
+                          .lockForLifecycle(
+                              fixture.creation().requestId(), receipt.current().rowVersion()))
+                  .isEqualTo(receipt.current());
+              assertThat(fixture.intents().findCreation(fixture.creation().requestId()))
+                  .contains(fixture.creation());
+              subscriptionLocked.countDown();
+              try {
+                if (!releaseSubscriptionLock.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Timed out holding subscription row lock");
+                }
+              } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while holding row lock", ex);
+              }
+            }));
 
     try {
       assertThat(subscriptionLocked.await(5, TimeUnit.SECONDS)).isTrue();
@@ -605,27 +592,23 @@ class AccountRepositoryIntegrationTest {
               "SELECT 1 FROM subscription_instrument_reservations WHERE request_id = ? FOR UPDATE",
                   fixture.creation().requestId());
       for (var row : lockedRows.entrySet()) {
-        assertThatThrownBy(
-                () ->
-                    conflictingTransaction.executeWithoutResult(
-                        status -> {
-                          conflictingJdbc.execute("SET LOCAL lock_timeout = '250ms'");
-                          conflictingJdbc.queryForObject(
-                              row.getKey(), Integer.class, row.getValue());
-                        }))
+        assertThatThrownBy(() ->
+                conflictingTransaction.executeWithoutResult(status -> {
+                  conflictingJdbc.execute("SET LOCAL lock_timeout = '250ms'");
+                  conflictingJdbc.queryForObject(row.getKey(), Integer.class, row.getValue());
+                }))
             .as("owner-chain lock retained: %s", row.getKey())
             .hasMessageContaining("lock timeout");
       }
 
       Integer updatedAccounts =
-          conflictingTransaction.execute(
-              status -> {
-                conflictingJdbc.execute("SET LOCAL lock_timeout = '2s'");
-                return conflictingJdbc.update(
-                    "UPDATE accounts SET email = ? WHERE id = ?",
-                    "unrelated-subscription-lock-updated@example.com",
-                    unrelatedAccountId);
-              });
+          conflictingTransaction.execute(status -> {
+            conflictingJdbc.execute("SET LOCAL lock_timeout = '2s'");
+            return conflictingJdbc.update(
+                "UPDATE accounts SET email = ? WHERE id = ?",
+                "unrelated-subscription-lock-updated@example.com",
+                unrelatedAccountId);
+          });
       assertThat(updatedAccounts).isEqualTo(1);
     } finally {
       releaseSubscriptionLock.countDown();
@@ -636,16 +619,14 @@ class AccountRepositoryIntegrationTest {
       }
     }
     // The same real owner operation succeeds from an independent transaction after holder commit.
-    lockTransaction.executeWithoutResult(
-        status -> {
-          jdbc.execute("SET LOCAL lock_timeout = '2s'");
-          assertThat(
-                  fixture
-                      .intents()
-                      .lockForLifecycle(
-                          fixture.creation().requestId(), receipt.current().rowVersion()))
-              .isEqualTo(receipt.current());
-        });
+    lockTransaction.executeWithoutResult(status -> {
+      jdbc.execute("SET LOCAL lock_timeout = '2s'");
+      assertThat(
+              fixture
+                  .intents()
+                  .lockForLifecycle(fixture.creation().requestId(), receipt.current().rowVersion()))
+          .isEqualTo(receipt.current());
+    });
     assertThat(fixture.intents().findCreation(fixture.creation().requestId()))
         .contains(fixture.creation());
   }
@@ -744,17 +725,10 @@ class AccountRepositoryIntegrationTest {
 
     UUID revokedGeneration = revoked.getGrantAuthorityGeneration();
     var regrantResult =
-        transaction.execute(
-            status ->
-                accountService.grantRealmAccess(
-                    new RealmAccessGrantRequest(
-                        accountId,
-                        7654323L,
-                        "world",
-                        "private",
-                        "test",
-                        "regrant",
-                        "req-regrant-1")));
+        transaction.execute(status ->
+            accountService.grantRealmAccess(
+                new RealmAccessGrantRequest(
+                    accountId, 7654323L, "world", "private", "test", "regrant", "req-regrant-1")));
     AccountRealmAccessGrant regranted =
         grants
             .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
@@ -975,11 +949,10 @@ class AccountRepositoryIntegrationTest {
     assertThat(scopeCount(jdbc, future)).isEqualTo(1);
     assertThat(scopeCount(jdbc, malformed)).isEqualTo(1);
     assertThat(scopeCount(jdbc, invalidCalendarDate)).isEqualTo(1);
-    assertThatThrownBy(
-            () ->
-                jdbc.update(
-                    "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
-                    AccountJoinDigest.tokenHash(pending.connectScopeId())))
+    assertThatThrownBy(() ->
+            jdbc.update(
+                "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                AccountJoinDigest.tokenHash(pending.connectScopeId())))
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     assertThatThrownBy(
             () -> insertJoinIntent(joinOperations, unreferenced, "join-scope-after-cleanup"))
@@ -1259,31 +1232,29 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
     assertThat(updated.getAccountUuidSourceNumericId()).isEqualTo(updated.getId());
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO accounts "
-                        + "(username, email, password_hash, account_uuid, account_uuid_provenance) "
-                        + "VALUES (?, ?, ?, ?, ?)",
-                    "duplicate-uuid-account",
-                    "duplicate-uuid-account@example.com",
-                    "hash",
-                    accountUuid,
-                    AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO accounts "
+                    + "(username, email, password_hash, account_uuid, account_uuid_provenance) "
+                    + "VALUES (?, ?, ?, ?, ?)",
+                "duplicate-uuid-account",
+                "duplicate-uuid-account@example.com",
+                "hash",
+                accountUuid,
+                AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name()))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("accounts_account_uuid_unique");
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO accounts "
-                        + "(username, email, password_hash, account_uuid, account_uuid_provenance) "
-                        + "VALUES (?, ?, ?, ?, ?)",
-                    "nil-uuid-account",
-                    "nil-uuid-account@example.com",
-                    "hash",
-                    new UUID(0L, 0L),
-                    AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO accounts "
+                    + "(username, email, password_hash, account_uuid, account_uuid_provenance) "
+                    + "VALUES (?, ?, ?, ?, ?)",
+                "nil-uuid-account",
+                "nil-uuid-account@example.com",
+                "hash",
+                new UUID(0L, 0L),
+                AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name()))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("accounts_account_uuid_non_nil_check");
 
@@ -1300,28 +1271,26 @@ class AccountRepositoryIntegrationTest {
     assertThat(databaseInserted.get("account_uuid_source_numeric_id", Long.class))
         .isEqualTo(databaseInserted.get("id", Long.class));
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO accounts "
-                        + "(username, email, password_hash, account_uuid, "
-                        + "account_uuid_provenance) VALUES (?, ?, ?, ?, ?)",
-                    "migration-origin-account",
-                    "migration-origin@example.com",
-                    "hash",
-                    UUID.randomUUID(),
-                    AccountIdentityProvenance.ACCOUNT_V29_MIGRATION.name()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO accounts "
+                    + "(username, email, password_hash, account_uuid, "
+                    + "account_uuid_provenance) VALUES (?, ?, ?, ?, ?)",
+                "migration-origin-account",
+                "migration-origin@example.com",
+                "hash",
+                UUID.randomUUID(),
+                AccountIdentityProvenance.ACCOUNT_V29_MIGRATION.name()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ACCOUNT_V29_MIGRATION provenance is reserved for retained rows")
-        .satisfies(
-            failure -> {
-              Throwable rootCause = failure;
-              while (rootCause.getCause() != null) {
-                rootCause = rootCause.getCause();
-              }
-              assertThat(rootCause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
-            });
+        .satisfies(failure -> {
+          Throwable rootCause = failure;
+          while (rootCause.getCause() != null) {
+            rootCause = rootCause.getCause();
+          }
+          assertThat(rootCause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+        });
     assertThat(
             dsl.fetchValue(
                 "SELECT COUNT(*) FROM accounts WHERE username = 'migration-origin-account'",
@@ -1355,13 +1324,12 @@ class AccountRepositoryIntegrationTest {
         .extracting(Account::getAccountUuid)
         .containsExactlyInAnyOrder(first.getAccountUuid(), second.getAccountUuid());
     assertThat(owners)
-        .allSatisfy(
-            owner -> {
-              assertThat(owner.getId()).isPositive();
-              assertThat(owner.getAccountUuidProvenance())
-                  .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
-              assertThat(owner.getAccountUuidSourceNumericId()).isEqualTo(owner.getId());
-            });
+        .allSatisfy(owner -> {
+          assertThat(owner.getId()).isPositive();
+          assertThat(owner.getAccountUuidProvenance())
+              .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+          assertThat(owner.getAccountUuidSourceNumericId()).isEqualTo(owner.getId());
+        });
     assertThat(repository.findByAccountUuids(List.of())).isEmpty();
   }
 
@@ -1441,13 +1409,12 @@ class AccountRepositoryIntegrationTest {
                     + MIGRATION_PROOF_SCHEMA
                     + ".accounts WHERE username = 'legacy-migration'"))
         .isEqualTo("legacy@example.com");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO "
-                        + MIGRATION_PROOF_SCHEMA
-                        + ".accounts (username, email, password_hash) "
-                        + "VALUES ('noncanonical', ' Another@Example.COM ', 'hash')"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO "
+                    + MIGRATION_PROOF_SCHEMA
+                    + ".accounts (username, email, password_hash) "
+                    + "VALUES ('noncanonical', ' Another@Example.COM ', 'hash')"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("accounts_email_canonical_check");
   }
@@ -1480,16 +1447,15 @@ class AccountRepositoryIntegrationTest {
             + ".accounts (username, email, password_hash) "
             + "VALUES ('collision-second', ' player@example.com ', 'hash')");
 
-    assertThatThrownBy(
-            () ->
-                Flyway.configure()
-                    .dataSource(dataSource)
-                    .locations(MIGRATION_LOCATION)
-                    .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
-                    .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
-                    .placeholders(Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
-                    .load()
-                    .migrate())
+    assertThatThrownBy(() ->
+            Flyway.configure()
+                .dataSource(dataSource)
+                .locations(MIGRATION_LOCATION)
+                .schemas(COLLISION_MIGRATION_PROOF_SCHEMA)
+                .defaultSchema(COLLISION_MIGRATION_PROOF_SCHEMA)
+                .placeholders(Map.of("serviceSchema", COLLISION_MIGRATION_PROOF_SCHEMA))
+                .load()
+                .migrate())
         .isInstanceOf(FlywayException.class)
         .hasStackTraceContaining("accounts_email_canonicalization_collision");
 
@@ -1533,14 +1499,12 @@ class AccountRepositoryIntegrationTest {
             dsl.resultQuery("SELECT COUNT(*) FROM profiles WHERE account_id = ?", accountId)
                 .fetchOne(0, Long.class))
         .isEqualTo(2L);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO profiles (account_id, tenant_id, display_name) "
-                        + "VALUES (?, ?, ?)",
-                    accountId,
-                    101L,
-                    "Tenant One Duplicate"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO profiles (account_id, tenant_id, display_name) " + "VALUES (?, ?, ?)",
+                accountId,
+                101L,
+                "Tenant One Duplicate"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("profiles_tenant_account_unique");
   }
@@ -1588,16 +1552,15 @@ class AccountRepositoryIntegrationTest {
         303L,
         "Retained Duplicate");
 
-    assertThatThrownBy(
-            () ->
-                Flyway.configure()
-                    .dataSource(dataSource)
-                    .locations(MIGRATION_LOCATION)
-                    .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
-                    .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
-                    .placeholders(Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
-                    .load()
-                    .migrate())
+    assertThatThrownBy(() ->
+            Flyway.configure()
+                .dataSource(dataSource)
+                .locations(MIGRATION_LOCATION)
+                .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+                .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+                .placeholders(Map.of("serviceSchema", PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA))
+                .load()
+                .migrate())
         .isInstanceOf(FlywayException.class)
         .hasStackTraceContaining("profiles_tenant_account_identity_collision");
 
@@ -2228,59 +2191,53 @@ class AccountRepositoryIntegrationTest {
                 .fetchOne(0, Long.class))
         .isEqualTo(1L);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE " + schema + ".accounts SET account_uuid = ? WHERE id = ?",
-                    UUID.randomUUID(),
-                    firstAccountId))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE " + schema + ".accounts SET account_uuid = ? WHERE id = ?",
+                UUID.randomUUID(),
+                firstAccountId))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Account identity cannot be reassigned")
-        .satisfies(
-            failure -> {
-              Throwable rootCause = failure;
-              while (rootCause.getCause() != null) {
-                rootCause = rootCause.getCause();
-              }
-              assertThat(rootCause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
-            });
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE " + schema + ".accounts SET account_uuid_provenance = ? WHERE id = ?",
-                    AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name(),
-                    firstAccountId))
+        .satisfies(failure -> {
+          Throwable rootCause = failure;
+          while (rootCause.getCause() != null) {
+            rootCause = rootCause.getCause();
+          }
+          assertThat(rootCause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+        });
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE " + schema + ".accounts SET account_uuid_provenance = ? WHERE id = ?",
+                AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name(),
+                firstAccountId))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Account identity cannot be reassigned")
-        .satisfies(
-            failure -> {
-              Throwable rootCause = failure;
-              while (rootCause.getCause() != null) {
-                rootCause = rootCause.getCause();
-              }
-              assertThat(rootCause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
-            });
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE "
-                        + schema
-                        + ".accounts SET account_uuid_source_numeric_id = ? WHERE id = ?",
-                    firstAccountId + 10,
-                    firstAccountId))
+        .satisfies(failure -> {
+          Throwable rootCause = failure;
+          while (rootCause.getCause() != null) {
+            rootCause = rootCause.getCause();
+          }
+          assertThat(rootCause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+        });
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE "
+                    + schema
+                    + ".accounts SET account_uuid_source_numeric_id = ? WHERE id = ?",
+                firstAccountId + 10,
+                firstAccountId))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Account identity cannot be reassigned")
-        .satisfies(
-            failure -> {
-              Throwable rootCause = failure;
-              while (rootCause.getCause() != null) {
-                rootCause = rootCause.getCause();
-              }
-              assertThat(rootCause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
-            });
+        .satisfies(failure -> {
+          Throwable rootCause = failure;
+          while (rootCause.getCause() != null) {
+            rootCause = rootCause.getCause();
+          }
+          assertThat(rootCause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+        });
     assertThat(
             dsl.resultQuery(
                     "SELECT account_uuid FROM " + schema + ".accounts WHERE id = ?", firstAccountId)

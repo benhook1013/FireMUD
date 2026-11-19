@@ -316,11 +316,10 @@ class AccountJwtValidatorInventorySourceTest {
     assertThat(snapshot.validators().get(0).pods().get(0).leafSpkiSha256()).isEqualTo(POD_SPKI);
     assertThat(snapshot.validators().get(0).replicaSets())
         .singleElement()
-        .satisfies(
-            replicaSet -> {
-              assertThat(replicaSet.ownerDeploymentName()).isEqualTo("player-service");
-              assertThat(replicaSet.ownerDeploymentUid()).isEqualTo(DEPLOYMENT_UID);
-            });
+        .satisfies(replicaSet -> {
+          assertThat(replicaSet.ownerDeploymentName()).isEqualTo("player-service");
+          assertThat(replicaSet.ownerDeploymentUid()).isEqualTo(DEPLOYMENT_UID);
+        });
     assertThat(snapshot.digest()).matches("[0-9a-f]{64}");
     assertThat(new String(snapshot.canonicalBytes(), StandardCharsets.UTF_8))
         .contains("ownerDeploymentUid", DEPLOYMENT_UID, "podTemplateHash", POD_TEMPLATE_HASH)
@@ -355,14 +354,13 @@ class AccountJwtValidatorInventorySourceTest {
     assertThat(snapshot.observationContext()).contains(context);
     assertThat(snapshot.validators())
         .singleElement()
-        .satisfies(
-            validator -> {
-              assertThat(validator.pods())
-                  .extracting(AccountJwtValidatorInventorySource.PodObservation::uid)
-                  .containsExactly(POD_UID);
-              assertThat(validator.image()).isEqualTo(IMAGE);
-              assertThat(validator.verifierConfigSha256()).isNotBlank();
-            });
+        .satisfies(validator -> {
+          assertThat(validator.pods())
+              .extracting(AccountJwtValidatorInventorySource.PodObservation::uid)
+              .containsExactly(POD_UID);
+          assertThat(validator.image()).isEqualTo(IMAGE);
+          assertThat(validator.verifierConfigSha256()).isNotBlank();
+        });
     assertThat(new String(snapshot.canonicalBytes(), StandardCharsets.UTF_8))
         .contains(
             "INITIAL_NO_ACTIVE_SIGNER_CANDIDATES",
@@ -378,13 +376,12 @@ class AccountJwtValidatorInventorySourceTest {
     fixture.stubNotReadyCandidates();
 
     assertUnavailable(fixture);
-    assertThatThrownBy(
-            () ->
-                fixture.source.observe(
-                    new ObservationContext(
-                        ObservationPurpose.STRICT_READY,
-                        UUID.fromString("66666666-6666-4666-8666-666666666666"),
-                        "9".repeat(64))))
+    assertThatThrownBy(() ->
+            fixture.source.observe(
+                new ObservationContext(
+                    ObservationPurpose.STRICT_READY,
+                    UUID.fromString("66666666-6666-4666-8666-666666666666"),
+                    "9".repeat(64))))
         .isInstanceOf(InventoryUnavailableException.class)
         .hasNoCause();
   }

@@ -80,11 +80,10 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
   void exactCreatedAndNotCreatedReadsReturnOnlyCodecValidatedEvidence() throws Exception {
     var stub = mockStub();
     when(stub.resolveOriginalTenantCreationOutcome(any()))
-        .thenAnswer(
-            invocation ->
-                responseFor(
-                    invocation.getArgument(0, ResolveOriginalTenantCreationOutcomeRequest.class),
-                    Outcome.CREATED));
+        .thenAnswer(invocation ->
+            responseFor(
+                invocation.getArgument(0, ResolveOriginalTenantCreationOutcomeRequest.class),
+                Outcome.CREATED));
     var client = newClient(stub);
 
     var first = client.readOriginal(binding());
@@ -101,29 +100,27 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
     verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
     verify(stub, times(2)).resolveOriginalTenantCreationOutcome(requests.capture());
     assertThat(requests.getAllValues())
-        .allSatisfy(
-            request -> {
-              assertThat(request.getSchemaVersion()).isEqualTo(1);
-              assertThat(request.getTargetNamespace()).isEqualTo("test");
-              assertThat(request.getCreationRequestId()).isEqualTo(CREATION_ID.toString());
-              assertThat(request.getAccountAuthorizationOperationId())
-                  .isEqualTo(AUTH_OPERATION_ID.toString());
-              assertThat(request.getInitiatingAccountId()).isEqualTo(ACCOUNT_ID.toString());
-              assertThat(request.getCreationRequestDigest()).isEqualTo(CREATION_DIGEST);
-              assertThat(request.getAccountAuthorizationDigest()).isEqualTo(AUTH_DIGEST);
-              assertThat(UUID.fromString(request.getReadRequestId())).isNotEqualTo(new UUID(0, 0));
-            });
+        .allSatisfy(request -> {
+          assertThat(request.getSchemaVersion()).isEqualTo(1);
+          assertThat(request.getTargetNamespace()).isEqualTo("test");
+          assertThat(request.getCreationRequestId()).isEqualTo(CREATION_ID.toString());
+          assertThat(request.getAccountAuthorizationOperationId())
+              .isEqualTo(AUTH_OPERATION_ID.toString());
+          assertThat(request.getInitiatingAccountId()).isEqualTo(ACCOUNT_ID.toString());
+          assertThat(request.getCreationRequestDigest()).isEqualTo(CREATION_DIGEST);
+          assertThat(request.getAccountAuthorizationDigest()).isEqualTo(AUTH_DIGEST);
+          assertThat(UUID.fromString(request.getReadRequestId())).isNotEqualTo(new UUID(0, 0));
+        });
     assertThat(requests.getAllValues().get(0).getReadRequestId())
         .isNotEqualTo(requests.getAllValues().get(1).getReadRequestId());
     verifyNoMoreInteractions(stub);
 
     var notCreatedStub = mockStub();
     when(notCreatedStub.resolveOriginalTenantCreationOutcome(any()))
-        .thenAnswer(
-            invocation ->
-                responseFor(
-                    invocation.getArgument(0, ResolveOriginalTenantCreationOutcomeRequest.class),
-                    Outcome.NOT_CREATED));
+        .thenAnswer(invocation ->
+            responseFor(
+                invocation.getArgument(0, ResolveOriginalTenantCreationOutcomeRequest.class),
+                Outcome.NOT_CREATED));
     var notCreated = newClient(notCreatedStub).readOriginal(binding());
     assertThat(notCreated.evidence().outcome()).isEqualTo(Outcome.NOT_CREATED);
     assertThat(notCreated.evidence().receipt()).isEmpty();
@@ -132,60 +129,48 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
   @Test
   void refusesAnyChangedEchoOutcomeDigestOrNestedReceipt() throws Exception {
     assertRejected(response -> response.toBuilder().setTargetNamespace("other").build());
-    assertRejected(
-        response ->
-            response.toBuilder().setCreationRequestId(UUID.randomUUID().toString()).build());
-    assertRejected(
-        response ->
-            response.toBuilder()
-                .setAccountAuthorizationOperationId(UUID.randomUUID().toString())
-                .build());
-    assertRejected(
-        response ->
-            response.toBuilder().setInitiatingAccountId(UUID.randomUUID().toString()).build());
-    assertRejected(
-        response ->
-            response.toBuilder().setCreationRequestDigest("sha256:" + "d".repeat(64)).build());
-    assertRejected(
-        response ->
-            response.toBuilder().setAccountAuthorizationDigest("sha256:" + "e".repeat(64)).build());
+    assertRejected(response ->
+        response.toBuilder().setCreationRequestId(UUID.randomUUID().toString()).build());
+    assertRejected(response ->
+        response.toBuilder()
+            .setAccountAuthorizationOperationId(UUID.randomUUID().toString())
+            .build());
+    assertRejected(response ->
+        response.toBuilder().setInitiatingAccountId(UUID.randomUUID().toString()).build());
+    assertRejected(response ->
+        response.toBuilder().setCreationRequestDigest("sha256:" + "d".repeat(64)).build());
+    assertRejected(response ->
+        response.toBuilder().setAccountAuthorizationDigest("sha256:" + "e".repeat(64)).build());
     assertRejected(
         response -> response.toBuilder().setReadRequestId(UUID.randomUUID().toString()).build());
     assertRejected(
         response -> response.toBuilder().setEvidenceDigest("sha256:" + "f".repeat(64)).build());
     assertRejected(response -> response.toBuilder().setSchemaVersion(2).build());
-    assertRejected(
-        response ->
-            response.toBuilder()
-                .setOutcome(
-                    OriginalTenantCreationOutcome.ORIGINAL_TENANT_CREATION_OUTCOME_UNSPECIFIED)
-                .build());
+    assertRejected(response ->
+        response.toBuilder()
+            .setOutcome(OriginalTenantCreationOutcome.ORIGINAL_TENANT_CREATION_OUTCOME_UNSPECIFIED)
+            .build());
     assertRejected(response -> response.toBuilder().setOutcomeValue(99).build());
-    assertRejected(
-        response ->
-            response.toBuilder()
-                .setCreatedReceipt(
-                    response.getCreatedReceipt().toBuilder()
-                        .setCanonicalTenantId(UUID.randomUUID().toString()))
-                .build());
+    assertRejected(response ->
+        response.toBuilder()
+            .setCreatedReceipt(
+                response.getCreatedReceipt().toBuilder()
+                    .setCanonicalTenantId(UUID.randomUUID().toString()))
+            .build());
     UnknownFieldSet unknown =
         UnknownFieldSet.newBuilder()
             .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
     assertRejected(response -> response.toBuilder().setUnknownFields(unknown).build());
-    assertRejected(
-        response ->
-            response.toBuilder()
-                .setCreatedReceipt(
-                    response.getCreatedReceipt().toBuilder().setUnknownFields(unknown))
-                .build());
-    assertRejected(
-        response ->
-            response.toBuilder()
-                .setOutcome(
-                    OriginalTenantCreationOutcome.ORIGINAL_TENANT_CREATION_OUTCOME_NOT_CREATED)
-                .setCreatedReceipt(ResolveFreshTenantCreationResponse.getDefaultInstance())
-                .build());
+    assertRejected(response ->
+        response.toBuilder()
+            .setCreatedReceipt(response.getCreatedReceipt().toBuilder().setUnknownFields(unknown))
+            .build());
+    assertRejected(response ->
+        response.toBuilder()
+            .setOutcome(OriginalTenantCreationOutcome.ORIGINAL_TENANT_CREATION_OUTCOME_NOT_CREATED)
+            .setCreatedReceipt(ResolveFreshTenantCreationResponse.getDefaultInstance())
+            .build());
     assertRejected(response -> response.toBuilder().clearCreatedReceipt().build());
   }
 
@@ -211,16 +196,15 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
   void rejectsWrongLocalNamespaceAndInvalidBindingsBeforeRpc() throws Exception {
     var stub = mockStub();
     var client = newClient(stub);
-    assertThatThrownBy(
-            () ->
-                client.readOriginal(
-                    new Binding(
-                        "other",
-                        CREATION_ID,
-                        AUTH_OPERATION_ID,
-                        ACCOUNT_ID,
-                        CREATION_DIGEST,
-                        AUTH_DIGEST)))
+    assertThatThrownBy(() ->
+            client.readOriginal(
+                new Binding(
+                    "other",
+                    CREATION_ID,
+                    AUTH_OPERATION_ID,
+                    ACCOUNT_ID,
+                    CREATION_DIGEST,
+                    AUTH_DIGEST)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> client.readOriginal(null)).isInstanceOf(NullPointerException.class);
     verifyNoInteractions(stub);
@@ -231,16 +215,14 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
     GrpcChannelFactory channels = mock(GrpcChannelFactory.class);
     CommonGrpcClientProperties plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GameDesignOriginalTenantCreationOutcomeClient(
-                    new ServiceEndpointsProperties(), plaintext, channels, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignOriginalTenantCreationOutcomeClient(
+                new ServiceEndpointsProperties(), plaintext, channels, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
-    assertThatThrownBy(
-            () ->
-                new GameDesignOriginalTenantCreationOutcomeClient(
-                    new ServiceEndpointsProperties(), null, channels, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignOriginalTenantCreationOutcomeClient(
+                new ServiceEndpointsProperties(), null, channels, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
     for (CommonGrpcClientProperties incomplete :
@@ -252,10 +234,9 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
           mtlsPropertiesWith("cert", "classpath:key", "ca"),
           mtlsPropertiesWith("cert", "key", "classpath:ca")
         }) {
-      assertThatThrownBy(
-              () ->
-                  new GameDesignOriginalTenantCreationOutcomeClient(
-                      new ServiceEndpointsProperties(), incomplete, channels, "test"))
+      assertThatThrownBy(() ->
+              new GameDesignOriginalTenantCreationOutcomeClient(
+                  new ServiceEndpointsProperties(), incomplete, channels, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     CommonGrpcClientProperties missingFile =
@@ -263,17 +244,15 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
             defaultTlsDirectory.resolve("missing-cert.pem").toString(),
             mtlsProperties().getPrivateKey(),
             mtlsProperties().getCaCert());
-    assertThatThrownBy(
-            () ->
-                new GameDesignOriginalTenantCreationOutcomeClient(
-                    new ServiceEndpointsProperties(), missingFile, channels, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignOriginalTenantCreationOutcomeClient(
+                new ServiceEndpointsProperties(), missingFile, channels, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("readable file-backed TLS material");
     for (String namespace : new String[] {null, "", "Upper", "not/a-label"}) {
-      assertThatThrownBy(
-              () ->
-                  new GameDesignOriginalTenantCreationOutcomeClient(
-                      new ServiceEndpointsProperties(), mtlsProperties(), channels, namespace))
+      assertThatThrownBy(() ->
+              new GameDesignOriginalTenantCreationOutcomeClient(
+                  new ServiceEndpointsProperties(), mtlsProperties(), channels, namespace))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("namespace");
     }
@@ -393,13 +372,11 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
       throws Exception {
     var stub = mockStub();
     when(stub.resolveOriginalTenantCreationOutcome(any()))
-        .thenAnswer(
-            invocation ->
-                mutation.apply(
-                    responseFor(
-                        invocation.getArgument(
-                            0, ResolveOriginalTenantCreationOutcomeRequest.class),
-                        Outcome.CREATED)));
+        .thenAnswer(invocation ->
+            mutation.apply(
+                responseFor(
+                    invocation.getArgument(0, ResolveOriginalTenantCreationOutcomeRequest.class),
+                    Outcome.CREATED)));
     assertThatThrownBy(() -> newClient(stub).readOriginal(binding()))
         .isInstanceOf(IllegalStateException.class);
   }

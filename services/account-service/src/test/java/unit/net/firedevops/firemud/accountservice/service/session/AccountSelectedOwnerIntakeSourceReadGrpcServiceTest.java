@@ -104,10 +104,9 @@ class AccountSelectedOwnerIntakeSourceReadGrpcServiceTest {
 
     var wrongNamespace = new Collector();
     peer("test", "game-design-service")
-        .run(
-            () ->
-                service.readSourceScope(
-                    original.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
+        .run(() ->
+            service.readSourceScope(
+                original.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
     assertThat(wrongNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     var wrongReader =

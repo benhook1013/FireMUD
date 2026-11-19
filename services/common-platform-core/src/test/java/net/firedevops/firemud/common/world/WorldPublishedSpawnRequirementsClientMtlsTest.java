@@ -130,10 +130,9 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
       client.init();
       assertThatThrownBy(() -> client.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              exception ->
-                  assertThat(Status.fromThrowable(exception).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(exception ->
+              assertThat(Status.fromThrowable(exception).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(headers).hasValue(0);
       assertThat(bodies).hasValue(0);
       stopTransport();
@@ -167,10 +166,9 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
 
     assertThatThrownBy(() -> client.read(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            exception ->
-                assertThat(Status.fromThrowable(exception).getCode())
-                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        .satisfies(exception ->
+            assertThat(Status.fromThrowable(exception).getCode())
+                .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
     assertThat(headers).hasValue(1);
     assertThat(bodies).hasValue(1);
   }
@@ -186,19 +184,17 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
 
     var plaintext = pki.clientProperties(tempDirectory, pki.entityClient());
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsClient(
-                    endpoints(server), plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsClient(
+                endpoints(server), plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 
     var classpath = pki.clientProperties(tempDirectory, pki.entityClient());
     classpath.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsClient(
-                    endpoints(server), classpath, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsClient(
+                endpoints(server), classpath, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
 

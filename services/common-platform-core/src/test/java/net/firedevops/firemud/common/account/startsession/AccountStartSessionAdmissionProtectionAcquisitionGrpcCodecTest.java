@@ -53,10 +53,9 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
     assertThat(request.canonicalBytes()).containsExactly(fixture.request().canonicalBytes());
     assertThat(evidence.canonicalBytes()).containsExactly(fixture.evidence().canonicalBytes());
     assertThat(evidence.request().canonicalBytes()).containsExactly(request.canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
-                    fixture("different-request").request(), responseWire))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
+                fixture("different-request").request(), responseWire))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -75,20 +74,15 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
     var duplicateSchema = request.toBuilder().addSchemaVersion(1).build();
     var unsupportedSchema = request.toBuilder().clearSchemaVersion().addSchemaVersion(2).build();
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
-                    unknownRequest))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(unknownRequest))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
-                    duplicateSchema))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(duplicateSchema))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
-                    unsupportedSchema))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
+                unsupportedSchema))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] noncanonicalRequestBytes =
@@ -100,10 +94,9 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
             .addSchemaVersion(1)
             .addRequestCanonicalBytes(ByteString.copyFrom(noncanonicalRequestBytes))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
-                    noncanonicalRequest))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
+                noncanonicalRequest))
         .isInstanceOf(IllegalArgumentException.class);
 
     ByteArrayOutputStream reorderedBytes = new ByteArrayOutputStream();
@@ -111,10 +104,9 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
     output.writeByteArray(2, fixture.request().canonicalBytes());
     output.writeInt32(1, AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.SCHEMA_VERSION);
     output.flush();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequestWireBytes(
-                    reorderedBytes.toByteArray()))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequestWireBytes(
+                reorderedBytes.toByteArray()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var response =
@@ -129,15 +121,13 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
             .build();
     var unsupportedResponseSchema =
         response.toBuilder().clearSchemaVersion().addSchemaVersion(2).build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
-                    fixture.request(), unknownResponse))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
+                fixture.request(), unknownResponse))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
-                    fixture.request(), unsupportedResponseSchema))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
+                fixture.request(), unsupportedResponseSchema))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] noncanonicalEvidenceBytes =
@@ -149,10 +139,9 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
             .addSchemaVersion(1)
             .addEvidenceCanonicalBytes(ByteString.copyFrom(noncanonicalEvidenceBytes))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
-                    fixture.request(), noncanonicalResponse))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
+                fixture.request(), noncanonicalResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -179,15 +168,13 @@ class AccountStartSessionAdmissionProtectionAcquisitionGrpcCodecTest {
                             + 1]))
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
-                    oversizedRequest))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(
+                oversizedRequest))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
-                    fixture("oversized-response").request(), oversizedResponse))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromResponse(
+                fixture("oversized-response").request(), oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

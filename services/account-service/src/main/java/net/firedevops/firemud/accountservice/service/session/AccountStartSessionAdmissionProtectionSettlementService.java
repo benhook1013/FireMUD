@@ -62,21 +62,19 @@ public final class AccountStartSessionAdmissionProtectionSettlementService {
 
     Lookup lookup =
         Objects.requireNonNull(
-            lookupTransaction.execute(
-                ignored -> {
-                  StoredProtection protection =
-                      repository
-                          .findHistoricalExact(protectionId, protectionFence)
-                          .orElseThrow(
-                              () ->
-                                  failedPrecondition(
-                                      "Exact historical Account admission protection is unavailable"));
-                  requireExactProtection(protection, protectionId, protectionFence);
-                  requireTargetBinding(protection);
-                  StoredSettlement settled =
-                      repository.findSettlementExact(protectionId, protectionFence).orElse(null);
-                  return new Lookup(protection, settled);
-                }),
+            lookupTransaction.execute(ignored -> {
+              StoredProtection protection =
+                  repository
+                      .findHistoricalExact(protectionId, protectionFence)
+                      .orElseThrow(() ->
+                          failedPrecondition(
+                              "Exact historical Account admission protection is unavailable"));
+              requireExactProtection(protection, protectionId, protectionFence);
+              requireTargetBinding(protection);
+              StoredSettlement settled =
+                  repository.findSettlementExact(protectionId, protectionFence).orElse(null);
+              return new Lookup(protection, settled);
+            }),
             "Account admission protection lookup transaction returned no value");
 
     if (lookup.settlement() != null) {
@@ -129,14 +127,12 @@ public final class AccountStartSessionAdmissionProtectionSettlementService {
     requireNoAmbientTransaction();
     StoredSettlement readback =
         Objects.requireNonNull(
-            readbackTransaction.execute(
-                ignored ->
-                    repository
-                        .findSettlementExact(protectionId, protectionFence)
-                        .orElseThrow(
-                            () ->
-                                failedPrecondition(
-                                    "Committed Game Session terminal settlement is not readable"))),
+            readbackTransaction.execute(ignored ->
+                repository
+                    .findSettlementExact(protectionId, protectionFence)
+                    .orElseThrow(() ->
+                        failedPrecondition(
+                            "Committed Game Session terminal settlement is not readable"))),
             "Account admission settlement readback transaction returned no value");
     if (!Arrays.equals(committed.canonicalBytes(), readback.canonicalBytes())) {
       throw failedPrecondition("Committed admission settlement readback differs");

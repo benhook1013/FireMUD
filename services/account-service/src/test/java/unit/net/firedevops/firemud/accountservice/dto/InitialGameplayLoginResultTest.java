@@ -93,31 +93,25 @@ class InitialGameplayLoginResultTest {
   @Test
   void rejectsRecoveredCredentialThatContradictsStoredEvidence() {
     AccountAuthEvidenceBundle bundle = evidenceBundle();
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginResult.fromRecoveredCredential(
-                    credential(
-                        bundle, UUID.randomUUID(), TOKEN_JTI, "a".repeat(64), expectedExpiry())))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginResult.fromRecoveredCredential(
+                credential(bundle, UUID.randomUUID(), TOKEN_JTI, "a".repeat(64), expectedExpiry())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Recovered gameplay LOGIN metadata is inconsistent");
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginResult.fromRecoveredCredential(
-                    credential(
-                        bundle, ACCOUNT_ID, UUID.randomUUID(), "a".repeat(64), expectedExpiry())))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginResult.fromRecoveredCredential(
+                credential(
+                    bundle, ACCOUNT_ID, UUID.randomUUID(), "a".repeat(64), expectedExpiry())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Recovered gameplay LOGIN metadata is inconsistent");
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginResult.fromRecoveredCredential(
-                    credential(
-                        bundle, ACCOUNT_ID, TOKEN_JTI, "a".repeat(64), expectedExpiry() + 1L)))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginResult.fromRecoveredCredential(
+                credential(bundle, ACCOUNT_ID, TOKEN_JTI, "a".repeat(64), expectedExpiry() + 1L)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Recovered gameplay LOGIN metadata is inconsistent");
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginResult.fromRecoveredCredential(
-                    credential(bundle, ACCOUNT_ID, TOKEN_JTI, "not-a-hash", expectedExpiry())))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginResult.fromRecoveredCredential(
+                credential(bundle, ACCOUNT_ID, TOKEN_JTI, "not-a-hash", expectedExpiry())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Recovered gameplay LOGIN metadata is inconsistent");
   }

@@ -76,10 +76,9 @@ class EntityPreseededActorAssignmentReceiptClientMtlsTest {
                 .build());
         assertThatThrownBy(() -> client.read(request()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
       }
     } finally {
       stopServer(server);
@@ -107,10 +106,9 @@ class EntityPreseededActorAssignmentReceiptClientMtlsTest {
         client.init();
         assertThatThrownBy(() -> client.read(request()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
       }
     } finally {
       stopServer(wrongServer);

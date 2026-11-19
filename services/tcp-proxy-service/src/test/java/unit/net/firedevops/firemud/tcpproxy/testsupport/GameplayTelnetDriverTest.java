@@ -49,19 +49,18 @@ class GameplayTelnetDriverTest {
   void readBlockContainingFailsWhenStreamClosesAfterMatch() throws Exception {
     try (ServerSocket server = new ServerSocket(0)) {
       Thread serverThread =
-          new Thread(
-              () -> {
-                try (Socket socket = server.accept();
-                    PrintWriter writer =
-                        new PrintWriter(
-                            new OutputStreamWriter(
-                                socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                            true)) {
-                  writer.println("LOOK READY");
-                } catch (IOException ignored) {
-                  // The client may close the socket while the test is cleaning up.
-                }
-              });
+          new Thread(() -> {
+            try (Socket socket = server.accept();
+                PrintWriter writer =
+                    new PrintWriter(
+                        new OutputStreamWriter(
+                            socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                        true)) {
+              writer.println("LOOK READY");
+            } catch (IOException ignored) {
+              // The client may close the socket while the test is cleaning up.
+            }
+          });
       serverThread.start();
 
       try (GameplayTelnetDriver driver =
@@ -83,22 +82,21 @@ class GameplayTelnetDriverTest {
     try (ServerSocket server = new ServerSocket(0)) {
       CountDownLatch responseFlushed = new CountDownLatch(1);
       Thread serverThread =
-          new Thread(
-              () -> {
-                try (Socket socket = server.accept();
-                    PrintWriter writer =
-                        new PrintWriter(
-                            new OutputStreamWriter(
-                                socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                            true)) {
-                  writer.println("LOOK READY");
-                  responseFlushed.countDown();
-                  socket.setSoTimeout(5_000);
-                  socket.getInputStream().read();
-                } catch (IOException ignored) {
-                  // The client may close the socket while the test is cleaning up.
-                }
-              });
+          new Thread(() -> {
+            try (Socket socket = server.accept();
+                PrintWriter writer =
+                    new PrintWriter(
+                        new OutputStreamWriter(
+                            socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                        true)) {
+              writer.println("LOOK READY");
+              responseFlushed.countDown();
+              socket.setSoTimeout(5_000);
+              socket.getInputStream().read();
+            } catch (IOException ignored) {
+              // The client may close the socket while the test is cleaning up.
+            }
+          });
       serverThread.start();
 
       try (GameplayTelnetDriver driver =

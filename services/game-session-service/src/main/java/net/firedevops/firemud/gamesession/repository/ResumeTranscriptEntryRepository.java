@@ -161,11 +161,10 @@ public class ResumeTranscriptEntryRepository {
     List<Query> updates =
         entries.stream()
             .filter(entry -> entry.getId() != null)
-            .<Query>map(
-                entry ->
-                    dsl.update(RESUME_TRANSCRIPT_ENTRY)
-                        .set(RESUME_TRANSCRIPT_ENTRY.BYTE_SIZE, entry.getByteSize())
-                        .where(RESUME_TRANSCRIPT_ENTRY.ID.eq(entry.getId())))
+            .<Query>map(entry ->
+                dsl.update(RESUME_TRANSCRIPT_ENTRY)
+                    .set(RESUME_TRANSCRIPT_ENTRY.BYTE_SIZE, entry.getByteSize())
+                    .where(RESUME_TRANSCRIPT_ENTRY.ID.eq(entry.getId())))
             .toList();
     if (!updates.isEmpty()) {
       dsl.batch(updates).execute();

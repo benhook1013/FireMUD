@@ -86,27 +86,26 @@ public final class GameplayAdmissionPointerSnapshots {
       return clearGenericBootstrapRouting(normalizedShell);
     }
     return singularCompletePointer(filteredRuntimePointers)
-        .map(
-            pointer ->
-                new SessionContext(
-                    normalizedShell.sessionId(),
-                    normalizedShell.tenantId(),
-                    normalizedShell.accountId(),
-                    normalizedShell.loginName(),
-                    normalizedShell.characterId(),
-                    normalizedShell.characterName(),
-                    normalizedShell.gameInstanceId(),
-                    normalizedShell.roomInstanceId(),
-                    normalizedShell.jwt(),
-                    normalizedShell.localeTag(),
-                    normalizedShell.bootstrapGameInstanceId(),
-                    pointer.worldSlug(),
-                    pointer.realmSlug(),
-                    pointer.pointerVersion(),
-                    pointer.stateScope(),
-                    normalizedShell.connectScopeId(),
-                    normalizedShell.connectRequestId(),
-                    normalizedShell.firstPartyConnectContext()))
+        .map(pointer ->
+            new SessionContext(
+                normalizedShell.sessionId(),
+                normalizedShell.tenantId(),
+                normalizedShell.accountId(),
+                normalizedShell.loginName(),
+                normalizedShell.characterId(),
+                normalizedShell.characterName(),
+                normalizedShell.gameInstanceId(),
+                normalizedShell.roomInstanceId(),
+                normalizedShell.jwt(),
+                normalizedShell.localeTag(),
+                normalizedShell.bootstrapGameInstanceId(),
+                pointer.worldSlug(),
+                pointer.realmSlug(),
+                pointer.pointerVersion(),
+                pointer.stateScope(),
+                normalizedShell.connectScopeId(),
+                normalizedShell.connectRequestId(),
+                normalizedShell.firstPartyConnectContext()))
         .orElse(clearGenericBootstrapRouting(normalizedShell));
   }
 
@@ -189,16 +188,15 @@ public final class GameplayAdmissionPointerSnapshots {
       String realmSlug,
       long pointerVersion) {
     return singularCompletePointer(pointers)
-        .map(
-            pointer ->
-                matchesCurrentRuntimeTarget(
-                    List.of(pointer),
-                    tenantId,
-                    gameInstanceId,
-                    worldSlug,
-                    realmSlug,
-                    pointerVersion,
-                    pointer.stateScope()))
+        .map(pointer ->
+            matchesCurrentRuntimeTarget(
+                List.of(pointer),
+                tenantId,
+                gameInstanceId,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                pointer.stateScope()))
         .orElse(false);
   }
 
@@ -223,9 +221,8 @@ public final class GameplayAdmissionPointerSnapshots {
     return singularCompletePointer(pointers)
         .filter(pointer -> pointer.tenantId() == tenantId)
         .filter(pointer -> pointer.gameInstanceId() == gameInstanceId)
-        .filter(
-            pointer ->
-                sameRoutingIdentity(pointer.worldSlug(), pointer.realmSlug(), worldSlug, realmSlug))
+        .filter(pointer ->
+            sameRoutingIdentity(pointer.worldSlug(), pointer.realmSlug(), worldSlug, realmSlug))
         .filter(pointer -> pointer.pointerVersion() == pointerVersion)
         .filter(
             pointer -> normalizedPlayableStateScope.equals(normalizeScope(pointer.stateScope())))

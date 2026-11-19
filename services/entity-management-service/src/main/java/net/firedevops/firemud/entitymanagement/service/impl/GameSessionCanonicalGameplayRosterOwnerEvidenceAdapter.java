@@ -157,10 +157,9 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
 
     List<PublishedRealmEntryPolicyEvidence> exactPolicies =
         policySet.policies().stream()
-            .filter(
-                candidate ->
-                    candidate.policy().worldSlug().equals(holdRequest.worldSlug())
-                        && candidate.policy().realmSlug().equals(ownerReadRequest.realmSlug()))
+            .filter(candidate ->
+                candidate.policy().worldSlug().equals(holdRequest.worldSlug())
+                    && candidate.policy().realmSlug().equals(ownerReadRequest.realmSlug()))
             .toList();
     if (exactPolicies.size() != 1) {
       throw new IllegalArgumentException(

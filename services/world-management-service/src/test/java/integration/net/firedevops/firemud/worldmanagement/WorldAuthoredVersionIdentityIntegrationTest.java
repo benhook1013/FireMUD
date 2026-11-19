@@ -160,33 +160,31 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     long gameDesignVersionId = 103L;
     AuthoredWorldVersionStateClient client = mock(AuthoredWorldVersionStateClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
-              return versionEvidence(
-                  request,
-                  source,
-                  canonicalVersionId,
-                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                  5L);
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
+          return versionEvidence(
+              request,
+              source,
+              canonicalVersionId,
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+              5L);
+        });
     WorldAuthoredVersionIdentityRepository repository =
         new WorldAuthoredVersionIdentityRepository(dsl);
     WorldAuthoredVersionIdentityService service = service(client, repository, transactionManager);
     UUID readRequestId = UUID.randomUUID();
 
     WorldAuthoredVersionIdentityReceipt receipt =
-        withGameDesign(
-            () ->
-                service.associate(
-                    NAMESPACE,
-                    source.canonicalTenantId(),
-                    source.worldSlug(),
-                    source.operationId(),
-                    source.evidenceDigest(),
-                    canonicalVersionId,
-                    gameDesignVersionId,
-                    readRequestId));
+        withGameDesign(() ->
+            service.associate(
+                NAMESPACE,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                canonicalVersionId,
+                gameDesignVersionId,
+                readRequestId));
     WorldAuthoredVersionIdentityReceipt independentReadback =
         repository
             .readByCanonicalVersion(
@@ -269,19 +267,17 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     assertThat(retainedWorld.get("version_id", Long.class)).isEqualTo(29L);
     assertThat(retainedWorld.get("status", String.class)).isEqualTo("ACTIVE");
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE world_authored_version_identity SET world_slug = ? "
-                        + "WHERE operation_id = ?",
-                    "rewritten-world",
-                    receipt.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE world_authored_version_identity SET world_slug = ? "
+                    + "WHERE operation_id = ?",
+                "rewritten-world",
+                receipt.operationId()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_authored_version_identity WHERE operation_id = ?",
-                    receipt.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_authored_version_identity WHERE operation_id = ?",
+                receipt.operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> dsl.execute("TRUNCATE world_authored_version_identity"))
         .isInstanceOf(DataAccessException.class);
@@ -298,46 +294,42 @@ class WorldAuthoredVersionIdentityIntegrationTest {
 
     AuthoredWorldVersionStateClient wrongUuidClient = mock(AuthoredWorldVersionStateClient.class);
     when(wrongUuidClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                versionEvidence(
-                    invocation.getArgument(0),
-                    source,
-                    OTHER_CANONICAL_VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                    8L));
+        .thenAnswer(invocation ->
+            versionEvidence(
+                invocation.getArgument(0),
+                source,
+                OTHER_CANONICAL_VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                8L));
     WorldAuthoredVersionIdentityRepository repository =
         new WorldAuthoredVersionIdentityRepository(dsl);
     WorldAuthoredVersionIdentityService wrongUuidService =
         service(wrongUuidClient, repository, transactionManager);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        associate(
-                            wrongUuidService,
-                            source,
-                            canonicalVersionId,
-                            gameDesignVersionId,
-                            UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                associate(
+                    wrongUuidService,
+                    source,
+                    canonicalVersionId,
+                    gameDesignVersionId,
+                    UUID.randomUUID())))
         .isInstanceOf(InvalidIdentityEvidenceException.class);
     assertThat(identityCount(source)).isZero();
 
     AuthoredWorldVersionStateClient wrongPeerClient = mock(AuthoredWorldVersionStateClient.class);
     WorldAuthoredVersionIdentityService wrongPeerService =
         service(wrongPeerClient, repository, transactionManager);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    NAMESPACE,
-                    "game-session-service",
-                    () ->
-                        associate(
-                            wrongPeerService,
-                            source,
-                            canonicalVersionId,
-                            gameDesignVersionId,
-                            UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            withPeer(
+                NAMESPACE,
+                "game-session-service",
+                () ->
+                    associate(
+                        wrongPeerService,
+                        source,
+                        canonicalVersionId,
+                        gameDesignVersionId,
+                        UUID.randomUUID())))
         .isInstanceOf(SecurityException.class);
     verify(wrongPeerClient, never()).read(any());
     assertThat(identityCount(source)).isZero();
@@ -346,26 +338,23 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     AuthoredWorldVersionStateClient wrongSourceClient = mock(AuthoredWorldVersionStateClient.class);
     UUID substitutedReadId = UUID.randomUUID();
     when(wrongSourceClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                versionEvidence(
-                    request(substitutedSource, substitutedReadId, gameDesignVersionId),
-                    substitutedSource,
-                    canonicalVersionId,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                    9L));
+        .thenAnswer(invocation ->
+            versionEvidence(
+                request(substitutedSource, substitutedReadId, gameDesignVersionId),
+                substitutedSource,
+                canonicalVersionId,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                9L));
     WorldAuthoredVersionIdentityService wrongSourceService =
         service(wrongSourceClient, repository, transactionManager);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        associate(
-                            wrongSourceService,
-                            source,
-                            canonicalVersionId,
-                            gameDesignVersionId,
-                            substitutedReadId)))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                associate(
+                    wrongSourceService,
+                    source,
+                    canonicalVersionId,
+                    gameDesignVersionId,
+                    substitutedReadId)))
         .isInstanceOf(InvalidIdentityEvidenceException.class);
     assertThat(identityCount(source)).isZero();
     assertThat(identityCount(substitutedSource)).isZero();
@@ -374,19 +363,17 @@ class WorldAuthoredVersionIdentityIntegrationTest {
         mock(AuthoredWorldVersionStateClient.class);
     WorldAuthoredVersionIdentityService wrongNamespaceService =
         service(wrongNamespaceClient, repository, transactionManager);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        wrongNamespaceService.associate(
-                            "other-namespace",
-                            source.canonicalTenantId(),
-                            source.worldSlug(),
-                            source.operationId(),
-                            source.evidenceDigest(),
-                            canonicalVersionId,
-                            gameDesignVersionId,
-                            UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                wrongNamespaceService.associate(
+                    "other-namespace",
+                    source.canonicalTenantId(),
+                    source.worldSlug(),
+                    source.operationId(),
+                    source.evidenceDigest(),
+                    canonicalVersionId,
+                    gameDesignVersionId,
+                    UUID.randomUUID())))
         .isInstanceOf(SecurityException.class);
     verify(wrongNamespaceClient, never()).read(any());
     assertThat(identityCount(source)).isZero();
@@ -395,26 +382,23 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     AuthoredWorldVersionStateClient missingSourceClient =
         mock(AuthoredWorldVersionStateClient.class);
     when(missingSourceClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                versionEvidence(
-                    invocation.getArgument(0),
-                    missingSource,
-                    canonicalVersionId,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                    10L));
+        .thenAnswer(invocation ->
+            versionEvidence(
+                invocation.getArgument(0),
+                missingSource,
+                canonicalVersionId,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                10L));
     WorldAuthoredVersionIdentityService missingSourceService =
         service(missingSourceClient, repository, transactionManager);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        associate(
-                            missingSourceService,
-                            missingSource,
-                            canonicalVersionId,
-                            gameDesignVersionId,
-                            UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                associate(
+                    missingSourceService,
+                    missingSource,
+                    canonicalVersionId,
+                    gameDesignVersionId,
+                    UUID.randomUUID())))
         .isInstanceOf(InvalidIdentityEvidenceException.class);
     assertThat(identityCount(missingSource)).isZero();
     assertThat(
@@ -441,35 +425,33 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     AuthoredWorldVersionStateClient firstClient = mock(AuthoredWorldVersionStateClient.class);
     AuthoredWorldVersionStateClient secondClient = mock(AuthoredWorldVersionStateClient.class);
     when(firstClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
-              awaitReadBarrier(bothRead);
-              AuthoredWorldVersionStateEvidence evidence =
-                  versionEvidence(
-                      request,
-                      source,
-                      canonicalVersionId,
-                      VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                      12L);
-              firstEvidence.set(evidence);
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
+          awaitReadBarrier(bothRead);
+          AuthoredWorldVersionStateEvidence evidence =
+              versionEvidence(
+                  request,
+                  source,
+                  canonicalVersionId,
+                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                  12L);
+          firstEvidence.set(evidence);
+          return evidence;
+        });
     when(secondClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
-              awaitReadBarrier(bothRead);
-              AuthoredWorldVersionStateEvidence evidence =
-                  versionEvidence(
-                      request,
-                      source,
-                      canonicalVersionId,
-                      VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE,
-                      13L);
-              secondEvidence.set(evidence);
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
+          awaitReadBarrier(bothRead);
+          AuthoredWorldVersionStateEvidence evidence =
+              versionEvidence(
+                  request,
+                  source,
+                  canonicalVersionId,
+                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE,
+                  13L);
+          secondEvidence.set(evidence);
+          return evidence;
+        });
     WorldAuthoredVersionIdentityRepository repository =
         new WorldAuthoredVersionIdentityRepository(dsl);
     WorldAuthoredVersionIdentityService firstService =
@@ -479,27 +461,19 @@ class WorldAuthoredVersionIdentityIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldAuthoredVersionIdentityReceipt> first =
-          executor.submit(
-              () ->
-                  withGameDesign(
-                      () ->
-                          associate(
-                              firstService,
-                              source,
-                              canonicalVersionId,
-                              gameDesignVersionId,
-                              firstReadId)));
+          executor.submit(() ->
+              withGameDesign(() ->
+                  associate(
+                      firstService, source, canonicalVersionId, gameDesignVersionId, firstReadId)));
       Future<WorldAuthoredVersionIdentityReceipt> second =
-          executor.submit(
-              () ->
-                  withGameDesign(
-                      () ->
-                          associate(
-                              secondService,
-                              source,
-                              canonicalVersionId,
-                              gameDesignVersionId,
-                              secondReadId)));
+          executor.submit(() ->
+              withGameDesign(() ->
+                  associate(
+                      secondService,
+                      source,
+                      canonicalVersionId,
+                      gameDesignVersionId,
+                      secondReadId)));
       WorldAuthoredVersionIdentityReceipt firstReceipt = first.get(25, TimeUnit.SECONDS);
       WorldAuthoredVersionIdentityReceipt secondReceipt = second.get(25, TimeUnit.SECONDS);
 
@@ -531,50 +505,43 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     long gameDesignVersionId = 401L;
     AuthoredWorldVersionStateClient client = mock(AuthoredWorldVersionStateClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
-              UUID returnedCanonicalId =
-                  request.versionId() == gameDesignVersionId
-                      ? canonicalVersionId
-                      : OTHER_CANONICAL_VERSION;
-              return versionEvidence(
-                  request,
-                  source,
-                  returnedCanonicalId,
-                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                  16L);
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
+          UUID returnedCanonicalId =
+              request.versionId() == gameDesignVersionId
+                  ? canonicalVersionId
+                  : OTHER_CANONICAL_VERSION;
+          return versionEvidence(
+              request,
+              source,
+              returnedCanonicalId,
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+              16L);
+        });
     WorldAuthoredVersionIdentityRepository repository =
         new WorldAuthoredVersionIdentityRepository(dsl);
     WorldAuthoredVersionIdentityService service = service(client, repository, transactionManager);
     WorldAuthoredVersionIdentityReceipt original =
-        withGameDesign(
-            () ->
-                associate(
-                    service, source, canonicalVersionId, gameDesignVersionId, UUID.randomUUID()));
+        withGameDesign(() ->
+            associate(service, source, canonicalVersionId, gameDesignVersionId, UUID.randomUUID()));
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        associate(
-                            service,
-                            source,
-                            canonicalVersionId,
-                            gameDesignVersionId + 1,
-                            UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                associate(
+                    service,
+                    source,
+                    canonicalVersionId,
+                    gameDesignVersionId + 1,
+                    UUID.randomUUID())))
         .isInstanceOf(RegistrationConflictException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        associate(
-                            service,
-                            source,
-                            OTHER_CANONICAL_VERSION,
-                            gameDesignVersionId,
-                            UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                associate(
+                    service,
+                    source,
+                    OTHER_CANONICAL_VERSION,
+                    gameDesignVersionId,
+                    UUID.randomUUID())))
         .isInstanceOf(RegistrationConflictException.class);
 
     assertThat(
@@ -593,14 +560,13 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     long gameDesignVersionId = 503L;
     AuthoredWorldVersionStateClient client = mock(AuthoredWorldVersionStateClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation ->
-                versionEvidence(
-                    invocation.getArgument(0),
-                    source,
-                    canonicalVersionId,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                    21L));
+        .thenAnswer(invocation ->
+            versionEvidence(
+                invocation.getArgument(0),
+                source,
+                canonicalVersionId,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                21L));
     WorldAuthoredVersionIdentityRepository repository =
         new WorldAuthoredVersionIdentityRepository(dsl);
     WorldAuthoredVersionIdentityService service =
@@ -609,15 +575,11 @@ class WorldAuthoredVersionIdentityIntegrationTest {
     UUID originalReadId = UUID.randomUUID();
 
     WorldAuthoredVersionIdentityReceipt recovered =
-        withGameDesign(
-            () ->
-                associate(
-                    service, source, canonicalVersionId, gameDesignVersionId, originalReadId));
+        withGameDesign(() ->
+            associate(service, source, canonicalVersionId, gameDesignVersionId, originalReadId));
     WorldAuthoredVersionIdentityReceipt retry =
-        withGameDesign(
-            () ->
-                associate(
-                    service, source, canonicalVersionId, gameDesignVersionId, UUID.randomUUID()));
+        withGameDesign(() ->
+            associate(service, source, canonicalVersionId, gameDesignVersionId, UUID.randomUUID()));
 
     assertThat(recovered).isEqualTo(retry);
     assertThat(retry.versionStateEvidence().request().readRequestId()).isEqualTo(originalReadId);

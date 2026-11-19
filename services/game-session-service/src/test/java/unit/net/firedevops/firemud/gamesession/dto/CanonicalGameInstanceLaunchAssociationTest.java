@@ -63,24 +63,23 @@ class CanonicalGameInstanceLaunchAssociationTest {
 
   @Test
   void rejectsSelectorsAndCurrentRowVersionsThatDifferFromTheOwnerEvidence() {
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameInstanceLaunchAssociation(
-                    NAMESPACE,
-                    701L,
-                    ASSOCIATION_ID,
-                    TENANT_ID,
-                    INSTANCE_ID,
-                    "mars",
-                    STATE_NAMESPACE_ID,
-                    RealmEntryPolicy.StateScope.SHARED,
-                    true,
-                    "launch-request-1",
-                    "descriptor-902",
-                    3L,
-                    evidence(),
-                    CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STARTING,
-                    3L))
+    assertThatThrownBy(() ->
+            new CanonicalGameInstanceLaunchAssociation(
+                NAMESPACE,
+                701L,
+                ASSOCIATION_ID,
+                TENANT_ID,
+                INSTANCE_ID,
+                "mars",
+                STATE_NAMESPACE_ID,
+                RealmEntryPolicy.StateScope.SHARED,
+                true,
+                "launch-request-1",
+                "descriptor-902",
+                3L,
+                evidence(),
+                CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STARTING,
+                3L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match");
     assertThatThrownBy(
@@ -149,19 +148,17 @@ class CanonicalGameInstanceLaunchAssociationTest {
             null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        "902",
-                        false,
-                        null,
-                        "publish-commit-902",
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    "902",
+                    false,
+                    null,
+                    "publish-commit-902",
+                    "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(owner),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence attestation =
         AuthoredWorldReleaseAttestationEvidence.create(

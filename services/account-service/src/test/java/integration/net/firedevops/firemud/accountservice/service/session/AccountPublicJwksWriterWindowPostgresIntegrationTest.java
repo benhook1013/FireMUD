@@ -151,13 +151,11 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
           harness.assertLiveMatchesCurrentPrepublicationIntent();
           assertThat(harness.count("account_jwt_jwks_publication_receipts")).isZero();
           harness.assertUnavailableRead();
-          harness.manager.beforeCommit.set(
-              () ->
-                  harness.observeBlockedPublicRead(
-                      harness::assertUnavailableRead,
-                      () ->
-                          assertThat(harness.count("account_jwt_jwks_publication_receipts"))
-                              .isZero()));
+          harness.manager.beforeCommit.set(() ->
+              harness.observeBlockedPublicRead(
+                  harness::assertUnavailableRead,
+                  () ->
+                      assertThat(harness.count("account_jwt_jwks_publication_receipts")).isZero()));
         };
     try {
       assertThatThrownBy(harness.prepublication::prepublishCurrentGeneration)
@@ -193,10 +191,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     var cachedKey = cache.keyFor(committedKid);
     var committed =
         harness
-            .tx(
-                () ->
-                    harness.desired.readCurrentCommittedSigner(
-                        harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
+            .tx(() ->
+                harness.desired.readCurrentCommittedSigner(
+                    harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
             .orElseThrow();
     var state =
         harness
@@ -212,12 +209,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
 
     // A subsequent rotation-request entrypoint and its prepublication/pruning lifecycle are not
     // implemented or physically qualified. Neither a retained signer nor a test may invent it.
-    assertThatThrownBy(
-            () ->
-                harness.tx(
-                    () ->
-                        harness.desired.ensureCurrentGenerationRequest(
-                            harness.binding.accountBinding(), harness.trust)))
+    assertThatThrownBy(() ->
+            harness.tx(() ->
+                harness.desired.ensureCurrentGenerationRequest(
+                    harness.binding.accountBinding(), harness.trust)))
         .isExactlyInstanceOf(
             AccountJwtSignerDesiredStateRepository.MissingGenerationOperationException.class)
         .hasMessage("Account has no durable rotation request for its committed signer");
@@ -236,13 +231,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         .isEqualTo(state);
     assertThat(
             harness
-                .tx(
-                    () ->
-                        harness.desired.readCurrentCommittedSigner(
-                            harness.binding.accountBinding(),
-                            harness.trust,
-                            API_DIGEST,
-                            API_REVISION))
+                .tx(() ->
+                    harness.desired.readCurrentCommittedSigner(
+                        harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
                 .orElseThrow())
         .isEqualTo(committed);
     assertThat(harness.transport.patches).isEqualTo(patchCount);
@@ -286,19 +277,18 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
           harness.assertPreparedDeny();
           assertThatThrownBy(transitionCache::refresh)
               .isInstanceOf(SourcePreparedDenyException.class);
-          harness.manager.beforeCommit.set(
-              () ->
-                  harness.observeBlockedPublicRead(
-                      harness::assertPreparedDeny,
-                      () ->
-                          assertThat(
-                                  harness
-                                      .dsl
-                                      .resultQuery(
-                                          "SELECT count(*) FROM account_jwt_signer_promotion_operations "
-                                              + "WHERE active_jwks_receipt_digest IS NOT NULL")
-                                      .fetchOne(0, Long.class))
-                              .isZero()));
+          harness.manager.beforeCommit.set(() ->
+              harness.observeBlockedPublicRead(
+                  harness::assertPreparedDeny,
+                  () ->
+                      assertThat(
+                              harness
+                                  .dsl
+                                  .resultQuery(
+                                      "SELECT count(*) FROM account_jwt_signer_promotion_operations "
+                                          + "WHERE active_jwks_receipt_digest IS NOT NULL")
+                                  .fetchOne(0, Long.class))
+                          .isZero()));
         };
     try {
       assertThatThrownBy(harness::reconcilePromotion)
@@ -329,10 +319,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         () -> {
           var promotion =
               harness
-                  .tx(
-                      () ->
-                          harness.desired.readPreparedGenerationForRecovery(
-                              harness.binding.accountBinding(), harness.trust))
+                  .tx(() ->
+                      harness.desired.readPreparedGenerationForRecovery(
+                          harness.binding.accountBinding(), harness.trust))
                   .promotion();
           if (promotion.activeJwksReceiptDigest().isPresent()) {
             exactReceiptPreparedReads.incrementAndGet();
@@ -347,10 +336,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     assertThat(harness.transport.patches).isEqualTo(writtenPatches);
     var committed =
         harness
-            .tx(
-                () ->
-                    harness.desired.readCurrentCommittedSigner(
-                        harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
+            .tx(() ->
+                harness.desired.readCurrentCommittedSigner(
+                    harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
             .orElseThrow();
     assertThat(committed.promotion().status()).isEqualTo("COMMITTED");
     assertThat(committed.publicReceipt().observedResourceVersion())
@@ -369,13 +357,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     assertThat(harness.transport.patches).isEqualTo(writtenPatches);
     assertThat(
             harness
-                .tx(
-                    () ->
-                        harness.desired.readCurrentCommittedSigner(
-                            harness.binding.accountBinding(),
-                            harness.trust,
-                            API_DIGEST,
-                            API_REVISION))
+                .tx(() ->
+                    harness.desired.readCurrentCommittedSigner(
+                        harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
                 .orElseThrow())
         .isEqualTo(committed);
 
@@ -410,12 +394,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     harness.transport.clearHooks();
     var durablePublication =
         harness
-            .independent(
-                () ->
-                    harness.tx(
-                        () ->
-                            harness.publication.readCurrentPublication(
-                                harness.binding.accountBinding(), harness.trust)))
+            .independent(() ->
+                harness.tx(() ->
+                    harness.publication.readCurrentPublication(
+                        harness.binding.accountBinding(), harness.trust)))
             .orElseThrow();
     var durableReceipt = durablePublication.receipt().orElseThrow();
     assertThat(durableReceipt.observedResourceVersion()).isEqualTo(harness.transport.version);
@@ -431,10 +413,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     assertThat(harness.transport.patches).isEqualTo(prepublicationPatches);
     assertThat(
             harness
-                .tx(
-                    () ->
-                        harness.publication.readCurrentPublication(
-                            harness.binding.accountBinding(), harness.trust))
+                .tx(() ->
+                    harness.publication.readCurrentPublication(
+                        harness.binding.accountBinding(), harness.trust))
                 .orElseThrow())
         .isEqualTo(durablePublication);
     harness.mountAndObserve();
@@ -446,12 +427,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     harness.transport.clearHooks();
     var durableActive =
         harness
-            .independent(
-                () ->
-                    harness.tx(
-                        () ->
-                            harness.desired.readPreparedGenerationForRecovery(
-                                harness.binding.accountBinding(), harness.trust)))
+            .independent(() ->
+                harness.tx(() ->
+                    harness.desired.readPreparedGenerationForRecovery(
+                        harness.binding.accountBinding(), harness.trust)))
             .promotion();
     assertThat(durableActive.status()).isEqualTo("PREPARED");
     assertThat(durableActive.activeJwksReceiptDigest()).isPresent();
@@ -472,15 +451,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     assertThat(harness.transport.patches).isEqualTo(activePatches);
     var committed =
         harness
-            .independent(
-                () ->
-                    harness.tx(
-                        () ->
-                            harness.desired.readCurrentCommittedSigner(
-                                harness.binding.accountBinding(),
-                                harness.trust,
-                                API_DIGEST,
-                                API_REVISION)))
+            .independent(() ->
+                harness.tx(() ->
+                    harness.desired.readCurrentCommittedSigner(
+                        harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION)))
             .orElseThrow();
     assertThat(committed.publicReceipt().receiptDigest())
         .isEqualTo(durableActive.activeJwksReceiptDigest().orElseThrow());
@@ -528,10 +502,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     assertThat(harness.transport.patches).isEqualTo(2);
     var committed =
         harness
-            .tx(
-                () ->
-                    harness.desired.readCurrentCommittedSigner(
-                        harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
+            .tx(() ->
+                harness.desired.readCurrentCommittedSigner(
+                    harness.binding.accountBinding(), harness.trust, API_DIGEST, API_REVISION))
             .orElseThrow();
     assertThat(committed.publicReceipt().observedResourceVersion())
         .isEqualTo(harness.transport.version);
@@ -785,11 +758,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
                   Path.of("jwt-generation.json")));
       var inventory = mock(AccountJwtValidatorInventorySource.class);
       when(inventory.observe(any(AccountJwtValidatorInventorySource.ObservationContext.class)))
-          .thenAnswer(
-              invocation -> {
-                afterInventory.run();
-                return readinessFixture.currentInventory(dsl, invocation.getArgument(0));
-              });
+          .thenAnswer(invocation -> {
+            afterInventory.run();
+            return readinessFixture.currentInventory(dsl, invocation.getArgument(0));
+          });
       var beans = new DefaultListableBeanFactory();
       beans.registerSingleton("controlledInventory", inventory);
       coordinator =
@@ -815,29 +787,27 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       String prior = result == null ? "12" : "14";
       String next = result == null ? "13" : "15";
       var observed =
-          tx(
-              () ->
-                  desired.recordSecretObservation(
-                      binding.accountBinding(),
-                      trust,
-                      request.operationId(),
-                      request.operationDigest(),
-                      SECRET_UID,
-                      prior));
+          tx(() ->
+              desired.recordSecretObservation(
+                  binding.accountBinding(),
+                  trust,
+                  request.operationId(),
+                  request.operationDigest(),
+                  SECRET_UID,
+                  prior));
       keyPair = generateRsa3072();
       PublicJwk jwk = publicJwk(request.targetKid(), (RSAPublicKey) keyPair.getPublic());
       result =
-          tx(
-              () ->
-                  desired.recordGenerationResult(
-                      binding.accountBinding(),
-                      trust,
-                      request.operationId(),
-                      observed.generationRequestDigest(),
-                      SECRET_UID,
-                      prior,
-                      next,
-                      jwk.json()));
+          tx(() ->
+              desired.recordGenerationResult(
+                  binding.accountBinding(),
+                  trust,
+                  request.operationId(),
+                  observed.generationRequestDigest(),
+                  SECRET_UID,
+                  prior,
+                  next,
+                  jwk.json()));
       Files.writeString(
           privateMount.resolve("pending.key"), privateBundleJson(request, result, keyPair));
       readinessFixture =
@@ -874,10 +844,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
               Optional.empty(),
               List.of("current"));
       privateReceipt =
-          tx(
-              () ->
-                  desired.recordPrivatePromotionResult(
-                      binding.accountBinding(), trust, privateObservation));
+          tx(() ->
+              desired.recordPrivatePromotionResult(
+                  binding.accountBinding(), trust, privateObservation));
       Files.writeString(
           privateMount.resolve("current.key"), privateBundleJson(request, result, keyPair));
     }
@@ -903,10 +872,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       try {
         return Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-            .call(
-                () ->
-                    AccountPublicJwksReadCodec.result(
-                        publicRead.read(AccountPublicJwksReadCodec.request())));
+            .call(() ->
+                AccountPublicJwksReadCodec.result(
+                    publicRead.read(AccountPublicJwksReadCodec.request())));
       } catch (RuntimeException failure) {
         throw failure;
       } catch (Exception failure) {
@@ -1009,21 +977,17 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
               privateObservation.current(),
               privateObservation.previous(),
               privateObservation.resultingSlots());
-      assertThatThrownBy(
-              () ->
-                  tx(
-                      () ->
-                          desired.recordPrivatePromotionResult(
-                              binding.accountBinding(), trust, changed)))
+      assertThatThrownBy(() ->
+              tx(() ->
+                  desired.recordPrivatePromotionResult(binding.accountBinding(), trust, changed)))
           .isExactlyInstanceOf(
               AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class)
           .hasMessage("Private promotion readback changed for the same Account operation");
       assertThat(ownerHistoryImages()).isEqualTo(retained);
       assertThat(
-              tx(
-                  () ->
-                      desired.recordPrivatePromotionResult(
-                          binding.accountBinding(), trust, privateObservation)))
+              tx(() ->
+                  desired.recordPrivatePromotionResult(
+                      binding.accountBinding(), trust, privateObservation)))
           .isEqualTo(privateReceipt);
       assertPreparedDeny();
     }
@@ -1084,18 +1048,16 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       AtomicInteger readerPid = new AtomicInteger();
       CountDownLatch readerBegan = new CountDownLatch(1);
       CompletableFuture<Void> reader =
-          CompletableFuture.runAsync(
-              () -> {
-                manager.readerBackend.set(
-                    pid -> {
-                      if (readerPid.compareAndSet(0, pid)) readerBegan.countDown();
-                    });
-                try {
-                  assertAfterRollback.run();
-                } finally {
-                  manager.readerBackend.remove();
-                }
-              });
+          CompletableFuture.runAsync(() -> {
+            manager.readerBackend.set(pid -> {
+              if (readerPid.compareAndSet(0, pid)) readerBegan.countDown();
+            });
+            try {
+              assertAfterRollback.run();
+            } finally {
+              manager.readerBackend.remove();
+            }
+          });
       assertThat(blockedPublicRead.compareAndSet(null, reader)).isTrue();
       try {
         assertThat(readerBegan.await(5, TimeUnit.SECONDS)).isTrue();
@@ -1106,23 +1068,20 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       Awaitility.await()
           .alias("exact public reader waits on actual receipt writer")
           .atMost(Duration.ofSeconds(5))
-          .until(
-              () ->
-                  independent(
-                      () ->
-                          Boolean.TRUE.equals(
-                              dsl.resultQuery(
-                                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
-                                          + "AND wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)))",
-                                      readerPid.get(),
-                                      writerPid)
-                                  .fetchOne(0, Boolean.class))));
+          .until(() ->
+              independent(() ->
+                  Boolean.TRUE.equals(
+                      dsl.resultQuery(
+                              "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
+                                  + "AND wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)))",
+                              readerPid.get(),
+                              writerPid)
+                          .fetchOne(0, Boolean.class))));
       assertThat(reader.isDone()).isFalse();
-      independent(
-          () -> {
-            assertCommittedReceiptAbsent.run();
-            return null;
-          });
+      independent(() -> {
+        assertCommittedReceiptAbsent.run();
+        return null;
+      });
     }
 
     private void awaitBlockedPublicRead() {

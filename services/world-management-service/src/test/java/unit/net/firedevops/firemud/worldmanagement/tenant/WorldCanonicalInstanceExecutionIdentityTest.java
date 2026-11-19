@@ -32,19 +32,18 @@ class WorldCanonicalInstanceExecutionIdentityTest {
     var observationBytes =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(observation).toByteArray();
 
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInstanceExecutionIdentity(
-                    tupleBytes,
-                    PARTICIPATION_ID,
-                    ACCOUNT_FENCE,
-                    null,
-                    ATTEMPT_ID,
-                    OWNER_FENCE,
-                    observation,
-                    GAME_INSTANCE_ID,
-                    "{}",
-                    observationBytes))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInstanceExecutionIdentity(
+                tupleBytes,
+                PARTICIPATION_ID,
+                ACCOUNT_FENCE,
+                null,
+                ATTEMPT_ID,
+                OWNER_FENCE,
+                observation,
+                GAME_INSTANCE_ID,
+                "{}",
+                observationBytes))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account original-attempt observation is incomplete");
   }

@@ -50,27 +50,23 @@ class AccountTenantOperationEntitlementClientMtlsTest {
     var paid = request(SourceKind.PAID_HOSTING);
     var demo = request(SourceKind.NON_PAID_DEMO);
     when(owner.evaluatePaid(any()))
-        .thenAnswer(
-            invocation -> {
-              var actual =
-                  (AccountTenantOperationEntitlementOwner.Request) invocation.getArgument(0);
-              assertThat(actual)
-                  .isEqualTo(
-                      new AccountTenantOperationEntitlementOwner.Request(
-                          paid.tenantId(), paid.requestId(), paid.expectedWorldWorkload()));
-              return evidence(paid);
-            });
+        .thenAnswer(invocation -> {
+          var actual = (AccountTenantOperationEntitlementOwner.Request) invocation.getArgument(0);
+          assertThat(actual)
+              .isEqualTo(
+                  new AccountTenantOperationEntitlementOwner.Request(
+                      paid.tenantId(), paid.requestId(), paid.expectedWorldWorkload()));
+          return evidence(paid);
+        });
     when(owner.evaluateDemo(any()))
-        .thenAnswer(
-            invocation -> {
-              var actual =
-                  (AccountTenantOperationEntitlementOwner.Request) invocation.getArgument(0);
-              assertThat(actual)
-                  .isEqualTo(
-                      new AccountTenantOperationEntitlementOwner.Request(
-                          demo.tenantId(), demo.requestId(), demo.expectedWorldWorkload()));
-              return evidence(demo);
-            });
+        .thenAnswer(invocation -> {
+          var actual = (AccountTenantOperationEntitlementOwner.Request) invocation.getArgument(0);
+          assertThat(actual)
+              .isEqualTo(
+                  new AccountTenantOperationEntitlementOwner.Request(
+                      demo.tenantId(), demo.requestId(), demo.expectedWorldWorkload()));
+          return evidence(demo);
+        });
     var receiver = new AccountTenantOperationEntitlementGrpcService(owner, "firemud");
     Server server =
         receiver
@@ -101,20 +97,18 @@ class AccountTenantOperationEntitlementClientMtlsTest {
             }) {
           doThrow(failure).when(owner).evaluatePaid(any());
           assertThatThrownBy(() -> client.read(paid))
-              .satisfies(
-                  thrown -> {
-                    assertThat(Status.fromThrowable(thrown).getCode())
-                        .isEqualTo(Status.Code.INTERNAL);
-                    var details = io.grpc.protobuf.StatusProto.fromThrowable(thrown);
-                    assertThat(details).isNotNull();
-                    assertThat(details.getDetailsCount()).isEqualTo(1);
-                    var detail =
-                        details
-                            .getDetails(0)
-                            .unpack(net.firedevops.firemud.shared.v1.ErrorDetail.class);
-                    assertThat(detail.getCode()).isEqualTo("INTERNAL");
-                    assertThat(detail.getMessage()).doesNotContain("private");
-                  });
+              .satisfies(thrown -> {
+                assertThat(Status.fromThrowable(thrown).getCode()).isEqualTo(Status.Code.INTERNAL);
+                var details = io.grpc.protobuf.StatusProto.fromThrowable(thrown);
+                assertThat(details).isNotNull();
+                assertThat(details.getDetailsCount()).isEqualTo(1);
+                var detail =
+                    details
+                        .getDetails(0)
+                        .unpack(net.firedevops.firemud.shared.v1.ErrorDetail.class);
+                assertThat(detail.getCode()).isEqualTo("INTERNAL");
+                assertThat(detail.getMessage()).doesNotContain("private");
+              });
         }
         verify(owner, org.mockito.Mockito.times(1)).evaluateDemo(any());
         TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -209,10 +203,9 @@ class AccountTenantOperationEntitlementClientMtlsTest {
     var properties = new net.firedevops.firemud.common.grpc.CommonGrpcClientProperties();
     properties.setPlaintext(true);
     var channels = mock(GrpcChannelFactory.class);
-    assertThatThrownBy(
-            () ->
-                new AccountTenantOperationEntitlementClient(
-                    new ServiceEndpointsProperties(), properties, channels, "firemud"))
+    assertThatThrownBy(() ->
+            new AccountTenantOperationEntitlementClient(
+                new ServiceEndpointsProperties(), properties, channels, "firemud"))
         .isInstanceOf(IllegalArgumentException.class);
     org.mockito.Mockito.verifyNoInteractions(channels);
   }

@@ -111,10 +111,9 @@ class WorldPrivatePreparationProtectionClientMtlsTest {
       }
       try (var cancelled = Context.current().withCancellation()) {
         cancelled.cancel(null);
-        cancelled.run(
-            () ->
-                assertThatThrownBy(() -> h.client.acquire(UUID.randomUUID(), source()))
-                    .isInstanceOf(StatusRuntimeException.class));
+        cancelled.run(() ->
+            assertThatThrownBy(() -> h.client.acquire(UUID.randomUUID(), source()))
+                .isInstanceOf(StatusRuntimeException.class));
       }
       assertThat(h.calls.get()).isZero();
     }

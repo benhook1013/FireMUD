@@ -370,9 +370,8 @@ public final class TemplateReferenceRepository {
       TemplateConfigSourceSnapshot snapshot =
           sourceRepository
               .readSnapshot(scope.target(), visibleCommitId)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException("TEMPLATE_REFERENCE_SOURCE_SNAPSHOT_UNAVAILABLE"));
+              .orElseThrow(() ->
+                  new IllegalStateException("TEMPLATE_REFERENCE_SOURCE_SNAPSHOT_UNAVAILABLE"));
       Map<Long, TemplateRow> versionTemplates = templatesByVersion.get(canonicalVersionId);
       if (snapshot.entries().size() != versionTemplates.size()) {
         throw new IllegalStateException("TEMPLATE_REFERENCE_INVENTORY_SOURCE_SET_CONFLICT");

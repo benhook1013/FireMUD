@@ -70,14 +70,12 @@ class AccountJwtJwksPrepublicationServiceTest {
         .thenReturn(Optional.empty());
     when(fixture.client.observe()).thenReturn(fixture.snapshot);
     when(fixture.client.publish(eq(fixture.snapshot), anyMap()))
-        .thenAnswer(
-            invocation -> {
-              Map<String, String> desired = invocation.getArgument(1);
-              Map<String, String> readback = new LinkedHashMap<>(desired);
-              readback.put("unrelated.txt", "preserved");
-              return new CasObservation(
-                  CONFIG_MAP_UID, "41", "42", desired, readback, Outcome.APPLIED);
-            });
+        .thenAnswer(invocation -> {
+          Map<String, String> desired = invocation.getArgument(1);
+          Map<String, String> readback = new LinkedHashMap<>(desired);
+          readback.put("unrelated.txt", "preserved");
+          return new CasObservation(CONFIG_MAP_UID, "41", "42", desired, readback, Outcome.APPLIED);
+        });
     when(fixture.publicationRepository.recordPrepublicationIntent(
             eq(accountBinding()),
             eq(trustFence(fixture.binding)),
@@ -90,14 +88,13 @@ class AccountJwtJwksPrepublicationServiceTest {
             any(String.class),
             any(String.class),
             any(String.class)))
-        .thenAnswer(
-            invocation ->
-                intent(
-                    fixture,
-                    invocation.getArgument(9),
-                    invocation.getArgument(10),
-                    invocation.getArgument(7),
-                    invocation.getArgument(8)));
+        .thenAnswer(invocation ->
+            intent(
+                fixture,
+                invocation.getArgument(9),
+                invocation.getArgument(10),
+                invocation.getArgument(7),
+                invocation.getArgument(8)));
     when(fixture.publicationRepository.recordPublicationReceipt(
             eq(accountBinding()),
             eq(trustFence(fixture.binding)),
@@ -108,17 +105,15 @@ class AccountJwtJwksPrepublicationServiceTest {
             eq("42"),
             any(String.class),
             any(String.class)))
-        .thenAnswer(
-            invocation ->
-                PublicationReceipt.create(
-                    intent(
-                        fixture,
-                        invocation.getArgument(7),
-                        invocation.getArgument(8),
-                        "41",
-                        AccountJwtJwksPublicationRepository.snapshotDigest(
-                            fixture.snapshot.data())),
-                    invocation.getArgument(6)));
+        .thenAnswer(invocation ->
+            PublicationReceipt.create(
+                intent(
+                    fixture,
+                    invocation.getArgument(7),
+                    invocation.getArgument(8),
+                    "41",
+                    AccountJwtJwksPublicationRepository.snapshotDigest(fixture.snapshot.data())),
+                invocation.getArgument(6)));
 
     PublicationReceipt receipt = fixture.service.prepublishCurrentGeneration();
 

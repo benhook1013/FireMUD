@@ -76,36 +76,34 @@ class AuthenticatedGameplayListenerConfigurationTest {
     var received = new AtomicInteger();
     var filter = config.authenticatedGameplayPathFilter(port);
     var web =
-        factory.getWebServer(
-            context -> {
-              var servlet =
-                  context.addServlet(
-                      "custody",
-                      new HttpServlet() {
-                        @Override
-                        protected void doGet(
-                            HttpServletRequest request, HttpServletResponse response)
-                            throws java.io.IOException, jakarta.servlet.ServletException {
-                          filter.doFilter(
-                              request,
-                              response,
-                              (incoming, outgoing) -> {
-                                try {
-                                  AuthenticatedDirectTextIngress.authenticate(
-                                      new ServletServerHttpRequest((HttpServletRequest) incoming),
-                                      port,
-                                      "test",
-                                      "42");
-                                  received.incrementAndGet();
-                                  ((HttpServletResponse) outgoing).setStatus(200);
-                                } catch (IllegalArgumentException rejected) {
-                                  ((HttpServletResponse) outgoing).setStatus(403);
-                                }
-                              });
-                        }
-                      });
-              servlet.addMapping("/*");
-            });
+        factory.getWebServer(context -> {
+          var servlet =
+              context.addServlet(
+                  "custody",
+                  new HttpServlet() {
+                    @Override
+                    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+                        throws java.io.IOException, jakarta.servlet.ServletException {
+                      filter.doFilter(
+                          request,
+                          response,
+                          (incoming, outgoing) -> {
+                            try {
+                              AuthenticatedDirectTextIngress.authenticate(
+                                  new ServletServerHttpRequest((HttpServletRequest) incoming),
+                                  port,
+                                  "test",
+                                  "42");
+                              received.incrementAndGet();
+                              ((HttpServletResponse) outgoing).setStatus(200);
+                            } catch (IllegalArgumentException rejected) {
+                              ((HttpServletResponse) outgoing).setStatus(403);
+                            }
+                          });
+                    }
+                  });
+          servlet.addMapping("/*");
+        });
     web.start();
     try {
       assertThat(call("gateway", port, "/ws/game/tcp").statusCode()).isEqualTo(200);

@@ -31,10 +31,9 @@ class PublishedReleaseBundleContractTest {
   @Test
   void exactRepairAcceptsCompleteSelectorV2Bundle() throws Exception {
     WorldPublishedStartLocationEvidence selector = selectorEvidence();
-    assertDoesNotThrow(
-        () ->
-            PublishedReleaseBundleContract.requireExactRepairMatch(
-                selectorBundle(selector, selectorParticipants(selector)), exportedManifest));
+    assertDoesNotThrow(() ->
+        PublishedReleaseBundleContract.requireExactRepairMatch(
+            selectorBundle(selector, selectorParticipants(selector)), exportedManifest));
   }
 
   @Test
@@ -223,10 +222,9 @@ class PublishedReleaseBundleContractTest {
 
   @Test
   void exactRepairContinuesToAcceptV1AndRejectV3() {
-    assertDoesNotThrow(
-        () ->
-            PublishedReleaseBundleContract.requireExactRepairMatch(
-                bundle("v1", null, List.of()), exportedManifest));
+    assertDoesNotThrow(() ->
+        PublishedReleaseBundleContract.requireExactRepairMatch(
+            bundle("v1", null, List.of()), exportedManifest));
 
     IllegalStateException unsupported =
         assertThrows(
@@ -349,22 +347,21 @@ class PublishedReleaseBundleContractTest {
   private static List<PublishParticipantDigestDto> selectorParticipants(
       WorldPublishedStartLocationEvidence selector) {
     return PublishedWorldSelectorFixtures.participants(VERSION_ID, selector).stream()
-        .map(
-            participant ->
-                "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
-                    ? new PublishParticipantDigestDto(
+        .map(participant ->
+            "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                ? new PublishParticipantDigestDto(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    participant.baseVersionId(),
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                         participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant.participantKey(),
-                            AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        participant.abilitySchemaDigest(),
-                        participant.errorCode(),
-                        participant.errorMessage())
-                    : participant)
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    participant.abilitySchemaDigest(),
+                    participant.errorCode(),
+                    participant.errorMessage())
+                : participant)
         .toList();
   }
 

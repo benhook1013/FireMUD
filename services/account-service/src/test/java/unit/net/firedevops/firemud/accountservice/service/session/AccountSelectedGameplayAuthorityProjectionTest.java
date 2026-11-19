@@ -34,15 +34,13 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
                     value.canonicalBytes(), ACCOUNT, TENANT)
                 .canonicalBytes())
         .containsExactly(value.canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                AccountSelectedGameplayAuthorityProjection.decode(
-                    value.canonicalBytes(), UUID.randomUUID(), TENANT))
+    assertThatThrownBy(() ->
+            AccountSelectedGameplayAuthorityProjection.decode(
+                value.canonicalBytes(), UUID.randomUUID(), TENANT))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountSelectedGameplayAuthorityProjection.membership(
-                    member(ACCOUNT, TENANT, "1", "7", "2"), 9L))
+    assertThatThrownBy(() ->
+            AccountSelectedGameplayAuthorityProjection.membership(
+                member(ACCOUNT, TENANT, "1", "7", "2"), 9L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -86,10 +84,9 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
             json.replace("\"sourceVersion\":\"2\"", "\"generation\":\"2\""),
             json.replace("\"sourceVersion\":\"2\"", "\"sourceVersion\":\"2\",\"extra\":true"),
             json.replace("\"sourceVersion\":\"2\"", "\"sourceVersion\":2"))) {
-      assertThatThrownBy(
-              () ->
-                  AccountSelectedGameplayAuthorityProjection.decode(
-                      malformed.getBytes(StandardCharsets.UTF_8), ACCOUNT, TENANT))
+      assertThatThrownBy(() ->
+              AccountSelectedGameplayAuthorityProjection.decode(
+                  malformed.getBytes(StandardCharsets.UTF_8), ACCOUNT, TENANT))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

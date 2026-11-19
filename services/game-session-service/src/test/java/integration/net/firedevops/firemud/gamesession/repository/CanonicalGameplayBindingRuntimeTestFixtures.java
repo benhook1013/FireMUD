@@ -134,11 +134,10 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(sourceEvidence);
     FreshGameSessionTenantAssociation tenantAssociation =
         java.util.Objects.requireNonNull(
-            transactions.execute(
-                status ->
-                    new GameSessionFreshTenantAssociationRepository(dsl)
-                        .associateFresh(
-                            UUID.randomUUID(), targetNamespace, sourceReceipt, creationEvidence)),
+            transactions.execute(status ->
+                new GameSessionFreshTenantAssociationRepository(dsl)
+                    .associateFresh(
+                        UUID.randomUUID(), targetNamespace, sourceReceipt, creationEvidence)),
             "fresh source-bound Game Session tenant association");
 
     UUID catalogRequestId = UUID.randomUUID();
@@ -231,29 +230,27 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         new GameSessionCanonicalStartingInstanceRepository(dsl, targetNamespace);
     StartingInstance startingInstance =
         java.util.Objects.requireNonNull(
-            transactions.execute(
-                status ->
-                    startingRepository.createStarting(
-                        tenantAssociation,
-                        binding,
-                        ownerAccountUuid,
-                        controlPlaneRequestId,
-                        originalTuple.mutationDigest(),
-                        originalTuple)),
+            transactions.execute(status ->
+                startingRepository.createStarting(
+                    tenantAssociation,
+                    binding,
+                    ownerAccountUuid,
+                    controlPlaneRequestId,
+                    originalTuple.mutationDigest(),
+                    originalTuple)),
             "created canonical STARTING instance");
     int consumerInputRows =
         java.util.Objects.requireNonNull(
-            transactions.execute(
-                status ->
-                    dsl.execute(
-                        // Controlled upstream World epoch inputs support only this downstream
-                        // guard-consumer proof; they are not World ACTIVE, Human terminal, Account
-                        // protection, or admission evidence.
-                        "UPDATE game_instances SET status = 'RUNNING',"
-                            + " row_version = row_version + 1, run_owned_start_preparing_epoch = 1,"
-                            + " run_owned_start_active_epoch = 2 WHERE tenant_id = ? AND id = ?",
-                        tenantAssociation.legacyGameSessionTenantId(),
-                        startingInstance.gameInstanceId())),
+            transactions.execute(status ->
+                dsl.execute(
+                    // Controlled upstream World epoch inputs support only this downstream
+                    // guard-consumer proof; they are not World ACTIVE, Human terminal, Account
+                    // protection, or admission evidence.
+                    "UPDATE game_instances SET status = 'RUNNING',"
+                        + " row_version = row_version + 1, run_owned_start_preparing_epoch = 1,"
+                        + " run_owned_start_active_epoch = 2 WHERE tenant_id = ? AND id = ?",
+                    tenantAssociation.legacyGameSessionTenantId(),
+                    startingInstance.gameInstanceId())),
             "controlled runtime consumer input row count");
     if (consumerInputRows != 1) {
       throw new IllegalStateException(

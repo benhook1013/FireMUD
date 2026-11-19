@@ -198,11 +198,10 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var fixture = fixture(Clock.systemUTC());
     var reads = new AtomicInteger();
     var catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              reads.incrementAndGet();
-              return List.of(world(fixture.targets().get(1)), world(fixture.targets().get(0)));
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          reads.incrementAndGet();
+          return List.of(world(fixture.targets().get(1)), world(fixture.targets().get(0)));
+        });
     var selection = new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
     var store = store(selection, fixture.clock());
     var transport = observation();
@@ -489,13 +488,12 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
                     return List.of(mismatched);
                   }
                 }));
-    assertThatThrownBy(
-            () ->
-                new DirectTextWorldMenuRedisStore(
-                    selection,
-                    fixture.clock(),
-                    () -> writer.connect(ByteArrayCodec.INSTANCE),
-                    badCatalog))
+    assertThatThrownBy(() ->
+            new DirectTextWorldMenuRedisStore(
+                selection,
+                fixture.clock(),
+                () -> writer.connect(ByteArrayCodec.INSTANCE),
+                badCatalog))
         .isInstanceOf(IllegalStateException.class);
     assertThat(admin.get(key(transport))).isNull();
   }

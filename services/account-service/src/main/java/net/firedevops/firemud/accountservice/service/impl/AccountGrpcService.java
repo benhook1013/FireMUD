@@ -889,13 +889,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       }
       var builder =
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
-      policies.forEach(
-          (storageId, policy) ->
-              builder.addPolicies(
-                  net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
-                      .setAccountId(accountUuidsByStorageId.get(storageId).toString())
-                      .setPolicy(policy.name())
-                      .build()));
+      policies.forEach((storageId, policy) ->
+          builder.addPolicies(
+              net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
+                  .setAccountId(accountUuidsByStorageId.get(storageId).toString())
+                  .setPolicy(policy.name())
+                  .build()));
       responseObserver.onNext(builder.build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {

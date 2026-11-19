@@ -136,21 +136,20 @@ class AccountJwtValidatorInventoryRepositoryTest {
     returned[2] = 'x';
 
     assertThat(snapshot.canonicalBytes()).isEqualTo(bytes);
-    assertThatThrownBy(
-            () ->
-                new AccountJwtValidatorInventoryRepository.StoredSnapshot(
-                    "d".repeat(64),
-                    "staging",
-                    "cluster-a",
-                    TRUST.expectedClusterIncarnationUid(),
-                    "firemud",
-                    TRUST.expectedNamespaceUid(),
-                    "api-r1",
-                    "b".repeat(64),
-                    "inventory-r1",
-                    "c".repeat(64),
-                    Instant.parse("2026-10-05T00:00:00Z"),
-                    bytes))
+    assertThatThrownBy(() ->
+            new AccountJwtValidatorInventoryRepository.StoredSnapshot(
+                "d".repeat(64),
+                "staging",
+                "cluster-a",
+                TRUST.expectedClusterIncarnationUid(),
+                "firemud",
+                TRUST.expectedNamespaceUid(),
+                "api-r1",
+                "b".repeat(64),
+                "inventory-r1",
+                "c".repeat(64),
+                Instant.parse("2026-10-05T00:00:00Z"),
+                bytes))
         .isInstanceOf(
             AccountJwtValidatorInventoryRepository.InventorySnapshotUnavailableException.class)
         .hasNoCause();

@@ -148,24 +148,23 @@ class EntitySelectedEmptyPublicationDigestGrpcReceiverTest {
                 "spiffe://firemud/ns/test/sa/game-design-service",
                 NAMESPACE,
                 "game-design-service"))
-        .run(
-            () ->
-                receiver.getDraftDesignDigest(
-                    request,
-                    new StreamObserver<>() {
-                      @Override
-                      public void onNext(GetDraftDesignDigestResponse value) {
-                        response.set(value);
-                      }
+        .run(() ->
+            receiver.getDraftDesignDigest(
+                request,
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    response.set(value);
+                  }
 
-                      @Override
-                      public void onError(Throwable error) {
-                        throw new AssertionError(error);
-                      }
+                  @Override
+                  public void onError(Throwable error) {
+                    throw new AssertionError(error);
+                  }
 
-                      @Override
-                      public void onCompleted() {}
-                    }));
+                  @Override
+                  public void onCompleted() {}
+                }));
     return response.get();
   }
 }

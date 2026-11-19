@@ -96,9 +96,8 @@ public final class CanonicalInitialPlayerLocationGrpcService
       response =
           service
               .read(selection)
-              .map(
-                  retained ->
-                      CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, retained));
+              .map(retained ->
+                  CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, retained));
     } catch (StatusRuntimeException rejected) {
       reportOwnerFailure(
           responseObserver, rejected, "World initial-player location read is unavailable");
@@ -176,9 +175,8 @@ public final class CanonicalInitialPlayerLocationGrpcService
     final Optional<CanonicalInitialPlayerLocationRegionResponse> response;
     try {
       response =
-          retainedRegion.map(
-              retained ->
-                  CanonicalInitialPlayerLocationGrpcCodec.toRegionResponse(selection, retained));
+          retainedRegion.map(retained ->
+              CanonicalInitialPlayerLocationGrpcCodec.toRegionResponse(selection, retained));
     } catch (IllegalStateException inconsistent) {
       fail(
           responseObserver,

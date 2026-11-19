@@ -78,10 +78,9 @@ class StartSessionPreAuthorizationReservationTupleTest {
     StartSessionOperatorAction action = action(StartSessionOperatorAction.ClientIp.absent());
     SessionContext.setContext(ACTOR_ID.toString(), List.of(), Map.of(), false, null, null);
 
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
-                    "start-session-request-03", action))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
+                "start-session-request-03", action))
         .isInstanceOf(IllegalArgumentException.class);
 
     SessionContext.setContext(
@@ -91,10 +90,9 @@ class StartSessionPreAuthorizationReservationTupleTest {
         false,
         null,
         null);
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
-                    "start-session-request-03", action))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
+                "start-session-request-03", action))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -108,10 +106,9 @@ class StartSessionPreAuthorizationReservationTupleTest {
         true,
         "logging-admin-service",
         "instance-1");
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
-                    "start-session-request-04", action))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
+                "start-session-request-04", action))
         .isInstanceOf(IllegalArgumentException.class);
 
     SessionContext.setContext(
@@ -121,10 +118,9 @@ class StartSessionPreAuthorizationReservationTupleTest {
         false,
         null,
         null);
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
-                    "start-session-request-04", action))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
+                "start-session-request-04", action))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -136,14 +132,12 @@ class StartSessionPreAuthorizationReservationTupleTest {
                 "start-session-request-05", action(StartSessionOperatorAction.ClientIp.absent()))
             .canonicalJson();
 
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(" " + canonicalJson))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(" " + canonicalJson))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
-                    canonicalJson.replace("\"presence\":\"ABSENT\"", "\"presence\":\"NULL\"")))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
+                canonicalJson.replace("\"presence\":\"ABSENT\"", "\"presence\":\"NULL\"")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

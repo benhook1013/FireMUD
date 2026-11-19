@@ -217,13 +217,9 @@ class AutomationRuntimeFamilyCatalogClientMtlsTest {
     }
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AutomationRuntimeFamilyCatalogClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new AutomationRuntimeFamilyCatalogClient(
+                new ServiceEndpointsProperties(), plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

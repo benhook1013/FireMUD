@@ -99,24 +99,22 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .isEqualTo(f.tables().size());
       for (String name : List.of("gameplay_command", "remote_followup")) {
         assertThat(catalog.families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(name);
-                  assertThat(family.stateClass()).isEqualTo(StateClass.UNKNOWN);
-                  assertThat(family.freshDisposition())
-                      .isEqualTo(FreshDisposition.STATE_CLASS_UNKNOWN_BLOCKING);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(name);
+              assertThat(family.stateClass()).isEqualTo(StateClass.UNKNOWN);
+              assertThat(family.freshDisposition())
+                  .isEqualTo(FreshDisposition.STATE_CLASS_UNKNOWN_BLOCKING);
+            });
       }
       assertThat(catalog.families())
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("game_manifest");
-                assertThat(family.stateClass()).isEqualTo(StateClass.UNRESOLVED);
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.UNSUPPORTED_SOURCE_BLOCKING);
-                assertThat(family.ownerConsequence())
-                    .contains("legacy", "tenant", "Not build or FRESH authority");
-              });
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("game_manifest");
+            assertThat(family.stateClass()).isEqualTo(StateClass.UNRESOLVED);
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.UNSUPPORTED_SOURCE_BLOCKING);
+            assertThat(family.ownerConsequence())
+                .contains("legacy", "tenant", "Not build or FRESH authority");
+          });
       for (String name :
           List.of(
               "tick_batch",
@@ -126,19 +124,17 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "game_session_region_runtime_status",
               "game_session_region_timeline_preparation")) {
         assertThat(catalog.families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(name);
-                  assertThat(family.freshDisposition())
-                      .isEqualTo(FreshDisposition.RUNTIME_EVIDENCE_BLOCKING);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(name);
+              assertThat(family.freshDisposition())
+                  .isEqualTo(FreshDisposition.RUNTIME_EVIDENCE_BLOCKING);
+            });
       }
       assertThat(catalog.families())
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("player_command_history");
-                assertThat(family.role()).isEqualTo(Role.AUDIT);
-              });
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("player_command_history");
+            assertThat(family.role()).isEqualTo(Role.AUDIT);
+          });
       for (String name :
           List.of(
               "saga_instance",
@@ -159,11 +155,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertPrivateRevisionClassifications(catalog);
       assertPrivateRuntimeClassification(catalog);
       assertThat(catalog.families())
-          .noneMatch(
-              family ->
-                  family.familyId().equals("redis_session")
-                      || family.familyId().equals("tick_queue")
-                      || family.familyId().equals("issuer_redis_index"));
+          .noneMatch(family ->
+              family.familyId().equals("redis_session")
+                  || family.familyId().equals("tick_queue")
+                  || family.familyId().equals("issuer_redis_index"));
       assertThat(catalog.families())
           .allSatisfy(family -> assertThat(family.ownerConsequence()).isNotBlank());
       assertThat(catalog.nonSqlGaps())
@@ -186,14 +181,13 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1060",
               "catalog-installation:1061",
               "catalog-installation:1062")
-          .noneMatch(
-              identity ->
-                  identity.contains(":1057:")
-                      || identity.contains(":1058:")
-                      || identity.contains(":1059:")
-                      || identity.contains(":1060:")
-                      || identity.contains(":1061:")
-                      || identity.contains(":1062:"));
+          .noneMatch(identity ->
+              identity.contains(":1057:")
+                  || identity.contains(":1058:")
+                  || identity.contains(":1059:")
+                  || identity.contains(":1060:")
+                  || identity.contains(":1061:")
+                  || identity.contains(":1062:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -227,11 +221,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       try (Fixture f = fixture(null, history)) {
         var evidence = f.owner().capture(request());
         assertThat(evidence.catalog().families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(history);
-                  assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(history);
+              assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
+            });
         assertThat(f.owner().readExact(evidence.request())).isEqualTo(evidence);
         assertThat(
                 f.dsl
@@ -279,17 +272,15 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Request read = request();
       var start = new CountDownLatch(1);
       var first =
-          workers.submit(
-              () -> {
-                start.await();
-                return f.owner().capture(read);
-              });
+          workers.submit(() -> {
+            start.await();
+            return f.owner().capture(read);
+          });
       var second =
-          workers.submit(
-              () -> {
-                start.await();
-                return f.owner().capture(read);
-              });
+          workers.submit(() -> {
+            start.await();
+            return f.owner().capture(read);
+          });
       start.countDown();
       var evidence = first.get(30, TimeUnit.SECONDS);
       assertThat(second.get(30, TimeUnit.SECONDS)).isEqualTo(evidence);
@@ -447,23 +438,20 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.rows(before.keySet())).isEqualTo(before);
       assertThat(f.sequencePositions()).containsAll(sequences);
       // Original authority/replay/hold guards remain effective, not merely present by name.
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE game_session_start_session_operator_attempt SET owner_fence=owner_fence+1"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE game_session_start_session_operator_attempt SET owner_fence=owner_fence+1"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE game_session_start_session_operator_attempt SET lease_expires_at=lease_expires_at+interval '1 hour'"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE game_session_start_session_operator_attempt SET lease_expires_at=lease_expires_at+interval '1 hour'"))
           .hasMessageContaining("immutable");
       assertThatThrownBy(
               () -> f.dsl.execute("DELETE FROM game_session_start_session_operator_attempt"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE game_session_initial_gameplay_login_journal SET expected_attempt_fence=2"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE game_session_initial_gameplay_login_journal SET expected_attempt_fence=2"))
           .hasMessageContaining("cannot be replaced or reopened");
       assertThatThrownBy(
               () -> f.dsl.execute("DELETE FROM game_session_initial_gameplay_login_journal"))
@@ -738,13 +726,11 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
         var original = f.owner().capture(request());
         assertThat(original.catalog().catalogEpoch()).isEqualTo(6);
         assertThat(original.catalog().schemaFacts())
-            .anyMatch(
-                fact ->
-                    fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
-            .anyMatch(
-                fact ->
-                    fact.kind() == FactKind.VIEW
-                        && fact.identity().equals("catalog_probe_materialized"));
+            .anyMatch(fact ->
+                fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
+            .anyMatch(fact ->
+                fact.kind() == FactKind.VIEW
+                    && fact.identity().equals("catalog_probe_materialized"));
         Map<String, String> before = f.rows(f.tables());
         var definitions =
             f.dsl.fetch(
@@ -954,53 +940,49 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             .hasMessageContaining("immutable");
       }
       for (String consequence : List.of(" ", "\t")) {
-        assertThatThrownBy(
-                () ->
-                    f.dsl.execute(
-                        "INSERT INTO "
-                            + CLASSIFICATIONS
-                            + " VALUES('game_manifest.description','game_manifest','description','SOURCE','UNRESOLVED',"
-                            + "'UNSUPPORTED_SOURCE_BLOCKING','UNRESOLVED_RETAINED',?)",
-                        consequence))
+        assertThatThrownBy(() ->
+                f.dsl.execute(
+                    "INSERT INTO "
+                        + CLASSIFICATIONS
+                        + " VALUES('game_manifest.description','game_manifest','description','SOURCE','UNRESOLVED',"
+                        + "'UNSUPPORTED_SOURCE_BLOCKING','UNRESOLVED_RETAINED',?)",
+                    consequence))
             .hasMessageContaining("ck_gs_runtime_family_consequence");
       }
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO "
-                          + EPOCHS
-                          + "(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 7,catalog_bytes,catalog_digest FROM "
-                          + EPOCHS
-                          + " WHERE catalog_epoch=6"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO "
+                      + EPOCHS
+                      + "(catalog_epoch,catalog_bytes,catalog_digest)"
+                      + " SELECT 7,catalog_bytes,catalog_digest FROM "
+                      + EPOCHS
+                      + " WHERE catalog_epoch=6"))
           .hasMessageContaining("exact classified installed schema");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO "
-                          + SNAPSHOTS
-                          + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
-                          + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest"
-                          + " FROM "
-                          + SNAPSHOTS
-                          + " WHERE read_request_id=?",
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      original.request().readRequestId()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO "
+                      + SNAPSHOTS
+                      + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
+                      + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest"
+                      + " FROM "
+                      + SNAPSHOTS
+                      + " WHERE read_request_id=?",
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  original.request().readRequestId()))
           .hasMessageContaining("complete exact request and evidence");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO "
-                          + SNAPSHOTS
-                          + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
-                          + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,'sha256:'||repeat('0',64),evidence_bytes,evidence_digest"
-                          + " FROM "
-                          + SNAPSHOTS
-                          + " WHERE read_request_id=?",
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      original.request().readRequestId()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO "
+                      + SNAPSHOTS
+                      + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
+                      + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,'sha256:'||repeat('0',64),evidence_bytes,evidence_digest"
+                      + " FROM "
+                      + SNAPSHOTS
+                      + " WHERE read_request_id=?",
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  original.request().readRequestId()))
           .hasMessageContaining("new owner epoch required");
       assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
     }
@@ -1266,17 +1248,15 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
 
   private static void assertPrivateRuntimeClassification(GameSessionRuntimeFamilyCatalog catalog) {
     assertThat(catalog.families())
-        .anySatisfy(
-            family -> {
-              assertThat(family.familyId())
-                  .isEqualTo("game_session_private_fresh_runtime_allocations");
-              assertThat(family.role()).isEqualTo(Role.CONTROL);
-              assertThat(family.stateClass()).isEqualTo(StateClass.NOT_PAYLOAD);
-              assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
-              assertThat(family.retentionDisposition())
-                  .isEqualTo(RetentionDisposition.IMMUTABLE_RETAINED);
-              assertThat(family.ownerConsequence()).contains("provenance", "no running instance");
-            });
+        .anySatisfy(family -> {
+          assertThat(family.familyId()).isEqualTo("game_session_private_fresh_runtime_allocations");
+          assertThat(family.role()).isEqualTo(Role.CONTROL);
+          assertThat(family.stateClass()).isEqualTo(StateClass.NOT_PAYLOAD);
+          assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
+          assertThat(family.retentionDisposition())
+              .isEqualTo(RetentionDisposition.IMMUTABLE_RETAINED);
+          assertThat(family.ownerConsequence()).contains("provenance", "no running instance");
+        });
   }
 
   private static void assertPrivateRevisionClassifications(
@@ -1290,15 +1270,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                 "game_session_current_private_catalog_revisions",
                 RetentionDisposition.OWNER_POLICY_RETAINED))) {
       assertThat(catalog.families())
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo(expected.getKey());
-                assertThat(family.role()).isEqualTo(Role.CONTROL);
-                assertThat(family.stateClass()).isEqualTo(StateClass.NOT_PAYLOAD);
-                assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
-                assertThat(family.retentionDisposition()).isEqualTo(expected.getValue());
-                assertThat(family.ownerConsequence()).isNotBlank();
-              });
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo(expected.getKey());
+            assertThat(family.role()).isEqualTo(Role.CONTROL);
+            assertThat(family.stateClass()).isEqualTo(StateClass.NOT_PAYLOAD);
+            assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
+            assertThat(family.retentionDisposition()).isEqualTo(expected.getValue());
+            assertThat(family.ownerConsequence()).isNotBlank();
+          });
     }
   }
 
@@ -1548,14 +1527,13 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       var intake =
           Objects.requireNonNull(
               transaction.execute(status -> sourceOwner.register(UUID.randomUUID(), evidence)));
-      transaction.executeWithoutResult(
-          status ->
-              new GameSessionFreshTenantAssociationRepository(dsl)
-                  .associateFresh(
-                      UUID.randomUUID(),
-                      "test",
-                      intake,
-                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
+      transaction.executeWithoutResult(status ->
+          new GameSessionFreshTenantAssociationRepository(dsl)
+              .associateFresh(
+                  UUID.randomUUID(),
+                  "test",
+                  intake,
+                  CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
       var catalogRequest =
           new CreateCanonicalRealmCatalogRequest(
               UUID.randomUUID(),
@@ -1617,23 +1595,21 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   .plusSeconds(3600));
       var preparation =
           Objects.requireNonNull(
-                  transaction.execute(
-                      status ->
-                          new GameSessionInitialPlaytestLifecycleRepository(dsl)
-                              .prepare(preparationRequest)))
+                  transaction.execute(status ->
+                      new GameSessionInitialPlaytestLifecycleRepository(dsl)
+                          .prepare(preparationRequest)))
               .preparation();
       var privateTargets = new GameSessionPrivateFreshTargetRepository(dsl);
       var serializable = new TransactionTemplate(manager);
       serializable.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
       var allocation =
           Objects.requireNonNull(
-              serializable.execute(
-                  status ->
-                      privateTargets.allocate(
-                          new GameSessionPrivateFreshTargetRepository.Request(
-                              UUID.randomUUID(),
-                              preparationRequest.requestId(),
-                              preparation.playtestLifecycleId()))));
+              serializable.execute(status ->
+                  privateTargets.allocate(
+                      new GameSessionPrivateFreshTargetRepository.Request(
+                          UUID.randomUUID(),
+                          preparationRequest.requestId(),
+                          preparation.playtestLifecycleId()))));
       assertThat(allocation.replayed()).isFalse();
       assertThat(
               privateTargets.readByPreparation(

@@ -151,13 +151,11 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                 "expected retained reset token")
             .intoMap();
     var beforeEvents = dsl.fetch("SELECT * FROM account_authority_outbox_events").intoMaps();
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        service.completePasswordReset(
-                            new net.firedevops.firemud.accountservice.dto
-                                .CompletePasswordResetRequest(tokenValue, "replacement-password"))))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                service.completePasswordReset(
+                    new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                        tokenValue, "replacement-password"))))
         .isInstanceOf(
             AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
     assertThat(accounts.findById(accountId).orElseThrow().getPasswordHash())
@@ -223,15 +221,13 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
         .isEqualTo(baseline.account().accountRepositoryInsertTransactionId());
     assertThat(baseline.account().accountSecurityCutoff()).isEmpty();
 
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "UPDATE account_authority_generations "
-                                + "SET generation = 2, source_version = 2 "
-                                + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
-                            account.getAccountUuid())))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                dsl.execute(
+                    "UPDATE account_authority_generations "
+                        + "SET generation = 2, source_version = 2 "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    account.getAccountUuid())))
         .isInstanceOf(RuntimeException.class);
     assertThat(
             Objects.requireNonNull(
@@ -247,11 +243,9 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     account.setEmailVerified(true);
     transaction.executeWithoutResult(status -> accounts.save(account));
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid())))
+    assertThatThrownBy(() ->
+            transaction.execute(status ->
+                sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid())))
         .isInstanceOf(
             AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class)
         .hasMessage("Account authority source evidence is unavailable or inconsistent");
@@ -309,20 +303,16 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
 
     Account rollbackAttempt = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
     rollbackAttempt.setPasswordHash("rollback-only-password-hash");
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      accounts.save(rollbackAttempt);
-                      throw new IllegalStateException("force Account source event rollback");
-                    }))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status -> {
+              accounts.save(rollbackAttempt);
+              throw new IllegalStateException("force Account source event rollback");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("force Account source event rollback");
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid())))
+    assertThatThrownBy(() ->
+            transaction.execute(status ->
+                sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid())))
         .isInstanceOf(
             AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class)
         .hasMessage("Account authority source evidence is unavailable or inconsistent");
@@ -441,13 +431,10 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThatThrownBy(() -> accounts.delete(account))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("pending-deletion retention workflow");
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "DELETE FROM accounts WHERE account_uuid = ?",
-                            account.getAccountUuid())))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                dsl.execute(
+                    "DELETE FROM accounts WHERE account_uuid = ?", account.getAccountUuid())))
         .isInstanceOf(DataAccessException.class);
     assertThat(accounts.findByAccountUuid(account.getAccountUuid())).isPresent();
   }
@@ -474,11 +461,9 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
 
     account.setPasswordHash("changed-null-role-account-password-hash");
     transaction.executeWithoutResult(status -> accounts.save(account));
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid())))
+    assertThatThrownBy(() ->
+            transaction.execute(status ->
+                sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid())))
         .isInstanceOf(
             AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class)
         .hasMessage("Account authority source evidence is unavailable or inconsistent");
@@ -527,10 +512,9 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     transaction.executeWithoutResult(status -> sources.initializeIssuerIfAbsent(ISSUER));
     var original =
         Objects.requireNonNull(
-            transaction.execute(
-                status ->
-                    sources.appendIssuerAuthorityChange(
-                        ISSUER, "SIGNER_COMPROMISE", "held-issuer-" + UUID.randomUUID())));
+            transaction.execute(status ->
+                sources.appendIssuerAuthorityChange(
+                    ISSUER, "SIGNER_COMPROMISE", "held-issuer-" + UUID.randomUUID())));
     var originalEvent =
         transaction.execute(
             status -> outbox.findEvent(original.checkpoint().outboxStreamKey(), 1L).orElseThrow());
@@ -586,11 +570,10 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     Long.toString(original.checkpoint().sequence()),
                     Objects.requireNonNull(originalEvent).payload())));
     var fences = new DraftAuthorizationFenceRepository(dsl);
-    transaction.executeWithoutResult(
-        status -> {
-          fences.reserve(holder);
-          fences.claimCommitOrder(holder);
-        });
+    transaction.executeWithoutResult(status -> {
+      fences.reserve(holder);
+      fences.claimCommitOrder(holder);
+    });
     Map<String, List<Map<String, Object>>> retained = new java.util.LinkedHashMap<>();
     for (String table :
         List.of(
@@ -612,21 +595,16 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     }
     var observed = transaction.execute(status -> sources.initializeIssuerIfAbsent(ISSUER));
     assertThat(observed).isEqualTo(original);
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        sources.appendIssuerAuthorityChange(
-                            ISSUER,
-                            "SIGNER_COMPROMISE",
-                            "blocked-held-issuer-" + UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                sources.appendIssuerAuthorityChange(
+                    ISSUER, "SIGNER_COMPROMISE", "blocked-held-issuer-" + UUID.randomUUID())))
         .rootCause()
         .isInstanceOf(org.postgresql.util.PSQLException.class)
         .hasMessageContaining("Required creator source is held until every original owner settles")
-        .satisfies(
-            failure ->
-                assertThat(((org.postgresql.util.PSQLException) failure).getSQLState())
-                    .isEqualTo("55P03"));
+        .satisfies(failure ->
+            assertThat(((org.postgresql.util.PSQLException) failure).getSQLState())
+                .isEqualTo("55P03"));
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
@@ -662,30 +640,26 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     CompletableFuture<Integer> secondPid = new CompletableFuture<>();
     ExecutorService executor = Executors.newFixedThreadPool(2);
     var first =
-        executor.submit(
-            () ->
-                transaction.execute(
-                    status -> {
-                      firstPid.complete(
-                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      var baseline = sources.initializeIssuerIfAbsent(ISSUER);
-                      firstInitialized.countDown();
-                      await(releaseFirst, "First issuer enrollment was not released");
-                      return baseline;
-                    }));
+        executor.submit(() ->
+            transaction.execute(status -> {
+              firstPid.complete(
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class));
+              var baseline = sources.initializeIssuerIfAbsent(ISSUER);
+              firstInitialized.countDown();
+              await(releaseFirst, "First issuer enrollment was not released");
+              return baseline;
+            }));
     var second =
-        executor.submit(
-            () -> {
-              await(firstInitialized, "First issuer enrollment did not initialize");
-              return transaction.execute(
-                  status -> {
-                    secondPid.complete(
-                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                            .get(0, Integer.class));
-                    return sources.initializeIssuerIfAbsent(ISSUER);
-                  });
-            });
+        executor.submit(() -> {
+          await(firstInitialized, "First issuer enrollment did not initialize");
+          return transaction.execute(status -> {
+            secondPid.complete(
+                Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                    .get(0, Integer.class));
+            return sources.initializeIssuerIfAbsent(ISSUER);
+          });
+        });
     try {
       assertThat(firstInitialized.await(30, TimeUnit.SECONDS)).isTrue();
       awaitLockWait(dsl, secondPid.get(30, TimeUnit.SECONDS), firstPid.get(30, TimeUnit.SECONDS));
@@ -737,17 +711,15 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                     "SELECT account_uuid FROM accounts WHERE username = ?", retained.getUsername()))
             .get("account_uuid", UUID.class);
     String retainedIssuer = "retained-issuer-" + UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      dsl.execute(
-                          "INSERT INTO account_authority_generations "
-                              + "(scope_kind, issuer_id, generation, source_version) "
-                              + "VALUES ('ISSUER', ?, 1, 1)",
-                          retainedIssuer);
-                      sources.initializeIssuerIfAbsent(retainedIssuer);
-                    }))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status -> {
+              dsl.execute(
+                  "INSERT INTO account_authority_generations "
+                      + "(scope_kind, issuer_id, generation, source_version) "
+                      + "VALUES ('ISSUER', ?, 1, 1)",
+                  retainedIssuer);
+              sources.initializeIssuerIfAbsent(retainedIssuer);
+            }))
         .isInstanceOf(
             AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
     assertThat(
@@ -761,21 +733,19 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
 
     transaction.executeWithoutResult(status -> sources.initializeIssuerIfAbsent(ISSUER));
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> {
-                      dsl.execute(
-                          "INSERT INTO account_authority_generations "
-                              + "(scope_kind, account_uuid, generation, source_version) "
-                              + "VALUES ('ACCOUNT', ?, 1, 1)",
-                          retainedUuid);
-                      dsl.execute(
-                          "INSERT INTO account_authority_issuance_fences "
-                              + "(account_uuid, issuance_fence, source_version) VALUES (?, 1, 1)",
-                          retainedUuid);
-                      return sources.readCurrentIssuerAccountSources(ISSUER, retainedUuid);
-                    }))
+    assertThatThrownBy(() ->
+            transaction.execute(status -> {
+              dsl.execute(
+                  "INSERT INTO account_authority_generations "
+                      + "(scope_kind, account_uuid, generation, source_version) "
+                      + "VALUES ('ACCOUNT', ?, 1, 1)",
+                  retainedUuid);
+              dsl.execute(
+                  "INSERT INTO account_authority_issuance_fences "
+                      + "(account_uuid, issuance_fence, source_version) VALUES (?, 1, 1)",
+                  retainedUuid);
+              return sources.readCurrentIssuerAccountSources(ISSUER, retainedUuid);
+            }))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             Objects.requireNonNull(
@@ -787,21 +757,18 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
         .isZero();
 
     String forgedKey = "account:auth-authority:v1:issuer/forged-empty-" + UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "INSERT INTO account_authority_outbox_streams "
-                                + "(outbox_stream_key, last_sequence) VALUES (?, 0)",
-                            forgedKey)))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                dsl.execute(
+                    "INSERT INTO account_authority_outbox_streams "
+                        + "(outbox_stream_key, last_sequence) VALUES (?, 0)",
+                    forgedKey)))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable rootCause = failure;
-              while (rootCause.getCause() != null) rootCause = rootCause.getCause();
-              assertThat(rootCause.getMessage()).contains("fresh source-baseline provenance");
-            });
+        .satisfies(failure -> {
+          Throwable rootCause = failure;
+          while (rootCause.getCause() != null) rootCause = rootCause.getCause();
+          assertThat(rootCause.getMessage()).contains("fresh source-baseline provenance");
+        });
   }
 
   @Test
@@ -827,39 +794,33 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     CompletableFuture<Integer> snapshotBackendPid = new CompletableFuture<>();
     ExecutorService executor = Executors.newFixedThreadPool(2);
     Future<?> writer =
-        executor.submit(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      writerBackendPid.complete(
-                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      participantsReady.countDown();
-                      await(startLockPhase, "Account lock-order phase was not started");
-                      dsl.fetchOne(
-                          "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-                          account.getAccountUuid());
-                      accountRowLocked.countDown();
-                      await(releaseWriter, "Account writer was not released");
-                      Account updated =
-                          accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
-                      updated.setPasswordHash("lock-order-updated-hash");
-                      accounts.save(updated);
-                    }));
+        executor.submit(() ->
+            transaction.executeWithoutResult(status -> {
+              writerBackendPid.complete(
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class));
+              participantsReady.countDown();
+              await(startLockPhase, "Account lock-order phase was not started");
+              dsl.fetchOne(
+                  "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                  account.getAccountUuid());
+              accountRowLocked.countDown();
+              await(releaseWriter, "Account writer was not released");
+              Account updated = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
+              updated.setPasswordHash("lock-order-updated-hash");
+              accounts.save(updated);
+            }));
     Future<AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot> snapshot =
-        executor.submit(
-            () ->
-                transaction.execute(
-                    status -> {
-                      snapshotBackendPid.complete(
-                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      participantsReady.countDown();
-                      await(startLockPhase, "Account lock-order phase was not started");
-                      await(accountRowLocked, "Account writer did not acquire its row lock");
-                      return sources.readCurrentIssuerAccountSources(
-                          ISSUER, account.getAccountUuid());
-                    }));
+        executor.submit(() ->
+            transaction.execute(status -> {
+              snapshotBackendPid.complete(
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class));
+              participantsReady.countDown();
+              await(startLockPhase, "Account lock-order phase was not started");
+              await(accountRowLocked, "Account writer did not acquire its row lock");
+              return sources.readCurrentIssuerAccountSources(ISSUER, account.getAccountUuid());
+            }));
 
     try {
       assertThat(participantsReady.await(30, TimeUnit.SECONDS)).isTrue();
@@ -872,15 +833,14 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
       writer.get(45, TimeUnit.SECONDS);
       assertThatThrownBy(() -> snapshot.get(45, TimeUnit.SECONDS))
           .isInstanceOf(java.util.concurrent.ExecutionException.class)
-          .satisfies(
-              failure -> {
-                assertThat(failure.getCause())
-                    .isInstanceOf(
-                        AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
-                            .class);
-                assertThat(failure.getCause())
-                    .hasMessage("Account authority source evidence is unavailable or inconsistent");
-              });
+          .satisfies(failure -> {
+            assertThat(failure.getCause())
+                .isInstanceOf(
+                    AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
+                        .class);
+            assertThat(failure.getCause())
+                .hasMessage("Account authority source evidence is unavailable or inconsistent");
+          });
       var committedState =
           transaction.execute(
               status -> generations.read(AuthorityScope.account(account.getAccountUuid())));
@@ -945,55 +905,43 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     CompletableFuture<Integer> writerPid = new CompletableFuture<>();
     ExecutorService executor = Executors.newFixedThreadPool(3);
     Future<AccountAuthorityGenerationRepository.CompositeSnapshot> firstReader =
-        executor.submit(
-            () ->
-                transaction.execute(
-                    status -> {
-                      firstReaderPid.complete(
-                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      var snapshot =
-                          generations.readCompositeSnapshot(
-                              ISSUER,
-                              first.getAccountUuid(),
-                              java.util.List.of(),
-                              java.util.List.of());
-                      readersReady.countDown();
-                      await(releaseReaders, "Shared issuer readers were not released");
-                      return snapshot;
-                    }));
+        executor.submit(() ->
+            transaction.execute(status -> {
+              firstReaderPid.complete(
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class));
+              var snapshot =
+                  generations.readCompositeSnapshot(
+                      ISSUER, first.getAccountUuid(), java.util.List.of(), java.util.List.of());
+              readersReady.countDown();
+              await(releaseReaders, "Shared issuer readers were not released");
+              return snapshot;
+            }));
     Future<AccountAuthorityGenerationRepository.CompositeSnapshot> secondReader =
-        executor.submit(
-            () ->
-                transaction.execute(
-                    status -> {
-                      secondReaderPid.complete(
-                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      var snapshot =
-                          generations.readCompositeSnapshot(
-                              ISSUER,
-                              second.getAccountUuid(),
-                              java.util.List.of(),
-                              java.util.List.of());
-                      readersReady.countDown();
-                      await(releaseReaders, "Shared issuer readers were not released");
-                      return snapshot;
-                    }));
+        executor.submit(() ->
+            transaction.execute(status -> {
+              secondReaderPid.complete(
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class));
+              var snapshot =
+                  generations.readCompositeSnapshot(
+                      ISSUER, second.getAccountUuid(), java.util.List.of(), java.util.List.of());
+              readersReady.countDown();
+              await(releaseReaders, "Shared issuer readers were not released");
+              return snapshot;
+            }));
     Future<?> issuerWriter =
-        executor.submit(
-            () -> {
-              await(readersReady, "Both shared issuer readers did not acquire their snapshot");
-              transaction.executeWithoutResult(
-                  status -> {
-                    writerPid.complete(
-                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                            .get(0, Integer.class));
-                    writerStarted.countDown();
-                    sources.appendIssuerAuthorityChange(
-                        ISSUER, "SIGNER_COMPROMISE", "shared-reader-" + UUID.randomUUID());
-                  });
-            });
+        executor.submit(() -> {
+          await(readersReady, "Both shared issuer readers did not acquire their snapshot");
+          transaction.executeWithoutResult(status -> {
+            writerPid.complete(
+                Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                    .get(0, Integer.class));
+            writerStarted.countDown();
+            sources.appendIssuerAuthorityChange(
+                ISSUER, "SIGNER_COMPROMISE", "shared-reader-" + UUID.randomUUID());
+          });
+        });
 
     try {
       assertThat(readersReady.await(30, TimeUnit.SECONDS)).isTrue();
@@ -1047,40 +995,34 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     String secondRequestId = "issuer-writer-two-" + UUID.randomUUID();
     ExecutorService executor = Executors.newFixedThreadPool(2);
     Future<?> firstWriter =
-        executor.submit(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      firstWriterPid.complete(
-                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      var issuerRow =
-                          dsl.fetchOne(
-                              "SELECT generation FROM account_authority_generations "
-                                  + "WHERE scope_kind = 'ISSUER' AND issuer_id = ? FOR UPDATE",
-                              ISSUER);
-                      assertThat(issuerRow).isNotNull();
-                      firstWriterLocked.countDown();
-                      await(secondWriterStarted, "Second issuer writer did not start");
-                      sources.appendIssuerAuthorityChange(
-                          ISSUER, "SIGNER_COMPROMISE", firstRequestId);
-                      firstWriterAppended.countDown();
-                      await(allowFirstWriterCommit, "First issuer writer was not released");
-                    }));
+        executor.submit(() ->
+            transaction.executeWithoutResult(status -> {
+              firstWriterPid.complete(
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class));
+              var issuerRow =
+                  dsl.fetchOne(
+                      "SELECT generation FROM account_authority_generations "
+                          + "WHERE scope_kind = 'ISSUER' AND issuer_id = ? FOR UPDATE",
+                      ISSUER);
+              assertThat(issuerRow).isNotNull();
+              firstWriterLocked.countDown();
+              await(secondWriterStarted, "Second issuer writer did not start");
+              sources.appendIssuerAuthorityChange(ISSUER, "SIGNER_COMPROMISE", firstRequestId);
+              firstWriterAppended.countDown();
+              await(allowFirstWriterCommit, "First issuer writer was not released");
+            }));
     Future<?> secondWriter =
-        executor.submit(
-            () -> {
-              await(firstWriterLocked, "First issuer writer did not acquire issuer row");
-              transaction.executeWithoutResult(
-                  status -> {
-                    secondWriterPid.complete(
-                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                            .get(0, Integer.class));
-                    secondWriterStarted.countDown();
-                    sources.appendIssuerAuthorityChange(
-                        ISSUER, "SIGNER_COMPROMISE", secondRequestId);
-                  });
-            });
+        executor.submit(() -> {
+          await(firstWriterLocked, "First issuer writer did not acquire issuer row");
+          transaction.executeWithoutResult(status -> {
+            secondWriterPid.complete(
+                Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                    .get(0, Integer.class));
+            secondWriterStarted.countDown();
+            sources.appendIssuerAuthorityChange(ISSUER, "SIGNER_COMPROMISE", secondRequestId);
+          });
+        });
 
     try {
       assertThat(firstWriterLocked.await(30, TimeUnit.SECONDS)).isTrue();
@@ -1104,23 +1046,21 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
           (IssuerEvent)
               AccountAuthoritySourceEventV1Codec.verify(
                   new String(
-                      transaction.execute(
-                          status ->
-                              outbox
-                                  .findEvent(readback.issuer().checkpoint().outboxStreamKey(), 1L)
-                                  .orElseThrow()
-                                  .payload()),
+                      transaction.execute(status ->
+                          outbox
+                              .findEvent(readback.issuer().checkpoint().outboxStreamKey(), 1L)
+                              .orElseThrow()
+                              .payload()),
                       StandardCharsets.UTF_8));
       var secondEvent =
           (IssuerEvent)
               AccountAuthoritySourceEventV1Codec.verify(
                   new String(
-                      transaction.execute(
-                          status ->
-                              outbox
-                                  .findEvent(readback.issuer().checkpoint().outboxStreamKey(), 2L)
-                                  .orElseThrow()
-                                  .payload()),
+                      transaction.execute(status ->
+                          outbox
+                              .findEvent(readback.issuer().checkpoint().outboxStreamKey(), 2L)
+                              .orElseThrow()
+                              .payload()),
                       StandardCharsets.UTF_8));
       assertThat(firstEvent.requestId()).isEqualTo(firstRequestId);
       assertThat(firstEvent.issuerAuthGeneration()).isEqualTo("2");

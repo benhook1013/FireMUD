@@ -77,11 +77,10 @@ class AccountPublicBootstrapEntitlementOwnerTest {
   void demoRevalidationCannotRenewTheOriginalObservationDeadline() {
     Fixture f = new Fixture(SourceKind.NON_PAID_DEMO);
     when(f.demos.revalidate(f.demo))
-        .thenAnswer(
-            invocation -> {
-              f.time.set(NOW.plusSeconds(7));
-              return f.demo;
-            });
+        .thenAnswer(invocation -> {
+          f.time.set(NOW.plusSeconds(7));
+          return f.demo;
+        });
     var value = f.owner.evaluate(TENANT);
     assertThat(value.sourceKind()).isEqualTo(SourceKind.NON_PAID_DEMO);
     assertThat(value.evaluatedAt()).isEqualTo(NOW);
@@ -121,11 +120,10 @@ class AccountPublicBootstrapEntitlementOwnerTest {
   void expiredDemoObservationAndFinalCommitFailureExposeNoValue() {
     Fixture f = new Fixture(SourceKind.NON_PAID_DEMO);
     when(f.demos.revalidate(f.demo))
-        .thenAnswer(
-            invocation -> {
-              f.time.set(NOW.plusSeconds(15));
-              return f.demo;
-            });
+        .thenAnswer(invocation -> {
+          f.time.set(NOW.plusSeconds(15));
+          return f.demo;
+        });
     assertThatThrownBy(() -> f.owner.evaluate(TENANT))
         .isInstanceOf(AccountPublicBootstrapEntitlementOwner.UnavailableException.class);
     Fixture failedCommit = new Fixture(SourceKind.NON_PAID_DEMO);

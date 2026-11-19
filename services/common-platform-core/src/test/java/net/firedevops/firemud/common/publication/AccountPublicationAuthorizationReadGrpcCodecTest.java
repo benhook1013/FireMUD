@@ -49,40 +49,37 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
     byte[] oversizedBinding =
         new byte[AccountPublicationAuthorizationReadEvidence.MAX_BINDING_BYTES + 1];
 
-    assertThatThrownBy(
-            () ->
-                new AccountPublicationAuthorizationReadEvidence.Request(
-                    AccountPublicationAuthorizationReadEvidence.Request.SCHEMA_VERSION,
-                    "test",
-                    UUID.randomUUID(),
-                    oversizedBinding,
-                    request.publicationAuthorizationDigest()))
+    assertThatThrownBy(() ->
+            new AccountPublicationAuthorizationReadEvidence.Request(
+                AccountPublicationAuthorizationReadEvidence.Request.SCHEMA_VERSION,
+                "test",
+                UUID.randomUUID(),
+                oversizedBinding,
+                request.publicationAuthorizationDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "Complete original Account publication authorization binding exceeds size limit");
 
     ReadHeldPublicationAuthorizationRequest wireRequest =
         AccountPublicationAuthorizationReadGrpcCodec.toRequest(request);
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
-                    wireRequest.toBuilder()
-                        .setOriginalPublicationAuthorizationBinding(
-                            ByteString.copyFrom(oversizedBinding))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
+                wireRequest.toBuilder()
+                    .setOriginalPublicationAuthorizationBinding(
+                        ByteString.copyFrom(oversizedBinding))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "Complete original Account publication authorization binding exceeds size limit");
 
     var wireResponse = AccountPublicationAuthorizationReadGrpcCodec.toHeldResponse(request);
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
-                    request,
-                    wireResponse.toBuilder()
-                        .setOriginalPublicationAuthorizationBinding(
-                            ByteString.copyFrom(oversizedBinding))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
+                request,
+                wireResponse.toBuilder()
+                    .setOriginalPublicationAuthorizationBinding(
+                        ByteString.copyFrom(oversizedBinding))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "Complete original Account publication authorization binding exceeds size limit");
@@ -92,9 +89,8 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
             .setTargetNamespace(
                 "x".repeat(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(oversizedRequestEnvelope))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromRequest(oversizedRequestEnvelope))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account publication authorization read request exceeds size limit");
 
@@ -103,10 +99,9 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
             .setTargetNamespace(
                 "x".repeat(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
-                    request, oversizedResponseEnvelope))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
+                request, oversizedResponseEnvelope))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account publication authorization read response exceeds size limit");
   }
@@ -119,28 +114,24 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
-                    request.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
+                request.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
-                    request.toBuilder().setReadRequestId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
+                request.toBuilder().setReadRequestId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
-                    request.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
+                request.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setPublicationAuthorizationDigest("sha256:" + "0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setPublicationAuthorizationDigest("sha256:" + "0".repeat(64))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account publication authorization read request is invalid")
         .hasRootCauseMessage(

@@ -215,15 +215,14 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         response.getCheckedAtMs() <= 0 ? null : Instant.ofEpochMilli(response.getCheckedAtMs()),
         response.getRemapSetId().isBlank() ? null : response.getRemapSetId(),
         response.getParticipantResultsList().stream()
-            .map(
-                participant ->
-                    new InstanceCutoverCompatibilityDto.CutoverParticipantResultDto(
-                        participant.getParticipant(),
-                        toCutoverResultName(participant.getResult().name()),
-                        participant.getReasonsList(),
-                        participant.getStateClassesCheckedList(),
-                        participant.getCheckedFamiliesList(),
-                        participant.getHasS2Rows()))
+            .map(participant ->
+                new InstanceCutoverCompatibilityDto.CutoverParticipantResultDto(
+                    participant.getParticipant(),
+                    toCutoverResultName(participant.getResult().name()),
+                    participant.getReasonsList(),
+                    participant.getStateClassesCheckedList(),
+                    participant.getCheckedFamiliesList(),
+                    participant.getHasS2Rows()))
             .toList());
   }
 
@@ -321,15 +320,14 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
             ? null
             : Instant.ofEpochMilli(preparation.getCheckedAtMs()),
         preparation.getParticipantResultsList().stream()
-            .map(
-                participant ->
-                    new PreparedVersionUpgradeDto.CutoverParticipantResultDto(
-                        participant.getParticipant(),
-                        toCutoverResultName(participant.getResult().name()),
-                        participant.getReasonsList(),
-                        participant.getStateClassesCheckedList(),
-                        participant.getCheckedFamiliesList(),
-                        participant.getHasS2Rows()))
+            .map(participant ->
+                new PreparedVersionUpgradeDto.CutoverParticipantResultDto(
+                    participant.getParticipant(),
+                    toCutoverResultName(participant.getResult().name()),
+                    participant.getReasonsList(),
+                    participant.getStateClassesCheckedList(),
+                    participant.getCheckedFamiliesList(),
+                    participant.getHasS2Rows()))
             .toList(),
         preparation.getControlPlaneRequestId(),
         preparation.getExecutedTargetGameInstanceId().isBlank()

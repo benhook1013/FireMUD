@@ -146,9 +146,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
               CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.ISSUER_OBLIGATION,
               CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.REGION_OBLIGATION);
       assertThat(intent.cohortRows())
-          .filteredOn(
-              row ->
-                  row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
+          .filteredOn(row ->
+              row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
           .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
           .contains(reservationOnlyId.toString());
 
@@ -288,10 +287,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
 
       var reservationCohortRow =
           intent.cohortRows().stream()
-              .filter(
-                  row ->
-                      row.kind()
-                          == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
+              .filter(row ->
+                  row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
               .findFirst()
               .orElseThrow();
       assertThat(reservationCohortRow.sourceKey())
@@ -300,9 +297,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       assertThat(frozenReadback.state())
           .isEqualTo(CanonicalGameplayIssuerLayoutBootstrapIntent.State.INITIAL_BOOTSTRAP_INTENT);
       assertThat(frozenReadback.cohortRows())
-          .filteredOn(
-              row ->
-                  row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
+          .filteredOn(row ->
+              row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
           .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
           .containsExactly(reservationCohortRow.sourceRowDigest());
       assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation"))
@@ -527,20 +523,18 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
                     + " WHERE singleton_id = 1 FOR UPDATE");
 
         Future<CanonicalGameplayBindingTransitionSnapshot> preparedFuture =
-            executor.submit(
-                () -> {
-                  prepareStarted.countDown();
-                  return prepareActualBinding(inventory);
-                });
+            executor.submit(() -> {
+              prepareStarted.countDown();
+              return prepareActualBinding(inventory);
+            });
         assertThat(prepareStarted.await(10, TimeUnit.SECONDS)).isTrue();
         awaitInventoryClockWaiters(testSchema, 1);
 
         Future<CanonicalGameplayIssuerLayoutBootstrapIntent> intentFuture =
-            executor.submit(
-                () -> {
-                  intentStarted.countDown();
-                  return owner.beginInitialBootstrapIntent(requestId, descriptor, source);
-                });
+            executor.submit(() -> {
+              intentStarted.countDown();
+              return owner.beginInitialBootstrapIntent(requestId, descriptor, source);
+            });
         assertThat(intentStarted.await(10, TimeUnit.SECONDS)).isTrue();
         awaitInventoryClockWaiters(testSchema, 2);
 
@@ -597,25 +591,23 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
                     + " WHERE singleton_id = 1 FOR UPDATE");
 
         Future<CanonicalGameplayIssuerLayoutBootstrapIntent> intentFuture =
-            executor.submit(
-                () -> {
-                  intentStarted.countDown();
-                  return owner.beginInitialBootstrapIntent(requestId, descriptor, source);
-                });
+            executor.submit(() -> {
+              intentStarted.countDown();
+              return owner.beginInitialBootstrapIntent(requestId, descriptor, source);
+            });
         assertThat(intentStarted.await(10, TimeUnit.SECONDS)).isTrue();
         awaitInventoryClockWaiters(testSchema, 1);
 
         Future<PreparationAttempt> prepareFuture =
-            executor.submit(
-                () -> {
-                  prepareStarted.countDown();
-                  try {
-                    return new PreparationAttempt(
-                        prepareActualBinding(inventory, BLOCKED_CHARACTER_ID), null);
-                  } catch (RuntimeException failure) {
-                    return new PreparationAttempt(null, failure);
-                  }
-                });
+            executor.submit(() -> {
+              prepareStarted.countDown();
+              try {
+                return new PreparationAttempt(
+                    prepareActualBinding(inventory, BLOCKED_CHARACTER_ID), null);
+              } catch (RuntimeException failure) {
+                return new PreparationAttempt(null, failure);
+              }
+            });
         assertThat(prepareStarted.await(10, TimeUnit.SECONDS)).isTrue();
         awaitInventoryClockWaiters(testSchema, 2);
 
@@ -797,10 +789,9 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       var newerLayout =
           descriptor(LAYOUT_VERSION.add(BigInteger.ONE), PARTITION_COUNT, PARTITION_CAPACITY);
       UUID replacementRequest = UUID.randomUUID();
-      assertThatThrownBy(
-              () ->
-                  owner.supersedeStaleInitialBootstrapIntent(
-                      original.operationId(), replacementRequest, newerLayout, source))
+      assertThatThrownBy(() ->
+              owner.supersedeStaleInitialBootstrapIntent(
+                  original.operationId(), replacementRequest, newerLayout, source))
           .hasMessageContaining("strictly newer inventory");
       assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
           .isEqualTo(originalControl);
@@ -815,20 +806,17 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       assertThatThrownBy(
               () -> plans.prepareInitialBuildPlan(original.operationId(), original.requestId()))
           .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  owner.supersedeStaleInitialBootstrapIntent(
-                      original.operationId(), replacementRequest, layout, source))
+      assertThatThrownBy(() ->
+              owner.supersedeStaleInitialBootstrapIntent(
+                  original.operationId(), replacementRequest, layout, source))
           .hasMessageContaining("strictly newer layout version");
-      assertThatThrownBy(
-              () ->
-                  owner.supersedeStaleInitialBootstrapIntent(
-                      original.operationId(), original.requestId(), newerLayout, source))
+      assertThatThrownBy(() ->
+              owner.supersedeStaleInitialBootstrapIntent(
+                  original.operationId(), original.requestId(), newerLayout, source))
           .hasMessageContaining("fresh distinct request");
-      assertThatThrownBy(
-              () ->
-                  owner.supersedeStaleInitialBootstrapIntent(
-                      UUID.randomUUID(), replacementRequest, newerLayout, source))
+      assertThatThrownBy(() ->
+              owner.supersedeStaleInitialBootstrapIntent(
+                  UUID.randomUUID(), replacementRequest, newerLayout, source))
           .hasMessageContaining("no longer current");
       assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
           .isEqualTo(originalControl);
@@ -898,17 +886,16 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       plans.prepareInitialBuildPlan(replacement.operationId(), replacementRequest);
       List<String> replacementControl =
           rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_session_canonical_issuer_layout_bootstrap_control"
-                          + " SET current_operation_id = ?, control_epoch = ?, current_operation_fence = ?,"
-                          + " current_coverage_fence = ? WHERE issuer_id = ?",
-                      original.operationId(),
-                      new BigDecimal(original.controlEpoch()),
-                      new BigDecimal(original.operationFence()),
-                      new BigDecimal(original.coverageFence()),
-                      ISSUER))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_session_canonical_issuer_layout_bootstrap_control"
+                      + " SET current_operation_id = ?, control_epoch = ?, current_operation_fence = ?,"
+                      + " current_coverage_fence = ? WHERE issuer_id = ?",
+                  original.operationId(),
+                  new BigDecimal(original.controlEpoch()),
+                  new BigDecimal(original.operationFence()),
+                  new BigDecimal(original.coverageFence()),
+                  ISSUER))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("requires exact retained supersession lineage");
       assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
@@ -938,33 +925,29 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
           .isEqualTo(replacementControl);
       assertThat(rowImages(dsl, "game_session_canonical_issuer_bootstrap_supersession"))
           .isEqualTo(retainedRelation);
-      assertThatThrownBy(
-              () ->
-                  restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
-                      original.operationId(), UUID.randomUUID(), newerLayout, source))
+      assertThatThrownBy(() ->
+              restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
+                  original.operationId(), UUID.randomUUID(), newerLayout, source))
           .hasMessageContaining("no longer current");
-      assertThatThrownBy(
-              () ->
-                  restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
-                      original.operationId(),
-                      replacementRequest,
-                      descriptor(
-                          LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
-                      source))
+      assertThatThrownBy(() ->
+              restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
+                  original.operationId(),
+                  replacementRequest,
+                  descriptor(
+                      LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
+                  source))
           .hasMessageContaining("changed its original trusted inputs");
-      assertThatThrownBy(
-              () ->
-                  restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
-                      original.operationId(),
-                      replacementRequest,
-                      newerLayout,
-                      sourceCheckpoint(BigInteger.valueOf(8))))
+      assertThatThrownBy(() ->
+              restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
+                  original.operationId(),
+                  replacementRequest,
+                  newerLayout,
+                  sourceCheckpoint(BigInteger.valueOf(8))))
           .hasMessageContaining("changed its original trusted inputs");
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_session_canonical_issuer_bootstrap_supersession"
-                          + " SET new_inventory_revision = new_inventory_revision"))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_session_canonical_issuer_bootstrap_supersession"
+                      + " SET new_inventory_revision = new_inventory_revision"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThatThrownBy(
               () -> dsl.execute("DELETE FROM game_session_canonical_issuer_bootstrap_supersession"))
@@ -1124,26 +1107,22 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
                       original.operationId())
                   .get(0, Long.class))
           .isEqualTo(1L);
-      assertThatThrownBy(
-              () ->
-                  bootstrap.supersedeStaleInitialBootstrapIntent(
-                      replacement.operationId(),
-                      UUID.randomUUID(),
-                      descriptor(
-                          LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
-                      source))
+      assertThatThrownBy(() ->
+              bootstrap.supersedeStaleInitialBootstrapIntent(
+                  replacement.operationId(),
+                  UUID.randomUUID(),
+                  descriptor(
+                      LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
+                  source))
           .hasMessageContaining("installed issuer anchor forbids");
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
-                      .supersedeStaleInitialBootstrapIntent(
-                          original.operationId(),
-                          replacement.requestId(),
-                          descriptor(
-                              LAYOUT_VERSION.add(BigInteger.ONE),
-                              PARTITION_COUNT,
-                              PARTITION_CAPACITY),
-                          source))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+                  .supersedeStaleInitialBootstrapIntent(
+                      original.operationId(),
+                      replacement.requestId(),
+                      descriptor(
+                          LAYOUT_VERSION.add(BigInteger.ONE), PARTITION_COUNT, PARTITION_CAPACITY),
+                      source))
           .hasMessageContaining("installed issuer anchor forbids");
       assertMalformedSupersessionRefusesOrdinaryNew(dsl, local, request, state);
     } finally {
@@ -1170,30 +1149,26 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
                 + " FROM game_session_canonical_issuer_layout_bootstrap_intent original"
                 + " ORDER BY operation_fence DESC LIMIT 1",
             "UPDATE game_session_canonical_issuer_bootstrap_supersession SET old_operation_fence = old_operation_fence + 1")) {
-      assertThatThrownBy(
-              () ->
-                  dsl.transaction(
-                      configuration -> {
-                        DSLContext transaction = DSL.using(configuration);
-                        transaction.execute(
-                            "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession DISABLE TRIGGER USER");
-                        if (corruption.startsWith("UPDATE")) {
-                          transaction.execute(
-                              "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession"
-                                  + " DROP CONSTRAINT chk_gs_issuer_bootstrap_supersession");
-                          transaction.execute(
-                              "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession"
-                                  + " DROP CONSTRAINT fk_gs_issuer_bootstrap_supersession_old");
-                        }
-                        transaction.execute(corruption);
-                        // Invoke the exact anchor gate in this same transaction, without opening
-                        // another connection.
-                        CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(
-                            transaction);
-                        CanonicalGameplayIssuerBootstrapCoverageRepository
-                            .readInstalledAnchorForBindingPreparationInTransaction(
-                                transaction, state);
-                      }))
+      assertThatThrownBy(() ->
+              dsl.transaction(configuration -> {
+                DSLContext transaction = DSL.using(configuration);
+                transaction.execute(
+                    "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession DISABLE TRIGGER USER");
+                if (corruption.startsWith("UPDATE")) {
+                  transaction.execute(
+                      "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession"
+                          + " DROP CONSTRAINT chk_gs_issuer_bootstrap_supersession");
+                  transaction.execute(
+                      "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession"
+                          + " DROP CONSTRAINT fk_gs_issuer_bootstrap_supersession_old");
+                }
+                transaction.execute(corruption);
+                // Invoke the exact anchor gate in this same transaction, without opening
+                // another connection.
+                CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+                CanonicalGameplayIssuerBootstrapCoverageRepository
+                    .readInstalledAnchorForBindingPreparationInTransaction(transaction, state);
+              }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining(
               corruption.startsWith("UPDATE")
@@ -1240,50 +1215,48 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
     UUID replacementId = UUID.randomUUID();
     BigInteger operationFence = original.coverageFence().add(BigInteger.ONE);
     BigInteger coverageFence = operationFence.add(BigInteger.ONE);
-    assertThatThrownBy(
-            () ->
-                dsl.transaction(
-                    configuration -> {
-                      DSLContext transaction = DSL.using(configuration);
-                      transaction.execute(
-                          "INSERT INTO game_session_canonical_issuer_layout_bootstrap_intent"
-                              + " SELECT (jsonb_populate_record("
-                              + " NULL::game_session_canonical_issuer_layout_bootstrap_intent,"
-                              + " to_jsonb(original) || jsonb_build_object("
-                              + " 'operation_id', ?::uuid, 'request_id', ?::uuid,"
-                              + " 'control_epoch', ?::numeric, 'operation_fence', ?::numeric,"
-                              + " 'coverage_fence', ?::numeric, 'inventory_snapshot_revision', ?::numeric,"
-                              + " 'layout_version', ?::numeric, 'layout_descriptor_bytes', ?::bytea,"
-                              + " 'layout_descriptor_digest', ?::text))).*"
-                              + " FROM game_session_canonical_issuer_layout_bootstrap_intent original"
-                              + " WHERE original.operation_id = ?",
-                          replacementId,
-                          UUID.randomUUID(),
-                          new BigDecimal(operationFence),
-                          new BigDecimal(operationFence),
-                          new BigDecimal(coverageFence),
-                          new BigDecimal(currentRevision),
-                          new BigDecimal(layout.layoutVersion()),
-                          layout.exactBytes(),
-                          CanonicalGameplayIssuerMemberV2Codec.sha256(layout.exactBytes()),
-                          original.operationId());
-                      transaction.execute(
-                          "INSERT INTO game_session_canonical_issuer_bootstrap_supersession"
-                              + " (issuer_id, old_operation_id, new_operation_id, old_inventory_revision,"
-                              + " new_inventory_revision, old_operation_fence, old_coverage_fence,"
-                              + " previous_last_issued_fence, new_operation_fence, new_coverage_fence)"
-                              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                          ISSUER,
-                          original.operationId(),
-                          replacementId,
-                          new BigDecimal(original.inventorySnapshotRevision()),
-                          new BigDecimal(currentRevision),
-                          new BigDecimal(original.operationFence()),
-                          new BigDecimal(original.coverageFence()),
-                          new BigDecimal(original.coverageFence()),
-                          new BigDecimal(operationFence),
-                          new BigDecimal(coverageFence));
-                    }))
+    assertThatThrownBy(() ->
+            dsl.transaction(configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              transaction.execute(
+                  "INSERT INTO game_session_canonical_issuer_layout_bootstrap_intent"
+                      + " SELECT (jsonb_populate_record("
+                      + " NULL::game_session_canonical_issuer_layout_bootstrap_intent,"
+                      + " to_jsonb(original) || jsonb_build_object("
+                      + " 'operation_id', ?::uuid, 'request_id', ?::uuid,"
+                      + " 'control_epoch', ?::numeric, 'operation_fence', ?::numeric,"
+                      + " 'coverage_fence', ?::numeric, 'inventory_snapshot_revision', ?::numeric,"
+                      + " 'layout_version', ?::numeric, 'layout_descriptor_bytes', ?::bytea,"
+                      + " 'layout_descriptor_digest', ?::text))).*"
+                      + " FROM game_session_canonical_issuer_layout_bootstrap_intent original"
+                      + " WHERE original.operation_id = ?",
+                  replacementId,
+                  UUID.randomUUID(),
+                  new BigDecimal(operationFence),
+                  new BigDecimal(operationFence),
+                  new BigDecimal(coverageFence),
+                  new BigDecimal(currentRevision),
+                  new BigDecimal(layout.layoutVersion()),
+                  layout.exactBytes(),
+                  CanonicalGameplayIssuerMemberV2Codec.sha256(layout.exactBytes()),
+                  original.operationId());
+              transaction.execute(
+                  "INSERT INTO game_session_canonical_issuer_bootstrap_supersession"
+                      + " (issuer_id, old_operation_id, new_operation_id, old_inventory_revision,"
+                      + " new_inventory_revision, old_operation_fence, old_coverage_fence,"
+                      + " previous_last_issued_fence, new_operation_fence, new_coverage_fence)"
+                      + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  ISSUER,
+                  original.operationId(),
+                  replacementId,
+                  new BigDecimal(original.inventorySnapshotRevision()),
+                  new BigDecimal(currentRevision),
+                  new BigDecimal(original.operationFence()),
+                  new BigDecimal(original.coverageFence()),
+                  new BigDecimal(original.coverageFence()),
+                  new BigDecimal(operationFence),
+                  new BigDecimal(coverageFence));
+            }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining("must move exact current control in the same transaction");
   }
@@ -1560,9 +1533,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
     assertThat(intent.inventorySnapshotRevision()).isEqualTo(prepared.inventoryRevision());
     assertThat(intent.cohortRows()).hasSize(6);
     assertThat(intent.cohortRows())
-        .allSatisfy(
-            row ->
-                assertThat(row.sourceInventoryRevision()).isEqualTo(prepared.inventoryRevision()));
+        .allSatisfy(row ->
+            assertThat(row.sourceInventoryRevision()).isEqualTo(prepared.inventoryRevision()));
     assertThat(intent.cohortRows())
         .filteredOn(
             row -> row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.BINDING)
@@ -1574,30 +1546,24 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
         .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
         .containsExactly(transitionId);
     assertThat(intent.cohortRows())
-        .filteredOn(
-            row ->
-                row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
+        .filteredOn(row ->
+            row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
         .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
         .containsExactly(prepared.issuerReservationId().toString());
     assertThat(intent.cohortRows())
-        .filteredOn(
-            row ->
-                row.kind()
-                    == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.ACCOUNT_OBLIGATION)
+        .filteredOn(row ->
+            row.kind()
+                == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.ACCOUNT_OBLIGATION)
         .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
         .containsExactly(transitionId + ":0");
     assertThat(intent.cohortRows())
-        .filteredOn(
-            row ->
-                row.kind()
-                    == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.ISSUER_OBLIGATION)
+        .filteredOn(row ->
+            row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.ISSUER_OBLIGATION)
         .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
         .containsExactly(bindingRefHex + ":" + transitionId);
     assertThat(intent.cohortRows())
-        .filteredOn(
-            row ->
-                row.kind()
-                    == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.REGION_OBLIGATION)
+        .filteredOn(row ->
+            row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.REGION_OBLIGATION)
         .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
         .containsExactly(transitionId);
   }

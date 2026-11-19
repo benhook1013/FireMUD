@@ -19,18 +19,16 @@ class GrpcAccountStartSessionAdmissionProtectionClientTest {
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new GrpcAccountStartSessionAdmissionProtectionClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), "world-runtime"))
+    assertThatThrownBy(() ->
+            new GrpcAccountStartSessionAdmissionProtectionClient(
+                endpoints, plaintext, new GrpcChannelFactory(), "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires workload mTLS");
 
     CommonGrpcClientProperties tls = fileBackedProperties();
-    assertThatThrownBy(
-            () ->
-                new GrpcAccountStartSessionAdmissionProtectionClient(
-                    endpoints, tls, new GrpcChannelFactory(), "WORLD"))
+    assertThatThrownBy(() ->
+            new GrpcAccountStartSessionAdmissionProtectionClient(
+                endpoints, tls, new GrpcChannelFactory(), "WORLD"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Canonical Game Session workload namespace");
 

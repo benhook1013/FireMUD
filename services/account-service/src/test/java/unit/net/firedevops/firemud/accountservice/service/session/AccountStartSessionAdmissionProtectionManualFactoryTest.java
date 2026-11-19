@@ -69,16 +69,14 @@ class AccountStartSessionAdmissionProtectionManualFactoryTest {
                             .MAX_REQUEST_WIRE_BYTES]))
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionServiceGrpc.newBlockingStub(channel)
-                    .withDeadlineAfter(10, TimeUnit.SECONDS)
-                    .acquireStartSessionAdmissionProtection(oversized))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionServiceGrpc.newBlockingStub(channel)
+                .withDeadlineAfter(10, TimeUnit.SECONDS)
+                .acquireStartSessionAdmissionProtection(oversized))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
     verifyNoInteractions(owner);
   }
 
@@ -94,31 +92,27 @@ class AccountStartSessionAdmissionProtectionManualFactoryTest {
         AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(
             AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE));
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionServiceGrpc.newBlockingStub(
-                        channel("game-session"))
-                    .withDeadlineAfter(10, TimeUnit.SECONDS)
-                    .acquireStartSessionAdmissionProtection(request))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionServiceGrpc.newBlockingStub(
+                    channel("game-session"))
+                .withDeadlineAfter(10, TimeUnit.SECONDS)
+                .acquireStartSessionAdmissionProtection(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION))
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION))
         .hasMessageNotContaining("controlled owner outcome");
     verify(owner).acquire(any());
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionServiceGrpc.newBlockingStub(
-                        channel("wrong-workload"))
-                    .withDeadlineAfter(10, TimeUnit.SECONDS)
-                    .acquireStartSessionAdmissionProtection(request))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionServiceGrpc.newBlockingStub(
+                    channel("wrong-workload"))
+                .withDeadlineAfter(10, TimeUnit.SECONDS)
+                .acquireStartSessionAdmissionProtection(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.PERMISSION_DENIED));
     verify(owner).acquire(any());
   }
 

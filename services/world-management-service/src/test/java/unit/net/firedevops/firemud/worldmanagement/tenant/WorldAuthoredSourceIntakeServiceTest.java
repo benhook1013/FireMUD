@@ -71,22 +71,20 @@ class WorldAuthoredSourceIntakeServiceTest {
           {"dev", "game-session-service", "d".repeat(64)},
           {"dev", "game-session-service", null}
         }) {
-      assertThatThrownBy(
-              () ->
-                  withFixturePeer(
-                      candidate[0],
-                      candidate[1],
-                      candidate[2],
-                      () -> fixtureService.intakeRunOwnedFixture(evidence)))
+      assertThatThrownBy(() ->
+              withFixturePeer(
+                  candidate[0],
+                  candidate[1],
+                  candidate[2],
+                  () -> fixtureService.intakeRunOwnedFixture(evidence)))
           .isInstanceOf(SecurityException.class);
     }
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    "dev",
-                    "game-session-service",
-                    "a".repeat(64),
-                    () -> withCallerContext(() -> fixtureService.intakeRunOwnedFixture(evidence))))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> withCallerContext(() -> fixtureService.intakeRunOwnedFixture(evidence))))
         .isInstanceOf(SecurityException.class);
     verifyNoInteractions(client, repository);
     assertThat(transactionManager.startedWith).isNull();
@@ -100,37 +98,33 @@ class WorldAuthoredSourceIntakeServiceTest {
     AtomicInteger reads = new AtomicInteger();
     AtomicReference<WorldAuthoredSourceIntakeReceipt> committed = new AtomicReference<>();
     when(repository.read(eq("dev"), any(UUID.class)))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              if (reads.incrementAndGet() == 1) {
-                committed.set(receipt(source, 9001L, call.getArgument(1)));
-                return Optional.empty();
-              }
-              return Optional.of(committed.get());
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          if (reads.incrementAndGet() == 1) {
+            committed.set(receipt(source, 9001L, call.getArgument(1)));
+            return Optional.empty();
+          }
+          return Optional.of(committed.get());
+        });
     when(client.read(any(ReadRequest.class)))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(transactionManager.startedWith).isNull();
-              ReadRequest request = call.getArgument(0);
-              assertThat(request.targetNamespace()).isEqualTo("dev");
-              assertThat(request.operationId()).isEqualTo(source.operationId());
-              assertThat(request.canonicalTenantId()).isEqualTo(source.canonicalTenantId());
-              assertThat(request.worldSlug()).isEqualTo(source.worldSlug());
-              assertThat(request.requestId()).isNotEqualTo(committed.get().intakeRequestId());
-              return source;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(transactionManager.startedWith).isNull();
+          ReadRequest request = call.getArgument(0);
+          assertThat(request.targetNamespace()).isEqualTo("dev");
+          assertThat(request.operationId()).isEqualTo(source.operationId());
+          assertThat(request.canonicalTenantId()).isEqualTo(source.canonicalTenantId());
+          assertThat(request.worldSlug()).isEqualTo(source.worldSlug());
+          assertThat(request.requestId()).isNotEqualTo(committed.get().intakeRequestId());
+          return source;
+        });
     when(repository.acceptFresh(eq("dev"), any(UUID.class), eq(source)))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                  .isFalse();
-              assertThat(call.<UUID>getArgument(1)).isEqualTo(committed.get().intakeRequestId());
-              return committed.get();
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          assertThat(call.<UUID>getArgument(1)).isEqualTo(committed.get().intakeRequestId());
+          return committed.get();
+        });
     WorldAuthoredSourceIntakeService fixtureService = fixtureService();
     WorldAuthoredSourceIntakeReceipt result =
         withFixturePeer(
@@ -169,13 +163,12 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
     when(client.read(any(ReadRequest.class)))
         .thenReturn(source("other", TENANT, SOURCE_OPERATION, WORLD));
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    "dev",
-                    "game-session-service",
-                    "a".repeat(64),
-                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService().intakeRunOwnedFixture(evidence)))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class);
     verify(repository, never()).acceptFresh(any(), any(), any());
     assertThat(transactionManager.startedWith).isNull();
@@ -189,13 +182,12 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
     when(client.read(any(ReadRequest.class))).thenReturn(source);
 
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    "dev",
-                    "game-session-service",
-                    "a".repeat(64),
-                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService().intakeRunOwnedFixture(evidence)))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
         .hasMessageContaining("owner transaction returned no receipt");
 
@@ -215,13 +207,12 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(client.read(any(ReadRequest.class))).thenReturn(source);
     when(repository.acceptFresh(eq("dev"), any(UUID.class), eq(source)))
         .thenAnswer(call -> receipt(source, 9001L, call.getArgument(1)));
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    "dev",
-                    "game-session-service",
-                    "a".repeat(64),
-                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService().intakeRunOwnedFixture(evidence)))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
         .hasMessageContaining("missing after its owner commit");
     verify(repository).acceptFresh(eq("dev"), any(UUID.class), eq(source));
@@ -235,21 +226,19 @@ class WorldAuthoredSourceIntakeServiceTest {
     var source = evidence.sourceReceipt().sourceEvidence();
     AtomicInteger reads = new AtomicInteger();
     when(repository.read(eq("dev"), any(UUID.class)))
-        .thenAnswer(
-            call ->
-                reads.incrementAndGet() == 1
-                    ? Optional.empty()
-                    : Optional.of(receipt(source, 9002L, call.getArgument(1))));
+        .thenAnswer(call ->
+            reads.incrementAndGet() == 1
+                ? Optional.empty()
+                : Optional.of(receipt(source, 9002L, call.getArgument(1))));
     when(client.read(any(ReadRequest.class))).thenReturn(source);
     when(repository.acceptFresh(eq("dev"), any(UUID.class), eq(source)))
         .thenAnswer(call -> receipt(source, 9001L, call.getArgument(1)));
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    "dev",
-                    "game-session-service",
-                    "a".repeat(64),
-                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService().intakeRunOwnedFixture(evidence)))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
         .hasMessageContaining("changed during independent commit readback");
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
@@ -260,13 +249,12 @@ class WorldAuthoredSourceIntakeServiceTest {
     RunOwnedCanonicalWorldLaunchEvidence evidence =
         RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    "dev",
-                    "game-session-service",
-                    "a".repeat(64),
-                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService().intakeRunOwnedFixture(evidence)))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(client, repository);
     assertThat(transactionManager.startedWith).isNull();
@@ -295,28 +283,19 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void requiresExactAuthenticatedGameDesignPeerBeforeOwnerAccess() {
-    assertThatThrownBy(
-            () ->
-                withoutPeer(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
+    assertThatThrownBy(() ->
+            withoutPeer(
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("firemud", "game-session-service"),
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("firemud", "game-session-service"),
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("other", "game-design-service"),
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("other", "game-design-service"),
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
         .isInstanceOf(SecurityException.class);
 
     verifyNoInteractions(client, repository);
@@ -324,55 +303,38 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void validatesAllRequestSelectorsAndDigestBeforeOwnerAccess() {
-    withGameDesign(
-        () -> {
-          assertThatThrownBy(
-                  () -> service.intake(null, TENANT, WORLD, SOURCE_OPERATION, digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(
-                          new UUID(0L, 0L), TENANT, WORLD, SOURCE_OPERATION, digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () -> service.intake(INTAKE_REQUEST, null, WORLD, SOURCE_OPERATION, digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(
-                          INTAKE_REQUEST, new UUID(0L, 0L), WORLD, SOURCE_OPERATION, digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(
-                          INTAKE_REQUEST, TENANT, "Bad-Slug", SOURCE_OPERATION, digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(INTAKE_REQUEST, TENANT, WORLD, new UUID(0L, 0L), digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, "sha256:bad"))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(
-                          2,
-                          NAMESPACE,
-                          INTAKE_REQUEST,
-                          TENANT,
-                          WORLD,
-                          SOURCE_OPERATION,
-                          digest('a')))
-              .isInstanceOf(IllegalArgumentException.class);
-          assertThatThrownBy(
-                  () ->
-                      service.intake(
-                          1, "other", INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a')))
-              .isInstanceOf(SecurityException.class);
-          return null;
-        });
+    withGameDesign(() -> {
+      assertThatThrownBy(() -> service.intake(null, TENANT, WORLD, SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> service.intake(new UUID(0L, 0L), TENANT, WORLD, SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> service.intake(INTAKE_REQUEST, null, WORLD, SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() ->
+              service.intake(
+                  INTAKE_REQUEST, new UUID(0L, 0L), WORLD, SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() ->
+              service.intake(INTAKE_REQUEST, TENANT, "Bad-Slug", SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, new UUID(0L, 0L), digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, "sha256:bad"))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() ->
+              service.intake(
+                  2, NAMESPACE, INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() ->
+              service.intake(
+                  1, "other", INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a')))
+          .isInstanceOf(SecurityException.class);
+      return null;
+    });
 
     verifyNoInteractions(client, repository);
   }
@@ -382,12 +344,9 @@ class WorldAuthoredSourceIntakeServiceTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(client, repository);
   }
@@ -397,12 +356,9 @@ class WorldAuthoredSourceIntakeServiceTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(client, repository);
   }
@@ -414,10 +370,9 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
 
     WorldAuthoredSourceIntakeReceipt result =
-        withGameDesign(
-            () ->
-                service.intake(
-                    INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()));
+        withGameDesign(() ->
+            service.intake(
+                INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()));
 
     assertThat(result).isSameAs(receipt);
     verify(client, never()).read(any(ReadRequest.class));
@@ -432,17 +387,16 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
 
     Optional<WorldAuthoredSourceIntakeReceipt> result =
-        withGameDesign(
-            () ->
-                service.readCommittedReceipt(
-                    1,
-                    NAMESPACE,
-                    READ_REQUEST,
-                    INTAKE_REQUEST,
-                    TENANT,
-                    WORLD,
-                    SOURCE_OPERATION,
-                    source.evidenceDigest()));
+        withGameDesign(() ->
+            service.readCommittedReceipt(
+                1,
+                NAMESPACE,
+                READ_REQUEST,
+                INTAKE_REQUEST,
+                TENANT,
+                WORLD,
+                SOURCE_OPERATION,
+                source.evidenceDigest()));
 
     assertThat(result).containsSame(receipt);
     verify(repository).read(NAMESPACE, INTAKE_REQUEST);
@@ -458,10 +412,8 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
 
     Optional<WorldAuthoredSourceIntakeReceipt> result =
-        withGameDesign(
-            () ->
-                service.readCommittedReceiptById(
-                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT));
+        withGameDesign(() ->
+            service.readCommittedReceiptById(1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT));
 
     assertThat(result).containsSame(receipt);
     verify(repository).read(NAMESPACE, INTAKE_REQUEST);
@@ -472,50 +424,37 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void committedReadByIdRejectsWrongPeerCallerContextAndInvalidScopeBeforeOwnerAccess() {
-    assertThatThrownBy(
-            () ->
-                withoutPeer(
-                    () ->
-                        service.readCommittedReceiptById(
-                            1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
+    assertThatThrownBy(() ->
+            withoutPeer(() ->
+                service.readCommittedReceiptById(
+                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-session-service"),
-                    () ->
-                        service.readCommittedReceiptById(
-                            1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-session-service"),
+                () ->
+                    service.readCommittedReceiptById(
+                        1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        withCallerContext(
-                            () ->
-                                service.readCommittedReceiptById(
-                                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT))))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                withCallerContext(() ->
+                    service.readCommittedReceiptById(
+                        1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT))))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.readCommittedReceiptById(
-                            1, "other", READ_REQUEST, INTAKE_REQUEST, TENANT)))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.readCommittedReceiptById(1, "other", READ_REQUEST, INTAKE_REQUEST, TENANT)))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.readCommittedReceiptById(
-                            2, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.readCommittedReceiptById(
+                    2, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.readCommittedReceiptById(
-                            1, NAMESPACE, INTAKE_REQUEST, INTAKE_REQUEST, TENANT)))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.readCommittedReceiptById(
+                    1, NAMESPACE, INTAKE_REQUEST, INTAKE_REQUEST, TENANT)))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(client, repository);
@@ -526,25 +465,21 @@ class WorldAuthoredSourceIntakeServiceTest {
   void committedReadByIdReturnsAbsentAndRejectsSubstitutedTenantWithoutMutation() {
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.empty());
     Optional<WorldAuthoredSourceIntakeReceipt> missing =
-        withGameDesign(
-            () ->
-                service.readCommittedReceiptById(
-                    1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT));
+        withGameDesign(() ->
+            service.readCommittedReceiptById(1, NAMESPACE, READ_REQUEST, INTAKE_REQUEST, TENANT));
     assertThat(missing).isEmpty();
 
     AuthoredWorldSourceEvidence source = source(NAMESPACE, TENANT, SOURCE_OPERATION, WORLD);
     when(repository.read(NAMESPACE, INTAKE_REQUEST))
         .thenReturn(Optional.of(receipt(source, 9001L)));
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.readCommittedReceiptById(
-                            1,
-                            NAMESPACE,
-                            READ_REQUEST,
-                            INTAKE_REQUEST,
-                            UUID.fromString("77777777-7777-4777-8777-777777777777"))))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.readCommittedReceiptById(
+                    1,
+                    NAMESPACE,
+                    READ_REQUEST,
+                    INTAKE_REQUEST,
+                    UUID.fromString("77777777-7777-4777-8777-777777777777"))))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
 
     verify(repository, org.mockito.Mockito.times(2)).read(NAMESPACE, INTAKE_REQUEST);
@@ -559,62 +494,55 @@ class WorldAuthoredSourceIntakeServiceTest {
     WorldAuthoredSourceIntakeReceipt receipt = receipt(source, 9001L);
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
 
-    assertThatThrownBy(
-            () ->
-                withoutPeer(
-                    () ->
-                        service.readCommittedReceipt(
-                            1,
-                            NAMESPACE,
-                            READ_REQUEST,
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withoutPeer(() ->
+                service.readCommittedReceipt(
+                    1,
+                    NAMESPACE,
+                    READ_REQUEST,
+                    INTAKE_REQUEST,
+                    TENANT,
+                    WORLD,
+                    SOURCE_OPERATION,
+                    source.evidenceDigest())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-session-service"),
-                    () ->
-                        service.readCommittedReceipt(
-                            1,
-                            NAMESPACE,
-                            READ_REQUEST,
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-session-service"),
+                () ->
+                    service.readCommittedReceipt(
+                        1,
+                        NAMESPACE,
+                        READ_REQUEST,
+                        INTAKE_REQUEST,
+                        TENANT,
+                        WORLD,
+                        SOURCE_OPERATION,
+                        source.evidenceDigest())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.readCommittedReceipt(
-                            1,
-                            "other",
-                            READ_REQUEST,
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.readCommittedReceipt(
+                    1,
+                    "other",
+                    READ_REQUEST,
+                    INTAKE_REQUEST,
+                    TENANT,
+                    WORLD,
+                    SOURCE_OPERATION,
+                    source.evidenceDigest())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.readCommittedReceipt(
-                            1,
-                            NAMESPACE,
-                            INTAKE_REQUEST,
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.readCommittedReceipt(
+                    1,
+                    NAMESPACE,
+                    INTAKE_REQUEST,
+                    INTAKE_REQUEST,
+                    TENANT,
+                    WORLD,
+                    SOURCE_OPERATION,
+                    source.evidenceDigest())))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(client, repository);
@@ -626,17 +554,16 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.empty());
 
     Optional<WorldAuthoredSourceIntakeReceipt> result =
-        withGameDesign(
-            () ->
-                service.readCommittedReceipt(
-                    1,
-                    NAMESPACE,
-                    READ_REQUEST,
-                    INTAKE_REQUEST,
-                    TENANT,
-                    WORLD,
-                    SOURCE_OPERATION,
-                    digest('a')));
+        withGameDesign(() ->
+            service.readCommittedReceipt(
+                1,
+                NAMESPACE,
+                READ_REQUEST,
+                INTAKE_REQUEST,
+                TENANT,
+                WORLD,
+                SOURCE_OPERATION,
+                digest('a')));
 
     assertThat(result).isEmpty();
     verify(repository).read(NAMESPACE, INTAKE_REQUEST);
@@ -651,45 +578,36 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(NAMESPACE, INTAKE_REQUEST))
         .thenReturn(Optional.of(receipt(source, 9001L)));
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST,
-                            UUID.fromString("66666666-6666-4666-8666-666666666666"),
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.intake(
+                    INTAKE_REQUEST,
+                    UUID.fromString("66666666-6666-4666-8666-666666666666"),
+                    WORLD,
+                    SOURCE_OPERATION,
+                    source.evidenceDigest())))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST,
-                            TENANT,
-                            "amber-coast",
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.intake(
+                    INTAKE_REQUEST,
+                    TENANT,
+                    "amber-coast",
+                    SOURCE_OPERATION,
+                    source.evidenceDigest())))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            UUID.fromString("77777777-7777-4777-8777-777777777777"),
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.intake(
+                    INTAKE_REQUEST,
+                    TENANT,
+                    WORLD,
+                    UUID.fromString("77777777-7777-4777-8777-777777777777"),
+                    source.evidenceDigest())))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('b'))))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('b'))))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class);
 
     verify(client, never()).read(any(ReadRequest.class));
@@ -702,12 +620,9 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(client.read(any(ReadRequest.class)))
         .thenThrow(new IllegalStateException("source unavailable"));
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a'))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("source unavailable");
 
@@ -732,16 +647,14 @@ class WorldAuthoredSourceIntakeServiceTest {
     for (AuthoredWorldSourceEvidence substituted : substitutedSources) {
       when(client.read(any(ReadRequest.class))).thenReturn(substituted);
 
-      assertThatThrownBy(
-              () ->
-                  withGameDesign(
-                      () ->
-                          service.intake(
-                              INTAKE_REQUEST,
-                              TENANT,
-                              WORLD,
-                              SOURCE_OPERATION,
-                              substituted.evidenceDigest())))
+      assertThatThrownBy(() ->
+              withGameDesign(() ->
+                  service.intake(
+                      INTAKE_REQUEST,
+                      TENANT,
+                      WORLD,
+                      SOURCE_OPERATION,
+                      substituted.evidenceDigest())))
           .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class);
     }
 
@@ -755,12 +668,9 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.empty());
     when(client.read(any(ReadRequest.class))).thenReturn(source);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('b'))))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('b'))))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class);
 
     verify(repository, never()).acceptFresh(any(), any(), any());
@@ -773,31 +683,26 @@ class WorldAuthoredSourceIntakeServiceTest {
     WorldAuthoredSourceIntakeReceipt receipt = receipt(source, 9001L);
     AtomicInteger readCount = new AtomicInteger();
     when(repository.read(NAMESPACE, INTAKE_REQUEST))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return readCount.incrementAndGet() == 1 ? Optional.empty() : Optional.of(receipt);
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return readCount.incrementAndGet() == 1 ? Optional.empty() : Optional.of(receipt);
+        });
     when(client.read(any(ReadRequest.class)))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return source;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return source;
+        });
     when(repository.acceptFresh(NAMESPACE, INTAKE_REQUEST, source))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                  .isFalse();
-              return receipt;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          return receipt;
+        });
 
     WorldAuthoredSourceIntakeReceipt result =
-        withGameDesign(
-            () ->
-                service.intake(
-                    INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()));
+        withGameDesign(() ->
+            service.intake(
+                INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()));
 
     assertThat(result).isEqualTo(receipt);
     assertThat(readCount.get()).isEqualTo(2);
@@ -826,16 +731,10 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(repository.acceptFresh(NAMESPACE, INTAKE_REQUEST, source))
         .thenReturn(receipt(source, 9001L));
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.intake(
+                    INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest())))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
         .hasMessageContaining("missing after commit readback");
 
@@ -853,16 +752,10 @@ class WorldAuthoredSourceIntakeServiceTest {
     when(client.read(any(ReadRequest.class))).thenReturn(source);
     when(repository.acceptFresh(NAMESPACE, INTAKE_REQUEST, source)).thenReturn(accepted);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.intake(
-                            INTAKE_REQUEST,
-                            TENANT,
-                            WORLD,
-                            SOURCE_OPERATION,
-                            source.evidenceDigest())))
+    assertThatThrownBy(() ->
+            withGameDesign(() ->
+                service.intake(
+                    INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest())))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
         .hasMessageContaining("changed during commit readback");
 

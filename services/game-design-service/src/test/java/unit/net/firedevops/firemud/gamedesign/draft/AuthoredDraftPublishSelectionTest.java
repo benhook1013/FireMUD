@@ -145,17 +145,16 @@ class AuthoredDraftPublishSelectionTest {
     DraftCommitBinding binding = binding(target);
     PublishIntent original = intent(target, binding, "original notes");
 
-    assertThatThrownBy(
-            () ->
-                new PublishIntent(
-                    target.canonicalTenantId(),
-                    target.canonicalVersionId(),
-                    original.publishRequestId(),
-                    "01",
-                    original.notes(),
-                    binding.requestId(),
-                    binding.commitId(),
-                    binding.digest()))
+    assertThatThrownBy(() ->
+            new PublishIntent(
+                target.canonicalTenantId(),
+                target.canonicalVersionId(),
+                original.publishRequestId(),
+                "01",
+                original.notes(),
+                binding.requestId(),
+                binding.commitId(),
+                binding.digest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive canonical decimal");
     assertThat(original).isNotEqualTo(intent(target, binding, "changed notes"));

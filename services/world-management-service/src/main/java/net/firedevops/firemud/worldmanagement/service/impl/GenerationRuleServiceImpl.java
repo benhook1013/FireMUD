@@ -30,10 +30,9 @@ public class GenerationRuleServiceImpl implements GenerationRuleService {
       existing =
           repository
               .findByTenantIdAndVersionIdAndId(dto.tenantId(), dto.versionId(), dto.id())
-              .orElseThrow(
-                  () ->
-                      new WorldDesignPublicationFenceRepository.ConflictException(
-                          "Generation rule does not belong to the locked tenant and Version"));
+              .orElseThrow(() ->
+                  new WorldDesignPublicationFenceRepository.ConflictException(
+                      "Generation rule does not belong to the locked tenant and Version"));
     }
     GenerationRule entity = mapper.toEntity(dto);
     if (existing != null) {

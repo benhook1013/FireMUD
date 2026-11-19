@@ -72,15 +72,14 @@ class CanonicalGameplayInitialAdmissionIntentRequestIdMigrationIntegrationTest {
       assertPendingIntent(dsl, intent128);
 
       Record originalIntent = readIntent(dsl, intent128);
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_session_canonical_initial_admission_intent "
-                          + "SET initial_admission_request_id = ? "
-                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                      "r".repeat(129),
-                      length128.targetNamespace(),
-                      intent128.request().initialAdmissionRequestId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_session_canonical_initial_admission_intent "
+                      + "SET initial_admission_request_id = ? "
+                      + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                  "r".repeat(129),
+                  length128.targetNamespace(),
+                  intent128.request().initialAdmissionRequestId()))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> assertThat(exception.sqlState()).isEqualTo("22001"));

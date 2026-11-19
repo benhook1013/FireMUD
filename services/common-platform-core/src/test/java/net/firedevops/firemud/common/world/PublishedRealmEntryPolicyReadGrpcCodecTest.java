@@ -66,44 +66,37 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validList.toBuilder().setUnknownFields(unknown).build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validList.toBuilder().setUnknownFields(unknown).build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validResolve.toBuilder().setSchemaVersion(2).build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validResolve.toBuilder().setSchemaVersion(2).build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validList.toBuilder()
-                        .setReadRequestId("00000000-0000-0000-0000-000000000000")
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validList.toBuilder()
+                    .setReadRequestId("00000000-0000-0000-0000-000000000000")
+                    .build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validList.toBuilder()
-                        .setCanonicalTenantId("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB")
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validList.toBuilder()
+                    .setCanonicalTenantId("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB")
+                    .build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validList.toBuilder().setTargetNamespace("Test").build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validList.toBuilder().setTargetNamespace("Test").build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validResolve.toBuilder().setWorldSlug("Main").build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validResolve.toBuilder().setWorldSlug("Main").build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                    validResolve.toBuilder().setRealmSlug("bad--slug").build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                validResolve.toBuilder().setRealmSlug("bad--slug").build()));
   }
 
   @Test
@@ -113,55 +106,49 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
     var response = PublishedRealmEntryPolicyReadGrpcCodec.toResponse(request, fixture.set());
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(response.getRequest().toBuilder().setTargetNamespace("other"))
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(response.getRequest().toBuilder().setTargetNamespace("other"))
+                    .build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setReadRequestId("88888888-8888-4888-8888-888888888888"))
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setReadRequestId("88888888-8888-4888-8888-888888888888"))
+                    .build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setCanonicalTenantId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setCanonicalTenantId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                    .build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setCanonicalVersionId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setCanonicalVersionId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
+                    .build()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()));
 
     var wrongTarget =
         new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
@@ -175,10 +162,8 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             .setPolicySetEvidence(ByteString.copyFrom(fixture.set().canonicalBytes()))
             .build();
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    wrongTarget, substitutedEvidence));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(wrongTarget, substitutedEvidence));
 
     var resolve = resolveRequest(fixture, "99999999-9999-4999-8999-999999999999", "missing");
     var missingSelectorResponse =
@@ -187,23 +172,19 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             .setPolicySetEvidence(ByteString.copyFrom(fixture.set().canonicalBytes()))
             .build();
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    resolve, missingSelectorResponse));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(resolve, missingSelectorResponse));
 
     var exactResolve = resolveRequest(fixture, "99999999-9999-4999-8999-999999999999", "main");
     var exactResolveResponse =
         PublishedRealmEntryPolicyReadGrpcCodec.toResponse(exactResolve, fixture.set());
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    exactResolve,
-                    exactResolveResponse.toBuilder()
-                        .setRequest(
-                            exactResolveResponse.getRequest().toBuilder().setRealmSlug("side"))
-                        .build()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                exactResolve,
+                exactResolveResponse.toBuilder()
+                    .setRequest(exactResolveResponse.getRequest().toBuilder().setRealmSlug("side"))
+                    .build()));
   }
 
   @Test
@@ -217,20 +198,17 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             originalList.canonicalTenantId(),
             originalList.canonicalVersionId());
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(
-                    crossNamespaceList, fixture.set()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossNamespaceList, fixture.set()));
     var substitutedList =
         ListPublishedRealmEntryPoliciesResponse.newBuilder()
             .setRequest(PublishedRealmEntryPolicyReadGrpcCodec.toRequest(crossNamespaceList))
             .setPolicySetEvidence(ByteString.copyFrom(fixture.set().canonicalBytes()))
             .build();
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    crossNamespaceList, substitutedList));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                crossNamespaceList, substitutedList));
 
     var crossTenantList =
         new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
@@ -239,9 +217,8 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             originalList.canonicalVersionId());
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossTenantList, fixture.set()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossTenantList, fixture.set()));
     var crossVersionList =
         new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
             originalList.targetNamespace(),
@@ -249,9 +226,8 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             originalList.canonicalTenantId(),
             UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossVersionList, fixture.set()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.toResponse(crossVersionList, fixture.set()));
 
     var originalResolve = resolveRequest(fixture, "99999999-9999-4999-8999-999999999999", "main");
     var crossNamespaceResolve =
@@ -263,20 +239,18 @@ class PublishedRealmEntryPolicyReadGrpcCodecTest {
             originalResolve.worldSlug(),
             originalResolve.realmSlug());
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.toResponse(
-                    crossNamespaceResolve, fixture.set()));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.toResponse(
+                crossNamespaceResolve, fixture.set()));
     var substitutedResolve =
         ResolvePublishedRealmEntryPolicyResponse.newBuilder()
             .setRequest(PublishedRealmEntryPolicyReadGrpcCodec.toRequest(crossNamespaceResolve))
             .setPolicySetEvidence(ByteString.copyFrom(fixture.set().canonicalBytes()))
             .build();
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
-                    crossNamespaceResolve, substitutedResolve));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                crossNamespaceResolve, substitutedResolve));
   }
 
   @Test

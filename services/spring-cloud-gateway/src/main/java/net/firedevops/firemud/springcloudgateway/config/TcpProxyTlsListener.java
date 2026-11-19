@@ -121,12 +121,11 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     }
     long delayMillis = Math.max(1L, untilExpiry.toMillis());
     expiryExecutor =
-        Executors.newSingleThreadScheduledExecutor(
-            runnable -> {
-              Thread thread = new Thread(runnable, "tcp-proxy-trust-profile-expiry");
-              thread.setDaemon(true);
-              return thread;
-            });
+        Executors.newSingleThreadScheduledExecutor(runnable -> {
+          Thread thread = new Thread(runnable, "tcp-proxy-trust-profile-expiry");
+          thread.setDaemon(true);
+          return thread;
+        });
     expiryTask =
         expiryExecutor.schedule(
             () -> {

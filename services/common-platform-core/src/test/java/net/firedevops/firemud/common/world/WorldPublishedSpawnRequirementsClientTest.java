@@ -14,13 +14,12 @@ class WorldPublishedSpawnRequirementsClientTest {
   void rejectsPlaintextAndInvalidNamespaceBeforeCreatingTransport() {
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    mock(GrpcChannelFactory.class),
-                    "test"))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsClient(
+                new ServiceEndpointsProperties(),
+                plaintext,
+                mock(GrpcChannelFactory.class),
+                "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 
@@ -28,10 +27,9 @@ class WorldPublishedSpawnRequirementsClientTest {
     tls.setCertChain(Path.of("missing.crt").toString());
     tls.setPrivateKey(Path.of("missing.key").toString());
     tls.setCaCert(Path.of("missing-ca.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsClient(
-                    new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), "Test"))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsClient(
+                new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), "Test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical DNS label");
   }

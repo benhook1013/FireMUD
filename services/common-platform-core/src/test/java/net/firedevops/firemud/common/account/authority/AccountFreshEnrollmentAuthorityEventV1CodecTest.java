@@ -45,10 +45,9 @@ class AccountFreshEnrollmentAuthorityEventV1CodecTest {
   }
 
   private static void assertRestrictionRejected(String category, String state, String sourceKind) {
-    assertThatThrownBy(
-            () ->
-                AccountSecurityStateAuthorityEventV1Codec.sealRestriction(
-                    preimage(category, state, sourceKind)))
+    assertThatThrownBy(() ->
+            AccountSecurityStateAuthorityEventV1Codec.sealRestriction(
+                preimage(category, state, sourceKind)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

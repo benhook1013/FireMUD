@@ -30,14 +30,13 @@ public class RemoteCommandCoordinatorController {
       listRemoteCommandCoordinators(
           @PathVariable String tenantId,
           @ModelAttribute RemoteCommandCoordinatorListRequest request) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  remoteCommandCoordinatorService.listRemoteCommandCoordinators(
-                      parsedTenantId, request)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              remoteCommandCoordinatorService.listRemoteCommandCoordinators(
+                  parsedTenantId, request)));
+    });
   }
 
   @GetMapping("/{tenantId}/{coordinatorId}")
@@ -46,13 +45,12 @@ public class RemoteCommandCoordinatorController {
       description = "Read canonical remote command coordinator by tenant-qualified coordinator id")
   public ResponseEntity<ApiResponse<RemoteCommandCoordinatorDto>> getRemoteCommandCoordinator(
       @PathVariable String tenantId, @PathVariable String coordinatorId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  remoteCommandCoordinatorService.getRemoteCommandCoordinator(
-                      parsedTenantId, coordinatorId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              remoteCommandCoordinatorService.getRemoteCommandCoordinator(
+                  parsedTenantId, coordinatorId)));
+    });
   }
 }

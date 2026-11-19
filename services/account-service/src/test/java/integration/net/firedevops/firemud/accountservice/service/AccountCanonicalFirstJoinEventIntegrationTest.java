@@ -108,12 +108,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     var decoded =
         MembershipAuthorityEventV1Codec.verify(new String(event.payload(), StandardCharsets.UTF_8));
     PairAuthority pair =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .pairs
-                    .readForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .pairs
+                .readForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
+                .orElseThrow());
 
     assertThat(first.eventSequence()).isEqualTo(1L);
     assertThat(replay).isEqualTo(first);
@@ -142,12 +141,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(fixture.count("account_audit_outbox", "audit_event_id", first.auditEventId()))
         .isEqualTo(1L);
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.terminalCoordinator.commitCanonicalFirstJoin(
-                            fixture.scope, fixture.requestId, "another-caller")))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.terminalCoordinator.commitCanonicalFirstJoin(
+                    fixture.scope, fixture.requestId, "another-caller")))
         .isInstanceOf(CanonicalJoinOperationConflictException.class)
         .hasMessage("Canonical JOIN intent conflicts");
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
@@ -169,12 +166,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         fixture.inTransaction(
             () -> fixture.tenantAuthorityEvents.readCurrentByTenant(fixture.tenantUuid));
     var pendingOperation =
-        fixture.inTransaction(
-            () -> {
-              fixture.operations.lockAccount(fixture.account.getId());
-              return fixture.operations.findCanonicalEvidenceForUpdateByRequestId(
-                  fixture.requestId);
-            });
+        fixture.inTransaction(() -> {
+          fixture.operations.lockAccount(fixture.account.getId());
+          return fixture.operations.findCanonicalEvidenceForUpdateByRequestId(fixture.requestId);
+        });
 
     assertThat(entitlement.entitlementVersion()).isEqualTo(2L);
     assertThat(pendingOperation).isPresent();
@@ -232,12 +227,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     var replay = fixture.commitFirstJoin();
     String stream = fixture.membershipStream();
     var operation =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .operations
-                    .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .operations
+                .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                .orElseThrow());
 
     assertThat(replay).isEqualTo(proof);
     assertThat(operation.status()).isEqualTo("COMMITTED");
@@ -254,12 +248,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(fixture.count("account_audit_outbox", "audit_event_id", proof.auditEventId()))
         .isEqualTo(1L);
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.terminalCoordinator.commitCanonicalFirstJoin(
-                            fixture.scope, fixture.requestId, "another-caller")))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.terminalCoordinator.commitCanonicalFirstJoin(
+                    fixture.scope, fixture.requestId, "another-caller")))
         .isInstanceOf(CanonicalJoinOperationConflictException.class);
     assertThat(fixture.count("account_authority_outbox_events", "outbox_stream_key", stream))
         .isEqualTo(1L);
@@ -300,12 +292,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isZero();
     assertThat(fixture.count("account_audit_outbox", "audit_event_id", auditEventId)).isZero();
     var operation =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .operations
-                    .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .operations
+                .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                .orElseThrow());
     assertThat(operation.status()).isEqualTo("PENDING");
     assertThat(operation.terminalProof()).isNull();
   }
@@ -330,13 +321,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                 "account_authority_outbox_events", "outbox_stream_key", fixture.membershipStream()))
         .isEqualTo(1L);
     assertThat(fixture.countAll("account_audit_outbox")).isEqualTo(1L);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.dsl.execute(
-                            "UPDATE account_join_operations SET outcome_membership_version = 3 WHERE request_id = ?",
-                            nextRequest)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.dsl.execute(
+                    "UPDATE account_join_operations SET outcome_membership_version = 3 WHERE request_id = ?",
+                    nextRequest)))
         .isInstanceOf(RuntimeException.class)
         .rootCause()
         .isInstanceOfSatisfying(
@@ -355,27 +344,25 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     String nextRequest = fixture.prepareAnotherJoin();
 
     // Retain a valid current membership witness but omit only the required committed outcome.
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.dsl.execute(
-                            """
-                            UPDATE account_join_operations pending
-                            SET status = 'COMMITTED', outcome = NULL,
-                                last_attempt_authority_availability = 'AVAILABLE',
-                                membership_id = original.membership_id,
-                                outcome_membership_version = original.outcome_membership_version,
-                                outcome_membership_authority_generation = original.outcome_membership_authority_generation,
-                                membership_authority_outbox_stream_key = original.membership_authority_outbox_stream_key,
-                                membership_authority_outbox_sequence = original.membership_authority_outbox_sequence,
-                                membership_authority_event_id = original.membership_authority_event_id,
-                                membership_authority_event_digest = original.membership_authority_event_digest
-                            FROM account_join_operations original
-                            WHERE pending.request_id = ? AND original.request_id = ?
-                            """,
-                            nextRequest,
-                            fixture.requestId)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.dsl.execute(
+                    """
+                    UPDATE account_join_operations pending
+                    SET status = 'COMMITTED', outcome = NULL,
+                        last_attempt_authority_availability = 'AVAILABLE',
+                        membership_id = original.membership_id,
+                        outcome_membership_version = original.outcome_membership_version,
+                        outcome_membership_authority_generation = original.outcome_membership_authority_generation,
+                        membership_authority_outbox_stream_key = original.membership_authority_outbox_stream_key,
+                        membership_authority_outbox_sequence = original.membership_authority_outbox_sequence,
+                        membership_authority_event_id = original.membership_authority_event_id,
+                        membership_authority_event_digest = original.membership_authority_event_digest
+                    FROM account_join_operations original
+                    WHERE pending.request_id = ? AND original.request_id = ?
+                    """,
+                    nextRequest,
+                    fixture.requestId)))
         .isInstanceOf(RuntimeException.class)
         .rootCause()
         .isInstanceOfSatisfying(
@@ -396,14 +383,12 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   void closingEnrollmentPreservesAnActiveMembersEventFreeJoinSnapshot() {
     Fixture fixture = newFixture();
     fixture.commitFirstJoin();
-    fixture.inTransaction(
-        () -> {
-          var current = fixture.demoEntitlements.readCurrent(fixture.tenantUuid);
-          fixture.demoEntitlements.provision(
-              fixture.entitlementRequest(UUID.randomUUID(), current, false),
-              fixture.tenantEvidence);
-          return null;
-        });
+    fixture.inTransaction(() -> {
+      var current = fixture.demoEntitlements.readCurrent(fixture.tenantUuid);
+      fixture.demoEntitlements.provision(
+          fixture.entitlementRequest(UUID.randomUUID(), current, false), fixture.tenantEvidence);
+      return null;
+    });
     String requestId = fixture.prepareAnotherJoin();
     var result = fixture.commitExistingJoin(requestId);
     assertThat(result.outcome()).isEqualTo("ALREADY_ACTIVE");
@@ -441,25 +426,22 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(replay.gameplayAdmissionAllowed()).isFalse();
     assertThat(replay.replayed()).isTrue();
     var member =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .memberships
-                    .findFreshMembershipForUpdate(
-                        fixture.account.getAccountUuid(), fixture.tenantUuid)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .memberships
+                .findFreshMembershipForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
+                .orElseThrow());
     var roles =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .roles
-                    .findForCanonicalUpdate(
-                        fixture.account.getAccountUuid(),
-                        fixture.tenantUuid,
-                        fixture.provenance,
-                        member.getId(),
-                        3L)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .roles
+                .findForCanonicalUpdate(
+                    fixture.account.getAccountUuid(),
+                    fixture.tenantUuid,
+                    fixture.provenance,
+                    member.getId(),
+                    3L)
+                .orElseThrow());
     assertThat(roles.roles()).isEmpty();
     assertThat(member.isGameplayAdmissionAllowed()).isFalse();
     assertThat(
@@ -477,13 +459,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("precommitted transition");
     var member =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .memberships
-                    .findFreshMembershipForUpdate(
-                        fixture.account.getAccountUuid(), fixture.tenantUuid)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .memberships
+                .findFreshMembershipForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
+                .orElseThrow());
     var proof =
         new AccountJoinOperationRepository.CanonicalJoinTerminalProof(
             checkpoint.outboxStreamKey(),
@@ -497,16 +477,14 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
             member.getId(),
             member.getMembershipVersion(),
             member.getMembershipAuthorityGeneration());
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.operations.commitCanonicalJoin(
-                            fixture.requestId,
-                            fixture.scope,
-                            fixture.callerBinding,
-                            "ALREADY_ACTIVE",
-                            proof)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.operations.commitCanonicalJoin(
+                    fixture.requestId,
+                    fixture.scope,
+                    fixture.callerBinding,
+                    "ALREADY_ACTIVE",
+                    proof)))
         .isInstanceOf(RuntimeException.class)
         .rootCause()
         .isInstanceOfSatisfying(
@@ -520,12 +498,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(fixture.countAll("account_audit_outbox")).isZero();
     assertThat(
             fixture
-                .inTransaction(
-                    () ->
-                        fixture
-                            .operations
-                            .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
-                            .orElseThrow())
+                .inTransaction(() ->
+                    fixture
+                        .operations
+                        .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                        .orElseThrow())
                 .status())
         .isEqualTo("PENDING");
   }
@@ -553,15 +530,14 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     java.util.function.Supplier<Object> storedRows =
         () ->
             tables.stream()
-                .map(
-                    table ->
-                        fixture
-                            .dsl
-                            .fetch(
-                                "SELECT xmin::text AS row_version, to_jsonb(t)::text AS row_data FROM "
-                                    + table
-                                    + " t ORDER BY to_jsonb(t)::text")
-                            .intoMaps())
+                .map(table ->
+                    fixture
+                        .dsl
+                        .fetch(
+                            "SELECT xmin::text AS row_version, to_jsonb(t)::text AS row_data FROM "
+                                + table
+                                + " t ORDER BY to_jsonb(t)::text")
+                        .intoMaps())
                 .toList();
     var inactiveRows = storedRows.get();
     assertThat(fixture.commitExistingJoin(originalRequest)).isEqualTo(committed);
@@ -573,12 +549,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(restored.membershipVersion()).isEqualTo(4L);
     var restoredRows = storedRows.get();
     assertThat(fixture.commitExistingJoin(originalRequest)).isEqualTo(committed);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.terminalCoordinator.commitCanonicalJoin(
-                            fixture.scope, originalRequest, "different-caller", null, null, null)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.terminalCoordinator.commitCanonicalJoin(
+                    fixture.scope, originalRequest, "different-caller", null, null, null)))
         .isInstanceOf(CanonicalJoinOperationConflictException.class);
     assertThat(storedRows.get()).isEqualTo(restoredRows);
   }
@@ -607,13 +581,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isEqualTo(3L);
     assertThat(fixture.countAll("account_audit_outbox")).isEqualTo(2L);
     var member =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .memberships
-                    .findFreshMembershipForUpdate(
-                        fixture.account.getAccountUuid(), fixture.tenantUuid)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .memberships
+                .findFreshMembershipForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
+                .orElseThrow());
     assertThat(member.getLifecycleState()).isEqualTo("ACTIVE");
     assertThat(member.isGameplayAdmissionAllowed()).isTrue();
   }
@@ -636,13 +608,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("restore terminal failure");
     var member =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .memberships
-                    .findFreshMembershipForUpdate(
-                        fixture.account.getAccountUuid(), fixture.tenantUuid)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .memberships
+                .findFreshMembershipForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
+                .orElseThrow());
     assertThat(member.getLifecycleState()).isEqualTo("INACTIVE");
     assertThat(member.getMembershipVersion()).isEqualTo(3L);
     assertThat(member.getMembershipAuthorityGeneration()).isEqualTo(2L);
@@ -652,12 +622,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isEqualTo(2L);
     assertThat(fixture.countAll("account_audit_outbox")).isEqualTo(1L);
     var operation =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .operations
-                    .findCanonicalEvidenceForUpdateByRequestId(restoreRequest)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .operations
+                .findCanonicalEvidenceForUpdateByRequestId(restoreRequest)
+                .orElseThrow());
     assertThat(operation.status()).isEqualTo("PENDING");
     assertThat(operation.terminalProof()).isNull();
   }
@@ -693,12 +662,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isEqualTo(1L);
     assertThat(fixture.countAll("account_audit_outbox")).isEqualTo(1L);
     var stored =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .operations
-                    .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture.operations.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow());
     assertThat(stored.status()).isEqualTo("COMMITTED");
     assertThat(stored.operationRepresentationVersion()).isEqualTo(2);
     assertThat(stored.scopeEvidence().tenantUuid()).isEqualTo(fixture.tenantUuid);
@@ -727,55 +692,48 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
             browser
                 .sessions()
                 .isAccountSessionActive(fixture.account.getId(), browser.bootstrapToken()))
-        .thenAnswer(
-            invocation -> {
-              // The second caller read occurs outside SQL, after preparation and immediately before
-              // the final transaction. Finish another exact attempt in this deterministic gap.
-              if (callerReads.incrementAndGet() == 2) {
-                if ("COMMITTED".equals(terminalState)) {
-                  var first =
-                      browser.service().joinPublicProduction(browser.bootstrapToken(), request);
-                  assertThat(first.success()).isTrue();
-                  assertThat(first.replayed()).isFalse();
-                } else {
-                  fixture.inTransaction(
-                      () -> {
-                        fixture.operations.lockAccount(fixture.account.getId());
-                        var scope =
-                            fixture
-                                .connectScopes
-                                .findCanonical(selected.connectScopeId())
-                                .orElseThrow();
-                        var pending =
-                            fixture
-                                .operations
-                                .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                                .orElseThrow();
-                        assertThat(pending.status()).isEqualTo("PENDING");
-                        if ("FAILED_BOUND".equals(terminalState)) {
-                          var policy = fixture.demoEntitlements.readCurrent(fixture.tenantUuid);
-                          fixture.operations.bindCanonicalPolicyEvidence(
-                              requestId,
-                              scope,
-                              pending.callerBinding(),
-                              policy.allowPublicJoin(),
-                              policy.entitlementVersion());
-                        }
-                        fixture.operations.finishCanonicalFailure(
-                            requestId, scope, pending.callerBinding(), "CONNECT_SCOPE_MISMATCH");
-                        return null;
-                      });
+        .thenAnswer(invocation -> {
+          // The second caller read occurs outside SQL, after preparation and immediately before
+          // the final transaction. Finish another exact attempt in this deterministic gap.
+          if (callerReads.incrementAndGet() == 2) {
+            if ("COMMITTED".equals(terminalState)) {
+              var first = browser.service().joinPublicProduction(browser.bootstrapToken(), request);
+              assertThat(first.success()).isTrue();
+              assertThat(first.replayed()).isFalse();
+            } else {
+              fixture.inTransaction(() -> {
+                fixture.operations.lockAccount(fixture.account.getId());
+                var scope =
+                    fixture.connectScopes.findCanonical(selected.connectScopeId()).orElseThrow();
+                var pending =
+                    fixture
+                        .operations
+                        .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                        .orElseThrow();
+                assertThat(pending.status()).isEqualTo("PENDING");
+                if ("FAILED_BOUND".equals(terminalState)) {
+                  var policy = fixture.demoEntitlements.readCurrent(fixture.tenantUuid);
+                  fixture.operations.bindCanonicalPolicyEvidence(
+                      requestId,
+                      scope,
+                      pending.callerBinding(),
+                      policy.allowPublicJoin(),
+                      policy.entitlementVersion());
                 }
-                retained.set(
-                    fixture.inTransaction(
-                        () ->
-                            fixture
-                                .operations
-                                .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                                .orElseThrow()));
-              }
-              return true;
-            });
+                fixture.operations.finishCanonicalFailure(
+                    requestId, scope, pending.callerBinding(), "CONNECT_SCOPE_MISMATCH");
+                return null;
+              });
+            }
+            retained.set(
+                fixture.inTransaction(() ->
+                    fixture
+                        .operations
+                        .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                        .orElseThrow()));
+          }
+          return true;
+        });
 
     var replay = browser.service().joinPublicProduction(browser.bootstrapToken(), request);
 
@@ -784,12 +742,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(replay.success()).isEqualTo("COMMITTED".equals(terminalState));
     assertThat(replay.outcomeCode()).isEqualTo(retained.get().outcome());
     assertThat(
-            fixture.inTransaction(
-                () ->
-                    fixture
-                        .operations
-                        .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                        .orElseThrow()))
+            fixture.inTransaction(() ->
+                fixture
+                    .operations
+                    .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                    .orElseThrow()))
         .isEqualTo(retained.get());
     assertThat(fixture.countAll("account_audit_outbox"))
         .isEqualTo("COMMITTED".equals(terminalState) ? 1L : 0L);
@@ -828,13 +785,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(replay.replayed()).isTrue();
 
     var currentMembership =
-        fixture.inTransaction(
-            () ->
-                fixture
-                    .memberships
-                    .findFreshMembershipForUpdate(
-                        fixture.account.getAccountUuid(), fixture.tenantUuid)
-                    .orElseThrow());
+        fixture.inTransaction(() ->
+            fixture
+                .memberships
+                .findFreshMembershipForUpdate(fixture.account.getAccountUuid(), fixture.tenantUuid)
+                .orElseThrow());
     assertThat(currentMembership.getLifecycleState()).isEqualTo("INACTIVE");
     assertThat(currentMembership.getMembershipVersion()).isEqualTo(3L);
     assertThat(currentMembership.getMembershipAuthorityGeneration()).isEqualTo(2L);
@@ -876,22 +831,21 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     var context =
         io.grpc.Context.ROOT.withValue(
             net.firedevops.firemud.common.grpc.GrpcPeerIdentity.CONTEXT_KEY, peer);
-    context.run(
-        () -> {
-          var scope = composed.service().issueDirectTextConnectScope(caller, selected);
-          var request =
-              new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
-                  scope.connectScopeId(), requestId);
-          var first = composed.service().joinPublicProductionFromGameSession(caller, request);
-          var replay = composed.service().joinPublicProductionFromGameSession(caller, request);
-          assertThat(first.success()).isTrue();
-          assertThat(first.tenantId()).isEqualTo(fixture.tenantUuid);
-          assertThat(first.membershipVersion()).isEqualTo(2L);
-          assertThat(first.gameplayAdmissionAllowed()).isTrue();
-          assertThat(replay.success()).isTrue();
-          assertThat(replay.replayed()).isTrue();
-          assertThat(replay.membershipId()).isEqualTo(first.membershipId());
-        });
+    context.run(() -> {
+      var scope = composed.service().issueDirectTextConnectScope(caller, selected);
+      var request =
+          new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
+              scope.connectScopeId(), requestId);
+      var first = composed.service().joinPublicProductionFromGameSession(caller, request);
+      var replay = composed.service().joinPublicProductionFromGameSession(caller, request);
+      assertThat(first.success()).isTrue();
+      assertThat(first.tenantId()).isEqualTo(fixture.tenantUuid);
+      assertThat(first.membershipVersion()).isEqualTo(2L);
+      assertThat(first.gameplayAdmissionAllowed()).isTrue();
+      assertThat(replay.success()).isTrue();
+      assertThat(replay.replayed()).isTrue();
+      assertThat(replay.membershipId()).isEqualTo(first.membershipId());
+    });
     org.mockito.Mockito.verifyNoInteractions(composed.sessions());
     assertThat(
             fixture.count(
@@ -1013,42 +967,38 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     }
 
     private void seedOwnerRowsAndOperation() {
-      inTransaction(
-          () -> {
-            freshTenants.importVerified(tenantEvidence);
-            sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
-            generations.initializeTenantIfAbsent(tenantUuid);
-            generations.initialize(
-                AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.getAccountUuid(), tenantUuid));
-            connectScopes.insertCanonical(account.getId(), scope, provenance);
-            operations.insertCanonicalIntent(requestId, scope, callerBinding);
-            return null;
-          });
+      inTransaction(() -> {
+        freshTenants.importVerified(tenantEvidence);
+        sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+        generations.initializeTenantIfAbsent(tenantUuid);
+        generations.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.getAccountUuid(), tenantUuid));
+        connectScopes.insertCanonical(account.getId(), scope, provenance);
+        operations.insertCanonicalIntent(requestId, scope, callerBinding);
+        return null;
+      });
       DemoTenantEntitlementSnapshot currentEntitlement =
-          inTransaction(
-              () ->
-                  demoEntitlements.provision(
-                      entitlementRequest(UUID.randomUUID(), null), tenantEvidence));
-      inTransaction(
-          () -> {
-            operations.bindCanonicalPolicyEvidence(
-                requestId,
-                scope,
-                callerBinding,
-                currentEntitlement.allowPublicJoin(),
-                currentEntitlement.entitlementVersion());
-            return null;
-          });
+          inTransaction(() ->
+              demoEntitlements.provision(
+                  entitlementRequest(UUID.randomUUID(), null), tenantEvidence));
+      inTransaction(() -> {
+        operations.bindCanonicalPolicyEvidence(
+            requestId,
+            scope,
+            callerBinding,
+            currentEntitlement.allowPublicJoin(),
+            currentEntitlement.entitlementVersion());
+        return null;
+      });
     }
 
     private DemoTenantEntitlementSnapshot provisionCurrentTenantEntitlement() {
       DemoTenantEntitlementSnapshot current =
           inTransaction(() -> demoEntitlements.readCurrent(tenantUuid));
-      return inTransaction(
-          () ->
-              demoEntitlements.provision(
-                  entitlementRequest(UUID.randomUUID(), current), tenantEvidence));
+      return inTransaction(() ->
+          demoEntitlements.provision(
+              entitlementRequest(UUID.randomUUID(), current), tenantEvidence));
     }
 
     private DemoTenantEntitlementRequest entitlementRequest(
@@ -1074,21 +1024,19 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     }
 
     private AccountAuthorityOutboxRepository.Checkpoint writeAndPublish() {
-      return inTransaction(
-          () -> {
-            var membership =
-                memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
-            membershipId = membership.getId();
-            roles.replaceCanonical(
-                membership,
-                account.getAccountUuid(),
-                tenantUuid,
-                provenance,
-                2L,
-                java.util.List.of("player"));
-            return producer.publishCanonicalFirstJoinMembershipChange(
-                scope, requestId, callerBinding);
-          });
+      return inTransaction(() -> {
+        var membership =
+            memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
+        membershipId = membership.getId();
+        roles.replaceCanonical(
+            membership,
+            account.getAccountUuid(),
+            tenantUuid,
+            provenance,
+            2L,
+            java.util.List.of("player"));
+        return producer.publishCanonicalFirstJoinMembershipChange(scope, requestId, callerBinding);
+      });
     }
 
     private AccountJoinOperationRepository.CanonicalJoinTerminalProof commitFirstJoin() {
@@ -1098,28 +1046,26 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
 
     private String prepareAnotherJoin() {
       String nextRequest = UUID.randomUUID().toString();
-      inTransaction(
-          () -> {
-            operations.lockAccount(account.getId());
-            operations.insertCanonicalIntent(nextRequest, scope, callerBinding);
-            var policy = demoEntitlements.readCurrent(tenantUuid);
-            operations.bindCanonicalPolicyEvidence(
-                nextRequest,
-                scope,
-                callerBinding,
-                policy.allowPublicJoin(),
-                policy.entitlementVersion());
-            return null;
-          });
+      inTransaction(() -> {
+        operations.lockAccount(account.getId());
+        operations.insertCanonicalIntent(nextRequest, scope, callerBinding);
+        var policy = demoEntitlements.readCurrent(tenantUuid);
+        operations.bindCanonicalPolicyEvidence(
+            nextRequest,
+            scope,
+            callerBinding,
+            policy.allowPublicJoin(),
+            policy.entitlementVersion());
+        return null;
+      });
       return nextRequest;
     }
 
     private AccountJoinOperationRepository.CanonicalJoinOperationEvidence commitExistingJoin(
         String nextRequest) {
-      return inTransaction(
-          () ->
-              terminalCoordinator.commitCanonicalJoin(
-                  scope, nextRequest, callerBinding, null, null, null));
+      return inTransaction(() ->
+          terminalCoordinator.commitCanonicalJoin(
+              scope, nextRequest, callerBinding, null, null, null));
     }
 
     private BrowserFacade browserFacade() {
@@ -1150,68 +1096,65 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       org.mockito.Mockito.when(
               targets.listVisiblePublicProductionAdmissionTargets(
                   org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                var request =
-                    new net.firedevops.firemud.common.gamesession
-                        .CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
-                        invocation.getArgument(0, UUID.class), TEST_NAMESPACE);
-                return net.firedevops.firemud.common.gamesession
-                    .CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                    request,
-                    net.firedevops.firemud.common.gamesession
-                        .CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                        request, java.util.List.of(target)));
-              });
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            var request =
+                new net.firedevops.firemud.common.gamesession
+                    .CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+                    invocation.getArgument(0, UUID.class), TEST_NAMESPACE);
+            return net.firedevops.firemud.common.gamesession
+                .CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                request,
+                net.firedevops.firemud.common.gamesession
+                    .CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                    request, java.util.List.of(target)));
+          });
       org.mockito.Mockito.when(
               targets.resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                var selector =
-                    invocation.getArgument(
-                        0,
-                        net.firedevops.firemud.common.gamesession
-                            .CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector
-                            .class);
-                return net.firedevops.firemud.common.gamesession
-                    .CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
-                    selector,
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            var selector =
+                invocation.getArgument(
+                    0,
                     net.firedevops.firemud.common.gamesession
-                        .CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
-                        selector, target));
-              });
+                        .CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector
+                        .class);
+            return net.firedevops.firemud.common.gamesession
+                .CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                selector,
+                net.firedevops.firemud.common.gamesession
+                    .CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                    selector, target));
+          });
       // The protected client is the controlled upstream boundary in this Account SQL composition;
       // this fixture does not claim physical GS publication or World lifecycle validation.
       org.mockito.Mockito.when(
               targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                var selector =
-                    invocation.getArgument(
-                        0,
-                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-                            .Request.class);
-                var published =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.gamesession
-                            .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
-                            .class);
-                org.mockito.Mockito.when(published.selector()).thenReturn(selector);
-                org.mockito.Mockito.when(published.currentTarget()).thenReturn(target);
-                return published;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            var selector =
+                invocation.getArgument(
+                    0,
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .Request.class);
+            var published =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.gamesession
+                        .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
+                        .class);
+            org.mockito.Mockito.when(published.selector()).thenReturn(selector);
+            org.mockito.Mockito.when(published.currentTarget()).thenReturn(target);
+            return published;
+          });
       var hosting =
           org.mockito.Mockito.mock(
               net.firedevops.firemud.accountservice.repository
@@ -1387,161 +1330,155 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
           org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
       historicalTransaction.setIsolationLevel(
           org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
-      historicalTransaction.execute(
-          status -> {
-            operations.lockAccount(account.getId());
-            var member =
-                memberships
-                    .findFreshMembershipForUpdate(account.getAccountUuid(), tenantUuid)
-                    .orElseThrow();
-            var generation =
-                generations.read(
-                    AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                        account.getAccountUuid(), tenantUuid));
-            // This is controlled historical input, not an implemented leave/role-removal owner.
-            // One atomic invalidating transaction advances the closed Account source and fence;
-            // the member generation then advances under that same fence without inventing an
-            // Account event or weakening the V40 deferred source/fence checks.
-            var accountBefore =
-                sourceEvidence.readCurrentIssuerAccountSources(
-                    ACCOUNT_ISSUER, account.getAccountUuid());
-            commitControlledClosedAccountSecurityChange(accountBefore.account());
-            assertThat(
-                    dsl.execute(
-                        "UPDATE account_authority_generations SET generation = generation + 1, "
-                            + "source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
-                            + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? AND tenant_uuid = ? "
-                            + "AND generation = ? AND source_version = ?",
-                        account.getAccountUuid(),
-                        tenantUuid,
-                        generation.generation(),
-                        generation.sourceVersion()))
-                .isEqualTo(1);
-            var next = generations.read(generation.scope());
-            var authority =
-                generations.readCompositeSnapshot(
-                    ACCOUNT_ISSUER,
+      historicalTransaction.execute(status -> {
+        operations.lockAccount(account.getId());
+        var member =
+            memberships
+                .findFreshMembershipForUpdate(account.getAccountUuid(), tenantUuid)
+                .orElseThrow();
+        var generation =
+            generations.read(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    account.getAccountUuid(), tenantUuid));
+        // This is controlled historical input, not an implemented leave/role-removal owner.
+        // One atomic invalidating transaction advances the closed Account source and fence;
+        // the member generation then advances under that same fence without inventing an
+        // Account event or weakening the V40 deferred source/fence checks.
+        var accountBefore =
+            sourceEvidence.readCurrentIssuerAccountSources(
+                ACCOUNT_ISSUER, account.getAccountUuid());
+        commitControlledClosedAccountSecurityChange(accountBefore.account());
+        assertThat(
+                dsl.execute(
+                    "UPDATE account_authority_generations SET generation = generation + 1, "
+                        + "source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? AND tenant_uuid = ? "
+                        + "AND generation = ? AND source_version = ?",
                     account.getAccountUuid(),
-                    java.util.List.of(tenantUuid),
-                    java.util.List.of(tenantUuid));
-            var accountSource =
-                sourceEvidence.readCurrentIssuerAccountSources(
-                    ACCOUNT_ISSUER, account.getAccountUuid());
-            assertThat(next.generation()).isEqualTo(generation.generation() + 1L);
-            assertThat(next.sourceVersion()).isEqualTo(generation.sourceVersion() + 1L);
-            assertThat(next.issuanceFence().value())
-                .isEqualTo(generation.issuanceFence().value() + 1L);
-            assertThat(next.issuanceFence().sourceVersion())
-                .isEqualTo(generation.issuanceFence().sourceVersion() + 1L);
-            assertThat(accountSource.issuanceFence()).isEqualTo(next.issuanceFence());
-            assertThat(accountSource.account().generation())
-                .isEqualTo(accountBefore.account().generation() + 1L);
-            assertThat(accountSource.account().sourceVersion())
-                .isEqualTo(accountBefore.account().sourceVersion() + 1L);
-            assertThat(accountSource.account().checkpoint().sequence())
-                .isEqualTo(accountBefore.account().checkpoint().sequence() + 1L);
-            var tenantSource = tenantAuthorityEvents.readCurrentByTenant(tenantUuid);
-            var prior = pairs.readForUpdate(account.getAccountUuid(), tenantUuid).orElseThrow();
-            long nextMembershipVersion = member.getMembershipVersion() + 1L;
-            long nextEventSequence = prior.eventSequence() + 1L;
-            var previousEvent =
-                outbox.findEvent(membershipStream(), prior.eventSequence()).orElseThrow();
-            var json = tools.jackson.databind.json.JsonMapper.builder().build();
-            Map<String, Object> event =
-                json.readValue(
-                    new String(previousEvent.payload(), StandardCharsets.UTF_8), Map.class);
-            String inactiveRequest = "controlled-inactive-" + UUID.randomUUID();
-            event.remove("eventDigest");
-            event.put("eventId", UUID.randomUUID().toString());
-            event.put("requestId", inactiveRequest);
-            event.put("outboxSequence", Long.toString(nextEventSequence));
-            event.put("membershipLifecycleState", lifecycle);
-            event.put("roles", currentRoles);
-            event.put(
-                "membershipVersion",
-                Map.of(tenantUuid.toString(), Long.toString(nextMembershipVersion)));
-            event.put("membershipAuthorityGeneration", Long.toString(next.generation()));
-            Map<String, Object> tuple = new java.util.LinkedHashMap<>();
-            tuple.put("issuerAuthGeneration", Long.toString(authority.issuer().generation()));
-            tuple.put(
-                "accountAuthorityGeneration", Long.toString(authority.account().generation()));
-            tuple.put(
-                "tenantAuthorityGeneration",
-                Map.of(
-                    tenantUuid.toString(),
-                    Long.toString(authority.tenants().getFirst().generation())));
-            tuple.put(
-                "membershipAuthorityGeneration",
-                Map.of(tenantUuid.toString(), Long.toString(next.generation())));
-            tuple.put("privateRealmGrantVersions", java.util.List.of());
-            var cutoff = accountSource.account().accountSecurityCutoff().orElseThrow();
-            tuple.put(
-                "accountSecurityCutoff",
-                Map.of(
-                    "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
-                    "outboxStreamKey", cutoff.outboxStreamKey(),
-                    "outboxSequence", cutoff.outboxSequence()));
-            tuple.put(
-                "tenantBillingCutoff",
-                Map.of(
-                    tenantUuid.toString(),
-                    Map.of(
-                        "tenantAuthorityGeneration",
-                            Long.toString(tenantSource.tenantAuthorityGeneration()),
-                        "tenantBillingSequence",
-                            Long.toString(tenantSource.tenantBillingSequence()),
-                        "outboxStreamKey", tenantSource.outboxStreamKey(),
-                        "outboxSequence", Long.toString(tenantSource.outboxSequence()))));
-            event.put("authorityTuple", tuple);
-            event.put("issuanceFence", Long.toString(next.issuanceFence().value()));
-            event.put("gameplayAdmissionAllowed", false);
-            event.put("callerBoundAuthorityInvalidated", true);
-            var sealed = MembershipAuthorityEventV1Codec.seal(event);
-            var appended =
-                outbox.append(
-                    membershipStream(),
-                    inactiveRequest,
-                    sequence -> {
-                      if (sequence != nextEventSequence)
-                        throw new IllegalStateException("Controlled inactive sequence changed");
-                      return new AccountAuthorityOutboxRepository.EventEvidence(
-                          sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
-                    });
-            assertThat(
-                    dsl.execute(
-                        "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = FALSE, "
-                            + "membership_version = ?, membership_authority_generation = ? WHERE id = ?",
-                        lifecycle,
-                        nextMembershipVersion,
-                        next.generation(),
-                        member.getId()))
-                .isEqualTo(1);
-            var inactive =
-                memberships
-                    .findCanonicalMembershipForUpdate(account.getAccountUuid(), tenantUuid)
-                    .orElseThrow();
-            roles.replaceCanonical(
-                inactive,
+                    tenantUuid,
+                    generation.generation(),
+                    generation.sourceVersion()))
+            .isEqualTo(1);
+        var next = generations.read(generation.scope());
+        var authority =
+            generations.readCompositeSnapshot(
+                ACCOUNT_ISSUER,
                 account.getAccountUuid(),
-                tenantUuid,
-                provenance,
-                nextMembershipVersion,
-                currentRoles);
-            assertThat(
-                    dsl.execute(
-                        "UPDATE account_membership_pair_authority SET membership_version = ?, membership_authority_generation = ?, "
-                            + "last_event_sequence = ?, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE "
-                            + "WHERE account_uuid = ? AND tenant_uuid = ?",
-                        nextMembershipVersion,
-                        next.generation(),
-                        appended.outboxSequence(),
-                        appended.eventId(),
-                        appended.eventDigest(),
-                        account.getAccountUuid(),
-                        tenantUuid))
-                .isEqualTo(1);
-            return null;
-          });
+                java.util.List.of(tenantUuid),
+                java.util.List.of(tenantUuid));
+        var accountSource =
+            sourceEvidence.readCurrentIssuerAccountSources(
+                ACCOUNT_ISSUER, account.getAccountUuid());
+        assertThat(next.generation()).isEqualTo(generation.generation() + 1L);
+        assertThat(next.sourceVersion()).isEqualTo(generation.sourceVersion() + 1L);
+        assertThat(next.issuanceFence().value()).isEqualTo(generation.issuanceFence().value() + 1L);
+        assertThat(next.issuanceFence().sourceVersion())
+            .isEqualTo(generation.issuanceFence().sourceVersion() + 1L);
+        assertThat(accountSource.issuanceFence()).isEqualTo(next.issuanceFence());
+        assertThat(accountSource.account().generation())
+            .isEqualTo(accountBefore.account().generation() + 1L);
+        assertThat(accountSource.account().sourceVersion())
+            .isEqualTo(accountBefore.account().sourceVersion() + 1L);
+        assertThat(accountSource.account().checkpoint().sequence())
+            .isEqualTo(accountBefore.account().checkpoint().sequence() + 1L);
+        var tenantSource = tenantAuthorityEvents.readCurrentByTenant(tenantUuid);
+        var prior = pairs.readForUpdate(account.getAccountUuid(), tenantUuid).orElseThrow();
+        long nextMembershipVersion = member.getMembershipVersion() + 1L;
+        long nextEventSequence = prior.eventSequence() + 1L;
+        var previousEvent =
+            outbox.findEvent(membershipStream(), prior.eventSequence()).orElseThrow();
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        Map<String, Object> event =
+            json.readValue(new String(previousEvent.payload(), StandardCharsets.UTF_8), Map.class);
+        String inactiveRequest = "controlled-inactive-" + UUID.randomUUID();
+        event.remove("eventDigest");
+        event.put("eventId", UUID.randomUUID().toString());
+        event.put("requestId", inactiveRequest);
+        event.put("outboxSequence", Long.toString(nextEventSequence));
+        event.put("membershipLifecycleState", lifecycle);
+        event.put("roles", currentRoles);
+        event.put(
+            "membershipVersion",
+            Map.of(tenantUuid.toString(), Long.toString(nextMembershipVersion)));
+        event.put("membershipAuthorityGeneration", Long.toString(next.generation()));
+        Map<String, Object> tuple = new java.util.LinkedHashMap<>();
+        tuple.put("issuerAuthGeneration", Long.toString(authority.issuer().generation()));
+        tuple.put("accountAuthorityGeneration", Long.toString(authority.account().generation()));
+        tuple.put(
+            "tenantAuthorityGeneration",
+            Map.of(
+                tenantUuid.toString(), Long.toString(authority.tenants().getFirst().generation())));
+        tuple.put(
+            "membershipAuthorityGeneration",
+            Map.of(tenantUuid.toString(), Long.toString(next.generation())));
+        tuple.put("privateRealmGrantVersions", java.util.List.of());
+        var cutoff = accountSource.account().accountSecurityCutoff().orElseThrow();
+        tuple.put(
+            "accountSecurityCutoff",
+            Map.of(
+                "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                "outboxStreamKey", cutoff.outboxStreamKey(),
+                "outboxSequence", cutoff.outboxSequence()));
+        tuple.put(
+            "tenantBillingCutoff",
+            Map.of(
+                tenantUuid.toString(),
+                Map.of(
+                    "tenantAuthorityGeneration",
+                        Long.toString(tenantSource.tenantAuthorityGeneration()),
+                    "tenantBillingSequence", Long.toString(tenantSource.tenantBillingSequence()),
+                    "outboxStreamKey", tenantSource.outboxStreamKey(),
+                    "outboxSequence", Long.toString(tenantSource.outboxSequence()))));
+        event.put("authorityTuple", tuple);
+        event.put("issuanceFence", Long.toString(next.issuanceFence().value()));
+        event.put("gameplayAdmissionAllowed", false);
+        event.put("callerBoundAuthorityInvalidated", true);
+        var sealed = MembershipAuthorityEventV1Codec.seal(event);
+        var appended =
+            outbox.append(
+                membershipStream(),
+                inactiveRequest,
+                sequence -> {
+                  if (sequence != nextEventSequence)
+                    throw new IllegalStateException("Controlled inactive sequence changed");
+                  return new AccountAuthorityOutboxRepository.EventEvidence(
+                      sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+                });
+        assertThat(
+                dsl.execute(
+                    "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = FALSE, "
+                        + "membership_version = ?, membership_authority_generation = ? WHERE id = ?",
+                    lifecycle,
+                    nextMembershipVersion,
+                    next.generation(),
+                    member.getId()))
+            .isEqualTo(1);
+        var inactive =
+            memberships
+                .findCanonicalMembershipForUpdate(account.getAccountUuid(), tenantUuid)
+                .orElseThrow();
+        roles.replaceCanonical(
+            inactive,
+            account.getAccountUuid(),
+            tenantUuid,
+            provenance,
+            nextMembershipVersion,
+            currentRoles);
+        assertThat(
+                dsl.execute(
+                    "UPDATE account_membership_pair_authority SET membership_version = ?, membership_authority_generation = ?, "
+                        + "last_event_sequence = ?, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE "
+                        + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                    nextMembershipVersion,
+                    next.generation(),
+                    appended.outboxSequence(),
+                    appended.eventId(),
+                    appended.eventDigest(),
+                    account.getAccountUuid(),
+                    tenantUuid))
+            .isEqualTo(1);
+        return null;
+      });
     }
 
     /**

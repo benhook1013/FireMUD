@@ -221,17 +221,15 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
       assertThatThrownBy(
               () -> withPeer(WORLD_PEER_URI, () -> admissionAcquisition.acquire(request)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       assertThatThrownBy(
               () -> withPeer(GAME_SESSION_PEER_URI, () -> worldAcquisition.acquire(worldRequest)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       var acquired = withPeer(GAME_SESSION_PEER_URI, () -> admissionAcquisition.acquire(request));
       assertThat(acquired.request().canonicalBytes()).containsExactly(request.canonicalBytes());
       assertThat(acquired.accountProtectionId()).isNotEqualTo(new UUID(0L, 0L));
@@ -241,14 +239,13 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
       var protectionRepository =
           new AccountStartSessionAdmissionProtectionRepository(proof.sourceDsl());
       var readback =
-          accountSources.transactions.execute(
-              ignored ->
-                  protectionRepository
-                      .findCurrentExact(
-                          acquired.accountProtectionId(),
-                          acquired.accountProtectionFence(),
-                          request.canonicalBytes())
-                      .orElseThrow());
+          accountSources.transactions.execute(ignored ->
+              protectionRepository
+                  .findCurrentExact(
+                      acquired.accountProtectionId(),
+                      acquired.accountProtectionFence(),
+                      request.canonicalBytes())
+                  .orElseThrow());
       assertThat(readback.evidence().canonicalBytes()).containsExactly(acquired.canonicalBytes());
       assertThat(
               proof
@@ -278,10 +275,8 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
               participation.participation().participationFence(),
               changedHold);
       assertThat(changedRequest.canonicalBytes()).isNotEqualTo(request.canonicalBytes());
-      assertThatThrownBy(
-              () ->
-                  withPeer(
-                      GAME_SESSION_PEER_URI, () -> admissionAcquisition.acquire(changedRequest)))
+      assertThatThrownBy(() ->
+              withPeer(GAME_SESSION_PEER_URI, () -> admissionAcquisition.acquire(changedRequest)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Original StartSession admission protection conflicts with its immutable binding");
@@ -303,24 +298,20 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
               .sourceDsl()
               .fetchSingle("SELECT password_hash FROM accounts WHERE account_uuid = ?", accountId)
               .get("password_hash", String.class);
-      assertThatThrownBy(
-              () ->
-                  accountSources.transactions.executeWithoutResult(
-                      ignored ->
-                          proof
-                              .sourceDsl()
-                              .execute(
-                                  "UPDATE accounts SET password_hash = password_hash || '-blocked' "
-                                      + "WHERE account_uuid = ?",
-                                  accountId)))
-          .satisfies(
-              failure -> {
-                SQLException sqlFailure = findSqlException(failure);
-                assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
-                assertThat(sqlFailure.getMessage())
-                    .contains(
-                        "StartSession World participation remains pending for a required source");
-              });
+      assertThatThrownBy(() ->
+              accountSources.transactions.executeWithoutResult(ignored ->
+                  proof
+                      .sourceDsl()
+                      .execute(
+                          "UPDATE accounts SET password_hash = password_hash || '-blocked' "
+                              + "WHERE account_uuid = ?",
+                          accountId)))
+          .satisfies(failure -> {
+            SQLException sqlFailure = findSqlException(failure);
+            assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
+            assertThat(sqlFailure.getMessage())
+                .contains("StartSession World participation remains pending for a required source");
+          });
       assertThat(
               proof
                   .sourceDsl()
@@ -336,39 +327,35 @@ class AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest {
       String sourcePlaceholders =
           String.join(", ", java.util.Collections.nCopies(admissionSourceKeys.size(), "?"));
       Object[] sourceBindings = admissionSourceKeys.toArray();
-      assertThatThrownBy(
-              () ->
-                  accountSources.transactions.executeWithoutResult(
-                      ignored -> {
-                        var lockedKeys =
-                            proof
-                                .sourceDsl()
-                                .fetch(
-                                    "SELECT source_key FROM account_draft_authorization_source_locks "
-                                        + "WHERE source_key IN ("
-                                        + sourcePlaceholders
-                                        + ") ORDER BY account_publication_authorization_source_sort_key(source_key) "
-                                        + "FOR UPDATE",
-                                    sourceBindings)
-                                .getValues(0, String.class);
-                        assertThat(lockedKeys)
-                            .containsExactlyInAnyOrderElementsOf(admissionSourceKeys);
-                        proof
-                            .sourceDsl()
-                            .execute(
-                                "SELECT account_ss_admission_assert_no_pending(ARRAY["
-                                    + sourcePlaceholders
-                                    + "]::text[])",
-                                sourceBindings);
-                      }))
-          .satisfies(
-              failure -> {
-                SQLException sqlFailure = findSqlException(failure);
-                assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
-                assertThat(sqlFailure.getMessage())
-                    .contains(
-                        "Original StartSession admission protection remains pending for a required source");
-              });
+      assertThatThrownBy(() ->
+              accountSources.transactions.executeWithoutResult(ignored -> {
+                var lockedKeys =
+                    proof
+                        .sourceDsl()
+                        .fetch(
+                            "SELECT source_key FROM account_draft_authorization_source_locks "
+                                + "WHERE source_key IN ("
+                                + sourcePlaceholders
+                                + ") ORDER BY account_publication_authorization_source_sort_key(source_key) "
+                                + "FOR UPDATE",
+                            sourceBindings)
+                        .getValues(0, String.class);
+                assertThat(lockedKeys).containsExactlyInAnyOrderElementsOf(admissionSourceKeys);
+                proof
+                    .sourceDsl()
+                    .execute(
+                        "SELECT account_ss_admission_assert_no_pending(ARRAY["
+                            + sourcePlaceholders
+                            + "]::text[])",
+                        sourceBindings);
+              }))
+          .satisfies(failure -> {
+            SQLException sqlFailure = findSqlException(failure);
+            assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
+            assertThat(sqlFailure.getMessage())
+                .contains(
+                    "Original StartSession admission protection remains pending for a required source");
+          });
     }
   }
 

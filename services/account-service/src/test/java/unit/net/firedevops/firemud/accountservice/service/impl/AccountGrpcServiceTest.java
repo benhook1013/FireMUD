@@ -1937,16 +1937,13 @@ class AccountGrpcServiceTest {
             .collect(java.util.stream.Collectors.toSet()));
     assertTrue(
         observer.response().getPoliciesList().stream()
-            .anyMatch(
-                entry ->
-                    entry.getAccountId().equals(ACCOUNT_UUID)
-                        && entry.getPolicy().equals("PRIVATE")));
+            .anyMatch(entry ->
+                entry.getAccountId().equals(ACCOUNT_UUID) && entry.getPolicy().equals("PRIVATE")));
     assertTrue(
         observer.response().getPoliciesList().stream()
-            .anyMatch(
-                entry ->
-                    entry.getAccountId().equals(OTHER_ACCOUNT_UUID)
-                        && entry.getPolicy().equals("HIDDEN_STAFF")));
+            .anyMatch(entry ->
+                entry.getAccountId().equals(OTHER_ACCOUNT_UUID)
+                    && entry.getPolicy().equals("HIDDEN_STAFF")));
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
     Mockito.verify(accountService)

@@ -72,29 +72,26 @@ public final class AccountAuthoritySourceReader {
     }
     requireNoAmbientTransaction();
     return requireTransactionResult(
-        ownerTransaction.execute(
-            status -> {
-              Account account = loadLockedAccount(accountId);
-              AccountSourceSnapshot current = readCurrentSnapshot(account, accountId);
-              if (outboxSequence > current.outboxSequence()) {
-                throw new IllegalStateException(
-                    "Selected Account source event is ahead of its current checkpoint");
-              }
-              Event requested =
-                  outboxRepository
-                      .findEvent(current.outboxStreamKey(), outboxSequence)
-                      .orElseThrow(
-                          () ->
-                              new IllegalStateException(
-                                  "Selected Account source event is missing"));
-              if (!current.outboxStreamKey().equals(requested.outboxStreamKey())
-                  || requested.outboxSequence() != outboxSequence) {
-                throw new IllegalStateException(
-                    "Selected Account source event identity changed during readback");
-              }
-              sourceEventReadback.requireRetainedEvent(account, requested, current.sourceState());
-              return new AccountSourceEventReadback(current, requested);
-            }));
+        ownerTransaction.execute(status -> {
+          Account account = loadLockedAccount(accountId);
+          AccountSourceSnapshot current = readCurrentSnapshot(account, accountId);
+          if (outboxSequence > current.outboxSequence()) {
+            throw new IllegalStateException(
+                "Selected Account source event is ahead of its current checkpoint");
+          }
+          Event requested =
+              outboxRepository
+                  .findEvent(current.outboxStreamKey(), outboxSequence)
+                  .orElseThrow(
+                      () -> new IllegalStateException("Selected Account source event is missing"));
+          if (!current.outboxStreamKey().equals(requested.outboxStreamKey())
+              || requested.outboxSequence() != outboxSequence) {
+            throw new IllegalStateException(
+                "Selected Account source event identity changed during readback");
+          }
+          sourceEventReadback.requireRetainedEvent(account, requested, current.sourceState());
+          return new AccountSourceEventReadback(current, requested);
+        }));
   }
 
   private AccountSourceSnapshot readCurrentSnapshot(Account account, UUID accountId) {
@@ -212,10 +209,9 @@ public final class AccountAuthoritySourceReader {
                   || !outboxStreamKey.equals(latestEvent.orElseThrow().outboxStreamKey())))) {
         throw new IllegalArgumentException("Account source snapshot is inconsistent");
       }
-      latestEvent.ifPresent(
-          event ->
-              AccountAuthoritySourceEventReadback.requireEventMatchesSnapshot(
-                  event, accountId, sourceState, true));
+      latestEvent.ifPresent(event ->
+          AccountAuthoritySourceEventReadback.requireEventMatchesSnapshot(
+              event, accountId, sourceState, true));
     }
   }
 

@@ -330,21 +330,20 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     }
     Map<UUID, UUID> assignments = new LinkedHashMap<>();
     node.propertyNames()
-        .forEach(
-            canonicalRegionId -> {
-              JsonNode operationalRegion = node.get(canonicalRegionId);
-              if (operationalRegion == null || !operationalRegion.isTextual()) {
-                throw new IllegalArgumentException(
-                    "operationalRegionAssignments values must be canonical UUID strings");
-              }
-              UUID canonical = parseUuid(canonicalRegionId, "operationalRegionAssignments key");
-              UUID operational =
-                  parseUuid(operationalRegion.textValue(), "operationalRegionAssignments value");
-              if (assignments.putIfAbsent(canonical, operational) != null) {
-                throw new IllegalArgumentException(
-                    "operationalRegionAssignments contains duplicate canonical region identities");
-              }
-            });
+        .forEach(canonicalRegionId -> {
+          JsonNode operationalRegion = node.get(canonicalRegionId);
+          if (operationalRegion == null || !operationalRegion.isTextual()) {
+            throw new IllegalArgumentException(
+                "operationalRegionAssignments values must be canonical UUID strings");
+          }
+          UUID canonical = parseUuid(canonicalRegionId, "operationalRegionAssignments key");
+          UUID operational =
+              parseUuid(operationalRegion.textValue(), "operationalRegionAssignments value");
+          if (assignments.putIfAbsent(canonical, operational) != null) {
+            throw new IllegalArgumentException(
+                "operationalRegionAssignments contains duplicate canonical region identities");
+          }
+        });
     return immutableOperationalRegionAssignments(assignments);
   }
 
@@ -354,29 +353,27 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     if (assignments.isEmpty()) {
       throw new IllegalArgumentException("operationalRegionAssignments must be nonempty");
     }
-    assignments.forEach(
-        (canonical, operational) -> {
-          requireNonNil(canonical, "operationalRegionAssignments canonical region ID");
-          requireNonNil(operational, "operationalRegionAssignments operational region ID");
-        });
+    assignments.forEach((canonical, operational) -> {
+      requireNonNil(canonical, "operationalRegionAssignments canonical region ID");
+      requireNonNil(operational, "operationalRegionAssignments operational region ID");
+    });
     Map<UUID, UUID> ordered = new LinkedHashMap<>();
     Set<UUID> operationalIdentities = new HashSet<>();
     assignments.entrySet().stream()
         .sorted((left, right) -> left.getKey().toString().compareTo(right.getKey().toString()))
-        .forEach(
-            entry -> {
-              UUID canonical = entry.getKey();
-              UUID operational = entry.getValue();
-              if (canonical.equals(operational)) {
-                throw new IllegalArgumentException(
-                    "Canonical and operational region identities must be distinct");
-              }
-              if (!operationalIdentities.add(operational)) {
-                throw new IllegalArgumentException(
-                    "operationalRegionAssignments contains duplicate operational region identities");
-              }
-              ordered.put(canonical, operational);
-            });
+        .forEach(entry -> {
+          UUID canonical = entry.getKey();
+          UUID operational = entry.getValue();
+          if (canonical.equals(operational)) {
+            throw new IllegalArgumentException(
+                "Canonical and operational region identities must be distinct");
+          }
+          if (!operationalIdentities.add(operational)) {
+            throw new IllegalArgumentException(
+                "operationalRegionAssignments contains duplicate operational region identities");
+          }
+          ordered.put(canonical, operational);
+        });
     return Collections.unmodifiableMap(ordered);
   }
 

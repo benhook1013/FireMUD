@@ -108,10 +108,9 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
         Thread.sleep(10L);
       }
 
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserveHumanStarting(request, lifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().reserveHumanStarting(request, lifecycle)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Exact canonical pins are required before STARTING");
       assertThat(
@@ -135,10 +134,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
               request, uuid(411), uuid(412));
 
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().attach(request, identity)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(status -> target.intents().attach(request, identity)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("must commit before World hold identity attachment");
       assertNoAdmissionMutation(harness.dsl);
@@ -155,15 +152,14 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
           .contains(reserved);
 
-      harness.transactions.execute(
-          status -> {
-            harness.dsl.execute(
-                "UPDATE game_instances SET row_version = row_version + 1 "
-                    + "WHERE tenant_id = ? AND id = ?",
-                target.gameSessionTenantId(),
-                target.gameInstanceId());
-            return null;
-          });
+      harness.transactions.execute(status -> {
+        harness.dsl.execute(
+            "UPDATE game_instances SET row_version = row_version + 1 "
+                + "WHERE tenant_id = ? AND id = ?",
+            target.gameSessionTenantId(),
+            target.gameInstanceId());
+        return null;
+      });
       CanonicalInitialAdmissionIntentSnapshot retry =
           harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
       assertThat(retry).isEqualTo(reserved);
@@ -192,34 +188,30 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           .isEqualTo(target.catalog().sourceIntakeReceipt().intakeRequestId());
       assertPendingIntentVisibleFromSeparateConnection(harness, request, lifecycle);
       var changedLifecycle = target.lifecycleRequest(uuid(413));
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserve(request, changedLifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().reserve(request, changedLifecycle)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("retained request or locked owner source binding");
 
       var changedDigest = withDigest(request, "b".repeat(64));
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserve(changedDigest, lifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().reserve(changedDigest, lifecycle)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("does not bind the complete initial-admission input");
 
       var changedSource = withInstance(request, uuid(414));
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserve(changedSource, lifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().reserve(changedSource, lifecycle)))
           .isInstanceOf(IllegalStateException.class);
 
       var competingRequest = holdRequest(target, "intent-other-request");
       var competingLifecycle = target.lifecycleRequest(uuid(415));
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserve(competingRequest, competingLifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().reserve(competingRequest, competingLifecycle)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("already owns this realm");
 
@@ -240,10 +232,9 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       var changedIdentity =
           new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
               request, uuid(416), uuid(417));
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().attach(request, changedIdentity)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().attach(request, changedIdentity)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("cannot accept a changed hold identity");
       assertThat(
@@ -331,68 +322,59 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       var request = holdRequest(target, "intent-runtime-version");
       var lifecycle = target.lifecycleRequest(uuid(420));
 
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> {
-                        target.intents().reserve(request, lifecycle);
-                        throw new IllegalStateException("force owner rollback");
-                      }))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(status -> {
+                target.intents().reserve(request, lifecycle);
+                throw new IllegalStateException("force owner rollback");
+              }))
           .hasMessageContaining("force owner rollback");
       assertThat(
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
           .isEmpty();
       assertNoAdmissionMutation(harness.dsl);
 
-      harness.transactions.execute(
-          status -> {
-            harness.dsl.execute(
-                "UPDATE game_instances SET row_version = row_version + 1 "
-                    + "WHERE tenant_id = ? AND id = ?",
-                target.gameSessionTenantId(),
-                target.gameInstanceId());
-            return null;
-          });
+      harness.transactions.execute(status -> {
+        harness.dsl.execute(
+            "UPDATE game_instances SET row_version = row_version + 1 "
+                + "WHERE tenant_id = ? AND id = ?",
+            target.gameSessionTenantId(),
+            target.gameInstanceId());
+        return null;
+      });
       CanonicalInitialAdmissionIntentSnapshot reserved =
           harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
-      harness.transactions.execute(
-          status -> {
-            harness.dsl.execute(
-                "UPDATE game_instances SET row_version = row_version + 1 "
-                    + "WHERE tenant_id = ? AND id = ?",
-                target.gameSessionTenantId(),
-                target.gameInstanceId());
-            return null;
-          });
+      harness.transactions.execute(status -> {
+        harness.dsl.execute(
+            "UPDATE game_instances SET row_version = row_version + 1 "
+                + "WHERE tenant_id = ? AND id = ?",
+            target.gameSessionTenantId(),
+            target.gameInstanceId());
+        return null;
+      });
       CanonicalInitialAdmissionIntentSnapshot monotonicRetry =
           harness.transactions.execute(status -> target.intents().reserve(request, lifecycle));
       assertThat(monotonicRetry).isEqualTo(reserved);
       assertThat(monotonicRetry.sourceBinding().currentRowVersion())
           .isEqualTo(reserved.sourceBinding().currentRowVersion());
 
-      harness.transactions.execute(
-          status -> {
-            harness.dsl.execute(
-                "UPDATE game_instances SET row_version = ? WHERE tenant_id = ? AND id = ?",
-                reserved.sourceBinding().currentRowVersion() - 1,
-                target.gameSessionTenantId(),
-                target.gameInstanceId());
-            return null;
-          });
+      harness.transactions.execute(status -> {
+        harness.dsl.execute(
+            "UPDATE game_instances SET row_version = ? WHERE tenant_id = ? AND id = ?",
+            reserved.sourceBinding().currentRowVersion() - 1,
+            target.gameSessionTenantId(),
+            target.gameInstanceId());
+        return null;
+      });
 
       var identity =
           new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
               request, uuid(421), uuid(422));
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserve(request, lifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(status -> target.intents().reserve(request, lifecycle)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("retained request or locked owner source binding");
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().attach(request, identity)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(status -> target.intents().attach(request, identity)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("retained request or locked owner source binding");
       assertThat(
@@ -424,10 +406,9 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           holdRequest(
               target, request.initialAdmissionRequestId(), target.catalog().catalogRevision() + 1);
 
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> target.intents().reserve(changedCatalogRequest, lifecycle)))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(
+                  status -> target.intents().reserve(changedCatalogRequest, lifecycle)))
           .isInstanceOf(
               GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class)
           .hasMessageContaining("missing or stale");
@@ -456,15 +437,13 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
                   target.gameSessionTenantId(),
                   target.gameInstanceId()));
 
-      assertThatThrownBy(
-              () ->
-                  harness.transactions.execute(
-                      status -> {
-                        harness.dsl.execute(
-                            updateSql, target.gameSessionTenantId(), target.gameInstanceId());
-                        target.intents().reserve(request, lifecycle);
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              harness.transactions.execute(status -> {
+                harness.dsl.execute(
+                    updateSql, target.gameSessionTenantId(), target.gameInstanceId());
+                target.intents().reserve(request, lifecycle);
+                return null;
+              }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("complete launch binding");
       Record runtimeSourceAfterRollback =
@@ -862,15 +841,13 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           Objects.requireNonNull(
               transactions.execute(
                   status -> sourceRepository.register(INTAKE_REQUEST, freshSource())));
-      transactions.execute(
-          status ->
-              new GameSessionFreshTenantAssociationRepository(dsl)
-                  .associateFresh(
-                      ASSOCIATION_OPERATION,
-                      NAMESPACE,
-                      source,
-                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                          source.source())));
+      transactions.execute(status ->
+          new GameSessionFreshTenantAssociationRepository(dsl)
+              .associateFresh(
+                  ASSOCIATION_OPERATION,
+                  NAMESPACE,
+                  source,
+                  CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source.source())));
       var preparedCatalog =
           catalogRepository.prepareInitialPublicProduction(
               catalogRequest(source), publishedPolicy(source));
@@ -932,33 +909,32 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
           dsl, transactions, tuple, source.source(), publishedPolicy(source), binding, ownerLease);
       return Objects.requireNonNull(
-          transactions.execute(
-              status -> {
-                var association =
-                    new GameSessionFreshTenantAssociationRepository(dsl)
-                        .associateFresh(
-                            ASSOCIATION_OPERATION,
-                            NAMESPACE,
-                            source,
-                            CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                                source.source()));
-                var starting =
-                    new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE)
-                        .createStarting(
-                            association,
-                            binding,
-                            ACTOR,
-                            tuple.controlPlaneRequestId(),
-                            tuple.mutationDigest(),
-                            tuple);
-                if (completeRunning) {
-                  dsl.execute(
-                      "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-                      association.legacyGameSessionTenantId(),
-                      starting.gameInstanceId());
-                }
-                return starting.gameInstanceUuid();
-              }),
+          transactions.execute(status -> {
+            var association =
+                new GameSessionFreshTenantAssociationRepository(dsl)
+                    .associateFresh(
+                        ASSOCIATION_OPERATION,
+                        NAMESPACE,
+                        source,
+                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                            source.source()));
+            var starting =
+                new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE)
+                    .createStarting(
+                        association,
+                        binding,
+                        ACTOR,
+                        tuple.controlPlaneRequestId(),
+                        tuple.mutationDigest(),
+                        tuple);
+            if (completeRunning) {
+              dsl.execute(
+                  "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+                  association.legacyGameSessionTenantId(),
+                  starting.gameInstanceId());
+            }
+            return starting.gameInstanceUuid();
+          }),
           "Actual owner-allocated canonical instance UUID");
     }
 

@@ -241,26 +241,23 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       int registeredReservations =
           Math.toIntExact(
               work.localEntries().stream()
-                  .filter(
-                      entry ->
-                          entry
-                              .memberValue()
-                              .reservation()
-                              .partitionId()
-                              .equals(operation.releasedMemberValue().reservation().partitionId()))
+                  .filter(entry ->
+                      entry
+                          .memberValue()
+                          .reservation()
+                          .partitionId()
+                          .equals(operation.releasedMemberValue().reservation().partitionId()))
                   .count());
       int registeredBindings =
           Math.toIntExact(
               work.localEntries().stream()
-                  .filter(
-                      entry ->
-                          entry
-                                  .memberValue()
-                                  .reservation()
-                                  .partitionId()
-                                  .equals(
-                                      operation.releasedMemberValue().reservation().partitionId())
-                              && entry.bindingPresent())
+                  .filter(entry ->
+                      entry
+                              .memberValue()
+                              .reservation()
+                              .partitionId()
+                              .equals(operation.releasedMemberValue().reservation().partitionId())
+                          && entry.bindingPresent())
                   .count());
       if (BigInteger.valueOf(physicalCapacity).compareTo(work.anchor().partitionCapacity()) > 0
           || BigInteger.valueOf(physicalCapacity).compareTo(work.partitionCapacity()) > 0
@@ -297,13 +294,12 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     }
     List<CanonicalGameplayIssuerBindingLocalProjectionRepository.LocalEntry> entries =
         work.localEntries().stream()
-            .filter(
-                entry ->
-                    entry
-                        .memberValue()
-                        .reservation()
-                        .partitionId()
-                        .equals(operation.releasedMemberValue().reservation().partitionId()))
+            .filter(entry ->
+                entry
+                    .memberValue()
+                    .reservation()
+                    .partitionId()
+                    .equals(operation.releasedMemberValue().reservation().partitionId()))
             .sorted(java.util.Comparator.comparing(entry -> entry.operationId().toString()))
             .toList();
     args.add(ascii(Integer.toString(entries.size())));

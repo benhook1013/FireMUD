@@ -120,10 +120,8 @@ class AutomationRuntimeFamilyCatalogTest {
           CATALOG.replace("Namespace and actor class unresolved; no clone.", ""),
           CATALOG + "{}"
         }) {
-      assertThatThrownBy(
-              () ->
-                  AutomationRuntimeFamilyCatalog.fromStored(
-                      invalid.getBytes(StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              AutomationRuntimeFamilyCatalog.fromStored(invalid.getBytes(StandardCharsets.UTF_8)))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -162,16 +160,13 @@ class AutomationRuntimeFamilyCatalogTest {
           CATALOG.replace(FACT, ""),
           CATALOG.replace(GAP, "")
         }) {
-      assertThatThrownBy(
-              () ->
-                  AutomationRuntimeFamilyCatalog.fromStored(
-                      invalid.getBytes(StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              AutomationRuntimeFamilyCatalog.fromStored(invalid.getBytes(StandardCharsets.UTF_8)))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalog.fromStored(
-                    new byte[AutomationRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalog.fromStored(
+                new byte[AutomationRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -183,61 +178,52 @@ class AutomationRuntimeFamilyCatalogTest {
         UnknownFieldSet.newBuilder()
             .addField(9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromRequest(
-                    request.toBuilder()
-                        .addCanonicalRequestBytes(request.getCanonicalRequestBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromRequest(
+                request.toBuilder()
+                    .addCanonicalRequestBytes(request.getCanonicalRequestBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromRequest(
-                    request.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromRequest(
+                request.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromRequest(
-                    request.toBuilder()
-                        .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromRequest(
+                request.toBuilder()
+                    .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var evidence = new Evidence(read, UUID.randomUUID(), catalog());
     var response = AutomationRuntimeFamilyCatalogCodec.toResponse(read, evidence);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(UUID.randomUUID(), "test"), response))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(UUID.randomUUID(), "test"), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(read.readRequestId(), "other"), response))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(read.readRequestId(), "other"), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromResponse(
-                    read,
-                    response.toBuilder()
-                        .addCanonicalResponseBytes(response.getCanonicalResponseBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromResponse(
+                read,
+                response.toBuilder()
+                    .addCanonicalResponseBytes(response.getCanonicalResponseBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromResponse(
-                    read, response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromResponse(
+                read, response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationRuntimeFamilyCatalogCodec.fromResponse(
-                    read,
-                    response.toBuilder()
-                        .setCanonicalResponseBytes(
-                            0,
-                            ByteString.copyFrom(
-                                new byte
-                                    [AutomationRuntimeFamilyCatalogCodec.MAX_RESPONSE_BYTES + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationRuntimeFamilyCatalogCodec.fromResponse(
+                read,
+                response.toBuilder()
+                    .setCanonicalResponseBytes(
+                        0,
+                        ByteString.copyFrom(
+                            new byte[AutomationRuntimeFamilyCatalogCodec.MAX_RESPONSE_BYTES + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

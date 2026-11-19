@@ -212,19 +212,18 @@ class CanonicalGameplayIssuerIdentityMigrationPostgresIntegrationTest {
       assertRecreatedIdentityChecksRemainValidated(dsl);
       assertLegacyIssuerValues(dsl);
       assertThatThrownBy(() -> new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot())
-          .satisfies(
-              failure -> {
-                Throwable rootCause = failure;
-                while (rootCause.getCause() != null) {
-                  rootCause = rootCause.getCause();
-                }
-                assertThat(rootCause)
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage(
-                        "Unsupported issuer identity; expected exact Account issuer "
-                            + "firemud-account-service; legacy UUID issuer identities require "
-                            + "explicit recovery");
-              });
+          .satisfies(failure -> {
+            Throwable rootCause = failure;
+            while (rootCause.getCause() != null) {
+              rootCause = rootCause.getCause();
+            }
+            assertThat(rootCause)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(
+                    "Unsupported issuer identity; expected exact Account issuer "
+                        + "firemud-account-service; legacy UUID issuer identities require "
+                        + "explicit recovery");
+          });
       assertThat(rowSnapshots(dsl)).isEqualTo(beforeMigration);
       assertThat(historySnapshot(dsl).subList(0, historyBeforeMigration.size()))
           .containsExactlyElementsOf(historyBeforeMigration);
@@ -644,16 +643,15 @@ class CanonicalGameplayIssuerIdentityMigrationPostgresIntegrationTest {
 
   private static void assertRejectedIssuerWrite(
       DSLContext dsl, IssuerField field, String attemptedIssuer) {
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE "
-                        + field.table()
-                        + " SET "
-                        + field.column()
-                        + " = ? WHERE "
-                        + field.where(),
-                    parameters(attemptedIssuer, field.keys())))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE "
+                    + field.table()
+                    + " SET "
+                    + field.column()
+                    + " = ? WHERE "
+                    + field.where(),
+                parameters(attemptedIssuer, field.keys())))
         .isInstanceOfSatisfying(
             DataAccessException.class,
             exception -> assertThat(exception.sqlState()).isEqualTo("23514"));

@@ -45,10 +45,8 @@ public record SelectedDraftControlPlaneDigest(
     TemplateConfigSourceSnapshot templateConfig =
         sources
             .templateConfig()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Selected template-config source snapshot unavailable"));
+            .orElseThrow(() ->
+                new IllegalStateException("Selected template-config source snapshot unavailable"));
     List<Snapshot> snapshots =
         List.of(
             new Snapshot(

@@ -109,12 +109,11 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
         inTransaction(context, () -> bundles.captureAndPersist(zero.requestId()));
     assertThat(zeroBundle.fields().get("outboxCheckpoints"))
         .asList()
-        .allSatisfy(
-            checkpoint ->
-                assertThat(checkpoint)
-                    .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                    .containsEntry("outboxSequence", "0")
-                    .hasSize(2));
+        .allSatisfy(checkpoint ->
+            assertThat(checkpoint)
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("outboxSequence", "0")
+                .hasSize(2));
 
     AccountGameplayDelegationIssuancePersistenceIntegrationTest.advanceEmailVerifiedThroughOwner(
         dsl, context.transaction(), sources, account.getAccountUuid());
@@ -123,13 +122,12 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
         inTransaction(context, () -> bundles.captureAndPersist(positive.requestId()));
     assertThat(positiveBundle.fields().get("outboxCheckpoints"))
         .asList()
-        .anySatisfy(
-            checkpoint ->
-                assertThat(checkpoint)
-                    .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                    .containsEntry("outboxSequence", "1")
-                    .containsKeys("sourceEventId", "sourceEventDigest")
-                    .hasSize(4));
+        .anySatisfy(checkpoint ->
+            assertThat(checkpoint)
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("outboxSequence", "1")
+                .containsKeys("sourceEventId", "sourceEventDigest")
+                .hasSize(4));
     var retainedBundles =
         dsl.fetch(
                 "SELECT * FROM account_gameplay_delegation_auth_evidence_bundles ORDER BY operation_id")
@@ -417,17 +415,15 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     CountDownLatch captureStart = new CountDownLatch(1);
     ExecutorService concurrentCaptures = Executors.newFixedThreadPool(2);
     var firstCapture =
-        concurrentCaptures.submit(
-            () -> {
-              captureStart.await();
-              return inTransaction(context, () -> bundles.captureAndPersist(pending.requestId()));
-            });
+        concurrentCaptures.submit(() -> {
+          captureStart.await();
+          return inTransaction(context, () -> bundles.captureAndPersist(pending.requestId()));
+        });
     var secondCapture =
-        concurrentCaptures.submit(
-            () -> {
-              captureStart.await();
-              return inTransaction(context, () -> bundles.captureAndPersist(pending.requestId()));
-            });
+        concurrentCaptures.submit(() -> {
+          captureStart.await();
+          return inTransaction(context, () -> bundles.captureAndPersist(pending.requestId()));
+        });
     AccountAuthEvidenceBundle first;
     AccountAuthEvidenceBundle concurrentRetry;
     try {
@@ -480,24 +476,22 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
     assertThat(nextReference.get("sourceFence")).isEqualTo("2");
     assertThat(new java.math.BigInteger((String) nextReference.get("sourceFence")))
         .isGreaterThan(new java.math.BigInteger((String) firstReference.get("sourceFence")));
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        dsl.execute(
-                            "UPDATE account_gameplay_delegation_auth_evidence_bundles "
-                                + "SET source_fence = '99' WHERE operation_id = ?",
-                            pending.operationId())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    dsl.execute(
+                        "UPDATE account_gameplay_delegation_auth_evidence_bundles "
+                            + "SET source_fence = '99' WHERE operation_id = ?",
+                        pending.operationId())))
         .isInstanceOf(RuntimeException.class);
     assertThat(first.fields().get("outboxCheckpoints"))
         .asList()
-        .allSatisfy(
-            checkpoint ->
-                assertThat(checkpoint)
-                    .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                    .containsEntry("outboxSequence", "0")
-                    .doesNotContainKeys("sourceEventId", "sourceEventDigest"));
+        .allSatisfy(checkpoint ->
+            assertThat(checkpoint)
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("outboxSequence", "0")
+                .doesNotContainKeys("sourceEventId", "sourceEventDigest"));
     Long bundleCount =
         Objects.requireNonNull(
                 dsl.fetchOne(
@@ -569,12 +563,11 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
         snapshot
             .account()
             .accountSecurityCutoff()
-            .map(
-                value ->
-                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                        value.accountAuthorityGeneration(),
-                        value.outboxStreamKey(),
-                        value.outboxSequence()));
+            .map(value ->
+                new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                    value.accountAuthorityGeneration(),
+                    value.outboxStreamKey(),
+                    value.outboxSequence()));
     return new AccountAuthoritySnapshot(
         snapshot.account().scope().accountId(),
         snapshot.issuer().generation(),

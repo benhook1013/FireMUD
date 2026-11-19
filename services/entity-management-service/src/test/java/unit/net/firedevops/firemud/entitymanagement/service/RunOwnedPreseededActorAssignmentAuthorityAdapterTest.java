@@ -59,30 +59,26 @@ class RunOwnedPreseededActorAssignmentAuthorityAdapterTest {
     RunOwnedPreseededActorAssignmentAuthorityAdapter authority =
         authority(capabilityFile.toString());
 
-    withGameSessionPeer(
-        () -> {
-          assertThatCode(
-                  () ->
-                      authority.requireAuthorized(
-                          request(),
-                          RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
-              .doesNotThrowAnyException();
-          assertThatCode(
-                  () ->
-                      authority.requireTargetBoundAuthorized(
-                          request(),
-                          ownerEvidence(),
-                          RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
-              .doesNotThrowAnyException();
-          assertThatThrownBy(
-                  () ->
-                      authority.requireTargetBoundAuthorized(
-                          request(),
-                          ownerEvidenceWithNamespace(
-                              UUID.fromString("60000000-0000-4000-8000-000000000006")),
-                          RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
-              .isInstanceOf(AdminAuthorizationException.class);
-        });
+    withGameSessionPeer(() -> {
+      assertThatCode(() ->
+              authority.requireAuthorized(
+                  request(),
+                  RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+          .doesNotThrowAnyException();
+      assertThatCode(() ->
+              authority.requireTargetBoundAuthorized(
+                  request(),
+                  ownerEvidence(),
+                  RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+          .doesNotThrowAnyException();
+      assertThatThrownBy(() ->
+              authority.requireTargetBoundAuthorized(
+                  request(),
+                  ownerEvidenceWithNamespace(
+                      UUID.fromString("60000000-0000-4000-8000-000000000006")),
+                  RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+          .isInstanceOf(AdminAuthorizationException.class);
+    });
   }
 
   @Test
@@ -107,21 +103,18 @@ class RunOwnedPreseededActorAssignmentAuthorityAdapterTest {
         new PreseededActorAssignmentService(
             authority, accountIdentityPort, stagingPort(), ownerEvidencePort, characterRepository);
 
-    withGameSessionPeer(
-        () ->
-            assertThatThrownBy(() -> service.assign(request))
-                .isInstanceOf(AdminAuthorizationException.class));
+    withGameSessionPeer(() ->
+        assertThatThrownBy(() -> service.assign(request))
+            .isInstanceOf(AdminAuthorizationException.class));
     verifyNoInteractions(accountIdentityPort, ownerEvidencePort, characterRepository);
 
     RunOwnedPreseededActorAssignmentAuthorityAdapter missingCapability = authority("");
-    withGameSessionPeer(
-        () ->
-            assertThatThrownBy(
-                    () ->
-                        missingCapability.requireAuthorized(
-                            request,
-                            RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
-                .isInstanceOf(AdminAuthorizationException.class));
+    withGameSessionPeer(() ->
+        assertThatThrownBy(() ->
+                missingCapability.requireAuthorized(
+                    request,
+                    RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+            .isInstanceOf(AdminAuthorizationException.class));
   }
 
   @Test
@@ -131,11 +124,9 @@ class RunOwnedPreseededActorAssignmentAuthorityAdapterTest {
     RunOwnedPreseededActorAssignmentAuthorityAdapter authority =
         authority(capabilityFile.toString());
 
-    assertThatThrownBy(
-            () ->
-                authority.requireAuthorized(
-                    request(),
-                    RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+    assertThatThrownBy(() ->
+            authority.requireAuthorized(
+                request(), RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
         .isInstanceOf(AdminAuthorizationException.class);
     Context.current()
         .withValue(
@@ -144,27 +135,21 @@ class RunOwnedPreseededActorAssignmentAuthorityAdapterTest {
                 "spiffe://firemud/ns/other/sa/game-session-service",
                 "other",
                 "game-session-service"))
-        .run(
-            () ->
-                assertThatThrownBy(
-                        () ->
-                            authority.requireAuthorized(
-                                request(),
-                                RunOwnedPreseededAssignmentAuthority.Action
-                                    .PRESEEDED_ACTOR_ASSIGNMENT))
-                    .isInstanceOf(AdminAuthorizationException.class));
+        .run(() ->
+            assertThatThrownBy(() ->
+                    authority.requireAuthorized(
+                        request(),
+                        RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+                .isInstanceOf(AdminAuthorizationException.class));
 
     SessionContext.setContext(ACCOUNT_UUID.toString(), List.of(), java.util.Map.of());
     try {
-      withGameSessionPeer(
-          () ->
-              assertThatThrownBy(
-                      () ->
-                          authority.requireAuthorized(
-                              request(),
-                              RunOwnedPreseededAssignmentAuthority.Action
-                                  .PRESEEDED_ACTOR_ASSIGNMENT))
-                  .isInstanceOf(AdminAuthorizationException.class));
+      withGameSessionPeer(() ->
+          assertThatThrownBy(() ->
+                  authority.requireAuthorized(
+                      request(),
+                      RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+              .isInstanceOf(AdminAuthorizationException.class));
     } finally {
       SessionContext.clear();
     }
@@ -190,25 +175,23 @@ class RunOwnedPreseededActorAssignmentAuthorityAdapterTest {
             authority, accountIdentityPort, stagingPort(), ownerEvidencePort, characterRepository);
     when(accountIdentityPort.resolveRuntimeAccountIdentity(
             ACCOUNT_UUID.toString(), ASSIGNMENT_UUID.toString()))
-        .thenAnswer(
-            invocation -> {
-              PreseededActorAssignmentRequest replacement =
-                  new PreseededActorAssignmentRequest(
-                      ASSIGNMENT_UUID,
-                      ACCOUNT_UUID,
-                      new PreseededActorCorePayload(
-                          PreseededActorCorePayload.ActorKind.PLAYER, "Changed Actor"),
-                      request.expectedTarget());
-              replaceGrant(capabilityFile, replacement);
-              return accountProof;
-            });
+        .thenAnswer(invocation -> {
+          PreseededActorAssignmentRequest replacement =
+              new PreseededActorAssignmentRequest(
+                  ASSIGNMENT_UUID,
+                  ACCOUNT_UUID,
+                  new PreseededActorCorePayload(
+                      PreseededActorCorePayload.ActorKind.PLAYER, "Changed Actor"),
+                  request.expectedTarget());
+          replaceGrant(capabilityFile, replacement);
+          return accountProof;
+        });
     when(ownerEvidencePort.resolveCurrentEligibleTarget(request, accountProof, stagingEvidence()))
         .thenReturn(ownerEvidence());
 
-    withGameSessionPeer(
-        () ->
-            assertThatThrownBy(() -> service.assign(request))
-                .isInstanceOf(AdminAuthorizationException.class));
+    withGameSessionPeer(() ->
+        assertThatThrownBy(() -> service.assign(request))
+            .isInstanceOf(AdminAuthorizationException.class));
 
     verifyNoInteractions(characterRepository);
   }
@@ -222,19 +205,17 @@ class RunOwnedPreseededActorAssignmentAuthorityAdapterTest {
         new RunOwnedPreseededActorAssignmentAuthorityAdapter(
             capabilityFile.toString(), RUN_ID, PROJECT_NAME, NAMESPACE, activeTrustRoot::get);
 
-    withGameSessionPeer(
-        () -> {
-          authority.requireAuthorized(
-              request(), RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT);
-          activeTrustRoot.set("c".repeat(64));
-          assertThatThrownBy(
-                  () ->
-                      authority.requireTargetBoundAuthorized(
-                          request(),
-                          ownerEvidence(),
-                          RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
-              .isInstanceOf(AdminAuthorizationException.class);
-        });
+    withGameSessionPeer(() -> {
+      authority.requireAuthorized(
+          request(), RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT);
+      activeTrustRoot.set("c".repeat(64));
+      assertThatThrownBy(() ->
+              authority.requireTargetBoundAuthorized(
+                  request(),
+                  ownerEvidence(),
+                  RunOwnedPreseededAssignmentAuthority.Action.PRESEEDED_ACTOR_ASSIGNMENT))
+          .isInstanceOf(AdminAuthorizationException.class);
+    });
   }
 
   private static RunOwnedPreseededActorAssignmentAuthorityAdapter authority(String path) {

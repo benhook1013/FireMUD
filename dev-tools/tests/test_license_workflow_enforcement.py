@@ -174,18 +174,53 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
         gatling = [
             curation
             for curation in curations
-            if curation["id"]
-            == "Maven:io.gatling.highcharts:gatling-charts-highcharts:3.16.0"
+            if curation["id"].startswith(
+                "Maven:io.gatling.highcharts:gatling-charts-highcharts:"
+            )
         ]
-        self.assertEqual(1, len(gatling))
+        self.assertEqual(2, len(gatling))
         self.assertEqual(
-            {"Gatling Highcharts": GATLING_LICENSE_REF},
-            gatling[0]["curations"]["declared_license_mapping"],
+            {
+                f"Maven:io.gatling.highcharts:gatling-charts-highcharts:{version}"
+                for version in ("3.16.0", "3.16.1")
+            },
+            {entry["id"] for entry in gatling},
         )
+        for entry in gatling:
+            self.assertEqual(
+                {"Gatling Highcharts": GATLING_LICENSE_REF},
+                entry["curations"]["declared_license_mapping"],
+            )
         self.assertEqual(
             GATLING_LICENSE_SHA256,
             hashlib.sha256(GATLING_LICENSE_PATH.read_bytes()).hexdigest(),
         )
+
+    def test_java_operator_license_aliases_are_version_specific(self) -> None:
+        path = ROOT / "config/ort/curations/firemud.yml"
+        entries = yaml.safe_load(path.read_text(encoding="utf-8"))
+        java_operator = [
+            entry
+            for entry in entries
+            if entry["id"].startswith("Maven:io.javaoperatorsdk:")
+        ]
+        expected = {
+            f"Maven:io.javaoperatorsdk:{module}:{version}"
+            for module in ("operator-framework", "operator-framework-core")
+            for version in ("5.6.3", "5.6.4")
+        } | {
+            f"Maven:io.javaoperatorsdk:operator-framework-spring-boot-starter:{version}"
+            for version in ("6.7.3", "6.7.4")
+        }
+        self.assertEqual(len(expected), len(java_operator))
+        self.assertEqual(expected, {entry["id"] for entry in java_operator})
+        for entry in java_operator:
+            with self.subTest(coordinate=entry["id"]):
+                self.assertEqual({"comment", "declared_license_mapping"}, set(entry["curations"]))
+                self.assertEqual(
+                    {"Apache 2 License": "Apache-2.0"},
+                    entry["curations"]["declared_license_mapping"],
+                )
 
     def test_gatling_resolution_matches_only_the_observed_violation(self) -> None:
         observed_message = (
@@ -199,7 +234,7 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
             ),
             "altered version": observed_message.replace(
                 "gatling-charts-highcharts:3.16.0",
-                "gatling-charts-highcharts:3.16.1",
+                "gatling-charts-highcharts:3.16.2",
             ),
             "altered license": observed_message.replace(
                 GATLING_LICENSE_REF, "LicenseRef-Gatling-Highcharts-3.16.1"
@@ -219,14 +254,32 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
             config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
             resolutions = config["resolutions"]["rule_violations"]
             with self.subTest(config=config_path.name):
-                self.assertEqual(1, len(resolutions))
-                resolution = resolutions[0]
-                self.assertEqual("NOT_MODIFIED_EXCEPTION", resolution["reason"])
-                pattern = resolution["message"]
-                self.assertIsNotNone(re.fullmatch(pattern, observed_message, re.DOTALL))
-                for case, message in rejected_messages.items():
-                    with self.subTest(rejected=case):
-                        self.assertIsNone(re.fullmatch(pattern, message, re.DOTALL))
+                self.assertEqual(2, len(resolutions))
+                for version, resolution in zip(("3.16.0", "3.16.1"), resolutions, strict=True):
+                    with self.subTest(version=version):
+                        self.assertEqual("NOT_MODIFIED_EXCEPTION", resolution["reason"])
+                        pattern = resolution["message"]
+                        package = "gatling-charts-highcharts:3.16.0"
+                        expected = observed_message.replace(
+                            package, f"gatling-charts-highcharts:{version}"
+                        )
+                        self.assertIsNotNone(re.fullmatch(pattern, expected, re.DOTALL))
+                        other_version = "3.16.1" if version == "3.16.0" else "3.16.0"
+                        denied = rejected_messages | {
+                            "other approved version": observed_message.replace(
+                                package, f"gatling-charts-highcharts:{other_version}"
+                            )
+                        }
+                        for case, message in denied.items():
+                            if case != "other approved version":
+                                message = message.replace(
+                                    package, f"gatling-charts-highcharts:{version}"
+                                )
+                            with self.subTest(rejected=case):
+                                self.assertIsNone(re.fullmatch(pattern, message, re.DOTALL))
+                        if version == "3.16.1":
+                            self.assertIn("limited to internal use", resolution["comment"])
+                            self.assertIn("No distributing, copying,", resolution["comment"])
 
     def test_guard_failures_retain_results_and_gradle_diagnostics(self) -> None:
         gradle = self.jobs["ort-gradle"]

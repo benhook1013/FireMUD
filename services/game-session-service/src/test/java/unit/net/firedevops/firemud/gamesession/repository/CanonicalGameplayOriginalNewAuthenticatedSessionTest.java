@@ -91,10 +91,8 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
           .doesNotContain(fixture.compactJwt)
           .doesNotContain("\"lineageId\"")
           .doesNotContain("\"authTokenJti\"");
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(
-                      templateBytes, CLOCK))
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(templateBytes, CLOCK))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Canonical ORIGINAL_NEW authenticated session is invalid");
 
@@ -141,12 +139,11 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
     }
 
     try (Fixture unscoped =
-        fixture(
-            claims -> {
-              claims.remove("tenantId");
-              claims.put("authorityTuple", unscopedTuple());
-              claims.put("membershipVersion", Map.of());
-            })) {
+        fixture(claims -> {
+          claims.remove("tenantId");
+          claims.put("authorityTuple", unscopedTuple());
+          claims.put("membershipVersion", Map.of());
+        })) {
       assertVerifierDenies(unscoped);
     }
 
@@ -160,21 +157,19 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
     }
 
     try (Fixture expired =
-        fixture(
-            claims -> {
-              claims.put("exp", NOW_SECONDS - 1L);
-              claims.put("nbf", NOW_SECONDS - 5L);
-            })) {
+        fixture(claims -> {
+          claims.put("exp", NOW_SECONDS - 1L);
+          claims.put("nbf", NOW_SECONDS - 5L);
+        })) {
       assertVerifierDenies(expired);
     }
 
     try (Fixture futureIat =
-        fixture(
-            claims -> {
-              claims.put("iat", NOW_SECONDS + 6L);
-              claims.put("nbf", NOW_SECONDS + 6L);
-              claims.put("exp", NOW_SECONDS + 100L);
-            })) {
+        fixture(claims -> {
+          claims.put("iat", NOW_SECONDS + 6L);
+          claims.put("nbf", NOW_SECONDS + 6L);
+          claims.put("exp", NOW_SECONDS + 100L);
+        })) {
       assertVerifierDenies(futureIat);
     }
 
@@ -218,21 +213,20 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
     }
 
     try (Fixture wrongTuple =
-        fixture(
-            claims ->
-                claims.put(
-                    "authorityTuple",
-                    Map.of(
-                        "issuerAuthGeneration",
-                        "1",
-                        "accountAuthorityGeneration",
-                        "1",
-                        "tenantAuthorityGeneration",
-                        Map.of(TENANT_ID.toString(), "3"),
-                        "membershipAuthorityGeneration",
-                        Map.of(TENANT_ID.toString(), "3"),
-                        "privateRealmGrantVersions",
-                        List.of())))) {
+        fixture(claims ->
+            claims.put(
+                "authorityTuple",
+                Map.of(
+                    "issuerAuthGeneration",
+                    "1",
+                    "accountAuthorityGeneration",
+                    "1",
+                    "tenantAuthorityGeneration",
+                    Map.of(TENANT_ID.toString(), "3"),
+                    "membershipAuthorityGeneration",
+                    Map.of(TENANT_ID.toString(), "3"),
+                    "privateRealmGrantVersions",
+                    List.of())))) {
       assertVerifierDenies(wrongTuple);
     }
   }

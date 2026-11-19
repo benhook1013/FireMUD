@@ -34,14 +34,13 @@ class EntityMutationEffectReplayServiceTest {
         };
 
     for (String effectId : new String[] {null, "", " \t "}) {
-      assertThatThrownBy(
-              () ->
-                  service.execute(
-                      1L,
-                      effectId,
-                      "PickupItemFromRoom",
-                      mutation,
-                      PickupItemFromRoomResponse::parseFrom))
+      assertThatThrownBy(() ->
+              service.execute(
+                  1L,
+                  effectId,
+                  "PickupItemFromRoom",
+                  mutation,
+                  PickupItemFromRoomResponse::parseFrom))
           .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
           .hasMessageContaining("Effect id is required");
     }

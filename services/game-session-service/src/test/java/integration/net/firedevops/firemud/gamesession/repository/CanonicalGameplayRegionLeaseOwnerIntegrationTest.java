@@ -240,9 +240,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               world,
               "unavailable-incarnation",
               CanonicalGameplayRegionIncarnationSource.unavailable());
-      assertThatThrownBy(
-              () ->
-                  unavailableIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
+      assertThatThrownBy(() ->
+              unavailableIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
@@ -305,10 +304,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var preparation = statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow();
       byte[] initialLeaseValue = redis.admin().get(redisKey);
       assertThat(redis.admin().hdel(ascii(initialMetaKey), ascii("current_tick_id"))).isEqualTo(1L);
-      assertThatThrownBy(
-              () ->
-                  initializeTimelineWithoutCreationPermission(
-                      redisOwner, preparation, "instance-a"))
+      assertThatThrownBy(() ->
+              initializeTimelineWithoutCreationPermission(redisOwner, preparation, "instance-a"))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")
           .satisfies(failure -> assertThat(failure.getCause()).isNull());
@@ -647,10 +644,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               world,
               "preclaim-dependency-drift",
               incarnationSource);
-      assertThatThrownBy(
-              () ->
-                  preClaimDependencyFailureOwner.installForTransition(
-                      TRANSITION_ID, world.request()))
+      assertThatThrownBy(() ->
+              preClaimDependencyFailureOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
@@ -1258,28 +1253,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           .setPlayerCreatedOrigin(
                               origin.toBuilder().setMutationDigest("4".repeat(64)))
                           .build();
-                  assertThatThrownBy(
-                          () ->
-                              binding
-                                  .owner()
-                                  .installForTransition(
-                                      binding.installation(),
-                                      binding.acknowledgement().obligation().transitionId(),
-                                      changed))
+                  assertThatThrownBy(() ->
+                          binding
+                              .owner()
+                              .installForTransition(
+                                  binding.installation(),
+                                  binding.acknowledgement().obligation().transitionId(),
+                                  changed))
                       .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
                   var substituted =
                       request.toBuilder()
                           .setAssignmentUuid(origin.getCreationOperationUuid())
                           .setAssignmentIntentDigest(origin.getMutationDigest())
                           .build();
-                  assertThatThrownBy(
-                          () ->
-                              binding
-                                  .owner()
-                                  .installForTransition(
-                                      binding.installation(),
-                                      binding.acknowledgement().obligation().transitionId(),
-                                      substituted))
+                  assertThatThrownBy(() ->
+                          binding
+                              .owner()
+                              .installForTransition(
+                                  binding.installation(),
+                                  binding.acknowledgement().obligation().transitionId(),
+                                  substituted))
                       .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
                   var unknownOrigin =
                       origin.toBuilder()
@@ -1293,14 +1286,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                   .build())
                           .build();
                   var extended = request.toBuilder().setPlayerCreatedOrigin(unknownOrigin).build();
-                  assertThatThrownBy(
-                          () ->
-                              binding
-                                  .owner()
-                                  .installForTransition(
-                                      binding.installation(),
-                                      binding.acknowledgement().obligation().transitionId(),
-                                      extended))
+                  assertThatThrownBy(() ->
+                          binding
+                              .owner()
+                              .installForTransition(
+                                  binding.installation(),
+                                  binding.acknowledgement().obligation().transitionId(),
+                                  extended))
                       .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
                   // Still structurally valid authenticated response, but no longer the original
                   // projection.
@@ -1939,15 +1931,14 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       this.initialClient = mock(CanonicalInitialPlayerLocationClient.class);
       this.lifecycleClient = mock(WorldCanonicalInstanceLifecycleClient.class);
       when(initialClient.readInitialPlayerLocationRegion(request))
-          .thenAnswer(
-              invocation -> {
-                int read = reads.incrementAndGet();
-                if (read == replaceOnRead) current.set(replacement);
-                CanonicalInitialPlayerLocationRegionResponse response =
-                    regionResponse(request, current.get());
-                if (read == callbackOnRead) afterRead.run();
-                return response;
-              });
+          .thenAnswer(invocation -> {
+            int read = reads.incrementAndGet();
+            if (read == replaceOnRead) current.set(replacement);
+            CanonicalInitialPlayerLocationRegionResponse response =
+                regionResponse(request, current.get());
+            if (read == callbackOnRead) afterRead.run();
+            return response;
+          });
       when(lifecycleClient.read(original.request())).thenAnswer(invocation -> current.get());
       this.resolver =
           new CanonicalInitialPlayerLocationRegionResolver(

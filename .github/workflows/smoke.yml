@@ -813,7 +813,7 @@ jobs:
             // inputs are never accepted for other PRs, bases or dispatches.
             function dependencyPlayClassifierOverrides(pr, identity, event) {
               if (String(pr) !== "3469" || identity.baseRef !== "develop" ||
-                  identity.baseSha !== "fe9873c01fc006c5d9238673d047127e90ef01f5" ||
+                  identity.baseSha !== "3b81c438ddf473c94ad0424ad9a979d7070091e4" ||
                   event !== "pull_request") return {};
               return {
                 "docker/docker-compose.yml": "6d79647e49aea696598e8c1ba8c665967664986af66efd18e832949dd3b29ab6",
@@ -825,7 +825,7 @@ jobs:
             // authority to the independently reviewed exact head-tree payload.
             // Exclude only this workflow, which contains its own digest.
             async function verifyReviewedDependencyPlayTree(headSha) {
-              const expected = "010a88ae9ed5dbd4ca69b9b2f9e0315efe6a1d9b637253d45cb2d7d25a7454ef";
+              const expected = "6ae7b1a511c1cf1391dfd9ab785554e5bb211eced4109b79367e2f990a3c6b27";
               const { data: commit } = await withTransientGitHubRetry(
                 "immutable dependency head lookup",
                 () => github.rest.git.getCommit({ owner, repo, commit_sha: headSha })

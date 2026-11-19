@@ -418,24 +418,22 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               gameSessionOwnerFence,
               changedPreparation,
               digest(changedPreparation));
-      assertThatThrownBy(
-              () ->
-                  withWorldCurrentness(
-                      operatorAuthorization,
-                      originalTuple,
-                      gameSessionAttemptId,
-                      gameSessionOwnerFence,
-                      ignored -> repository.createOrReadExact(changedCandidate)))
+      assertThatThrownBy(() ->
+              withWorldCurrentness(
+                  operatorAuthorization,
+                  originalTuple,
+                  gameSessionAttemptId,
+                  gameSessionOwnerFence,
+                  ignored -> repository.createOrReadExact(changedCandidate)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("StartSession World participation conflicts with its immutable binding");
-      assertThatThrownBy(
-              () ->
-                  withWorldCurrentness(
-                      operatorAuthorization,
-                      originalTuple,
-                      UUID.randomUUID(),
-                      gameSessionOwnerFence,
-                      ignored -> repository.createOrReadExact(initialCandidate.get())))
+      assertThatThrownBy(() ->
+              withWorldCurrentness(
+                  operatorAuthorization,
+                  originalTuple,
+                  UUID.randomUUID(),
+                  gameSessionOwnerFence,
+                  ignored -> repository.createOrReadExact(initialCandidate.get())))
           .isInstanceOf(IllegalStateException.class);
 
       assertThatThrownBy(() -> repository.createOrReadExact(initialCandidate.get()))
@@ -444,11 +442,10 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
 
       long fenceSequenceBeforeHistoricalRead = participationFenceSequence(account.dsl);
       StoredParticipation historical =
-          account.tx(
-              () ->
-                  repository
-                      .findHistoricalExact(first.participationId(), first.participationFence())
-                      .orElseThrow());
+          account.tx(() ->
+              repository
+                  .findHistoricalExact(first.participationId(), first.participationFence())
+                  .orElseThrow());
       long fenceSequenceAfterHistoricalRead = participationFenceSequence(account.dsl);
       assertThat(historical.participationId()).isEqualTo(first.participationId());
       assertThat(historical.participationFence()).isEqualTo(first.participationFence());
@@ -484,12 +481,10 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       assertThat(exactSettlementRetry.terminalDigest()).isEqualTo(committed.terminalDigest());
       assertThat(
               account
-                  .tx(
-                      () ->
-                          repository
-                              .findSettlementExact(
-                                  first.participationId(), first.participationFence())
-                              .orElseThrow())
+                  .tx(() ->
+                      repository
+                          .findSettlementExact(first.participationId(), first.participationFence())
+                          .orElseThrow())
                   .terminalBytes())
           .containsExactly(committed.terminalBytes());
 
@@ -506,12 +501,11 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                   first.participationId()),
           "StartSession World participation evidence is append-only");
       assertThat(
-              account.tx(
-                  () ->
-                      repository
-                          .findSettlementExact(first.participationId(), first.participationFence())
-                          .orElseThrow()
-                          .terminalBytes()))
+              account.tx(() ->
+                  repository
+                      .findSettlementExact(first.participationId(), first.participationFence())
+                      .orElseThrow()
+                      .terminalBytes()))
           .containsExactly(committed.terminalBytes());
 
       var absentParentTerminal =
@@ -533,11 +527,10 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Exact StartSession World participation evidence unavailable");
       assertThat(
-              account.tx(
-                  () ->
-                      repository.findSettlementExact(
-                          absentParentTerminal.accountWorldParticipationId(),
-                          absentParentTerminal.accountWorldParticipationFence())))
+              account.tx(() ->
+                  repository.findSettlementExact(
+                      absentParentTerminal.accountWorldParticipationId(),
+                      absentParentTerminal.accountWorldParticipationFence())))
           .isEmpty();
 
       // The terminal is a typed test collaborator. Its validity proves Account storage binding,
@@ -558,19 +551,18 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
   private static void assertGuardRejected(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                throw new AssertionError(
-                    "Participation settlement guard rejection must be a PostgreSQL exception",
-                    sqlFailure);
-              }
-              var serverError = postgresFailure.getServerErrorMessage();
-              assertThat(serverError).isNotNull();
-              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+            throw new AssertionError(
+                "Participation settlement guard rejection must be a PostgreSQL exception",
+                sqlFailure);
+          }
+          var serverError = postgresFailure.getServerErrorMessage();
+          assertThat(serverError).isNotNull();
+          assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+        });
   }
 
   private static SQLException findSqlException(Throwable failure) {
@@ -605,22 +597,21 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       // Controlled historical sender bytes, using the exact ccf0528c35^ scalar-v1 grammar. Account
       // issuance/redemption and the parent are actual owners; no current GS producer is asserted.
       // V160's intact parent/pending/lease/hash and append-only guards admit this predecessor row.
-      account.tx(
-          () -> {
-            account.dsl.execute(
-                "INSERT INTO account_start_session_world_original_attempt_evidence "
-                    + "(participation_id,target_namespace,game_session_owner_attempt_id,game_session_owner_mutation_id,game_session_owner_fence,original_lease_expires_at,original_response_bytes,original_response_digest) "
-                    + "VALUES (?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?)",
-                parent.participationId(),
-                NAMESPACE,
-                original.attempt(),
-                request.expectedOwnerMutationId(),
-                original.ownerFence(),
-                OffsetDateTime.ofInstant(lease, java.time.ZoneOffset.UTC),
-                response,
-                responseDigest);
-            return null;
-          });
+      account.tx(() -> {
+        account.dsl.execute(
+            "INSERT INTO account_start_session_world_original_attempt_evidence "
+                + "(participation_id,target_namespace,game_session_owner_attempt_id,game_session_owner_mutation_id,game_session_owner_fence,original_lease_expires_at,original_response_bytes,original_response_digest) "
+                + "VALUES (?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?)",
+            parent.participationId(),
+            NAMESPACE,
+            original.attempt(),
+            request.expectedOwnerMutationId(),
+            original.ownerFence(),
+            OffsetDateTime.ofInstant(lease, java.time.ZoneOffset.UTC),
+            response,
+            responseDigest);
+        return null;
+      });
       var before = retainedRows(account.dsl);
       account.upgradeToCurrent();
       assertThat(retainedRows(account.dsl)).isEqualTo(before);
@@ -636,12 +627,11 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       assertThat(historical.result().request()).isEqualTo(request);
       assertThat(
               account
-                  .tx(
-                      () ->
-                          parentRepository
-                              .findHistoricalExact(
-                                  parent.participationId(), parent.participationFence())
-                              .orElseThrow())
+                  .tx(() ->
+                      parentRepository
+                          .findHistoricalExact(
+                              parent.participationId(), parent.participationFence())
+                          .orElseThrow())
                   .originalPostAuthorizationTuple())
           .containsExactly(original.tuple().canonicalBytes());
       assertThat(
@@ -659,12 +649,11 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Original StartSession attempt evidence conflicts with its immutable binding");
-      assertThatThrownBy(
-              () ->
-                  OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                      request,
-                      net.firedevops.firemud.gamesession.v1
-                          .ReadOriginalStartSessionCurrentAttemptResponse.parseFrom(response)))
+      assertThatThrownBy(() ->
+              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
+                  request,
+                  net.firedevops.firemud.gamesession.v1
+                      .ReadOriginalStartSessionCurrentAttemptResponse.parseFrom(response)))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(retainedRows(account.dsl)).isEqualTo(before);
     }
@@ -770,23 +759,22 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               () -> account.tx(() -> repository.findHistoricalForOriginalTuple(predecessorBytes)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Exact StartSession World participation evidence unavailable");
-      assertThatThrownBy(
-              () ->
-                  withWorldCurrentness(
-                      original.authorizer(),
-                      original.tuple(),
-                      original.attempt(),
-                      original.ownerFence(),
-                      capture ->
-                          repository.findCurrentExact(
-                              candidate(
-                                  original.tuple(),
-                                  capture,
-                                  instance,
-                                  original.attempt(),
-                                  original.ownerFence(),
-                                  preparation,
-                                  preparationDigest))))
+      assertThatThrownBy(() ->
+              withWorldCurrentness(
+                  original.authorizer(),
+                  original.tuple(),
+                  original.attempt(),
+                  original.ownerFence(),
+                  capture ->
+                      repository.findCurrentExact(
+                          candidate(
+                              original.tuple(),
+                              capture,
+                              instance,
+                              original.attempt(),
+                              original.ownerFence(),
+                              preparation,
+                              preparationDigest))))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Exact StartSession World participation evidence unavailable");
       assertThatThrownBy(() -> StartSessionPostAuthorizationExecutionTuple.decode(predecessorBytes))

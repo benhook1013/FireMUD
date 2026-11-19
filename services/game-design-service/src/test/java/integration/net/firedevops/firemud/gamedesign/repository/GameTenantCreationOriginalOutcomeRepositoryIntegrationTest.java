@@ -83,16 +83,15 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     Binding binding = binding();
 
     CreatedResult original =
-        fixture.inTransaction(
-            () -> {
-              OriginalOutcomeSnapshot pending = fixture.outcomeRepository.claimLocked(binding);
-              assertThat(pending.status()).isEqualTo(OutcomeStatus.PENDING);
-              FreshTenantCreationEvidence receipt =
-                  fixture.creationRepository.createCandidate(
-                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-              return new CreatedResult(
-                  receipt, fixture.outcomeRepository.markCreatedLocked(binding, receipt));
-            });
+        fixture.inTransaction(() -> {
+          OriginalOutcomeSnapshot pending = fixture.outcomeRepository.claimLocked(binding);
+          assertThat(pending.status()).isEqualTo(OutcomeStatus.PENDING);
+          FreshTenantCreationEvidence receipt =
+              fixture.creationRepository.createCandidate(
+                  NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+          return new CreatedResult(
+              receipt, fixture.outcomeRepository.markCreatedLocked(binding, receipt));
+        });
 
     assertThat(original.snapshot().status()).isEqualTo(OutcomeStatus.CREATED);
     assertThat(original.snapshot().creationOperationId())
@@ -102,17 +101,14 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     assertThat(fixture.outcomeRepository.readCommitted(binding)).contains(original.snapshot());
 
     OriginalOutcomeSnapshot exactRetry =
-        fixture.inTransaction(
-            () -> {
-              OriginalOutcomeSnapshot claimed = fixture.outcomeRepository.claimLocked(binding);
-              assertThat(claimed.status()).isEqualTo(OutcomeStatus.CREATED);
-              return fixture.outcomeRepository.markCreatedLocked(binding, original.receipt());
-            });
+        fixture.inTransaction(() -> {
+          OriginalOutcomeSnapshot claimed = fixture.outcomeRepository.claimLocked(binding);
+          assertThat(claimed.status()).isEqualTo(OutcomeStatus.CREATED);
+          return fixture.outcomeRepository.markCreatedLocked(binding, original.receipt());
+        });
     assertThat(exactRetry).isEqualTo(original.snapshot());
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> fixture.outcomeRepository.closeNotCreatedLocked(binding)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() -> fixture.outcomeRepository.closeNotCreatedLocked(binding)))
         .isInstanceOf(CreationRequestConflictException.class)
         .hasMessageContaining("cannot be closed as not created");
     assertThat(fixture.creationRepository.read(REQUEST_ID, NAMESPACE)).contains(original.receipt());
@@ -132,12 +128,10 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
         fixture.inTransaction(() -> fixture.outcomeRepository.closeNotCreatedLocked(binding));
     assertThat(closed.status()).isEqualTo(OutcomeStatus.NOT_CREATED);
     assertThat(fixture.outcomeRepository.readCommitted(binding)).contains(closed);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.creationRepository.createCandidate(
-                            NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture.creationRepository.createCandidate(
+                    NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION)))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("definitively closed");
 
@@ -151,15 +145,12 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     Fixture fixture = fixture();
     Binding binding = binding();
     FreshTenantCreationEvidence receipt =
-        fixture.inTransaction(
-            () ->
-                fixture.creationRepository.createCandidate(
-                    NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION));
+        fixture.inTransaction(() ->
+            fixture.creationRepository.createCandidate(
+                NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION));
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> fixture.outcomeRepository.closeNotCreatedLocked(binding)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() -> fixture.outcomeRepository.closeNotCreatedLocked(binding)))
         .isInstanceOf(CreationRequestConflictException.class)
         .hasMessageContaining("cannot be closed as not created");
     assertThat(fixture.creationRepository.read(REQUEST_ID, NAMESPACE)).contains(receipt);
@@ -178,31 +169,27 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
 
     try {
       Future<OriginalOutcomeSnapshot> close =
-          executor.submit(
-              () ->
-                  fixture.inTransaction(
-                      () -> {
-                        OriginalOutcomeSnapshot result =
-                            fixture.outcomeRepository.closeNotCreatedLocked(binding);
-                        closeHasWritten.countDown();
-                        await(allowCloseCommit);
-                        return result;
-                      }));
+          executor.submit(() ->
+              fixture.inTransaction(() -> {
+                OriginalOutcomeSnapshot result =
+                    fixture.outcomeRepository.closeNotCreatedLocked(binding);
+                closeHasWritten.countDown();
+                await(allowCloseCommit);
+                return result;
+              }));
       assertThat(closeHasWritten.await(10, TimeUnit.SECONDS)).isTrue();
 
       Future<Throwable> delayedCreate =
-          executor.submit(
-              () -> {
-                try {
-                  fixture.inTransaction(
-                      () ->
-                          fixture.creationRepository.createCandidate(
-                              NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION));
-                  return null;
-                } catch (RuntimeException exception) {
-                  return exception;
-                }
-              });
+          executor.submit(() -> {
+            try {
+              fixture.inTransaction(() ->
+                  fixture.creationRepository.createCandidate(
+                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION));
+              return null;
+            } catch (RuntimeException exception) {
+              return exception;
+            }
+          });
       waitForAdvisoryWaiter(fixture.dsl);
       allowCloseCommit.countDown();
 
@@ -226,15 +213,14 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     Fixture fixture = fixture();
     Binding binding = binding();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .insertInto(OUTCOMES)
-                    .set(TARGET_NAMESPACE, binding.targetNamespace())
-                    .set(TARGET_REQUEST_ID, binding.creationRequestId())
-                    .set(STATUS, "NOT_CREATED")
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .insertInto(OUTCOMES)
+                .set(TARGET_NAMESPACE, binding.targetNamespace())
+                .set(TARGET_REQUEST_ID, binding.creationRequestId())
+                .set(STATUS, "NOT_CREATED")
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("must begin pending");
 
@@ -242,39 +228,35 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
             () -> fixture.inTransaction(() -> fixture.outcomeRepository.claimLocked(binding)))
         .hasStackTraceContaining("cannot commit while pending");
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> {
-                      fixture.outcomeRepository.claimLocked(binding);
-                      FreshTenantCreationEvidence receipt =
-                          fixture.creationRepository.createCandidate(
-                              NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-                      fixture
-                          .dsl
-                          .update(OUTCOMES)
-                          .set(STATUS, "CREATED")
-                          .set(CREATION_OPERATION_ID, UUID.randomUUID())
-                          .set(CREATION_EVIDENCE_DIGEST, receipt.evidenceDigest())
-                          .where(
-                              TARGET_NAMESPACE
-                                  .eq(binding.targetNamespace())
-                                  .and(TARGET_REQUEST_ID.eq(binding.creationRequestId())))
-                          .execute();
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() -> {
+              fixture.outcomeRepository.claimLocked(binding);
+              FreshTenantCreationEvidence receipt =
+                  fixture.creationRepository.createCandidate(
+                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+              fixture
+                  .dsl
+                  .update(OUTCOMES)
+                  .set(STATUS, "CREATED")
+                  .set(CREATION_OPERATION_ID, UUID.randomUUID())
+                  .set(CREATION_EVIDENCE_DIGEST, receipt.evidenceDigest())
+                  .where(
+                      TARGET_NAMESPACE
+                          .eq(binding.targetNamespace())
+                          .and(TARGET_REQUEST_ID.eq(binding.creationRequestId())))
+                  .execute();
+              return null;
+            }))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("exact V30 evidence");
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> {
-                      fixture.outcomeRepository.claimLocked(binding);
-                      fixture.creationRepository.createCandidate(
-                          NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-                      return fixture.outcomeRepository.closeNotCreatedLocked(binding);
-                    }))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() -> {
+              fixture.outcomeRepository.claimLocked(binding);
+              fixture.creationRepository.createCandidate(
+                  NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+              return fixture.outcomeRepository.closeNotCreatedLocked(binding);
+            }))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("cannot be closed as not created");
 
@@ -311,45 +293,39 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
                 "sha256:" + "c".repeat(64),
                 binding.accountAuthorizationDigest()));
     for (Binding changedBinding : changedBindings) {
-      assertThatThrownBy(
-              () ->
-                  fixture.inTransaction(
-                      () -> fixture.outcomeRepository.claimLocked(changedBinding)))
+      assertThatThrownBy(() ->
+              fixture.inTransaction(() -> fixture.outcomeRepository.claimLocked(changedBinding)))
           .isInstanceOf(CreationRequestConflictException.class)
           .hasMessageContaining("changed Account or request binding");
     }
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .update(OUTCOMES)
-                    .set(STATUS, "CREATED")
-                    .set(CREATION_OPERATION_ID, UUID.randomUUID())
-                    .set(CREATION_EVIDENCE_DIGEST, ACCOUNT_DIGEST)
-                    .where(
-                        TARGET_NAMESPACE
-                            .eq(binding.targetNamespace())
-                            .and(TARGET_REQUEST_ID.eq(binding.creationRequestId())))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .update(OUTCOMES)
+                .set(STATUS, "CREATED")
+                .set(CREATION_OPERATION_ID, UUID.randomUUID())
+                .set(CREATION_EVIDENCE_DIGEST, ACCOUNT_DIGEST)
+                .where(
+                    TARGET_NAMESPACE
+                        .eq(binding.targetNamespace())
+                        .and(TARGET_REQUEST_ID.eq(binding.creationRequestId())))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .deleteFrom(OUTCOMES)
-                    .where(
-                        TARGET_NAMESPACE
-                            .eq(binding.targetNamespace())
-                            .and(TARGET_REQUEST_ID.eq(binding.creationRequestId())))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .deleteFrom(OUTCOMES)
+                .where(
+                    TARGET_NAMESPACE
+                        .eq(binding.targetNamespace())
+                        .and(TARGET_REQUEST_ID.eq(binding.creationRequestId())))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("immutable");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "TRUNCATE TABLE game_tenant_creation_original_outcomes CASCADE"))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute("TRUNCATE TABLE game_tenant_creation_original_outcomes CASCADE"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("cannot be truncated");
     assertThat(fixture.outcomeRepository.readCommitted(binding)).contains(closed);
@@ -378,10 +354,9 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
                 secondNamespace, secondRequestId, secondSourceKey, secondName, DESCRIPTION),
             ACCOUNT_DIGEST);
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> fixture.outcomeRepository.closeNotCreatedLocked(secondBinding)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(
+                () -> fixture.outcomeRepository.closeNotCreatedLocked(secondBinding)))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("uq_game_creation_original_account_operation");
 
@@ -396,10 +371,9 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     Fixture fixture = fixtureBeforeV1033();
     Binding binding = binding();
     FreshTenantCreationEvidence receipt =
-        fixture.inTransaction(
-            () ->
-                fixture.creationRepository.createCandidate(
-                    NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION));
+        fixture.inTransaction(() ->
+            fixture.creationRepository.createCandidate(
+                NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION));
     String predecessorBytesAndXmin = operationBytesAndXmin(fixture.dsl);
 
     migrate(fixture.dataSource(), fixture.schema(), null);
@@ -407,10 +381,8 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
 
     assertThat(operationBytesAndXmin(upgraded.dsl)).isEqualTo(predecessorBytesAndXmin);
     assertThat(upgraded.creationRepository.read(REQUEST_ID, NAMESPACE)).contains(receipt);
-    assertThatThrownBy(
-            () ->
-                upgraded.inTransaction(
-                    () -> upgraded.outcomeRepository.closeNotCreatedLocked(binding)))
+    assertThatThrownBy(() ->
+            upgraded.inTransaction(() -> upgraded.outcomeRepository.closeNotCreatedLocked(binding)))
         .isInstanceOf(CreationRequestConflictException.class)
         .hasMessageContaining("cannot be closed as not created");
     assertThat(upgraded.outcomeRepository.readCommitted(binding)).isEmpty();
@@ -544,16 +516,15 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
       GameTenantCreationOriginalOutcomeRepository outcomeRepository,
       TransactionTemplate transactionTemplate) {
     private <T> T inTransaction(java.util.concurrent.Callable<T> work) {
-      return transactionTemplate.execute(
-          status -> {
-            try {
-              return work.call();
-            } catch (RuntimeException exception) {
-              throw exception;
-            } catch (Exception exception) {
-              throw new IllegalStateException(exception);
-            }
-          });
+      return transactionTemplate.execute(status -> {
+        try {
+          return work.call();
+        } catch (RuntimeException exception) {
+          throw exception;
+        } catch (Exception exception) {
+          throw new IllegalStateException(exception);
+        }
+      });
     }
 
     private Fixture withCurrentRepositories() {

@@ -79,17 +79,9 @@ class AccountSubscriptionIntentRepositoryTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new ProducerEvidence(ACCOUNT, UUID.randomUUID(), "unverified claim"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountSubscriptionCreateRequest(
-                    new UUID(0L, 0L),
-                    TENANT,
-                    OWNER,
-                    "basic-hosting",
-                    INSTRUMENT,
-                    1,
-                    PRODUCER,
-                    null))
+    assertThatThrownBy(() ->
+            new AccountSubscriptionCreateRequest(
+                new UUID(0L, 0L), TENANT, OWNER, "basic-hosting", INSTRUMENT, 1, PRODUCER, null))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl);
   }
@@ -364,32 +356,29 @@ class AccountSubscriptionIntentRepositoryTest {
                   OWNER.generation()));
       Record reservationRow = projection(reservation);
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0, String.class);
-                reads.add(sql);
-                if (sql.startsWith("SELECT * FROM subscription_create_operations"))
-                  return creationRow;
-                if (sql.contains("FROM accounts")) return ownerRow;
-                if (sql.contains("FROM billing_customer")) return customerRow;
-                if (sql.contains("FROM payment_instrument")) return instrumentRow;
-                if (sql.contains("FROM account_tenant_billing_owners")) return ownerRow;
-                if (sql.contains("FROM subscription s")) return currentRow;
-                if (sql.contains("FROM subscription_instrument_reservations"))
-                  return missingReservation ? null : reservationRow;
-                throw new AssertionError("Unexpected original binding SQL: " + sql);
-              });
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0, String.class);
+            reads.add(sql);
+            if (sql.startsWith("SELECT * FROM subscription_create_operations")) return creationRow;
+            if (sql.contains("FROM accounts")) return ownerRow;
+            if (sql.contains("FROM billing_customer")) return customerRow;
+            if (sql.contains("FROM payment_instrument")) return instrumentRow;
+            if (sql.contains("FROM account_tenant_billing_owners")) return ownerRow;
+            if (sql.contains("FROM subscription s")) return currentRow;
+            if (sql.contains("FROM subscription_instrument_reservations"))
+              return missingReservation ? null : reservationRow;
+            throw new AssertionError("Unexpected original binding SQL: " + sql);
+          });
     }
   }
 
   @SuppressWarnings("unchecked")
   private static Record projection(Map<String, Object> fields) {
     Record row = mock(Record.class);
-    doAnswer(
-            invocation ->
-                invocation
-                    .getArgument(1, Class.class)
-                    .cast(fields.get(invocation.getArgument(0, String.class))))
+    doAnswer(invocation ->
+            invocation
+                .getArgument(1, Class.class)
+                .cast(fields.get(invocation.getArgument(0, String.class))))
         .when(row)
         .get(anyString(), any(Class.class));
     when(row.get(anyString()))

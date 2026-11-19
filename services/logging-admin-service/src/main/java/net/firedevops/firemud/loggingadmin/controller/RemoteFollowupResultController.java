@@ -27,13 +27,12 @@ public class RemoteFollowupResultController {
       description = "Read canonical remote followup result by tenant-qualified result id")
   public ResponseEntity<ApiResponse<RemoteFollowupResultDto>> getRemoteFollowupResult(
       @PathVariable String tenantId, @PathVariable String resultId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  remoteFollowupResultService.getRemoteFollowupResult(parsedTenantId, resultId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              remoteFollowupResultService.getRemoteFollowupResult(parsedTenantId, resultId)));
+    });
   }
 
   @GetMapping("/{tenantId}")
@@ -44,12 +43,11 @@ public class RemoteFollowupResultController {
   public ResponseEntity<ApiResponse<java.util.List<RemoteFollowupResultDto>>>
       listRemoteFollowupResults(
           @PathVariable String tenantId, @ModelAttribute RemoteFollowupResultListRequest request) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  remoteFollowupResultService.listRemoteFollowupResults(parsedTenantId, request)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              remoteFollowupResultService.listRemoteFollowupResults(parsedTenantId, request)));
+    });
   }
 }

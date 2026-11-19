@@ -157,10 +157,9 @@ public final class GameplayWorldCatalog {
     List<WorldView> selectedWorldMatches =
         visibleWorlds(snapshot).stream()
             .filter(world -> world.slug().equals(selectedWorld.slug()))
-            .filter(
-                world ->
-                    world.realms().stream()
-                        .anyMatch(realm -> realm.tenantId() == publicRealm.tenantId()))
+            .filter(world ->
+                world.realms().stream()
+                    .anyMatch(realm -> realm.tenantId() == publicRealm.tenantId()))
             .toList();
     if (selectedWorldMatches.size() != 1) {
       return Optional.empty();
@@ -266,10 +265,9 @@ public final class GameplayWorldCatalog {
             && visibleRealms.stream()
                 .map(RealmView::tenantId)
                 .distinct()
-                .allMatch(
-                    tenantId ->
-                        publicProductionRealmCardinality(snapshot, tenantId)
-                            == PublicProductionRealmCardinality.EXACTLY_ONE)
+                .allMatch(tenantId ->
+                    publicProductionRealmCardinality(snapshot, tenantId)
+                        == PublicProductionRealmCardinality.EXACTLY_ONE)
         ? Optional.of(visibleRealms.getFirst())
         : Optional.empty();
   }
@@ -309,10 +307,9 @@ public final class GameplayWorldCatalog {
     return visibleRealms.stream()
         .map(RealmView::tenantId)
         .distinct()
-        .allMatch(
-            tenantId ->
-                publicProductionRealmCardinality(snapshot, tenantId)
-                    == PublicProductionRealmCardinality.EXACTLY_ONE);
+        .allMatch(tenantId ->
+            publicProductionRealmCardinality(snapshot, tenantId)
+                == PublicProductionRealmCardinality.EXACTLY_ONE);
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {
@@ -334,18 +331,13 @@ public final class GameplayWorldCatalog {
     CatalogSnapshot snapshot = loadWorldSnapshot();
     List<RuntimeRealmTarget> matches =
         snapshot.worlds().stream()
-            .flatMap(
-                world ->
-                    world.realms().stream()
-                        .filter(realm -> realm.tenantId() == tenantId)
-                        .filter(realm -> realm.gameInstanceId() == gameInstanceId)
-                        .map(
-                            realm ->
-                                new RuntimeRealmTarget(
-                                    world.slug(),
-                                    world.displayName(),
-                                    realm.slug(),
-                                    realm.displayName())))
+            .flatMap(world ->
+                world.realms().stream()
+                    .filter(realm -> realm.tenantId() == tenantId)
+                    .filter(realm -> realm.gameInstanceId() == gameInstanceId)
+                    .map(realm ->
+                        new RuntimeRealmTarget(
+                            world.slug(), world.displayName(), realm.slug(), realm.displayName())))
             .toList();
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
@@ -359,17 +351,12 @@ public final class GameplayWorldCatalog {
     List<RuntimeRealmTarget> matches =
         visibleWorlds(loadWorldSnapshot()).stream()
             .filter(world -> normalizedWorld.equals(selectorKey(world.slug())))
-            .flatMap(
-                world ->
-                    visibleRealms(world).stream()
-                        .filter(realm -> normalizedRealm.equals(selectorKey(realm.slug())))
-                        .map(
-                            realm ->
-                                new RuntimeRealmTarget(
-                                    world.slug(),
-                                    world.displayName(),
-                                    realm.slug(),
-                                    realm.displayName())))
+            .flatMap(world ->
+                visibleRealms(world).stream()
+                    .filter(realm -> normalizedRealm.equals(selectorKey(realm.slug())))
+                    .map(realm ->
+                        new RuntimeRealmTarget(
+                            world.slug(), world.displayName(), realm.slug(), realm.displayName())))
             .toList();
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
@@ -600,18 +587,16 @@ public final class GameplayWorldCatalog {
 
   private List<WorldView> publicDiscoveryWorlds(CatalogSnapshot snapshot) {
     return visibleWorlds(snapshot).stream()
-        .map(
-            world ->
-                new WorldView(
-                    world.slug(),
-                    world.displayName(),
-                    visibleRealms(world).stream()
-                        .filter(RealmView::publicProductionRealm)
-                        .filter(
-                            realm ->
-                                publicProductionRealmCardinality(snapshot, realm.tenantId())
-                                    == PublicProductionRealmCardinality.EXACTLY_ONE)
-                        .toList()))
+        .map(world ->
+            new WorldView(
+                world.slug(),
+                world.displayName(),
+                visibleRealms(world).stream()
+                    .filter(RealmView::publicProductionRealm)
+                    .filter(realm ->
+                        publicProductionRealmCardinality(snapshot, realm.tenantId())
+                            == PublicProductionRealmCardinality.EXACTLY_ONE)
+                    .toList()))
         .filter(world -> world.realms().size() == 1)
         .toList();
   }
@@ -784,15 +769,14 @@ public final class GameplayWorldCatalog {
     }
     return normalizeWorlds(
         worlds.values().stream()
-            .map(
-                world ->
-                    new WorldView(
-                        world.slug,
-                        world.displayName,
-                        world.realmsBySlug.entrySet().stream()
-                            .filter(entry -> entry.getValue().size() == 1)
-                            .map(entry -> toRealmView(entry.getValue().getFirst()))
-                            .toList()))
+            .map(world ->
+                new WorldView(
+                    world.slug,
+                    world.displayName,
+                    world.realmsBySlug.entrySet().stream()
+                        .filter(entry -> entry.getValue().size() == 1)
+                        .map(entry -> toRealmView(entry.getValue().getFirst()))
+                        .toList()))
             .toList());
   }
 
@@ -921,11 +905,9 @@ public final class GameplayWorldCatalog {
         input.slug(),
         input.displayName(),
         realms.stream()
-            .filter(
-                realm ->
-                    realmCounts.get(
-                            new RealmSelectorKey(realm.tenantId(), selectorKey(realm.slug())))
-                        == 1)
+            .filter(realm ->
+                realmCounts.get(new RealmSelectorKey(realm.tenantId(), selectorKey(realm.slug())))
+                    == 1)
             .toList());
   }
 

@@ -69,55 +69,53 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
     requireNoAmbientOwnerSql("Automation publication receipt read");
     requirePublicationScopeKey(targetNamespace, canonicalTenantId, gameDesignVersionRowId);
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          var associations =
-              tx.fetch(
-                  "SELECT canonical_version_id, intake_request_id FROM "
-                      + ASSOCIATION
-                      + " WHERE target_namespace = ? AND canonical_tenant_id = ? "
-                      + "ORDER BY canonical_version_id",
-                  targetNamespace,
-                  canonicalTenantId);
-          if (associations.isEmpty()) {
-            throw new IllegalStateException(
-                "Automation selected-empty publication receipt is unavailable");
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      var associations =
+          tx.fetch(
+              "SELECT canonical_version_id, intake_request_id FROM "
+                  + ASSOCIATION
+                  + " WHERE target_namespace = ? AND canonical_tenant_id = ? "
+                  + "ORDER BY canonical_version_id",
+              targetNamespace,
+              canonicalTenantId);
+      if (associations.isEmpty()) {
+        throw new IllegalStateException(
+            "Automation selected-empty publication receipt is unavailable");
+      }
 
-          var matches = new ArrayList<AutomationEmptySelectedSourceIntakeReceipt>();
-          for (Record association : associations) {
-            UUID associatedCanonicalVersionId = association.get(0, UUID.class);
-            UUID intakeRequestId = association.get(1, UUID.class);
-            if (associatedCanonicalVersionId == null || intakeRequestId == null) {
-              throw new CorruptReceiptException(
-                  "Automation publication association identity is corrupt");
-            }
-            AutomationEmptySelectedSourceIntakeReceipt receipt =
-                readValidated(tx, targetNamespace, intakeRequestId)
-                    .orElseThrow(
-                        () ->
-                            new CorruptReceiptException(
-                                "Automation publication association has no committed receipt"));
-            var target = receipt.authorizationBinding().selected().target();
-            if (!canonicalTenantId.equals(receipt.canonicalTenantId())
-                || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
-                || !canonicalTenantId.equals(target.canonicalTenantId())
-                || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
-              throw new CorruptReceiptException(
-                  "Automation publication association differs from the retained selected target");
-            }
-            if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
-              matches.add(receipt);
-            }
-          }
-          if (matches.size() != 1) {
-            throw new IllegalStateException(
-                "Automation selected-empty publication scope is missing or ambiguous");
-          }
-          return matches.get(0);
-        });
+      var matches = new ArrayList<AutomationEmptySelectedSourceIntakeReceipt>();
+      for (Record association : associations) {
+        UUID associatedCanonicalVersionId = association.get(0, UUID.class);
+        UUID intakeRequestId = association.get(1, UUID.class);
+        if (associatedCanonicalVersionId == null || intakeRequestId == null) {
+          throw new CorruptReceiptException(
+              "Automation publication association identity is corrupt");
+        }
+        AutomationEmptySelectedSourceIntakeReceipt receipt =
+            readValidated(tx, targetNamespace, intakeRequestId)
+                .orElseThrow(() ->
+                    new CorruptReceiptException(
+                        "Automation publication association has no committed receipt"));
+        var target = receipt.authorizationBinding().selected().target();
+        if (!canonicalTenantId.equals(receipt.canonicalTenantId())
+            || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
+            || !canonicalTenantId.equals(target.canonicalTenantId())
+            || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
+          throw new CorruptReceiptException(
+              "Automation publication association differs from the retained selected target");
+        }
+        if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
+          matches.add(receipt);
+        }
+      }
+      if (matches.size() != 1) {
+        throw new IllegalStateException(
+            "Automation selected-empty publication scope is missing or ambiguous");
+      }
+      return matches.get(0);
+    });
   }
 
   /**
@@ -167,70 +165,65 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
     requireNoAmbientOwnerSql("Automation source intake transaction");
 
     AutomationEmptySelectedSourceIntakeReceipt committed =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext tx = DSL.using(configuration);
-              tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-              lockAllocatorAndAssociations(tx);
-              lockSourceFamilies(tx);
+        dsl.transactionResult(configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+          lockAllocatorAndAssociations(tx);
+          lockSourceFamilies(tx);
 
-              // This is the exact request/operation/scope phase of the lock order. A competing
-              // local founder has already completed its source census before these rows are read.
-              var previous =
-                  readValidated(tx, binding.targetNamespace(), binding.intakeRequestId());
-              if (previous.isPresent()) {
-                AutomationEmptySelectedSourceIntakeReceipt receipt = previous.orElseThrow();
-                receipt.requireSameInputs(inputs);
-                return receipt;
-              }
-              requireNoPriorScopeOrOperation(tx, binding);
+          // This is the exact request/operation/scope phase of the lock order. A competing
+          // local founder has already completed its source census before these rows are read.
+          var previous = readValidated(tx, binding.targetNamespace(), binding.intakeRequestId());
+          if (previous.isPresent()) {
+            AutomationEmptySelectedSourceIntakeReceipt receipt = previous.orElseThrow();
+            receipt.requireSameInputs(inputs);
+            return receipt;
+          }
+          requireNoPriorScopeOrOperation(tx, binding);
 
-              Census census = censusAllSourceFamilies(tx);
-              census.requireFreshFoundingAllowed();
+          Census census = censusAllSourceFamilies(tx);
+          census.requireFreshFoundingAllowed();
 
-              long maximumOccupiedKey = maximumOccupiedNumericKey(tx);
-              long localTenantKey = Math.addExact(maximumOccupiedKey, 1L);
-              long localVersionKey = Math.addExact(maximumOccupiedKey, 2L);
-              Census selectedScope =
-                  censusSelectedNumericScope(tx, localTenantKey, localVersionKey);
-              selectedScope.requireSelectedScopeEmpty();
+          long maximumOccupiedKey = maximumOccupiedNumericKey(tx);
+          long localTenantKey = Math.addExact(maximumOccupiedKey, 1L);
+          long localVersionKey = Math.addExact(maximumOccupiedKey, 2L);
+          Census selectedScope = censusSelectedNumericScope(tx, localTenantKey, localVersionKey);
+          selectedScope.requireSelectedScopeEmpty();
 
-              reserveCanonicalKey(tx, "TENANT", localTenantKey);
-              reserveCanonicalKey(tx, "VERSION", localVersionKey);
-              OffsetDateTime retainedAt =
-                  requiredScalar(tx, "SELECT CURRENT_TIMESTAMP", OffsetDateTime.class)
-                      .withOffsetSameInstant(ZoneOffset.UTC);
-              AutomationEmptySelectedSourceIntakeReceipt receipt =
-                  AutomationEmptySelectedSourceIntakeReceipt.create(
-                      inputs,
-                      localTenantKey,
-                      localVersionKey,
-                      requestDigest,
-                      census.scriptsRows(),
-                      census.eventBindingRows(),
-                      census.patchBaseBindingRows(),
-                      census.unqualifiedScriptsRows(),
-                      census.unqualifiedEventBindingRows(),
-                      census.unqualifiedPatchBaseBindingRows(),
-                      census.emptyAssociatedScriptsRows(),
-                      census.emptyAssociatedEventBindingRows(),
-                      census.emptyAssociatedPatchBaseBindingRows(),
-                      selectedScope.scriptsRows(),
-                      selectedScope.eventBindingRows(),
-                      selectedScope.patchBaseBindingRows(),
-                      retainedAt);
+          reserveCanonicalKey(tx, "TENANT", localTenantKey);
+          reserveCanonicalKey(tx, "VERSION", localVersionKey);
+          OffsetDateTime retainedAt =
+              requiredScalar(tx, "SELECT CURRENT_TIMESTAMP", OffsetDateTime.class)
+                  .withOffsetSameInstant(ZoneOffset.UTC);
+          AutomationEmptySelectedSourceIntakeReceipt receipt =
+              AutomationEmptySelectedSourceIntakeReceipt.create(
+                  inputs,
+                  localTenantKey,
+                  localVersionKey,
+                  requestDigest,
+                  census.scriptsRows(),
+                  census.eventBindingRows(),
+                  census.patchBaseBindingRows(),
+                  census.unqualifiedScriptsRows(),
+                  census.unqualifiedEventBindingRows(),
+                  census.unqualifiedPatchBaseBindingRows(),
+                  census.emptyAssociatedScriptsRows(),
+                  census.emptyAssociatedEventBindingRows(),
+                  census.emptyAssociatedPatchBaseBindingRows(),
+                  selectedScope.scriptsRows(),
+                  selectedScope.eventBindingRows(),
+                  selectedScope.patchBaseBindingRows(),
+                  retainedAt);
 
-              insertAssociation(tx, receipt, retainedAt);
-              insertReceipt(tx, receipt, retainedAt);
-              return receipt;
-            });
+          insertAssociation(tx, receipt, retainedAt);
+          insertReceipt(tx, receipt, retainedAt);
+          return receipt;
+        });
 
     AutomationEmptySelectedSourceIntakeReceipt readBack =
         read(committed.targetNamespace(), committed.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new CorruptReceiptException(
-                        "Committed Automation source receipt is unavailable"));
+            .orElseThrow(() ->
+                new CorruptReceiptException("Committed Automation source receipt is unavailable"));
     if (!Arrays.equals(committed.canonicalBytes(), readBack.canonicalBytes())
         || !committed.receiptDigest().equals(readBack.receiptDigest())
         || !committed.requestDigest().equals(readBack.requestDigest())) {

@@ -14,6 +14,21 @@
     comment: 'The published POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.7.3/operator-framework-spring-boot-starter-6.7.3.pom'
     declared_license_mapping:
       Apache 2 License: Apache-2.0
+- id: Maven:io.javaoperatorsdk:operator-framework:5.6.4
+  curations:
+    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.4/java-operator-sdk-5.6.4.pom'
+    declared_license_mapping:
+      Apache 2 License: Apache-2.0
+- id: Maven:io.javaoperatorsdk:operator-framework-core:5.6.4
+  curations:
+    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.4/java-operator-sdk-5.6.4.pom'
+    declared_license_mapping:
+      Apache 2 License: Apache-2.0
+- id: Maven:io.javaoperatorsdk:operator-framework-spring-boot-starter:6.7.4
+  curations:
+    comment: 'The published POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.7.4/operator-framework-spring-boot-starter-6.7.4.pom'
+    declared_license_mapping:
+      Apache 2 License: Apache-2.0
 - id: Maven:jaxen:jaxen:2.0.6
   curations:
     comment: 'The tagged source license has the three BSD clauses, including non-endorsement; the POM''s BSD License 2.0 label
@@ -28,5 +43,16 @@
       verbatim under a package-specific LicenseRef; this metadata does not grant
       rights or change the terms. Retention of the report generator remains
       subject to human policy approval.
+    declared_license_mapping:
+      Gatling Highcharts: LicenseRef-Gatling-Highcharts-3.16.0
+- id: Maven:io.gatling.highcharts:gatling-charts-highcharts:3.16.1
+  curations:
+    comment: >-
+      The exact published 3.16.1 JAR (SHA-256
+      68c36ed76916a60d7e4bfd2529b313ebe0c83556321cfaa35a70c2110531f649)
+      contains the byte-identical META-INF/LICENSE (SHA-256
+      cadfc4af543cb6702bbf3aeedbf896c372b923f6ce7bf4d5e79cc40feb3c9681).
+      Reuse the verbatim existing LicenseRef text. This metadata does not
+      grant rights or change the terms.
     declared_license_mapping:
       Gatling Highcharts: LicenseRef-Gatling-Highcharts-3.16.0

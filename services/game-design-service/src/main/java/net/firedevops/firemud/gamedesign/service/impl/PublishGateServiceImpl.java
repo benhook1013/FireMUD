@@ -193,33 +193,31 @@ public final class PublishGateServiceImpl implements PublishGateService {
     var snapshot = selected;
     String snapshotFailureCode = failureCode;
     return FULL_VERSION_PARTICIPANTS.stream()
-        .map(
-            participant -> {
-              if (participant == PublishParticipantKey.WORLD_MANAGEMENT
-                  || participant == PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE) {
-                if (snapshot == null) {
-                  return failedObservation(
-                      participant,
-                      canonicalBinding.versionId(),
-                      null,
-                      snapshotFailureCode,
-                      "Exact selected publication source evidence unavailable");
-                }
-                return participant == PublishParticipantKey.WORLD_MANAGEMENT
-                    ? snapshot.worldManagementDigest()
-                    : toParticipantDigest(participant, version, snapshot.gameDesignDigest());
-              }
-              return observeFullVersionParticipant(version, canonicalBinding, participant, true);
-            })
+        .map(participant -> {
+          if (participant == PublishParticipantKey.WORLD_MANAGEMENT
+              || participant == PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE) {
+            if (snapshot == null) {
+              return failedObservation(
+                  participant,
+                  canonicalBinding.versionId(),
+                  null,
+                  snapshotFailureCode,
+                  "Exact selected publication source evidence unavailable");
+            }
+            return participant == PublishParticipantKey.WORLD_MANAGEMENT
+                ? snapshot.worldManagementDigest()
+                : toParticipantDigest(participant, version, snapshot.gameDesignDigest());
+          }
+          return observeFullVersionParticipant(version, canonicalBinding, participant, true);
+        })
         .toList();
   }
 
   private List<PublishParticipantDigestDto> collectFullVersionParticipantDigests(
       VersionDto version, PublicationDigestRequestBinding binding, boolean selectedPublication) {
     return FULL_VERSION_PARTICIPANTS.stream()
-        .map(
-            participant ->
-                observeFullVersionParticipant(version, binding, participant, selectedPublication))
+        .map(participant ->
+            observeFullVersionParticipant(version, binding, participant, selectedPublication))
         .toList();
   }
 
@@ -333,43 +331,40 @@ public final class PublishGateServiceImpl implements PublishGateService {
     String expectedScope =
         version.scriptOnly() ? version.scriptPatchVersion() : String.valueOf(version.id());
     Long expectedBaseVersionId = version.scriptOnly() ? version.baseVersionId() : null;
-    participantDigests.forEach(
-        digest -> {
-          if (!expectedScope.equals(digest.scopeValue())
-              || !Objects.equals(expectedBaseVersionId, digest.baseVersionId())) {
-            throw new PublishGateFailureException(
-                PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
-                "publish gate failed: wrong scope from " + digest.participantKey());
-          }
-          String participantKey = digest.participantKey();
-          Integer supportedSchemaVersion;
-          if (selectedAttestationSchema != null) {
-            supportedSchemaVersion =
-                AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                    participantKey, selectedAttestationSchema);
-          } else {
-            supportedSchemaVersion =
-                participantKey == null
-                    ? null
-                    : SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(participantKey);
-          }
-          if (digest.digestSchemaVersion() == null
-              || !digest.digestSchemaVersion().equals(supportedSchemaVersion)) {
-            throw new PublishGateFailureException(
-                PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
-                "publish gate failed: unsupported digest schema from " + digest.participantKey());
-          }
-          if (digest.contentDigest() == null || digest.contentDigest().isBlank()) {
-            throw new PublishGateFailureException(
-                PublishGateFailureCode.MISSING_CONTENT_DIGEST,
-                "publish gate failed: missing content digest from " + digest.participantKey());
-          }
-          if (digest.appliedCommitId() == null || digest.appliedCommitId().isBlank()) {
-            throw new PublishGateFailureException(
-                PublishGateFailureCode.MISSING_APPLIED_COMMIT,
-                "publish gate failed: missing applied commit from " + digest.participantKey());
-          }
-        });
+    participantDigests.forEach(digest -> {
+      if (!expectedScope.equals(digest.scopeValue())
+          || !Objects.equals(expectedBaseVersionId, digest.baseVersionId())) {
+        throw new PublishGateFailureException(
+            PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
+            "publish gate failed: wrong scope from " + digest.participantKey());
+      }
+      String participantKey = digest.participantKey();
+      Integer supportedSchemaVersion;
+      if (selectedAttestationSchema != null) {
+        supportedSchemaVersion =
+            AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                participantKey, selectedAttestationSchema);
+      } else {
+        supportedSchemaVersion =
+            participantKey == null ? null : SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(participantKey);
+      }
+      if (digest.digestSchemaVersion() == null
+          || !digest.digestSchemaVersion().equals(supportedSchemaVersion)) {
+        throw new PublishGateFailureException(
+            PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
+            "publish gate failed: unsupported digest schema from " + digest.participantKey());
+      }
+      if (digest.contentDigest() == null || digest.contentDigest().isBlank()) {
+        throw new PublishGateFailureException(
+            PublishGateFailureCode.MISSING_CONTENT_DIGEST,
+            "publish gate failed: missing content digest from " + digest.participantKey());
+      }
+      if (digest.appliedCommitId() == null || digest.appliedCommitId().isBlank()) {
+        throw new PublishGateFailureException(
+            PublishGateFailureCode.MISSING_APPLIED_COMMIT,
+            "publish gate failed: missing applied commit from " + digest.participantKey());
+      }
+    });
     long distinctAppliedCommitIds =
         participantDigests.stream()
             .map(PublishParticipantDigestDto::appliedCommitId)

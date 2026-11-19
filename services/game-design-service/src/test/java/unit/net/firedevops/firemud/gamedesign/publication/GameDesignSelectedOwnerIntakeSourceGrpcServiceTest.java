@@ -55,10 +55,9 @@ class GameDesignSelectedOwnerIntakeSourceGrpcServiceTest {
 
     var wrongNamespace = new Collector();
     peer(NAMESPACE, "account-service")
-        .run(
-            () ->
-                service.readSelectedSource(
-                    valid.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
+        .run(() ->
+            service.readSelectedSource(
+                valid.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
     assertThat(wrongNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     SessionContext.setContext("123", List.of(), java.util.Map.of());

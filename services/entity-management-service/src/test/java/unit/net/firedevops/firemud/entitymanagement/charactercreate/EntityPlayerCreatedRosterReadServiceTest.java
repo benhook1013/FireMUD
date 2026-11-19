@@ -38,11 +38,10 @@ class EntityPlayerCreatedRosterReadServiceTest {
     var service = new EntityPlayerCreatedRosterReadService(repository, source);
     TransactionSynchronizationManager.initSynchronization();
 
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    new AuthenticatedAccountSelector(UUID.randomUUID()),
-                    ReadPlayerCreatedRosterSourceRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            service.read(
+                new AuthenticatedAccountSelector(UUID.randomUUID()),
+                ReadPlayerCreatedRosterSourceRequest.getDefaultInstance()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("short Entity transactions");
     verifyNoInteractions(source, repository);
@@ -101,17 +100,15 @@ class EntityPlayerCreatedRosterReadServiceTest {
     var source = mock(EntityPlayerCreatedRosterSourceClient.class);
     var service = new EntityPlayerCreatedRosterReadService(repository, source);
 
-    assertThatThrownBy(
-            () ->
-                service.readSelectedTerminal(
-                    new AuthenticatedAccountSelector(UUID.randomUUID()),
-                    new UUID(0L, 0L),
-                    ReadPlayerCreatedRosterSourceRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            service.readSelectedTerminal(
+                new AuthenticatedAccountSelector(UUID.randomUUID()),
+                new UUID(0L, 0L),
+                ReadPlayerCreatedRosterSourceRequest.getDefaultInstance()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.INVALID_ARGUMENT));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.INVALID_ARGUMENT));
 
     verifyNoInteractions(source, repository);
   }

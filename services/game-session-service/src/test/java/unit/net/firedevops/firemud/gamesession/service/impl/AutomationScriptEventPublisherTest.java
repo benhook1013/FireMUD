@@ -51,10 +51,8 @@ class AutomationScriptEventPublisherTest {
         .thenThrow(new StatusRuntimeException(Status.fromCode(code).withDescription("rejected")));
     ScriptEventPublisher publisher = publisherForTriggerTest(client);
 
-    assertThatCode(
-            () ->
-                publisher.publishCommandEvent(
-                    sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
+    assertThatCode(() ->
+            publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
         .doesNotThrowAnyException();
 
     String capturedOutput = output.getOut() + output.getErr();
@@ -75,10 +73,8 @@ class AutomationScriptEventPublisherTest {
     when(client.triggerScriptEvent(Mockito.any())).thenReturn(unavailableResponse);
     ScriptEventPublisher publisher = publisherForTriggerTest(client);
 
-    assertThatCode(
-            () ->
-                publisher.publishCommandEvent(
-                    sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
+    assertThatCode(() ->
+            publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK")))
         .doesNotThrowAnyException();
 
     assertThat(unavailableResponse.getAdmitted()).isFalse();
@@ -594,11 +590,10 @@ class AutomationScriptEventPublisherTest {
         .containsOnly("7");
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getPayloadJson)
-        .allSatisfy(
-            payload -> {
-              assertThat(payload).contains("\"fromRegionId\":\"R-101\"");
-              assertThat(payload).contains("\"toRegionId\":\"R-102\"");
-            });
+        .allSatisfy(payload -> {
+          assertThat(payload).contains("\"fromRegionId\":\"R-101\"");
+          assertThat(payload).contains("\"toRegionId\":\"R-102\"");
+        });
   }
 
   @Test

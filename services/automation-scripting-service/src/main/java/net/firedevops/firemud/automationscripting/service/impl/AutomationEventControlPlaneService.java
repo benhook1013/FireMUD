@@ -38,10 +38,9 @@ final class AutomationEventControlPlaneService {
     ListScriptEventDefinitionsResponse.Builder response =
         ListScriptEventDefinitionsResponse.newBuilder();
     eventRegistryService.listDefinitions().stream()
-        .filter(
-            definition ->
-                request.getOwnerService().isBlank()
-                    || definition.ownerService().equals(request.getOwnerService()))
+        .filter(definition ->
+            request.getOwnerService().isBlank()
+                || definition.ownerService().equals(request.getOwnerService()))
         .map(AutomationEventControlPlaneService::toProto)
         .forEach(response::addDefinitions);
     return response.build();

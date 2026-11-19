@@ -150,17 +150,15 @@ public final class SelectedDraftPublicationOwner {
     var gameplayCapture =
         capture
             .gameplay()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "SELECTED_PUBLICATION_GAMEPLAY_SOURCE_CAPTURE_UNAVAILABLE"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "SELECTED_PUBLICATION_GAMEPLAY_SOURCE_CAPTURE_UNAVAILABLE"));
     var templateCapture =
         capture
             .templateConfig()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "SELECTED_PUBLICATION_TEMPLATE_SOURCE_CAPTURE_UNAVAILABLE"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "SELECTED_PUBLICATION_TEMPLATE_SOURCE_CAPTURE_UNAVAILABLE"));
     templateWorldSources.retainOrRead(
         operation, templateCapture, worldSourceRead, priorOperation.isEmpty());
     var retained =
@@ -172,10 +170,8 @@ public final class SelectedDraftPublicationOwner {
         selections
             .read(
                 intent.canonicalTenantId(), intent.canonicalVersionId(), intent.publishRequestId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "SELECTED_PUBLICATION_SELECTION_READBACK_UNAVAILABLE"))
+            .orElseThrow(() ->
+                new IllegalStateException("SELECTED_PUBLICATION_SELECTION_READBACK_UNAVAILABLE"))
             .selection();
     if (!Arrays.equals(operation.canonicalBytes(), retained.operation().canonicalBytes())
         || !"PENDING".equals(retained.outcome())

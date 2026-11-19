@@ -201,47 +201,42 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     Seed seed = seed(c);
     var created = create(c, request(seed, UUID.randomUUID(), 1, null));
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID());
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID());
+          s.setRollbackOnly();
+        });
     assertThat(count(c, "subscription_provisioning_work")).isZero();
     assertThat(count(c, "subscription_provisioning_attempts")).isZero();
     var pending = c.repository().findCurrentByTenant(seed.tenant()).orElseThrow();
     assertThat(pending.status()).isEqualTo("pending");
     var observed =
         c.tx()
-            .execute(
-                s ->
-                    new AccountPaymentInstrumentRepository(c.dsl())
-                        .recordAvailability(
-                            new AccountPaymentInstrumentRepository.AvailabilityObservation(
-                                UUID.randomUUID(),
-                                seed.instrument().instrumentUuid(),
-                                seed.owner().accountUuid(),
-                                1L,
-                                observedState,
-                                seed.instrument().display(),
-                                DIGEST)));
+            .execute(s ->
+                new AccountPaymentInstrumentRepository(c.dsl())
+                    .recordAvailability(
+                        new AccountPaymentInstrumentRepository.AvailabilityObservation(
+                            UUID.randomUUID(),
+                            seed.instrument().instrumentUuid(),
+                            seed.owner().accountUuid(),
+                            1L,
+                            observedState,
+                            seed.instrument().display(),
+                            DIGEST)));
     // Upgrade the original pending intent and its changed wallet without recreating either row.
     configuration(c).load().migrate();
-    assertThatThrownBy(
-            () ->
-                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 2, UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 2, UUID.randomUUID())))
         .isInstanceOf(FenceRejectedException.class);
     // Provisioning boundaries use PostgreSQL clock_timestamp(); an injected Java clock cannot
     // move the database clock before this durable creation time. The wrong-version fence above
     // and rollback proof below exercise the supported database-owned claim boundaries.
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              assertThat(
-                      lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID()).disposition())
-                  .isEqualTo(
-                      AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          assertThat(lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID()).disposition())
+              .isEqualTo(
+                  AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
+          s.setRollbackOnly();
+        });
     assertThat(count(c, "subscription_provisioning_work")).isZero();
     assertThat(count(c, "subscription_provisioning_operator_outbox")).isZero();
     UUID firstAttempt = UUID.randomUUID();
@@ -336,10 +331,9 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     var expired =
         Objects.requireNonNull(
             c.tx()
-                .execute(
-                    s ->
-                        lifecycle(c, provisioningTimeout)
-                            .claim(created.requestId(), 1, UUID.randomUUID())));
+                .execute(s ->
+                    lifecycle(c, provisioningTimeout)
+                        .claim(created.requestId(), 1, UUID.randomUUID())));
     assertThat(expired.disposition())
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
     assertThat(expired.claim()).isNull();
@@ -563,10 +557,8 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     var later =
         Objects.requireNonNull(
             c.tx()
-                .execute(
-                    s ->
-                        changedRepository.retainPending(
-                            request(second, UUID.randomUUID(), 1, null))));
+                .execute(s ->
+                    changedRepository.retainPending(request(second, UUID.randomUUID(), 1, null))));
     assertThat(later.planQuote()).isEqualTo(changedCatalog.resolve("basic-hosting"));
     assertThat(later.planQuote().digest()).isNotEqualTo(created.planQuote().digest());
     assertThat(created.requestDigest())
@@ -603,11 +595,10 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     Seed seed = seed(c);
     var unconfigured =
         new AccountSubscriptionIntentRepository(c.dsl(), new AccountHostingPlanCatalog(List.of()));
-    assertThatThrownBy(
-            () ->
-                c.tx()
-                    .execute(
-                        s -> unconfigured.retainPending(request(seed, UUID.randomUUID(), 1, null))))
+    assertThatThrownBy(() ->
+            c.tx()
+                .execute(
+                    s -> unconfigured.retainPending(request(seed, UUID.randomUUID(), 1, null))))
         .isInstanceOf(AccountHostingPlanCatalog.PlanUnavailableException.class);
     assertThat(count(c, "subscription_create_operations")).isZero();
     assertThat(count(c, "subscription")).isZero();
@@ -625,17 +616,16 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        insertBareOperationWithQuote(
-                            c,
-                            request,
-                            seed,
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            quote,
-                            quote.payload(),
-                            "sha256:" + "0".repeat(64))));
+                .executeWithoutResult(s ->
+                    insertBareOperationWithQuote(
+                        c,
+                        request,
+                        seed,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        quote,
+                        quote.payload(),
+                        "sha256:" + "0".repeat(64))));
     for (var changedFields :
         List.of(
             new AccountHostingPlanQuote(
@@ -667,17 +657,16 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
           "23514",
           () ->
               c.tx()
-                  .executeWithoutResult(
-                      s ->
-                          insertBareOperationWithQuote(
-                              c,
-                              request,
-                              seed,
-                              UUID.randomUUID(),
-                              UUID.randomUUID(),
-                              changedFields,
-                              quote.payload(),
-                              quote.digest())));
+                  .executeWithoutResult(s ->
+                      insertBareOperationWithQuote(
+                          c,
+                          request,
+                          seed,
+                          UUID.randomUUID(),
+                          UUID.randomUUID(),
+                          changedFields,
+                          quote.payload(),
+                          quote.digest())));
     }
     byte[] alteredBytes = Arrays.copyOf(quote.payload(), quote.payload().length + 1);
     alteredBytes[alteredBytes.length - 1] = ' ';
@@ -685,17 +674,16 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        insertBareOperationWithQuote(
-                            c,
-                            request,
-                            seed,
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            quote,
-                            alteredBytes,
-                            quote.digest())));
+                .executeWithoutResult(s ->
+                    insertBareOperationWithQuote(
+                        c,
+                        request,
+                        seed,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        quote,
+                        alteredBytes,
+                        quote.digest())));
     assertThat(count(c, "subscription_create_operations")).isZero();
     var created = create(c, request);
     rejectSql(
@@ -756,13 +744,12 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    status ->
-                        c.dsl()
-                            .execute(
-                                "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
-                                UUID.randomUUID(),
-                                seed.tenant())));
+                .executeWithoutResult(status ->
+                    c.dsl()
+                        .execute(
+                            "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
+                            UUID.randomUUID(),
+                            seed.tenant())));
     assertThat(
             c.setup()
                 .fetch(
@@ -819,25 +806,23 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s -> {
-                      c.repository().retainPending(request);
-                      c.dsl()
-                          .execute(
-                              "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
-                              UUID.randomUUID(),
-                              seed.tenant());
-                    }));
+                .executeWithoutResult(s -> {
+                  c.repository().retainPending(request);
+                  c.dsl()
+                      .execute(
+                          "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
+                          UUID.randomUUID(),
+                          seed.tenant());
+                }));
     assertThat(count(c, "subscription")).isZero();
     rejectSql(
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s -> {
-                      c.repository().retainPending(request);
-                      advanceWallet(c, seed.instrument().instrumentUuid(), UUID.randomUUID());
-                    }));
+                .executeWithoutResult(s -> {
+                  c.repository().retainPending(request);
+                  advanceWallet(c, seed.instrument().instrumentUuid(), UUID.randomUUID());
+                }));
     assertThat(count(c, "subscription_create_operations")).isZero();
     create(c, request);
     c.tx()
@@ -875,11 +860,10 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
             1,
             new ReplacementFence(original.subscriptionId(), canceled.rowVersion()));
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.repository().retainPending(replacement);
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          c.repository().retainPending(replacement);
+          s.setRollbackOnly();
+        });
     assertThat(c.repository().findCurrentByTenant(seed.tenant())).contains(canceled);
     assertThat(count(c, "subscription")).isOne();
     assertThat(count(c, "subscription_current_observations")).isEqualTo(2);
@@ -956,32 +940,29 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23505",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        c.dsl()
-                            .execute(
-                                "UPDATE subscription SET provider_subscription_id = 'sub_duplicate', row_version = row_version + 1 WHERE subscription_id IN (?, ?)",
-                                one.subscriptionId(),
-                                two.subscriptionId())));
+                .executeWithoutResult(s ->
+                    c.dsl()
+                        .execute(
+                            "UPDATE subscription SET provider_subscription_id = 'sub_duplicate', row_version = row_version + 1 WHERE subscription_id IN (?, ?)",
+                            one.subscriptionId(),
+                            two.subscriptionId())));
     rejectSql(
         "23503",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        c.dsl()
-                            .execute(
-                                "UPDATE subscription SET provider_subscription_id = 'sub_unmapped', row_version = row_version + 1 WHERE subscription_id = ?",
-                                one.subscriptionId())));
+                .executeWithoutResult(s ->
+                    c.dsl()
+                        .execute(
+                            "UPDATE subscription SET provider_subscription_id = 'sub_unmapped', row_version = row_version + 1 WHERE subscription_id = ?",
+                            one.subscriptionId())));
     var duplicateTenant = request(first, UUID.randomUUID(), 1, null);
     rejectSql(
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        insertBareOperation(
-                            c, duplicateTenant, first, UUID.randomUUID(), UUID.randomUUID())));
+                .executeWithoutResult(s ->
+                    insertBareOperation(
+                        c, duplicateTenant, first, UUID.randomUUID(), UUID.randomUUID())));
     assertThat(indexDefinition(c, "uq_subscription_active_tenant"))
         .contains("UNIQUE", "superseded_at IS NULL");
     assertThat(
@@ -1010,23 +991,21 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23503",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        insertBareOperation(
-                            c, missingPair, empty, UUID.randomUUID(), UUID.randomUUID())));
+                .executeWithoutResult(s ->
+                    insertBareOperation(
+                        c, missingPair, empty, UUID.randomUUID(), UUID.randomUUID())));
     assertThat(c.repository().findCreation(missingPair.requestId())).isEmpty();
     rejectSql(
         "23505",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        insertBareOperation(
-                            c,
-                            request(empty, UUID.randomUUID(), 1, null),
-                            empty,
-                            created.cleanupProviderIdentity(),
-                            UUID.randomUUID())));
+                .executeWithoutResult(s ->
+                    insertBareOperation(
+                        c,
+                        request(empty, UUID.randomUUID(), 1, null),
+                        empty,
+                        created.cleanupProviderIdentity(),
+                        UUID.randomUUID())));
     for (String table :
         List.of(
             "subscription_create_operations",
@@ -1057,27 +1036,26 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s -> {
-                      c.repository().lockPendingForClaim(creation.requestId(), 1);
-                      UUID resolution = UUID.randomUUID();
-                      c.dsl()
-                          .execute(
-                              "INSERT INTO subscription_provider_terminal_resolutions "
-                                  + "(resolution_id,request_id,subscription_id,cleanup_provider_identity,outcome,effective_at,evidence_digest) "
-                                  + "VALUES (?, ?, ?, ?, 'PROVIDER_ABSENT', ?::timestamptz, ?)",
-                              resolution,
-                              creation.requestId(),
-                              creation.subscriptionId(),
-                              creation.cleanupProviderIdentity(),
-                              BOUNDARY,
-                              DIGEST);
-                      c.dsl()
-                          .execute(
-                              "UPDATE subscription SET status = 'canceled', terminal_resolution_id = ?, row_version = row_version + 1 WHERE subscription_id = ?",
-                              resolution,
-                              creation.subscriptionId());
-                    }));
+                .executeWithoutResult(s -> {
+                  c.repository().lockPendingForClaim(creation.requestId(), 1);
+                  UUID resolution = UUID.randomUUID();
+                  c.dsl()
+                      .execute(
+                          "INSERT INTO subscription_provider_terminal_resolutions "
+                              + "(resolution_id,request_id,subscription_id,cleanup_provider_identity,outcome,effective_at,evidence_digest) "
+                              + "VALUES (?, ?, ?, ?, 'PROVIDER_ABSENT', ?::timestamptz, ?)",
+                          resolution,
+                          creation.requestId(),
+                          creation.subscriptionId(),
+                          creation.cleanupProviderIdentity(),
+                          BOUNDARY,
+                          DIGEST);
+                  c.dsl()
+                      .execute(
+                          "UPDATE subscription SET status = 'canceled', terminal_resolution_id = ?, row_version = row_version + 1 WHERE subscription_id = ?",
+                          resolution,
+                          creation.subscriptionId());
+                }));
     assertThat(c.repository().findCurrentByTenant(seed.tenant()).orElseThrow().status())
         .isEqualTo("pending");
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
@@ -1097,17 +1075,16 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     var advancedWallet =
         Objects.requireNonNull(
             c.tx()
-                .execute(
-                    s ->
-                        instruments.recordAvailability(
-                            new AccountPaymentInstrumentRepository.AvailabilityObservation(
-                                UUID.randomUUID(),
-                                first.instrument().instrumentUuid(),
-                                c.account(),
-                                1,
-                                AccountPaymentInstrumentRecord.State.ATTACHABLE,
-                                first.instrument().display(),
-                                "sha256:" + "b".repeat(64)))));
+                .execute(s ->
+                    instruments.recordAvailability(
+                        new AccountPaymentInstrumentRepository.AvailabilityObservation(
+                            UUID.randomUUID(),
+                            first.instrument().instrumentUuid(),
+                            c.account(),
+                            1,
+                            AccountPaymentInstrumentRecord.State.ATTACHABLE,
+                            first.instrument().display(),
+                            "sha256:" + "b".repeat(64)))));
     assertThat(advancedWallet.rowVersion()).isEqualTo(2);
     Seed otherTenant = seed(c);
     Seed sharedWallet = new Seed(otherTenant.tenant(), otherTenant.owner(), first.instrument());
@@ -1154,31 +1131,30 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     // An old request/subscription tuple or the originally observed version cannot select the
     // independent version-2 reservation. Nor may a stale caller rewrite its immutable identity.
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              assertThat(
-                      c.dsl()
-                          .execute(
-                              "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() "
-                                  + "WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? AND released_at IS NULL",
-                              terminalResolution,
-                              independent.requestId(),
-                              independent.subscriptionId(),
-                              original.paymentInstrumentId(),
-                              original.reservedInstrumentVersion()))
-                  .isZero();
-              assertThat(
-                      c.dsl()
-                          .execute(
-                              "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() "
-                                  + "WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? AND released_at IS NULL",
-                              terminalResolution,
-                              original.requestId(),
-                              independent.subscriptionId(),
-                              original.paymentInstrumentId(),
-                              independent.reservedInstrumentVersion()))
-                  .isZero();
-            });
+        .executeWithoutResult(s -> {
+          assertThat(
+                  c.dsl()
+                      .execute(
+                          "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() "
+                              + "WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? AND released_at IS NULL",
+                          terminalResolution,
+                          independent.requestId(),
+                          independent.subscriptionId(),
+                          original.paymentInstrumentId(),
+                          original.reservedInstrumentVersion()))
+              .isZero();
+          assertThat(
+                  c.dsl()
+                      .execute(
+                          "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() "
+                              + "WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? AND released_at IS NULL",
+                          terminalResolution,
+                          original.requestId(),
+                          independent.subscriptionId(),
+                          original.paymentInstrumentId(),
+                          independent.reservedInstrumentVersion()))
+              .isZero();
+        });
     for (String assignment :
         List.of(
             "request_id = '" + original.requestId() + "'::uuid",
@@ -1199,14 +1175,13 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         "23505",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s -> {
-                      c.dsl()
-                          .execute(
-                              "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() WHERE request_id = ?",
-                              terminalResolution,
-                              independent.requestId());
-                    }));
+                .executeWithoutResult(s -> {
+                  c.dsl()
+                      .execute(
+                          "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() WHERE request_id = ?",
+                          terminalResolution,
+                          independent.requestId());
+                }));
     assertThat(
             Objects.requireNonNull(
                     c.setup()
@@ -1270,12 +1245,11 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
                 .providerSubscriptionId())
         .isNull();
     c.tx()
-        .executeWithoutResult(
-            s ->
-                c.dsl()
-                    .execute(
-                        "UPDATE subscription SET provider_subscription_id = 'sub_original', row_version = row_version + 1 WHERE subscription_id = ?",
-                        creation.subscriptionId()));
+        .executeWithoutResult(s ->
+            c.dsl()
+                .execute(
+                    "UPDATE subscription SET provider_subscription_id = 'sub_original', row_version = row_version + 1 WHERE subscription_id = ?",
+                    creation.subscriptionId()));
     var mapped = c.repository().lookupProviderId("sub_original");
     assertThat(mapped.disposition()).isEqualTo(MappingDisposition.CURRENT_MAPPING);
     assertThat(mapped.history().orElseThrow().providerOperationId())
@@ -1346,48 +1320,44 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var holder =
-          executor.submit(
-              () ->
-                  c.tx()
-                      .executeWithoutResult(
-                          s -> {
-                            holderPid.set(
-                                Objects.requireNonNull(c.dsl().fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class));
-                            c.dsl()
-                                .fetchOne(
-                                    "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-                                    c.account());
-                            controlledAdvance.run();
-                            advanced.countDown();
-                            await(release);
-                          }));
+          executor.submit(() ->
+              c.tx()
+                  .executeWithoutResult(s -> {
+                    holderPid.set(
+                        Objects.requireNonNull(c.dsl().fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                    c.dsl()
+                        .fetchOne(
+                            "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                            c.account());
+                    controlledAdvance.run();
+                    advanced.countDown();
+                    await(release);
+                  }));
       if (!advanced.await(5, TimeUnit.SECONDS)) {
         // Expose a failed owner transaction instead of masking it as a coordination timeout.
         holder.get(1, TimeUnit.SECONDS);
         throw new AssertionError("Controlled owner advance did not reach its lock boundary");
       }
       var contender =
-          executor.submit(
-              () -> {
-                // Classify rejections only after the original create transaction has rolled back.
-                try {
-                  c.tx()
-                      .executeWithoutResult(
-                          s -> {
-                            contenderPid.set(
-                                Objects.requireNonNull(c.dsl().fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class));
-                            contenderStarted.countDown();
-                            c.repository().retainPending(request);
-                          });
-                  return "APPLIED";
-                } catch (ConflictException conflict) {
-                  return "CONFLICT";
-                } catch (FenceRejectedException stale) {
-                  return "FENCED";
-                }
-              });
+          executor.submit(() -> {
+            // Classify rejections only after the original create transaction has rolled back.
+            try {
+              c.tx()
+                  .executeWithoutResult(s -> {
+                    contenderPid.set(
+                        Objects.requireNonNull(c.dsl().fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                    contenderStarted.countDown();
+                    c.repository().retainPending(request);
+                  });
+              return "APPLIED";
+            } catch (ConflictException conflict) {
+              return "CONFLICT";
+            } catch (FenceRejectedException stale) {
+              return "FENCED";
+            }
+          });
       assertThat(contenderStarted.await(5, TimeUnit.SECONDS)).isTrue();
       awaitBlocked(c, contenderPid.get(), holderPid.get());
       release.countDown();
@@ -1421,19 +1391,18 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
   private static void controlledProviderHistory(
       Context c, AccountSubscriptionCreationRecord creation, String providerId) {
     c.tx()
-        .executeWithoutResult(
-            s ->
-                c.dsl()
-                    .execute(
-                        "INSERT INTO subscription_provider_history "
-                            + "(provider_subscription_id,subscription_id,operation_kind,request_id,provider_operation_id,role,effective_at,evidence_digest) "
-                            + "VALUES (?, ?, 'SUBSCRIPTION_PROVISIONING', ?, ?, 'canonical', ?::timestamptz, ?)",
-                        providerId,
-                        creation.subscriptionId(),
-                        creation.requestId(),
-                        creation.subscriptionProvisioningRequestId(),
-                        BOUNDARY,
-                        DIGEST));
+        .executeWithoutResult(s ->
+            c.dsl()
+                .execute(
+                    "INSERT INTO subscription_provider_history "
+                        + "(provider_subscription_id,subscription_id,operation_kind,request_id,provider_operation_id,role,effective_at,evidence_digest) "
+                        + "VALUES (?, ?, 'SUBSCRIPTION_PROVISIONING', ?, ?, 'canonical', ?::timestamptz, ?)",
+                    providerId,
+                    creation.subscriptionId(),
+                    creation.requestId(),
+                    creation.subscriptionProvisioningRequestId(),
+                    BOUNDARY,
+                    DIGEST));
   }
 
   /**
@@ -1444,92 +1413,91 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
       Context c, AccountSubscriptionCreationRecord creation) {
     return Objects.requireNonNull(
         c.tx()
-            .execute(
-                s -> {
-                  // Cleanup is not a new provisioning claim. Lock the same sources without
-                  // requiring
-                  // the globally shared wallet to retain the original observed
-                  // version/availability.
-                  new AccountPaymentInstrumentRepository(c.dsl())
-                      .findByOwnerForUpdate(
-                          creation.owner().accountUuid(), creation.paymentInstrumentId())
-                      .orElseThrow();
-                  c.dsl()
-                      .fetchOne(
-                          "SELECT * FROM account_tenant_billing_owners WHERE tenant_uuid = ? FOR UPDATE",
-                          creation.tenantId());
-                  var current =
-                      Objects.requireNonNull(
-                          c.dsl()
-                              .fetchOne(
-                                  "SELECT * FROM subscription WHERE subscription_id = ? AND tenant_id = ? AND creation_request_id = ? FOR UPDATE",
-                                  creation.subscriptionId(),
-                                  creation.tenantId(),
-                                  creation.requestId()));
-                  var hold =
-                      Objects.requireNonNull(
-                          c.dsl()
-                              .fetchOne(
-                                  "SELECT * FROM subscription_instrument_reservations WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? FOR UPDATE",
-                                  creation.requestId(),
-                                  creation.subscriptionId(),
-                                  creation.paymentInstrumentId(),
-                                  creation.reservedInstrumentVersion()));
-                  if (hold.get("released_at") != null) {
-                    UUID retainedResolution = hold.get("terminal_resolution_id", UUID.class);
-                    assertThat(current.get("status", String.class)).isEqualTo("canceled");
-                    assertThat(current.get("terminal_resolution_id", UUID.class))
-                        .isEqualTo(retainedResolution);
-                    var receipt =
-                        Objects.requireNonNull(
-                            c.dsl()
-                                .fetchOne(
-                                    "SELECT * FROM subscription_provider_terminal_resolutions WHERE resolution_id = ? AND request_id = ? AND subscription_id = ? AND cleanup_provider_identity = ?",
-                                    retainedResolution,
-                                    creation.requestId(),
-                                    creation.subscriptionId(),
-                                    creation.cleanupProviderIdentity()));
-                    assertThat(receipt.get("provider_subscription_id", String.class))
-                        .isEqualTo(current.get("provider_subscription_id", String.class));
-                    return retainedResolution;
-                  }
-                  UUID resolution = UUID.randomUUID();
-                  c.dsl()
-                      .execute(
-                          "INSERT INTO subscription_provider_terminal_resolutions "
-                              + "(resolution_id,request_id,subscription_id,cleanup_provider_identity,provider_subscription_id,outcome,effective_at,evidence_digest) "
-                              + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?)",
-                          resolution,
-                          creation.requestId(),
-                          creation.subscriptionId(),
-                          creation.cleanupProviderIdentity(),
-                          current.get("provider_subscription_id", String.class),
-                          current.get("provider_subscription_id") == null
-                              ? "PROVIDER_ABSENT"
-                              : "CANCELED",
-                          BOUNDARY,
-                          DIGEST);
-                  assertThat(
-                          c.dsl()
-                              .execute(
-                                  "UPDATE subscription SET status = 'canceled', terminal_resolution_id = ?, row_version = row_version + 1 WHERE subscription_id = ? AND creation_request_id = ? AND row_version = ? AND status = 'pending'",
-                                  resolution,
-                                  creation.subscriptionId(),
-                                  creation.requestId(),
-                                  current.get("row_version", Long.class)))
-                      .isOne();
-                  assertThat(
-                          c.dsl()
-                              .execute(
-                                  "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? AND released_at IS NULL",
-                                  resolution,
-                                  creation.requestId(),
-                                  creation.subscriptionId(),
-                                  creation.paymentInstrumentId(),
-                                  creation.reservedInstrumentVersion()))
-                      .isOne();
-                  return resolution;
-                }));
+            .execute(s -> {
+              // Cleanup is not a new provisioning claim. Lock the same sources without
+              // requiring
+              // the globally shared wallet to retain the original observed
+              // version/availability.
+              new AccountPaymentInstrumentRepository(c.dsl())
+                  .findByOwnerForUpdate(
+                      creation.owner().accountUuid(), creation.paymentInstrumentId())
+                  .orElseThrow();
+              c.dsl()
+                  .fetchOne(
+                      "SELECT * FROM account_tenant_billing_owners WHERE tenant_uuid = ? FOR UPDATE",
+                      creation.tenantId());
+              var current =
+                  Objects.requireNonNull(
+                      c.dsl()
+                          .fetchOne(
+                              "SELECT * FROM subscription WHERE subscription_id = ? AND tenant_id = ? AND creation_request_id = ? FOR UPDATE",
+                              creation.subscriptionId(),
+                              creation.tenantId(),
+                              creation.requestId()));
+              var hold =
+                  Objects.requireNonNull(
+                      c.dsl()
+                          .fetchOne(
+                              "SELECT * FROM subscription_instrument_reservations WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? FOR UPDATE",
+                              creation.requestId(),
+                              creation.subscriptionId(),
+                              creation.paymentInstrumentId(),
+                              creation.reservedInstrumentVersion()));
+              if (hold.get("released_at") != null) {
+                UUID retainedResolution = hold.get("terminal_resolution_id", UUID.class);
+                assertThat(current.get("status", String.class)).isEqualTo("canceled");
+                assertThat(current.get("terminal_resolution_id", UUID.class))
+                    .isEqualTo(retainedResolution);
+                var receipt =
+                    Objects.requireNonNull(
+                        c.dsl()
+                            .fetchOne(
+                                "SELECT * FROM subscription_provider_terminal_resolutions WHERE resolution_id = ? AND request_id = ? AND subscription_id = ? AND cleanup_provider_identity = ?",
+                                retainedResolution,
+                                creation.requestId(),
+                                creation.subscriptionId(),
+                                creation.cleanupProviderIdentity()));
+                assertThat(receipt.get("provider_subscription_id", String.class))
+                    .isEqualTo(current.get("provider_subscription_id", String.class));
+                return retainedResolution;
+              }
+              UUID resolution = UUID.randomUUID();
+              c.dsl()
+                  .execute(
+                      "INSERT INTO subscription_provider_terminal_resolutions "
+                          + "(resolution_id,request_id,subscription_id,cleanup_provider_identity,provider_subscription_id,outcome,effective_at,evidence_digest) "
+                          + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?)",
+                      resolution,
+                      creation.requestId(),
+                      creation.subscriptionId(),
+                      creation.cleanupProviderIdentity(),
+                      current.get("provider_subscription_id", String.class),
+                      current.get("provider_subscription_id") == null
+                          ? "PROVIDER_ABSENT"
+                          : "CANCELED",
+                      BOUNDARY,
+                      DIGEST);
+              assertThat(
+                      c.dsl()
+                          .execute(
+                              "UPDATE subscription SET status = 'canceled', terminal_resolution_id = ?, row_version = row_version + 1 WHERE subscription_id = ? AND creation_request_id = ? AND row_version = ? AND status = 'pending'",
+                              resolution,
+                              creation.subscriptionId(),
+                              creation.requestId(),
+                              current.get("row_version", Long.class)))
+                  .isOne();
+              assertThat(
+                      c.dsl()
+                          .execute(
+                              "UPDATE subscription_instrument_reservations SET terminal_resolution_id = ?, released_at = clock_timestamp() WHERE request_id = ? AND subscription_id = ? AND payment_instrument_id = ? AND instrument_version = ? AND released_at IS NULL",
+                              resolution,
+                              creation.requestId(),
+                              creation.subscriptionId(),
+                              creation.paymentInstrumentId(),
+                              creation.reservedInstrumentVersion()))
+                  .isOne();
+              return resolution;
+            }));
   }
 
   private static void advanceWallet(Context c, UUID instrument, UUID changeRequest) {
@@ -1671,62 +1639,55 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
             FreshTenantCreatorDigest.evidenceDigest(
                 1, creation, c.account(), authorityOperation, DIGEST));
     c.tx()
-        .executeWithoutResult(
-            s ->
-                new FreshTenantIdentityAssociationRepository(c.dsl(), "prod")
-                    .importVerified(creation));
+        .executeWithoutResult(s ->
+            new FreshTenantIdentityAssociationRepository(c.dsl(), "prod").importVerified(creation));
     var ownerResult =
         Objects.requireNonNull(
             c.tx()
-                .execute(
-                    s ->
-                        new AccountInitialTenantBillingOwnerRepository(c.dsl())
-                            .establishInitial(
-                                new AccountInitialTenantBillingOwnerRepository.InitialRequest(
-                                    UUID.randomUUID(), creator, UUID.randomUUID(), 1, true))));
+                .execute(s ->
+                    new AccountInitialTenantBillingOwnerRepository(c.dsl())
+                        .establishInitial(
+                            new AccountInitialTenantBillingOwnerRepository.InitialRequest(
+                                UUID.randomUUID(), creator, UUID.randomUUID(), 1, true))));
     var customers = new AccountBillingCustomerRepository(c.dsl());
     var customer =
         Objects.requireNonNull(
                 c.tx()
-                    .execute(
-                        s ->
-                            customers.retainIntent(
-                                c.account(), UUID.randomUUID(), UUID.randomUUID())))
+                    .execute(s ->
+                        customers.retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID())))
             .customer();
     if (customer.state() != AccountBillingCustomerRecord.State.CONFIRMED) {
       var pending = customer;
       customer =
           Objects.requireNonNull(
               c.tx()
-                  .execute(
-                      s ->
-                          customers.recordObservation(
-                              c.account(),
-                              pending.customerProvisioningRequestId(),
-                              pending.rowVersion(),
-                              UUID.randomUUID(),
-                              AccountBillingCustomerRecord.Observation.CONFIRMED,
-                              "cus_" + c.account().toString().replace("-", ""),
-                              DIGEST)));
+                  .execute(s ->
+                      customers.recordObservation(
+                          c.account(),
+                          pending.customerProvisioningRequestId(),
+                          pending.rowVersion(),
+                          UUID.randomUUID(),
+                          AccountBillingCustomerRecord.Observation.CONFIRMED,
+                          "cus_" + c.account().toString().replace("-", ""),
+                          DIGEST)));
     }
     var confirmed = customer;
     var instrument =
         Objects.requireNonNull(
             c.tx()
-                .execute(
-                    s ->
-                        new AccountPaymentInstrumentRepository(c.dsl())
-                            .retainAttachment(
-                                new Attachment(
-                                    UUID.randomUUID(),
-                                    UUID.randomUUID(),
-                                    c.account(),
-                                    confirmed.customerProvisioningRequestId(),
-                                    confirmed.providerCustomerId(),
-                                    "pm_" + UUID.randomUUID().toString().replace("-", ""),
-                                    AccountPaymentInstrumentRecord.State.ATTACHABLE,
-                                    new DisplayMetadata("visa", "4242", 12, 2030),
-                                    DIGEST))));
+                .execute(s ->
+                    new AccountPaymentInstrumentRepository(c.dsl())
+                        .retainAttachment(
+                            new Attachment(
+                                UUID.randomUUID(),
+                                UUID.randomUUID(),
+                                c.account(),
+                                confirmed.customerProvisioningRequestId(),
+                                confirmed.providerCustomerId(),
+                                "pm_" + UUID.randomUUID().toString().replace("-", ""),
+                                AccountPaymentInstrumentRecord.State.ATTACHABLE,
+                                new DisplayMetadata("visa", "4242", 12, 2030),
+                                DIGEST))));
     return new Seed(
         tenant,
         new OwnerFence(c.account(), ownerResult.ownerVersion(), ownerResult.ownerGeneration()),
@@ -1739,19 +1700,17 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return left.get();
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return left.get();
+          });
       var second =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return right.get();
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(start);
+            return right.get();
+          });
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       return List.of(first.get(15, TimeUnit.SECONDS), second.get(15, TimeUnit.SECONDS));
@@ -1774,16 +1733,15 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
 
   private static void rejectSql(String state, ThrowingCallable action) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-                if (cause instanceof SQLException sql) {
-                  assertThat(sql.getSQLState()).isEqualTo(state);
-                  return;
-                }
-              }
-              throw new AssertionError("Expected PostgreSQL invariant refusal", failure);
-            });
+        .satisfies(failure -> {
+          for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql) {
+              assertThat(sql.getSQLState()).isEqualTo(state);
+              return;
+            }
+          }
+          throw new AssertionError("Expected PostgreSQL invariant refusal", failure);
+        });
   }
 
   private static long count(Context c, String table) {

@@ -153,32 +153,30 @@ class VersionAssetExportCandidateServiceImplTest {
             TENANT_ID, VERSION_NUMBER, snapshot.items().get(0)))
         .thenReturn(sourceBytes.clone());
     when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
-        .thenAnswer(
-            invocation -> {
-              PutObjectRequest request = invocation.getArgument(0);
-              RequestBody body = invocation.getArgument(1);
-              byte[] bytes;
-              try (InputStream input = body.contentStreamProvider().newStream()) {
-                bytes = input.readAllBytes();
-              }
-              objectStore.put(request.key(), new StoredObject(bytes, request.contentType()));
-              return PutObjectResponse.builder().build();
-            });
+        .thenAnswer(invocation -> {
+          PutObjectRequest request = invocation.getArgument(0);
+          RequestBody body = invocation.getArgument(1);
+          byte[] bytes;
+          try (InputStream input = body.contentStreamProvider().newStream()) {
+            bytes = input.readAllBytes();
+          }
+          objectStore.put(request.key(), new StoredObject(bytes, request.contentType()));
+          return PutObjectResponse.builder().build();
+        });
     when(s3Client.getObject(any(GetObjectRequest.class)))
-        .thenAnswer(
-            invocation -> {
-              GetObjectRequest request = invocation.getArgument(0);
-              StoredObject stored = objectStore.get(request.key());
-              if (stored == null) {
-                throw new IllegalStateException("object is missing");
-              }
-              return new ResponseInputStream<>(
-                  GetObjectResponse.builder()
-                      .contentType(stored.contentType())
-                      .contentLength((long) stored.bytes().length)
-                      .build(),
-                  new ByteArrayInputStream(stored.bytes()));
-            });
+        .thenAnswer(invocation -> {
+          GetObjectRequest request = invocation.getArgument(0);
+          StoredObject stored = objectStore.get(request.key());
+          if (stored == null) {
+            throw new IllegalStateException("object is missing");
+          }
+          return new ResponseInputStream<>(
+              GetObjectResponse.builder()
+                  .contentType(stored.contentType())
+                  .contentLength((long) stored.bytes().length)
+                  .build(),
+              new ByteArrayInputStream(stored.bytes()));
+        });
 
     candidateService =
         new VersionAssetExportCandidateServiceImpl(

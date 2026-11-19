@@ -562,14 +562,11 @@ class WorldManagementGrpcServiceTest {
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            ref.set(
-                invokeDigest(
-                    service,
-                    fullDigestRequest("1", "7").toBuilder()
-                        .setRequestDigest("0".repeat(64))
-                        .build())));
+    runAsGameDesign(() ->
+        ref.set(
+            invokeDigest(
+                service,
+                fullDigestRequest("1", "7").toBuilder().setRequestDigest("0".repeat(64)).build())));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(digestService);
   }

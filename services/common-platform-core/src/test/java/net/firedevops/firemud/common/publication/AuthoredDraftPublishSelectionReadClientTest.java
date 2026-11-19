@@ -41,31 +41,27 @@ class AuthoredDraftPublishSelectionReadClientTest {
             directory.toString())) {
       var invalid = tls(directory);
       invalid.setCertChain(badPath);
-      assertThatThrownBy(
-              () ->
-                  new AuthoredDraftPublishSelectionReadClient(
-                      new ServiceEndpointsProperties(), invalid, factory, "test"))
+      assertThatThrownBy(() ->
+              new AuthoredDraftPublishSelectionReadClient(
+                  new ServiceEndpointsProperties(), invalid, factory, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var noKey = tls(directory);
     noKey.setPrivateKey(null);
-    assertThatThrownBy(
-            () ->
-                new AuthoredDraftPublishSelectionReadClient(
-                    new ServiceEndpointsProperties(), noKey, factory, "test"))
+    assertThatThrownBy(() ->
+            new AuthoredDraftPublishSelectionReadClient(
+                new ServiceEndpointsProperties(), noKey, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     var noCa = tls(directory);
     noCa.setCaCert(null);
-    assertThatThrownBy(
-            () ->
-                new AuthoredDraftPublishSelectionReadClient(
-                    new ServiceEndpointsProperties(), noCa, factory, "test"))
+    assertThatThrownBy(() ->
+            new AuthoredDraftPublishSelectionReadClient(
+                new ServiceEndpointsProperties(), noCa, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     var valid = tls(directory);
-    assertThatThrownBy(
-            () ->
-                new AuthoredDraftPublishSelectionReadClient(
-                    new ServiceEndpointsProperties(), valid, factory, "Test"))
+    assertThatThrownBy(() ->
+            new AuthoredDraftPublishSelectionReadClient(
+                new ServiceEndpointsProperties(), valid, factory, "Test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }
@@ -92,10 +88,9 @@ class AuthoredDraftPublishSelectionReadClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AuthoredDraftPublishSelectionReadClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "test"))
+    assertThatThrownBy(() ->
+            new AuthoredDraftPublishSelectionReadClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 
@@ -104,15 +99,14 @@ class AuthoredDraftPublishSelectionReadClientTest {
             new ServiceEndpointsProperties(), tls(directory), factory, "test");
     try {
       var request = AuthoredDraftPublishSelectionReadGrpcCodecTest.request();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      new AuthoredDraftPublishSelectionReadEvidence.Request(
-                          request.schemaVersion(),
-                          "other",
-                          request.readRequestId(),
-                          request.originalSelection(),
-                          request.selectionDigest())))
+      assertThatThrownBy(() ->
+              client.read(
+                  new AuthoredDraftPublishSelectionReadEvidence.Request(
+                      request.schemaVersion(),
+                      "other",
+                      request.readRequestId(),
+                      request.originalSelection(),
+                      request.selectionDigest())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("configured workload namespace");
       assertThatThrownBy(() -> client.read(request))

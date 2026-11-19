@@ -73,9 +73,8 @@ class WorldAuthoredGraphCodecTest {
   @ParameterizedTest
   @MethodSource("invalidReferences")
   void schemaTwoRejectsPartialMixedUnknownAndNoncanonicalReferences(String reference) {
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredGraph.decode(snapshot(2, "\"entityReference\":" + reference), MAPPER))
+    assertThatThrownBy(() ->
+            WorldAuthoredGraph.decode(snapshot(2, "\"entityReference\":" + reference), MAPPER))
         .isInstanceOf(WorldAuthoredGraphSnapshotRepository.SnapshotConflictException.class);
   }
 
@@ -104,15 +103,13 @@ class WorldAuthoredGraphCodecTest {
     assertThatThrownBy(
             () -> WorldAuthoredGraph.decode(snapshot(2, "\"entityTemplateId\":1"), MAPPER))
         .isInstanceOf(WorldAuthoredGraphSnapshotRepository.SnapshotConflictException.class);
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredGraph.decode(
-                    snapshot(1, "\"entityReference\":" + CANONICAL_REFERENCE), MAPPER))
+    assertThatThrownBy(() ->
+            WorldAuthoredGraph.decode(
+                snapshot(1, "\"entityReference\":" + CANONICAL_REFERENCE), MAPPER))
         .isInstanceOf(WorldAuthoredGraphSnapshotRepository.SnapshotConflictException.class);
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredGraph.decode(
-                    snapshot(3, "\"entityReference\":" + CANONICAL_REFERENCE), MAPPER))
+    assertThatThrownBy(() ->
+            WorldAuthoredGraph.decode(
+                snapshot(3, "\"entityReference\":" + CANONICAL_REFERENCE), MAPPER))
         .isInstanceOf(WorldAuthoredGraphSnapshotRepository.SnapshotConflictException.class);
   }
 

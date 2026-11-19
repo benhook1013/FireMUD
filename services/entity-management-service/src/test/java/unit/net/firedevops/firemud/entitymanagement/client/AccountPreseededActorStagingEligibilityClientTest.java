@@ -135,10 +135,8 @@ class AccountPreseededActorStagingEligibilityClientTest {
             });
 
     for (String[] invalid : invalidRequests) {
-      assertThatThrownBy(
-              () ->
-                  client.resolvePreseededActorStagingEligibility(
-                      invalid[0], invalid[1], invalid[2]))
+      assertThatThrownBy(() ->
+              client.resolvePreseededActorStagingEligibility(invalid[0], invalid[1], invalid[2]))
           .isInstanceOf(IllegalArgumentException.class);
     }
     verifyNoInteractions(channelFactory);
@@ -149,10 +147,9 @@ class AccountPreseededActorStagingEligibilityClientTest {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     AccountPreseededActorStagingEligibilityClient uninitialized =
         newClientWithoutStub(channelFactory);
-    assertThatThrownBy(
-            () ->
-                uninitialized.resolvePreseededActorStagingEligibility(
-                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            uninitialized.resolvePreseededActorStagingEligibility(
+                ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     verifyNoInteractions(channelFactory);
@@ -161,10 +158,9 @@ class AccountPreseededActorStagingEligibilityClientTest {
         stub = mockStub();
     when(stub.resolvePreseededActorStagingEligibility(any())).thenReturn(null);
     AccountPreseededActorStagingEligibilityClient client = newClient(stub);
-    assertThatThrownBy(
-            () ->
-                client.resolvePreseededActorStagingEligibility(
-                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolvePreseededActorStagingEligibility(
+                ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("absent");
   }
@@ -281,15 +277,13 @@ class AccountPreseededActorStagingEligibilityClientTest {
         .thenThrow(unavailable);
     AccountPreseededActorStagingEligibilityClient client = newClient(stub);
 
-    assertThatThrownBy(
-            () ->
-                client.resolvePreseededActorStagingEligibility(
-                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolvePreseededActorStagingEligibility(
+                ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isSameAs(timeout);
-    assertThatThrownBy(
-            () ->
-                client.resolvePreseededActorStagingEligibility(
-                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolvePreseededActorStagingEligibility(
+                ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isSameAs(unavailable);
 
     verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
@@ -301,16 +295,14 @@ class AccountPreseededActorStagingEligibilityClientTest {
     CommonGrpcClientProperties plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new AccountPreseededActorStagingEligibilityClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountPreseededActorStagingEligibilityClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
-    assertThatThrownBy(
-            () ->
-                new AccountPreseededActorStagingEligibilityClient(
-                    new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountPreseededActorStagingEligibilityClient(
+                new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("TLS configuration is required");
 
@@ -319,10 +311,9 @@ class AccountPreseededActorStagingEligibilityClientTest {
             incompleteMtlsProperties(null, "entity.key", "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", null, "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", "entity.key", null))) {
-      assertThatThrownBy(
-              () ->
-                  new AccountPreseededActorStagingEligibilityClient(
-                      new ServiceEndpointsProperties(), incomplete, channelFactory, NAMESPACE))
+      assertThatThrownBy(() ->
+              new AccountPreseededActorStagingEligibilityClient(
+                  new ServiceEndpointsProperties(), incomplete, channelFactory, NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("certificate, key, and CA");
     }
@@ -332,18 +323,16 @@ class AccountPreseededActorStagingEligibilityClientTest {
             incompleteMtlsProperties("classpath:entity.crt", "entity.key", "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", "classpath:entity.key", "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", "entity.key", "classpath:account-ca.crt"))) {
-      assertThatThrownBy(
-              () ->
-                  new AccountPreseededActorStagingEligibilityClient(
-                      new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
+      assertThatThrownBy(() ->
+              new AccountPreseededActorStagingEligibilityClient(
+                  new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("file-backed");
     }
 
-    assertThatThrownBy(
-            () ->
-                new AccountPreseededActorStagingEligibilityClient(
-                    new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
+    assertThatThrownBy(() ->
+            new AccountPreseededActorStagingEligibilityClient(
+                new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(channelFactory);
@@ -395,10 +384,9 @@ class AccountPreseededActorStagingEligibilityClientTest {
     setStub(client, staleStub);
     client.close();
 
-    assertThatThrownBy(
-            () ->
-                client.resolvePreseededActorStagingEligibility(
-                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolvePreseededActorStagingEligibility(
+                ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     verifyNoInteractions(staleStub);
@@ -414,10 +402,9 @@ class AccountPreseededActorStagingEligibilityClientTest {
     when(stub.resolvePreseededActorStagingEligibility(any())).thenReturn(response);
     AccountPreseededActorStagingEligibilityClient client = newClient(stub);
 
-    assertThatThrownBy(
-            () ->
-                client.resolvePreseededActorStagingEligibility(
-                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolvePreseededActorStagingEligibility(
+                ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -429,10 +416,9 @@ class AccountPreseededActorStagingEligibilityClientTest {
     when(stub.resolvePreseededActorStagingEligibility(any())).thenReturn(validResponse());
     AccountPreseededActorStagingEligibilityClient client = newClient(stub);
 
-    assertThatThrownBy(
-            () ->
-                client.resolvePreseededActorStagingEligibility(
-                    requestedAccountId, requestedTenantId, requestedRequestId))
+    assertThatThrownBy(() ->
+            client.resolvePreseededActorStagingEligibility(
+                requestedAccountId, requestedTenantId, requestedRequestId))
         .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("Account actor-staging eligibility response does not match the exact request");
   }

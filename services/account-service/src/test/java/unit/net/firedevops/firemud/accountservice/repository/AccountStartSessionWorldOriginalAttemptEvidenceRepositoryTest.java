@@ -76,23 +76,21 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
     byte[] roundedTimestampCandidate =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(subMicrosecond)
             .toByteArray();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldOriginalAttemptEvidenceRepository.validateResponse(
-                    expected, roundedTimestampCandidate, fixture.parent()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldOriginalAttemptEvidenceRepository.validateResponse(
+                expected, roundedTimestampCandidate, fixture.parent()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
 
     byte[] changedProjection = "not the exact Account projection".getBytes(StandardCharsets.UTF_8);
     Result wrongProjection =
         new Result(expected, exact.originalLeaseExpiresAt(), changedProjection);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldOriginalAttemptEvidenceRepository.validateResponse(
-                    expected,
-                    OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(wrongProjection)
-                        .toByteArray(),
-                    fixture.parent()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldOriginalAttemptEvidenceRepository.validateResponse(
+                expected,
+                OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(wrongProjection)
+                    .toByteArray(),
+                fixture.parent()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
   }
@@ -103,10 +101,9 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
     Request first = request(fixture, UUID.fromString("6a3922eb-96f5-4cc5-8e43-85c1bb3f49c0"));
     Request retry = request(fixture, UUID.fromString("21fa4d95-98f0-4c19-a5b6-864bd0467f94"));
 
-    assertThatCode(
-            () ->
-                AccountStartSessionWorldOriginalAttemptEvidenceRepository
-                    .requireSameSemanticRequest(first, retry))
+    assertThatCode(() ->
+            AccountStartSessionWorldOriginalAttemptEvidenceRepository.requireSameSemanticRequest(
+                first, retry))
         .doesNotThrowAnyException();
 
     assertMismatch(
@@ -130,15 +127,14 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
         OWNER_ATTEMPT_ID,
         UUID.fromString("1f2d6f4e-1202-4bdb-bcd4-f3c14e4cc764"),
         OWNER_FENCE);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    UUID.randomUUID(),
-                    "other-runtime",
-                    fixture.parent().originalPostAuthorizationTuple(),
-                    OWNER_ATTEMPT_ID,
-                    OWNER_MUTATION_ID,
-                    OWNER_FENCE))
+    assertThatThrownBy(() ->
+            new Request(
+                UUID.randomUUID(),
+                "other-runtime",
+                fixture.parent().originalPostAuthorizationTuple(),
+                OWNER_ATTEMPT_ID,
+                OWNER_MUTATION_ID,
+                OWNER_FENCE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("target the exact requested namespace");
 
@@ -150,10 +146,9 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
             OWNER_ATTEMPT_ID,
             OWNER_MUTATION_ID,
             OWNER_FENCE);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldOriginalAttemptEvidenceRepository
-                    .requireSameSemanticRequest(first, changedTuple))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldOriginalAttemptEvidenceRepository.requireSameSemanticRequest(
+                first, changedTuple))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
   }
@@ -183,15 +178,14 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
     assertThat(stored.toString())
         .contains("projection=<redacted>")
         .contains("responseBytes=<redacted>");
-    assertThatThrownBy(
-            () ->
-                new StoredEvidence(
-                    PARTICIPATION_ID,
-                    OWNER_MUTATION_ID,
-                    result.originalLeaseExpiresAt(),
-                    new byte[] {1},
-                    digest,
-                    result))
+    assertThatThrownBy(() ->
+            new StoredEvidence(
+                PARTICIPATION_ID,
+                OWNER_MUTATION_ID,
+                result.originalLeaseExpiresAt(),
+                new byte[] {1},
+                digest,
+                result))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest differs");
   }
@@ -199,10 +193,9 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
   private static void assertMismatch(
       Request expected, String namespace, byte[] tuple, UUID attempt, UUID mutation, long fence) {
     Request changed = new Request(UUID.randomUUID(), namespace, tuple, attempt, mutation, fence);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldOriginalAttemptEvidenceRepository
-                    .requireSameSemanticRequest(expected, changed))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldOriginalAttemptEvidenceRepository.requireSameSemanticRequest(
+                expected, changed))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
   }

@@ -55,17 +55,16 @@ public final class AccountPublicBootstrapEntitlementOwner {
     try {
       Prepared prepared =
           Objects.requireNonNull(
-              transaction.execute(
-                  status -> {
-                    requireSourceTransaction();
-                    SourceSelection selection = sources.readCurrentSourceSelection(tenantId);
-                    Instant observedAt = now();
-                    DemoTenantEntitlementSnapshot demo =
-                        selection.kind() == SourceKind.NON_PAID_DEMO
-                            ? demos.readCurrent(tenantId)
-                            : null;
-                    return new Prepared(selection, demo, observedAt);
-                  }));
+              transaction.execute(status -> {
+                requireSourceTransaction();
+                SourceSelection selection = sources.readCurrentSourceSelection(tenantId);
+                Instant observedAt = now();
+                DemoTenantEntitlementSnapshot demo =
+                    selection.kind() == SourceKind.NON_PAID_DEMO
+                        ? demos.readCurrent(tenantId)
+                        : null;
+                return new Prepared(selection, demo, observedAt);
+              }));
       Evaluation evaluation =
           switch (prepared.selection().kind()) {
             case PAID_HOSTING ->

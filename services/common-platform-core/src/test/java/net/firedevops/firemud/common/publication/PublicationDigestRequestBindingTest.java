@@ -79,25 +79,23 @@ class PublicationDigestRequestBindingTest {
   @Test
   void typedScopeFactoryRejectsInactiveFieldsBeforeOwnerRead() {
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublicationDigestRequestBinding.forScope(
-                    PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
-                    "tenant",
-                    "7",
-                    "6",
-                    "",
-                    "request"));
+        .isThrownBy(() ->
+            PublicationDigestRequestBinding.forScope(
+                PublicationDigestRequestBinding.ScopeKind.FULL_VERSION,
+                "tenant",
+                "7",
+                "6",
+                "",
+                "request"));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublicationDigestRequestBinding.forScope(
-                    PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
-                    "tenant",
-                    "7",
-                    "6",
-                    "patch",
-                    "request"));
+        .isThrownBy(() ->
+            PublicationDigestRequestBinding.forScope(
+                PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH,
+                "tenant",
+                "7",
+                "6",
+                "patch",
+                "request"));
   }
 
   @Test
@@ -106,22 +104,19 @@ class PublicationDigestRequestBindingTest {
         PublicationDigestRequestBinding.full("tenant", "1", "request");
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                binding.validateSupplied(
-                    "publish:tenant:publish-request:changed", binding.requestDigest()));
+        .isThrownBy(() ->
+            binding.validateSupplied(
+                "publish:tenant:publish-request:changed", binding.requestDigest()));
     assertThatIllegalArgumentException()
         .isThrownBy(() -> binding.validateSupplied(binding.derivedWorkflowIdentity(), null));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                binding.validateSupplied(
-                    binding.derivedWorkflowIdentity(), binding.requestDigest().toUpperCase()));
+        .isThrownBy(() ->
+            binding.validateSupplied(
+                binding.derivedWorkflowIdentity(), binding.requestDigest().toUpperCase()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                binding.validateSupplied(
-                    binding.derivedWorkflowIdentity(), binding.requestDigest().substring(1)));
+        .isThrownBy(() ->
+            binding.validateSupplied(
+                binding.derivedWorkflowIdentity(), binding.requestDigest().substring(1)));
     assertThatIllegalArgumentException()
         .isThrownBy(() -> PublicationDigestRequestBinding.full("tenant", "", "request"));
     assertThatIllegalArgumentException()
@@ -134,14 +129,11 @@ class PublicationDigestRequestBindingTest {
   void malformedScopeVersionAndIdentifiersAreRejected() {
     PublicationDigestRequestBinding.validatePublicationIdentity("tenant", "request");
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublicationDigestRequestBinding.validatePublicationIdentity(
-                    "tenant", "request:id"));
+        .isThrownBy(() ->
+            PublicationDigestRequestBinding.validatePublicationIdentity("tenant", "request:id"));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublicationDigestRequestBinding.validatePublicationIdentity(" tenant", "request"));
+        .isThrownBy(() ->
+            PublicationDigestRequestBinding.validatePublicationIdentity(" tenant", "request"));
     assertThatIllegalArgumentException()
         .isThrownBy(() -> PublicationDigestRequestBinding.full("tenant", "0", "request"));
     assertThatIllegalArgumentException()

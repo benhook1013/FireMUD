@@ -168,15 +168,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     AccountJwtSignerDesiredStateRepository repository =
         new AccountJwtSignerDesiredStateRepository(dsl);
 
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        repository.commitPreparedPromotion(
-                            BINDING,
-                            TRUST,
-                            UUID.fromString("44444444-4444-4444-8444-444444444444"),
-                            null)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                repository.commitPreparedPromotion(
+                    BINDING, TRUST, UUID.fromString("44444444-4444-4444-8444-444444444444"), null)))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("readiness proof");
     verifyNoInteractions(dsl);
@@ -214,28 +209,26 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     Conversation conversation = new Conversation();
     GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
     GenerationRequest pending =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    request.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                request.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
     PublicJwk jwk = publicJwk(request.targetKid());
     GenerationResult result =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordGenerationResult(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    pending.generationRequestDigest(),
-                    SECRET_UID.toString(),
-                    "12",
-                    "13",
-                    jwk.json()));
+        inWritableTransaction(() ->
+            conversation.repository.recordGenerationResult(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                pending.generationRequestDigest(),
+                SECRET_UID.toString(),
+                "12",
+                "13",
+                jwk.json()));
     conversation.preparePromotionForDispatch(request, result);
 
     var first =
@@ -257,45 +250,39 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     Conversation conversation = new Conversation();
     GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
     GenerationRequest pending =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    request.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                request.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
     PublicJwk jwk = publicJwk(request.targetKid());
     GenerationResult result =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordGenerationResult(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    pending.generationRequestDigest(),
-                    SECRET_UID.toString(),
-                    "12",
-                    "13",
-                    jwk.json()));
+        inWritableTransaction(() ->
+            conversation.repository.recordGenerationResult(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                pending.generationRequestDigest(),
+                SECRET_UID.toString(),
+                "12",
+                "13",
+                jwk.json()));
     conversation.preparePromotionForDispatch(request, result);
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () -> conversation.repository.readCurrentGenerationRequest(BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(
+                () -> conversation.repository.readCurrentGenerationRequest(BINDING, TRUST)))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
         .hasMessageContaining(
             "Existing PREPARED signer state requires unavailable lifecycle evidence");
     conversation.expireReadinessPlan();
 
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.readAndMarkPreparedPromotionDispatched(
-                            BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST)))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
         .hasMessageContaining("expired before private dispatch");
@@ -309,48 +296,42 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     Conversation conversation = new Conversation();
     GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
     GenerationRequest pending =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    request.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                request.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
     PublicJwk jwk = publicJwk(request.targetKid());
     GenerationResult result =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordGenerationResult(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    pending.generationRequestDigest(),
-                    SECRET_UID.toString(),
-                    "12",
-                    "13",
-                    jwk.json()));
+        inWritableTransaction(() ->
+            conversation.repository.recordGenerationResult(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                pending.generationRequestDigest(),
+                SECRET_UID.toString(),
+                "12",
+                "13",
+                jwk.json()));
     conversation.preparePromotionForDispatch(request, result);
     conversation.expireReadinessAtDispatchCas();
 
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.readAndMarkPreparedPromotionDispatched(
-                            BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.VersionConflictException.class);
     assertThat(conversation.promotionDispatchCasCount).isZero();
     assertThat(conversation.executedStatements)
-        .anySatisfy(
-            sql -> {
-              assertThat(sql).contains("WITH readiness_clock AS MATERIALIZED");
-              assertThat(sql).contains("clock_timestamp()");
-              assertThat(sql).contains("plan.expires_at_epoch_seconds");
-              assertThat(sql).contains("entry.expires_at_epoch_seconds");
-              assertThat(sql).doesNotContain("CURRENT_TIMESTAMP");
-            });
+        .anySatisfy(sql -> {
+          assertThat(sql).contains("WITH readiness_clock AS MATERIALIZED");
+          assertThat(sql).contains("clock_timestamp()");
+          assertThat(sql).contains("plan.expires_at_epoch_seconds");
+          assertThat(sql).contains("entry.expires_at_epoch_seconds");
+          assertThat(sql).doesNotContain("CURRENT_TIMESTAMP");
+        });
   }
 
   @Test
@@ -358,28 +339,26 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     Conversation conversation = new Conversation();
     GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
     GenerationRequest pending =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    request.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                request.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
     PublicJwk jwk = publicJwk(request.targetKid());
     GenerationResult result =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordGenerationResult(
-                    BINDING,
-                    TRUST,
-                    request.operationId(),
-                    pending.generationRequestDigest(),
-                    SECRET_UID.toString(),
-                    "12",
-                    "13",
-                    jwk.json()));
+        inWritableTransaction(() ->
+            conversation.repository.recordGenerationResult(
+                BINDING,
+                TRUST,
+                request.operationId(),
+                pending.generationRequestDigest(),
+                SECRET_UID.toString(),
+                "12",
+                "13",
+                jwk.json()));
     conversation.preparePromotionForDispatch(request, result);
     ReadinessPromotionProof exactProof =
         conversation.readinessProof(
@@ -388,12 +367,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     conversation.expireReadinessPlan();
     conversation.recordPromotionReceipts(result);
     int statementsBeforeUndeliveredRecovery = conversation.executedStatements.size();
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.commitPreparedPromotion(
-                            BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.commitPreparedPromotion(
+                    BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
         .hasMessageContaining(
             "Promotion dispatch state is inconsistent with its receipts or terminal status");
@@ -407,12 +384,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     conversation.preparedPromotionValues.put("active_jwks_receipt_digest", null);
     conversation.preparedPromotionValues.put("active_jwks_public_data_digest", null);
     conversation.preparedPromotionValues.put("active_jwks_observed_resource_version", null);
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.readAndMarkPreparedPromotionDispatched(
-                            BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST)))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
         .hasMessageContaining("expired before private dispatch");
@@ -434,12 +408,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
             TRUST.bindingDigest(),
             "binding-r2");
     int statementsBeforeChangedTrust = conversation.executedStatements.size();
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.commitPreparedPromotion(
-                            BINDING, changedTrust, conversation.preparedPromotionId, exactProof)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.commitPreparedPromotion(
+                    BINDING, changedTrust, conversation.preparedPromotionId, exactProof)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.BindingMismatchException.class)
         .hasMessageContaining("pinned enrollment");
     assertThat(
@@ -449,12 +421,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
 
     conversation.changePreparedStateForCommit();
     int statementsBeforeChangedState = conversation.executedStatements.size();
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.commitPreparedPromotion(
-                            BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.commitPreparedPromotion(
+                    BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
         .hasMessageContaining("exact desired-state fence");
     assertThat(
@@ -467,12 +437,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     changedPreimage[0] ^= 1;
     ReadinessPromotionProof changedProof = conversation.readinessProof(result, changedPreimage);
     int statementsBeforeChangedProof = conversation.executedStatements.size();
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.commitPreparedPromotion(
-                            BINDING, TRUST, conversation.preparedPromotionId, changedProof)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.commitPreparedPromotion(
+                    BINDING, TRUST, conversation.preparedPromotionId, changedProof)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class)
         .hasMessageContaining("frozen PREPARED evidence");
     assertThat(
@@ -483,34 +451,28 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     String exactPrivateReceiptDigest =
         (String) conversation.preparedPromotionValues.get("private_promotion_receipt_digest");
     var exactPrivateRecovery =
-        inWritableTransaction(
-            () ->
-                conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
-                    BINDING, TRUST));
+        inWritableTransaction(() ->
+            conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(BINDING, TRUST));
     assertThat(exactPrivateRecovery.promotionOperationId())
         .isEqualTo(conversation.preparedPromotionId);
     assertThat(exactPrivateRecovery.generationOperationId()).isEqualTo(result.operationId());
     assertThat(exactPrivateRecovery.receiptDigest()).isEqualTo(exactPrivateReceiptDigest);
     int statementsBeforeRecovery = conversation.executedStatements.size();
     conversation.preparedPromotionValues.put("private_promotion_receipt_digest", "0".repeat(64));
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
-                            BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
+                    BINDING, TRUST)))
         .isExactlyInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
         .hasMessageContaining("private promotion receipt digest is invalid");
     assertThat(
             conversation.executedStatements.subList(
                 statementsBeforeRecovery, conversation.executedStatements.size()))
         .noneMatch(sql -> sql.contains("UPDATE ") || sql.contains("INSERT "));
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.commitPreparedPromotion(
-                            BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.commitPreparedPromotion(
+                    BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
         .hasMessageContaining("private promotion receipt digest is invalid");
     conversation.preparedPromotionValues.put("status", "PREPARED");
@@ -518,10 +480,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         "private_promotion_receipt_digest", exactPrivateReceiptDigest);
 
     var committed =
-        inWritableTransaction(
-            () ->
-                conversation.repository.commitPreparedPromotion(
-                    BINDING, TRUST, conversation.preparedPromotionId, exactProof));
+        inWritableTransaction(() ->
+            conversation.repository.commitPreparedPromotion(
+                BINDING, TRUST, conversation.preparedPromotionId, exactProof));
     assertThat(committed.promotion().status()).isEqualTo("COMMITTED");
     assertThat(committed.desiredState().recordVersion()).isEqualTo(4L);
     String terminalUpdate =
@@ -550,12 +511,11 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
     verify(dsl, times(2)).fetchOne(queries.capture(), any(Object[].class));
     assertThat(queries.getAllValues())
-        .allSatisfy(
-            sql -> {
-              assertThat(sql)
-                  .contains("FROM account_jwt_signer_desired_states")
-                  .endsWith(" FOR UPDATE");
-            });
+        .allSatisfy(sql -> {
+          assertThat(sql)
+              .contains("FROM account_jwt_signer_desired_states")
+              .endsWith(" FOR UPDATE");
+        });
     verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
 
@@ -600,10 +560,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         .anyMatch(sql -> sql.contains("account_jwt_signer_generation_operations"));
     verify(conversation.dsl)
         .fetchOne(
-            org.mockito.ArgumentMatchers.argThat(
-                sql ->
-                    sql.contains("COALESCE(MAX(target_generation), 0)")
-                        && sql.contains("account_jwt_signer_generation_operations")),
+            org.mockito.ArgumentMatchers.argThat(sql ->
+                sql.contains("COALESCE(MAX(target_generation), 0)")
+                    && sql.contains("account_jwt_signer_generation_operations")),
             any(Object[].class));
   }
 
@@ -681,10 +640,8 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     Record activeState = record(values);
     when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(activeState);
 
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () -> repository.ensureCurrentGenerationRequest(BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() -> repository.ensureCurrentGenerationRequest(BINDING, TRUST)))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.MissingGenerationOperationException.class)
         .hasMessageContaining("durable rotation request");
@@ -697,25 +654,23 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     GenerationRequest operation = inWritableTransaction(conversation::ensureRequest);
 
     GenerationRequest pending =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    operation.operationId(),
-                    operation.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                operation.operationId(),
+                operation.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
     GenerationRequest replay =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    operation.operationId(),
-                    operation.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                operation.operationId(),
+                operation.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
 
     assertThat(pending.phase()).isEqualTo(GenerationPhase.GENERATE_PENDING);
     assertThat(pending.generationRequestDigest()).hasSize(64);
@@ -725,17 +680,15 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     assertThat(replay).isEqualTo(pending);
     int executedBeforeConflict = conversation.executedStatements.size();
 
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.recordSecretObservation(
-                            BINDING,
-                            TRUST,
-                            operation.operationId(),
-                            operation.operationDigest(),
-                            SECRET_UID.toString(),
-                            "changed-rv")))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    operation.operationId(),
+                    operation.operationDigest(),
+                    SECRET_UID.toString(),
+                    "changed-rv")))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class);
     assertThat(conversation.executedStatements).hasSize(executedBeforeConflict);
   }
@@ -745,41 +698,38 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     Conversation conversation = new Conversation();
     GenerationRequest operation = inWritableTransaction(conversation::ensureRequest);
     GenerationRequest pending =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordSecretObservation(
-                    BINDING,
-                    TRUST,
-                    operation.operationId(),
-                    operation.operationDigest(),
-                    SECRET_UID.toString(),
-                    "12"));
+        inWritableTransaction(() ->
+            conversation.repository.recordSecretObservation(
+                BINDING,
+                TRUST,
+                operation.operationId(),
+                operation.operationDigest(),
+                SECRET_UID.toString(),
+                "12"));
     PublicJwk jwk = publicJwk(operation.targetKid());
 
     GenerationResult result =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordGenerationResult(
-                    BINDING,
-                    TRUST,
-                    operation.operationId(),
-                    pending.generationRequestDigest(),
-                    SECRET_UID.toString(),
-                    "12",
-                    "13",
-                    jwk.json()));
+        inWritableTransaction(() ->
+            conversation.repository.recordGenerationResult(
+                BINDING,
+                TRUST,
+                operation.operationId(),
+                pending.generationRequestDigest(),
+                SECRET_UID.toString(),
+                "12",
+                "13",
+                jwk.json()));
     GenerationResult replay =
-        inWritableTransaction(
-            () ->
-                conversation.repository.recordGenerationResult(
-                    BINDING,
-                    TRUST,
-                    operation.operationId(),
-                    pending.generationRequestDigest(),
-                    SECRET_UID.toString(),
-                    "12",
-                    "13",
-                    jwk.json()));
+        inWritableTransaction(() ->
+            conversation.repository.recordGenerationResult(
+                BINDING,
+                TRUST,
+                operation.operationId(),
+                pending.generationRequestDigest(),
+                SECRET_UID.toString(),
+                "12",
+                "13",
+                jwk.json()));
 
     assertThat(result).isEqualTo(replay);
     assertThat(result.publicKeyFingerprint()).isEqualTo(jwk.fingerprint());
@@ -802,12 +752,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
             "1".repeat(64),
             "2".repeat(64),
             "{\"keys\":[" + result.publicJwkJson() + "]}");
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.prepareCurrentGeneration(
-                            BINDING, TRUST, callerSuppliedPreparation, null)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.prepareCurrentGeneration(
+                    BINDING, TRUST, callerSuppliedPreparation, null)))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("Account-verified readiness proof is required");
     assertThat(conversation.executedStatements).hasSize(executedBeforePromotionAttempt);
@@ -820,10 +768,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         new AccountJwtSignerDesiredStateRepository(emptyDsl);
     Record emptyState = stateRow(BINDING, 1, null, null, null, null, null);
     when(emptyDsl.fetchOne(anyString(), any(Object[].class))).thenReturn(emptyState);
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () -> emptyRepository.readCurrentGenerationRequest(BINDING, TRUST)))
+    assertThatThrownBy(() ->
+            inWritableTransaction(
+                () -> emptyRepository.readCurrentGenerationRequest(BINDING, TRUST)))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.MissingGenerationOperationException.class);
     verify(emptyDsl, never()).execute(anyString(), any(Object[].class));
@@ -832,17 +779,15 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     GenerationRequest operation = inWritableTransaction(conversation::ensureRequest);
     UUID wrongOperation = UUID.fromString("55555555-5555-4555-8555-555555555555");
     int executedBeforeStaleCall = conversation.executedStatements.size();
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        conversation.repository.recordSecretObservation(
-                            BINDING,
-                            TRUST,
-                            wrongOperation,
-                            operation.operationDigest(),
-                            SECRET_UID.toString(),
-                            "12")))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    wrongOperation,
+                    operation.operationDigest(),
+                    SECRET_UID.toString(),
+                    "12")))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.StaleGenerationOperationException.class);
     assertThat(conversation.executedStatements).hasSize(executedBeforeStaleCall);
@@ -854,19 +799,17 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     AccountJwtSignerDesiredStateRepository repository =
         new AccountJwtSignerDesiredStateRepository(dsl);
 
-    assertThatThrownBy(
-            () ->
-                inWritableTransaction(
-                    () ->
-                        repository.recordGenerationResult(
-                            BINDING,
-                            TRUST,
-                            UUID.fromString("22222222-2222-4222-8222-222222222222"),
-                            "a".repeat(64),
-                            SECRET_UID.toString(),
-                            "12",
-                            "13",
-                            "{\"d\":\"private\"}")))
+    assertThatThrownBy(() ->
+            inWritableTransaction(() ->
+                repository.recordGenerationResult(
+                    BINDING,
+                    TRUST,
+                    UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                    "a".repeat(64),
+                    SECRET_UID.toString(),
+                    "12",
+                    "13",
+                    "{\"d\":\"private\"}")))
         .isInstanceOf(IllegalArgumentException.class);
     verify(dsl, never()).fetchOne(anyString(), any(Object[].class));
     verify(dsl, never()).execute(anyString(), any(Object[].class));
@@ -1208,96 +1151,92 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     private Conversation(long historicalGenerationHighWater) {
       this.historicalGenerationHighWater = historicalGenerationHighWater;
       when(dsl.execute(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0);
-                Object[] arguments = invocation.getArguments();
-                Object[] parameters =
-                    arguments.length == 2 && arguments[1] instanceof Object[] bindings
-                        ? bindings
-                        : java.util.Arrays.copyOfRange(arguments, 1, arguments.length);
-                executedStatements.add(sql);
-                if (sql.contains("UPDATE account_jwt_signer_promotion_operations")) {
-                  if (sql.contains(
-                      "private_promotion_dispatched_at = readiness_clock.checked_at")) {
-                    if (readinessExpiresAtDispatchCas) {
-                      return 0;
-                    }
-                    promotionDispatchCasCount++;
-                    preparedPromotionValues.put("private_promotion_dispatched", true);
-                  } else if (sql.contains("SET status = 'COMMITTED'")) {
-                    preparedPromotionValues.put("status", "COMMITTED");
-                  }
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            Object[] arguments = invocation.getArguments();
+            Object[] parameters =
+                arguments.length == 2 && arguments[1] instanceof Object[] bindings
+                    ? bindings
+                    : java.util.Arrays.copyOfRange(arguments, 1, arguments.length);
+            executedStatements.add(sql);
+            if (sql.contains("UPDATE account_jwt_signer_promotion_operations")) {
+              if (sql.contains("private_promotion_dispatched_at = readiness_clock.checked_at")) {
+                if (readinessExpiresAtDispatchCas) {
+                  return 0;
                 }
-                if (sql.contains("account_jwt_signer_generation_operations")) {
-                  operationInsert = parameters.clone();
-                } else if (sql.contains("account_jwt_signer_secret_observations")) {
-                  observationInsert = parameters.clone();
-                } else if (sql.contains("account_jwt_signer_generation_results")) {
-                  resultInsert = parameters.clone();
-                }
-                return 1;
-              });
+                promotionDispatchCasCount++;
+                preparedPromotionValues.put("private_promotion_dispatched", true);
+              } else if (sql.contains("SET status = 'COMMITTED'")) {
+                preparedPromotionValues.put("status", "COMMITTED");
+              }
+            }
+            if (sql.contains("account_jwt_signer_generation_operations")) {
+              operationInsert = parameters.clone();
+            } else if (sql.contains("account_jwt_signer_secret_observations")) {
+              observationInsert = parameters.clone();
+            } else if (sql.contains("account_jwt_signer_generation_results")) {
+              resultInsert = parameters.clone();
+            }
+            return 1;
+          });
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0);
-                if (sql.contains("account_jwt_signer_promotion_operations")) {
-                  return preparedPromotionValues == null ? null : record(preparedPromotionValues);
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0);
+            if (sql.contains("account_jwt_signer_promotion_operations")) {
+              return preparedPromotionValues == null ? null : record(preparedPromotionValues);
+            }
+            if (sql.contains("account_jwt_readiness_probe_plans")) {
+              return preparedPromotionValues == null ? null : readinessPlanRow();
+            }
+            if (sql.contains("account_jwt_readiness_probe_entries")) {
+              return record(Map.of("total", 1L, "verified", 1L));
+            }
+            if (sql.contains("account_jwt_signer_desired_states")) {
+              stateReadCount++;
+              if (preparedPromotionId != null) {
+                if ("COMMITTED".equals(preparedPromotionValues.get("status"))) {
+                  long activeGeneration =
+                      ((Number) preparedPromotionValues.get("target_generation")).longValue();
+                  return stateRow(
+                      BINDING,
+                      4,
+                      activeGeneration,
+                      (String) preparedPromotionValues.get("target_kid"),
+                      activeGeneration,
+                      (String) preparedPromotionValues.get("target_kid"),
+                      null,
+                      null);
                 }
-                if (sql.contains("account_jwt_readiness_probe_plans")) {
-                  return preparedPromotionValues == null ? null : readinessPlanRow();
+                if (preparedStateChangedForCommit) {
+                  return stateRow(BINDING, 4, null, null, null, null, null, preparedPromotionId);
                 }
-                if (sql.contains("account_jwt_readiness_probe_entries")) {
-                  return record(Map.of("total", 1L, "verified", 1L));
-                }
-                if (sql.contains("account_jwt_signer_desired_states")) {
-                  stateReadCount++;
-                  if (preparedPromotionId != null) {
-                    if ("COMMITTED".equals(preparedPromotionValues.get("status"))) {
-                      long activeGeneration =
-                          ((Number) preparedPromotionValues.get("target_generation")).longValue();
-                      return stateRow(
-                          BINDING,
-                          4,
-                          activeGeneration,
-                          (String) preparedPromotionValues.get("target_kid"),
-                          activeGeneration,
-                          (String) preparedPromotionValues.get("target_kid"),
-                          null,
-                          null);
-                    }
-                    if (preparedStateChangedForCommit) {
-                      return stateRow(
-                          BINDING, 4, null, null, null, null, null, preparedPromotionId);
-                    }
-                    return stateRow(BINDING, 3, null, null, null, null, null, preparedPromotionId);
-                  }
-                  return stateReadCount == 1
-                      ? stateRow(BINDING, 1, null, null, null, null, null)
-                      : stateRow(
-                          BINDING,
-                          2,
-                          null,
-                          null,
-                          null,
-                          null,
-                          operationInsert == null ? null : (UUID) operationInsert[0]);
-                }
-                if (sql.contains("COALESCE(MAX(target_generation), 0)")) {
-                  return scalarLongRecord(historicalGenerationHighWater);
-                }
-                if (sql.contains("account_jwt_signer_generation_operations")) {
-                  return operationInsert == null ? null : generationOperationRow(operationInsert);
-                }
-                if (sql.contains("account_jwt_signer_generation_results")) {
-                  return resultInsert == null ? null : generationResultRow(resultInsert);
-                }
-                if (sql.contains("account_jwt_signer_secret_observations")) {
-                  return observationInsert == null ? null : secretObservationRow(observationInsert);
-                }
-                return null;
-              });
+                return stateRow(BINDING, 3, null, null, null, null, null, preparedPromotionId);
+              }
+              return stateReadCount == 1
+                  ? stateRow(BINDING, 1, null, null, null, null, null)
+                  : stateRow(
+                      BINDING,
+                      2,
+                      null,
+                      null,
+                      null,
+                      null,
+                      operationInsert == null ? null : (UUID) operationInsert[0]);
+            }
+            if (sql.contains("COALESCE(MAX(target_generation), 0)")) {
+              return scalarLongRecord(historicalGenerationHighWater);
+            }
+            if (sql.contains("account_jwt_signer_generation_operations")) {
+              return operationInsert == null ? null : generationOperationRow(operationInsert);
+            }
+            if (sql.contains("account_jwt_signer_generation_results")) {
+              return resultInsert == null ? null : generationResultRow(resultInsert);
+            }
+            if (sql.contains("account_jwt_signer_secret_observations")) {
+              return observationInsert == null ? null : secretObservationRow(observationInsert);
+            }
+            return null;
+          });
     }
 
     private GenerationRequest ensureRequest() {

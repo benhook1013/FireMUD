@@ -114,16 +114,15 @@ class WorldPrivateFreshOperationRepositoryTest {
             ByteString.copyFromUtf8("controlled abort"));
     assertThat(applied.admissionAllowed()).isFalse();
     assertThat(aborted.admissionAllowed()).isFalse();
-    assertThatThrownBy(
-            () ->
-                new Terminal(
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    DIGEST,
-                    "APPLIED",
-                    null,
-                    null,
-                    ByteString.copyFromUtf8("bad")))
+    assertThatThrownBy(() ->
+            new Terminal(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                DIGEST,
+                "APPLIED",
+                null,
+                null,
+                ByteString.copyFromUtf8("bad")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> new SourceProtectionBinding(UUID.randomUUID(), new UUID(0, 0), 1, DIGEST))

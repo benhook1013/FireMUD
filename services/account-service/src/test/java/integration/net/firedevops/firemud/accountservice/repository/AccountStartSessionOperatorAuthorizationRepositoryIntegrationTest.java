@@ -116,23 +116,17 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     assertThat(retainedAfterRedemption.bundleReference().linearization()).isEqualTo("123456789");
     assertImmutableGuardRejected(
         () ->
-            context.inTransactionWithoutResult(
-                () ->
-                    context.transactionDsl.execute(
-                        "UPDATE account_start_session_operator_authorizations "
-                            + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
-                        "123456788",
-                        REQUEST_ID)),
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
+                    "123456788",
+                    REQUEST_ID)),
         "StartSession authorization evidence is immutable except one exact redemption "
             + "or expired envelope erasure");
     assertThat(
-            context.inTransaction(
-                () ->
-                    context
-                        .repository
-                        .findByControlPlaneRequestId(REQUEST_ID)
-                        .orElseThrow()
-                        .status()))
+            context.inTransaction(() ->
+                context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow().status()))
         .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
   }
 
@@ -232,19 +226,18 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
       assertThatThrownBy(
               () -> insertCandidateWithSourceFence(context, candidate, invalidSourceFence))
           .isInstanceOf(IntegrityConstraintViolationException.class)
-          .satisfies(
-              failure -> {
-                SQLException sqlFailure = findSqlException(failure);
-                assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-                if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                  throw new AssertionError(
-                      "Source-fence rejection must be a PostgreSQL exception", sqlFailure);
-                }
-                var serverError = postgresFailure.getServerErrorMessage();
-                assertThat(serverError).isNotNull();
-                assertThat(serverError.getConstraint())
-                    .isEqualTo("account_ss_operator_bundle_source_fence_canonical_check");
-              });
+          .satisfies(failure -> {
+            SQLException sqlFailure = findSqlException(failure);
+            assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+            if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+              throw new AssertionError(
+                  "Source-fence rejection must be a PostgreSQL exception", sqlFailure);
+            }
+            var serverError = postgresFailure.getServerErrorMessage();
+            assertThat(serverError).isNotNull();
+            assertThat(serverError.getConstraint())
+                .isEqualTo("account_ss_operator_bundle_source_fence_canonical_check");
+          });
       assertThat(context.countRows()).isEqualTo(beforeInvalidFence);
     }
   }
@@ -495,10 +488,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .isTrue();
     assertThat(
             context
-                .inTransaction(
-                    () ->
-                        context.repository.redeemExact(
-                            redemption(maximumKeyId, OWNER_ATTEMPT_ID, 11L)))
+                .inTransaction(() ->
+                    context.repository.redeemExact(redemption(maximumKeyId, OWNER_ATTEMPT_ID, 11L)))
                 .replay())
         .isFalse();
 
@@ -511,43 +502,40 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
             "arfp/v1/key.with.dot/" + "b".repeat(64),
             UUID.randomUUID());
 
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "INSERT INTO account_start_session_operator_authorizations "
-                                + "(control_plane_request_id, pre_authorization_tuple, "
-                                + "mutation_digest, issuance_workload_uri, reservation_owner_id, "
-                                + "reservation_claim_fence, "
-                                + "issuance_operation_id, issuance_fence, bundle_version, "
-                                + "bundle_source_version, bundle_source_fence, "
-                                + "bundle_linearization, authority_evidence_bundle, "
-                                + "authorization_reference_fingerprint, "
-                                + "encrypted_response_envelope, issued_at, reference_expires_at, "
-                                + "response_envelope_expires_at, status) "
-                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                                + "'ISSUED')",
-                            dottedKeyId.controlPlaneRequestId(),
-                            dottedKeyId.preAuthorizationTuple(),
-                            dottedKeyId.mutationDigest(),
-                            dottedKeyId.issuanceWorkloadUri(),
-                            dottedKeyId.reservationOwnerId(),
-                            dottedKeyId.reservationClaimFence(),
-                            dottedKeyId.issuanceOperationId(),
-                            dottedKeyId.issuanceFence(),
-                            dottedKeyId.bundleReference().bundleVersion(),
-                            dottedKeyId.bundleReference().sourceVersion(),
-                            dottedKeyId.bundleReference().sourceFence(),
-                            dottedKeyId.bundleReference().linearization(),
-                            dottedKeyId.authorityEvidenceBundle(),
-                            dottedKeyId.authorizationReferenceFingerprint(),
-                            dottedKeyId.encryptedResponseEnvelope(),
-                            OffsetDateTime.ofInstant(dottedKeyId.issuedAt(), ZoneOffset.UTC),
-                            OffsetDateTime.ofInstant(
-                                dottedKeyId.referenceExpiresAt(), ZoneOffset.UTC),
-                            OffsetDateTime.ofInstant(
-                                dottedKeyId.responseEnvelopeExpiresAt(), ZoneOffset.UTC))))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "INSERT INTO account_start_session_operator_authorizations "
+                        + "(control_plane_request_id, pre_authorization_tuple, "
+                        + "mutation_digest, issuance_workload_uri, reservation_owner_id, "
+                        + "reservation_claim_fence, "
+                        + "issuance_operation_id, issuance_fence, bundle_version, "
+                        + "bundle_source_version, bundle_source_fence, "
+                        + "bundle_linearization, authority_evidence_bundle, "
+                        + "authorization_reference_fingerprint, "
+                        + "encrypted_response_envelope, issued_at, reference_expires_at, "
+                        + "response_envelope_expires_at, status) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        + "'ISSUED')",
+                    dottedKeyId.controlPlaneRequestId(),
+                    dottedKeyId.preAuthorizationTuple(),
+                    dottedKeyId.mutationDigest(),
+                    dottedKeyId.issuanceWorkloadUri(),
+                    dottedKeyId.reservationOwnerId(),
+                    dottedKeyId.reservationClaimFence(),
+                    dottedKeyId.issuanceOperationId(),
+                    dottedKeyId.issuanceFence(),
+                    dottedKeyId.bundleReference().bundleVersion(),
+                    dottedKeyId.bundleReference().sourceVersion(),
+                    dottedKeyId.bundleReference().sourceFence(),
+                    dottedKeyId.bundleReference().linearization(),
+                    dottedKeyId.authorityEvidenceBundle(),
+                    dottedKeyId.authorizationReferenceFingerprint(),
+                    dottedKeyId.encryptedResponseEnvelope(),
+                    OffsetDateTime.ofInstant(dottedKeyId.issuedAt(), ZoneOffset.UTC),
+                    OffsetDateTime.ofInstant(dottedKeyId.referenceExpiresAt(), ZoneOffset.UTC),
+                    OffsetDateTime.ofInstant(
+                        dottedKeyId.responseEnvelopeExpiresAt(), ZoneOffset.UTC))))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(context.countRows()).isEqualTo(1);
   }
@@ -562,25 +550,23 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<AccountStartSessionOperatorAuthorizationRepository.CreateOrReadResult> first =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                if (!start.await(5, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Timed out waiting to race exact issuance retry");
-                }
-                return context.inTransaction(
-                    () -> context.repository.createOrReadExact(firstCandidate));
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Timed out waiting to race exact issuance retry");
+            }
+            return context.inTransaction(
+                () -> context.repository.createOrReadExact(firstCandidate));
+          });
       Future<AccountStartSessionOperatorAuthorizationRepository.CreateOrReadResult> second =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                if (!start.await(5, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Timed out waiting to race exact issuance retry");
-                }
-                return context.inTransaction(
-                    () -> context.repository.createOrReadExact(secondCandidate));
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Timed out waiting to race exact issuance retry");
+            }
+            return context.inTransaction(
+                () -> context.repository.createOrReadExact(secondCandidate));
+          });
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       var firstResult = first.get(10, TimeUnit.SECONDS);
@@ -626,10 +612,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
             RESERVATION_OWNER_ID,
             candidate.reservationClaimFence() + 1L);
 
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(
-                    () -> context.repository.createOrReadExact(changedTupleCandidate)))
+    assertThatThrownBy(() ->
+            context.inTransaction(
+                () -> context.repository.createOrReadExact(changedTupleCandidate)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
     assertThatThrownBy(
@@ -716,50 +701,44 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
 
     assertImmutableGuardRejected(
         () ->
-            context.inTransactionWithoutResult(
-                () ->
-                    context.transactionDsl.execute(
-                        "UPDATE account_start_session_operator_authorizations "
-                            + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
-                        bytes("rewritten"),
-                        REQUEST_ID)),
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
+                    bytes("rewritten"),
+                    REQUEST_ID)),
         "StartSession authorization evidence is immutable except one exact redemption "
             + "or expired envelope erasure");
     assertImmutableGuardRejected(
         () ->
-            context.inTransactionWithoutResult(
-                () ->
-                    context.transactionDsl.execute(
-                        "DELETE FROM account_start_session_operator_authorizations "
-                            + "WHERE control_plane_request_id = ?",
-                        REQUEST_ID)),
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "DELETE FROM account_start_session_operator_authorizations "
+                        + "WHERE control_plane_request_id = ?",
+                    REQUEST_ID)),
         "StartSession operator authorization evidence cannot be deleted");
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "TRUNCATE account_start_session_operator_authorizations")))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "TRUNCATE account_start_session_operator_authorizations")))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("0A000");
-              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                throw new AssertionError(
-                    "Foreign-key truncate rejection must be a PostgreSQL exception", sqlFailure);
-              }
-              var serverError = postgresFailure.getServerErrorMessage();
-              assertThat(serverError).isNotNull();
-              assertThat(serverError.getMessage())
-                  .isEqualTo("cannot truncate a table referenced in a foreign key constraint");
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("0A000");
+          if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+            throw new AssertionError(
+                "Foreign-key truncate rejection must be a PostgreSQL exception", sqlFailure);
+          }
+          var serverError = postgresFailure.getServerErrorMessage();
+          assertThat(serverError).isNotNull();
+          assertThat(serverError.getMessage())
+              .isEqualTo("cannot truncate a table referenced in a foreign key constraint");
+        });
     assertImmutableGuardRejected(
         () ->
-            context.inTransactionWithoutResult(
-                () ->
-                    context.transactionDsl.execute(
-                        "TRUNCATE account_start_session_operator_authorizations CASCADE")),
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "TRUNCATE account_start_session_operator_authorizations CASCADE")),
         "StartSession operator authorization evidence cannot be truncated");
 
     var retained =
@@ -783,41 +762,36 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
             databaseNow.plusSeconds(12));
     context.inTransaction(() -> context.repository.createOrReadExact(candidate));
 
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET encrypted_response_envelope = NULL "
-                                + "WHERE control_plane_request_id = ?",
-                            candidate.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET encrypted_response_envelope = NULL "
+                        + "WHERE control_plane_request_id = ?",
+                    candidate.controlPlaneRequestId())))
         .isInstanceOf(IntegrityConstraintViolationException.class);
 
     var erased =
-        context.inTransaction(
-            () -> {
-              assertThat(
-                      ((OffsetDateTime)
-                              context.transactionDsl.fetchValue("SELECT transaction_timestamp()"))
-                          .toInstant())
-                  .isBefore(candidate.responseEnvelopeExpiresAt());
-              var redeemed =
-                  context.repository.redeemExact(
-                      redemption(
-                          candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt().plusSeconds(1)));
-              assertThat(redeemed.replay()).isFalse();
-              assertThatThrownBy(
-                      () ->
-                          context.repository.eraseExpiredResponseEnvelope(
-                              candidate.controlPlaneRequestId()))
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("evidence unavailable");
+        context.inTransaction(() -> {
+          assertThat(
+                  ((OffsetDateTime)
+                          context.transactionDsl.fetchValue("SELECT transaction_timestamp()"))
+                      .toInstant())
+              .isBefore(candidate.responseEnvelopeExpiresAt());
+          var redeemed =
+              context.repository.redeemExact(
+                  redemption(
+                      candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt().plusSeconds(1)));
+          assertThat(redeemed.replay()).isFalse();
+          assertThatThrownBy(() ->
+                  context.repository.eraseExpiredResponseEnvelope(
+                      candidate.controlPlaneRequestId()))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("evidence unavailable");
 
-              waitUntilDatabaseTime(context, candidate.responseEnvelopeExpiresAt());
-              return context.repository.eraseExpiredResponseEnvelope(
-                  candidate.controlPlaneRequestId());
-            });
+          waitUntilDatabaseTime(context, candidate.responseEnvelopeExpiresAt());
+          return context.repository.eraseExpiredResponseEnvelope(candidate.controlPlaneRequestId());
+        });
 
     assertThat(erased.erasedNow()).isTrue();
     assertThat(erased.issuance().encryptedResponseEnvelope()).isNull();
@@ -843,33 +817,28 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .containsExactly(candidate.authorityEvidenceBundle());
 
     var retry =
-        context.inTransaction(
-            () ->
-                context.repository.eraseExpiredResponseEnvelope(candidate.controlPlaneRequestId()));
+        context.inTransaction(() ->
+            context.repository.eraseExpiredResponseEnvelope(candidate.controlPlaneRequestId()));
     assertThat(retry.erasedNow()).isFalse();
     assertThat(retry.issuance().responseEnvelopeErasedAt())
         .isEqualTo(erased.issuance().responseEnvelopeErasedAt());
 
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET encrypted_response_envelope = ? "
-                                + "WHERE control_plane_request_id = ?",
-                            candidate.encryptedResponseEnvelope(),
-                            candidate.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET encrypted_response_envelope = ? "
+                        + "WHERE control_plane_request_id = ?",
+                    candidate.encryptedResponseEnvelope(),
+                    candidate.controlPlaneRequestId())))
         .isInstanceOf(IntegrityConstraintViolationException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET redemption_owner_fence = redemption_owner_fence + 1 "
-                                + "WHERE control_plane_request_id = ?",
-                            candidate.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET redemption_owner_fence = redemption_owner_fence + 1 "
+                        + "WHERE control_plane_request_id = ?",
+                    candidate.controlPlaneRequestId())))
         .isInstanceOf(IntegrityConstraintViolationException.class);
 
     Instant expiredAt = canonicalDatabaseNow(context);
@@ -878,35 +847,32 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     IssuanceCandidate expiredUnredeemed = expiredCandidate(expiredTuple, expiredAt);
     context.inTransaction(() -> context.repository.createOrReadExact(expiredUnredeemed));
     Instant redeemedAt = expiredUnredeemed.issuedAt().plusSeconds(1);
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET encrypted_response_envelope = NULL, status = 'REDEEMED', "
-                                + "redemption_redeemer_workload_uri = ?, "
-                                + "redemption_owner_attempt_id = ?, redemption_owner_fence = ?, "
-                                + "redeemed_at = CAST(? AS TIMESTAMPTZ), "
-                                + "redemption_reference_fingerprint = ?, "
-                                + "redemption_authority_evidence_bundle = ? "
-                                + "WHERE control_plane_request_id = ?",
-                            OWNER_URI,
-                            OWNER_ATTEMPT_ID,
-                            11L,
-                            OffsetDateTime.ofInstant(redeemedAt, ZoneOffset.UTC),
-                            expiredUnredeemed.authorizationReferenceFingerprint(),
-                            expiredUnredeemed.authorityEvidenceBundle(),
-                            expiredUnredeemed.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET encrypted_response_envelope = NULL, status = 'REDEEMED', "
+                        + "redemption_redeemer_workload_uri = ?, "
+                        + "redemption_owner_attempt_id = ?, redemption_owner_fence = ?, "
+                        + "redeemed_at = CAST(? AS TIMESTAMPTZ), "
+                        + "redemption_reference_fingerprint = ?, "
+                        + "redemption_authority_evidence_bundle = ? "
+                        + "WHERE control_plane_request_id = ?",
+                    OWNER_URI,
+                    OWNER_ATTEMPT_ID,
+                    11L,
+                    OffsetDateTime.ofInstant(redeemedAt, ZoneOffset.UTC),
+                    expiredUnredeemed.authorizationReferenceFingerprint(),
+                    expiredUnredeemed.authorityEvidenceBundle(),
+                    expiredUnredeemed.controlPlaneRequestId())))
         .isInstanceOf(IntegrityConstraintViolationException.class);
 
     var retained =
-        context.inTransaction(
-            () ->
-                context
-                    .repository
-                    .findByControlPlaneRequestId(candidate.controlPlaneRequestId())
-                    .orElseThrow());
+        context.inTransaction(() ->
+            context
+                .repository
+                .findByControlPlaneRequestId(candidate.controlPlaneRequestId())
+                .orElseThrow());
     assertThat(retained.encryptedResponseEnvelope()).isNull();
     assertThat(retained.responseEnvelopeErasedAt())
         .isEqualTo(erased.issuance().responseEnvelopeErasedAt());
@@ -970,25 +936,22 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     assertThat(retained.status())
         .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.ISSUED);
 
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET authority_evidence_bundle = ? "
-                                + "WHERE control_plane_request_id = ?",
-                            bytes("changed-retained-evidence"),
-                            legacy.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            context.inTransactionWithoutResult(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_start_session_operator_authorizations "
+                        + "SET authority_evidence_bundle = ? "
+                        + "WHERE control_plane_request_id = ?",
+                    bytes("changed-retained-evidence"),
+                    legacy.controlPlaneRequestId())))
         .isInstanceOf(IntegrityConstraintViolationException.class);
     assertThat(
-            context.inTransaction(
-                () ->
-                    context
-                        .repository
-                        .findByControlPlaneRequestId(legacy.controlPlaneRequestId())
-                        .orElseThrow()
-                        .encryptedResponseEnvelope()))
+            context.inTransaction(() ->
+                context
+                    .repository
+                    .findByControlPlaneRequestId(legacy.controlPlaneRequestId())
+                    .orElseThrow()
+                    .encryptedResponseEnvelope()))
         .containsExactly(retainedLegacyEnvelope);
   }
 
@@ -1001,16 +964,15 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
             + "CHECK (octet_length(encrypted_response_envelope) BETWEEN 1 AND 65536)");
     assertThat(legacyEnvelopeSizeGuardCount(context)).isEqualTo(2L);
 
-    assertThatThrownBy(
-            () ->
-                Flyway.configure()
-                    .dataSource(context.dataSource)
-                    .schemas(context.schema)
-                    .defaultSchema(context.schema)
-                    .placeholders(Map.of("serviceSchema", context.schema))
-                    .locations("classpath:db/migration")
-                    .load()
-                    .migrate())
+    assertThatThrownBy(() ->
+            Flyway.configure()
+                .dataSource(context.dataSource)
+                .schemas(context.schema)
+                .defaultSchema(context.schema)
+                .placeholders(Map.of("serviceSchema", context.schema))
+                .locations("classpath:db/migration")
+                .load()
+                .migrate())
         .isInstanceOf(FlywayException.class)
         .hasMessageContaining("V126.3");
 
@@ -1582,18 +1544,17 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
       ThrowingCallable action, String expectedDiagnostic) {
     assertThatThrownBy(action)
         .isInstanceOf(IntegrityConstraintViolationException.class)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                throw new AssertionError(
-                    "Immutable guard rejection must be a PostgreSQL exception", sqlFailure);
-              }
-              var serverError = postgresFailure.getServerErrorMessage();
-              assertThat(serverError).isNotNull();
-              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+            throw new AssertionError(
+                "Immutable guard rejection must be a PostgreSQL exception", sqlFailure);
+          }
+          var serverError = postgresFailure.getServerErrorMessage();
+          assertThat(serverError).isNotNull();
+          assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+        });
   }
 
   private static SQLException findSqlException(Throwable failure) {

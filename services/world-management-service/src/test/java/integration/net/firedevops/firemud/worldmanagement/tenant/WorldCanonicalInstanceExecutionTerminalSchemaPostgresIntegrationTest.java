@@ -128,14 +128,12 @@ class WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest {
       // not prove production admission or a successful terminal settlement.
       assertThatThrownBy(() -> invokeProductionFunctionAgainstTempProbe(source, schema))
           .isInstanceOf(SQLException.class)
-          .satisfies(
-              failure -> {
-                SQLException sql = (SQLException) failure;
-                assertThat(sql.getSQLState()).isEqualTo("23514");
-                assertThat(sql.getMessage())
-                    .contains(
-                        "World EXECUTING state cannot commit without exact terminal settlement");
-              });
+          .satisfies(failure -> {
+            SQLException sql = (SQLException) failure;
+            assertThat(sql.getSQLState()).isEqualTo("23514");
+            assertThat(sql.getMessage())
+                .contains("World EXECUTING state cannot commit without exact terminal settlement");
+          });
       assertThat(executionRows(dsl, qualifiedExecutionTable)).isEmpty();
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");

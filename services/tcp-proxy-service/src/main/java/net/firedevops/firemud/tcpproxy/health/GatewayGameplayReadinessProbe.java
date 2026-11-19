@@ -173,17 +173,16 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
           // Apply timeout to a dependent future; the timeout callback below cancels the original.
           .whenComplete((ignoredResult, ignoredError) -> {})
           .orTimeout(requestTimeoutNanos, TimeUnit.NANOSECONDS)
-          .whenComplete(
-              (result, error) -> {
-                synchronized (this) {
-                  if (error instanceof TimeoutException) {
-                    request.cancel(true);
-                  }
-                  if (inFlight.compareAndSet(request, null) && !closed.get()) {
-                    ready.set(error == null && Boolean.TRUE.equals(result));
-                  }
-                }
-              });
+          .whenComplete((result, error) -> {
+            synchronized (this) {
+              if (error instanceof TimeoutException) {
+                request.cancel(true);
+              }
+              if (inFlight.compareAndSet(request, null) && !closed.get()) {
+                ready.set(error == null && Boolean.TRUE.equals(result));
+              }
+            }
+          });
     }
 
     private synchronized void close() {

@@ -42,13 +42,12 @@ class DirectTextIssuedConnectScopeTest {
 
     assertThat(scope.isLive(clock(Instant.parse("2026-08-02T00:01:59.999999999Z")))).isTrue();
     assertThat(scope.isLive(clock(Instant.parse(EXPIRES_AT)))).isFalse();
-    assertThatThrownBy(
-            () ->
-                DirectTextIssuedConnectScope.fromAccountResponse(
-                    ACCOUNT_ID,
-                    target(),
-                    response("scope", EVALUATED_AT, EXPIRES_AT),
-                    clock(Instant.parse(EXPIRES_AT))))
+    assertThatThrownBy(() ->
+            DirectTextIssuedConnectScope.fromAccountResponse(
+                ACCOUNT_ID,
+                target(),
+                response("scope", EVALUATED_AT, EXPIRES_AT),
+                clock(Instant.parse(EXPIRES_AT))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -130,10 +129,8 @@ class DirectTextIssuedConnectScopeTest {
       String accountId,
       DirectTextConnectScopeTarget target,
       Clock clock) {
-    assertThatThrownBy(
-            () ->
-                DirectTextIssuedConnectScope.fromAccountResponse(
-                    accountId, target, response, clock))
+    assertThatThrownBy(() ->
+            DirectTextIssuedConnectScope.fromAccountResponse(accountId, target, response, clock))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

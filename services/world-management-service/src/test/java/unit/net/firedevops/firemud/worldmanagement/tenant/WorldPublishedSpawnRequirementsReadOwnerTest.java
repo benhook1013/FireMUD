@@ -95,25 +95,22 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
       try (var ignored = attach(identity)) {
         assertThatThrownBy(() -> owner().read(malformed))
             .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-            .satisfies(
-                failure ->
-                    assertThat(
-                            ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException)
-                                    failure)
-                                .code())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(
+                        ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                            .code())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       }
     }
     SessionContext.setContext(TENANT.toString(), List.of(), java.util.Map.of());
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(malformed))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
     verifyNoInteractions(gameDesign, published, transactions);
   }
@@ -122,20 +119,18 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
   void ambientTransactionIsRejectedBeforeDecodingOrGameDesignRead() {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
-      assertThatThrownBy(
-              () ->
-                  owner()
-                      .read(
-                          ReadWorldPublishedSpawnRequirementsRequest.newBuilder()
-                              .setSchemaVersion(-1)
-                              .build()))
+      assertThatThrownBy(() ->
+              owner()
+                  .read(
+                      ReadWorldPublishedSpawnRequirementsRequest.newBuilder()
+                          .setSchemaVersion(-1)
+                          .build()))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
     verifyNoInteractions(gameDesign, published, transactions);
   }
@@ -145,12 +140,11 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wireRequest("other")))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
     verifyNoInteractions(gameDesign, published, transactions);
   }
@@ -164,12 +158,11 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner.read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
     }
     verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
     verifyNoInteractions(published, transactions);
@@ -193,27 +186,25 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner.read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure -> {
-                var rejected =
-                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
-                Status.Code expected =
-                    switch (foreignCode) {
-                      case UNAVAILABLE,
-                          DEADLINE_EXCEEDED,
-                          CANCELLED,
-                          RESOURCE_EXHAUSTED,
-                          INTERNAL,
-                          UNKNOWN ->
-                          foreignCode;
-                      default -> Status.Code.FAILED_PRECONDITION;
-                    };
-                assertThat(rejected.code()).isEqualTo(expected);
-                assertThat(rejected.getMessage())
-                    .isEqualTo("Authenticated Game Design release read could not complete")
-                    .doesNotContain("foreign", "private", "secret");
-                assertThat(rejected.getCause()).isNull();
-              });
+          .satisfies(failure -> {
+            var rejected = (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+            Status.Code expected =
+                switch (foreignCode) {
+                  case UNAVAILABLE,
+                      DEADLINE_EXCEEDED,
+                      CANCELLED,
+                      RESOURCE_EXHAUSTED,
+                      INTERNAL,
+                      UNKNOWN ->
+                      foreignCode;
+                  default -> Status.Code.FAILED_PRECONDITION;
+                };
+            assertThat(rejected.code()).isEqualTo(expected);
+            assertThat(rejected.getMessage())
+                .isEqualTo("Authenticated Game Design release read could not complete")
+                .doesNotContain("foreign", "private", "secret");
+            assertThat(rejected.getCause()).isNull();
+          });
     }
 
     verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
@@ -235,18 +226,16 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wireRequest(NAMESPACE)))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure -> {
-                var rejected =
-                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
-                assertThat(rejected.code()).isEqualTo(Status.Code.INTERNAL);
-                assertThat(rejected.getMessage())
-                    .isEqualTo(
-                        failureKind == InvalidCarrierFailure.UNEXPECTED
-                            ? "Authenticated Game Design release read failed"
-                            : "Authenticated Game Design release evidence is invalid");
-                assertThat(rejected.getCause()).isNull();
-              });
+          .satisfies(failure -> {
+            var rejected = (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+            assertThat(rejected.code()).isEqualTo(Status.Code.INTERNAL);
+            assertThat(rejected.getMessage())
+                .isEqualTo(
+                    failureKind == InvalidCarrierFailure.UNEXPECTED
+                        ? "Authenticated Game Design release read failed"
+                        : "Authenticated Game Design release evidence is invalid");
+            assertThat(rejected.getCause()).isNull();
+          });
     }
 
     verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
@@ -277,23 +266,21 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
         .containsExactly(1, 1, 2, 1, 1, 1);
     assertThat(evidence.spawnRequirements())
         .singleElement()
-        .satisfies(
-            spawn -> {
-              assertThat(spawn.roomTemplate())
-                  .isEqualTo(
-                      fixture.plan().graph().freshGraphDeclaration().orElseThrow().startLocation());
-              assertThat(spawn.entityTemplate().kind())
-                  .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
-              assertThat(spawn.spawnCount()).isEqualTo(3);
-              assertThat(spawn.respawnDelaySeconds()).isEqualTo(90);
-            });
+        .satisfies(spawn -> {
+          assertThat(spawn.roomTemplate())
+              .isEqualTo(
+                  fixture.plan().graph().freshGraphDeclaration().orElseThrow().startLocation());
+          assertThat(spawn.entityTemplate().kind())
+              .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
+          assertThat(spawn.spawnCount()).isEqualTo(3);
+          assertThat(spawn.respawnDelaySeconds()).isEqualTo(90);
+        });
     assertThat(evidence.generationRequirements())
         .singleElement()
-        .satisfies(
-            generation -> {
-              assertThat(generation.name()).isEqualTo("density");
-              assertThat(generation.value()).isEqualTo("sparse");
-            });
+        .satisfies(generation -> {
+          assertThat(generation.name()).isEqualTo("density");
+          assertThat(generation.value()).isEqualTo("sparse");
+        });
 
     verify(gameDesign).getComplete(eq(fixture.request().getLaunchBindingRequest()));
     verify(published).readInOwnedSnapshot(eq(fixture.readCaptureRequest()));
@@ -312,16 +299,14 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", fixture.namespace()))) {
       assertThatThrownBy(() -> owner(fixture.namespace()).read(fixture.request()))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure -> {
-                var rejected =
-                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
-                assertThat(rejected.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-                assertThat(rejected.getMessage())
-                    .isEqualTo("Frozen World source differs from authenticated release evidence")
-                    .doesNotContain("private", "SQL", "receipt");
-                assertThat(rejected.getCause()).isNull();
-              });
+          .satisfies(failure -> {
+            var rejected = (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+            assertThat(rejected.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+            assertThat(rejected.getMessage())
+                .isEqualTo("Frozen World source differs from authenticated release evidence")
+                .doesNotContain("private", "SQL", "receipt");
+            assertThat(rejected.getCause()).isNull();
+          });
     }
 
     verify(gameDesign).getComplete(eq(fixture.request().getLaunchBindingRequest()));
@@ -362,12 +347,11 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
     verifyNoInteractions(published, transactions);
   }
@@ -389,12 +373,11 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
     verifyNoInteractions(published, transactions);
   }
@@ -423,24 +406,22 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure -> {
-                var rejected =
-                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
-                var expectedCode =
-                    switch (failureKind) {
-                      case TRANSIENT, RECOVERABLE -> Status.Code.UNAVAILABLE;
-                      case BAD_SQL, INTEGRITY, UNRELATED_RUNTIME -> Status.Code.INTERNAL;
-                    };
-                assertThat(rejected.code()).isEqualTo(expectedCode);
-                assertThat(rejected.getMessage())
-                    .isEqualTo(
-                        expectedCode == Status.Code.UNAVAILABLE
-                            ? "World published source is temporarily unavailable"
-                            : "World published source read failed")
-                    .doesNotContain("private", "SQL", "integrity");
-                assertThat(rejected.getCause()).isNull();
-              });
+          .satisfies(failure -> {
+            var rejected = (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+            var expectedCode =
+                switch (failureKind) {
+                  case TRANSIENT, RECOVERABLE -> Status.Code.UNAVAILABLE;
+                  case BAD_SQL, INTEGRITY, UNRELATED_RUNTIME -> Status.Code.INTERNAL;
+                };
+            assertThat(rejected.code()).isEqualTo(expectedCode);
+            assertThat(rejected.getMessage())
+                .isEqualTo(
+                    expectedCode == Status.Code.UNAVAILABLE
+                        ? "World published source is temporarily unavailable"
+                        : "World published source read failed")
+                .doesNotContain("private", "SQL", "integrity");
+            assertThat(rejected.getCause()).isNull();
+          });
     }
 
     verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
@@ -492,12 +473,11 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(
-                          ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
-                              .code())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(
+                      ((WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure)
+                          .code())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
     verify(published).readInOwnedSnapshot(any());
   }
@@ -825,15 +805,14 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
         contentDigest,
         digestSchemaVersion,
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList());
   }
 
@@ -931,15 +910,14 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
         captureRequest.contentDigest(),
         captureRequest.digestSchemaVersion(),
         captureRequest.suppliedOwnedAffectedTuples().stream()
-            .map(
-                tuple ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        tuple.owner(),
-                        tuple.aggregateType(),
-                        tuple.aggregateId(),
-                        tuple.scopeType(),
-                        tuple.scopeId(),
-                        tuple.expectedEpoch()))
+            .map(tuple ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    tuple.owner(),
+                    tuple.aggregateType(),
+                    tuple.aggregateId(),
+                    tuple.scopeType(),
+                    tuple.scopeId(),
+                    tuple.expectedEpoch()))
             .toList());
   }
 
@@ -1000,21 +978,20 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     String commitId = selectorEvidence.request().appliedCommitId();
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant,
-                        Integer.toString(descriptorVersionId),
-                        false,
-                        null,
-                        commitId,
-                        "WORLD_MANAGEMENT".equals(participant)
-                            ? selectorEvidence.request().contentDigest()
-                            : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant, attestationSchemaVersion),
-                        "GAME_LOGIC".equals(participant),
-                        "GAME_LOGIC".equals(participant) ? "sha256:" + "d".repeat(64) : null))
+            .map(participant ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    participant,
+                    Integer.toString(descriptorVersionId),
+                    false,
+                    null,
+                    commitId,
+                    "WORLD_MANAGEMENT".equals(participant)
+                        ? selectorEvidence.request().contentDigest()
+                        : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        participant, attestationSchemaVersion),
+                    "GAME_LOGIC".equals(participant),
+                    "GAME_LOGIC".equals(participant) ? "sha256:" + "d".repeat(64) : null))
             .toList();
     var release =
         attestationSchemaVersion == AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION

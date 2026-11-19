@@ -163,18 +163,17 @@ public final class AuthenticatedDirectTextSessions {
         requireLive();
         InitialGameplayLoginOwner.Outcome owned = outcome;
         if (owned == null) throw new LoginRequiredException();
-        return owned.withOwnedPrivateResult(
-            result -> {
-              if (borrowed.putIfAbsent(Thread.currentThread(), result) != null) throw unavailable();
-              try {
-                requireLive();
-                T answer = action.apply(owned.coordinates(), result);
-                requireLive();
-                return answer;
-              } finally {
-                borrowed.remove(Thread.currentThread(), result);
-              }
-            });
+        return owned.withOwnedPrivateResult(result -> {
+          if (borrowed.putIfAbsent(Thread.currentThread(), result) != null) throw unavailable();
+          try {
+            requireLive();
+            T answer = action.apply(owned.coordinates(), result);
+            requireLive();
+            return answer;
+          } finally {
+            borrowed.remove(Thread.currentThread(), result);
+          }
+        });
       } finally {
         lifetime.readLock().unlock();
       }

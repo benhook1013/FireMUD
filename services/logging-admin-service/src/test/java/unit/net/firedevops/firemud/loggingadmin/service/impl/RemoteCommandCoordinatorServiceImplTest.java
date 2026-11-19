@@ -166,14 +166,13 @@ class RemoteCommandCoordinatorServiceImplTest {
     request.setCommandId("cmd-123");
     request.setLimit(5);
     when(gameSessionControlPlaneClient.listRemoteCommandCoordinators(
-            argThat(
-                grpcRequest ->
-                    "2".equals(grpcRequest.getTenantId())
-                        && "7".equals(grpcRequest.getOriginGameInstanceId())
-                        && "target-region".equals(grpcRequest.getTargetRegionId())
-                        && "PENDING_REMOTE".equals(grpcRequest.getState())
-                        && "cmd-123".equals(grpcRequest.getCommandId())
-                        && grpcRequest.getLimit() == 5)))
+            argThat(grpcRequest ->
+                "2".equals(grpcRequest.getTenantId())
+                    && "7".equals(grpcRequest.getOriginGameInstanceId())
+                    && "target-region".equals(grpcRequest.getTargetRegionId())
+                    && "PENDING_REMOTE".equals(grpcRequest.getState())
+                    && "cmd-123".equals(grpcRequest.getCommandId())
+                    && grpcRequest.getLimit() == 5)))
         .thenReturn(
             net.firedevops.firemud.gamesession.v1.ListRemoteCommandCoordinatorsResponse.newBuilder()
                 .addCoordinators(remoteCoordinator("2", "coord-123"))

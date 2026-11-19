@@ -148,14 +148,13 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(SCRIPT_PIN_OPERATION)
                 .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("direct-valid-committed"))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("COMMITTED");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE)).isNull();
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
-                  .isEqualTo("patch-committed");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(2L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("COMMITTED");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE)).isNull();
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
+              .isEqualTo("patch-committed");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+        });
     assertThat(
             dsl.select(
                     SCRIPT_PIN_OPERATION.OUTCOME,
@@ -167,14 +166,13 @@ class ScriptPinOperationRepositoryIntegrationTest {
                     SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq(
                         "direct-valid-failed-unpinned"))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
-                  .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION)).isNull();
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isNull();
-            });
+        .satisfies(record -> {
+          assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
+              .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION)).isNull();
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isNull();
+        });
     assertThat(
             dsl.select(
                     SCRIPT_PIN_OPERATION.OUTCOME,
@@ -185,15 +183,14 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .where(
                     SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("direct-valid-failed-pinned"))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
-                  .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
-                  .isEqualTo("patch-1");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
+              .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
+              .isEqualTo("patch-1");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
 
     assertConstraintRejected(
         "ck_script_pin_operation_kind",
@@ -329,12 +326,11 @@ class ScriptPinOperationRepositoryIntegrationTest {
                   .from(GAME_INSTANCES)
                   .where(GAME_INSTANCES.ID.eq(7L))
                   .fetchOne())
-          .satisfies(
-              record -> {
-                assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION))
-                    .isEqualTo(winner.resultingScriptPatchVersion());
-                assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
-              });
+          .satisfies(record -> {
+            assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION))
+                .isEqualTo(winner.resultingScriptPatchVersion());
+            assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+          });
       ScriptPinMutationResult retry =
           repository.applyScriptPin(
               1L,
@@ -430,15 +426,13 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(SCRIPT_PIN_OPERATION)
                 .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-repin"))
                 .fetchOne())
-        .satisfies(
-            operation -> {
-              assertThat(operation.get(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID))
-                  .isEqualTo(100L);
-              assertThat(operation.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_BASE_VERSION_ID))
-                  .isNull();
-              assertThat(operation.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_BASE_VERSION_ID))
-                  .isEqualTo(100L);
-            });
+        .satisfies(operation -> {
+          assertThat(operation.get(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID)).isEqualTo(100L);
+          assertThat(operation.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_BASE_VERSION_ID))
+              .isNull();
+          assertThat(operation.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_BASE_VERSION_ID))
+              .isEqualTo(100L);
+        });
   }
 
   @Test
@@ -550,11 +544,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            instance -> {
-              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID)).isNull();
-            });
+        .satisfies(instance -> {
+          assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID)).isNull();
+        });
     assertThat(
             dsl.select(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID)
                 .from(SCRIPT_PIN_OPERATION)
@@ -604,29 +597,27 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            instance -> {
-              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID)).isNull();
-              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(instance -> {
+          assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID)).isNull();
+          assertThat(instance.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
   }
 
   @Test
   void callerSuppliedRepinMustTargetTheRowLockedCurrentPatch() {
-    assertThatThrownBy(
-            () ->
-                repository.applyScriptPin(
-                    1L,
-                    7L,
-                    "REPIN",
-                    "patch-2",
-                    "request-invalid-repin",
-                    "operator",
-                    "repin",
-                    "EXPECT_EPOCH",
-                    1L,
-                    100L))
+    assertThatThrownBy(() ->
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "REPIN",
+                "patch-2",
+                "request-invalid-repin",
+                "operator",
+                "repin",
+                "EXPECT_EPOCH",
+                1L,
+                100L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("REPIN requires target_script_patch_version to equal the current script patch");
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
@@ -635,11 +626,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
   }
 
   @Test
@@ -794,23 +784,21 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION))
-                  .isEqualTo("patch-unconditional");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION))
+              .isEqualTo("patch-unconditional");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+        });
     assertThat(
             dsl.select(SCRIPT_PIN_OPERATION.OPERATION_KIND, SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND)
                 .from(SCRIPT_PIN_OPERATION)
                 .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-unconditional"))
                 .fetchOne())
-        .satisfies(
-            operation -> {
-              assertThat(operation.get(SCRIPT_PIN_OPERATION.OPERATION_KIND)).isEqualTo("SET");
-              assertThat(operation.get(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND))
-                  .isEqualTo("UNCONDITIONAL");
-            });
+        .satisfies(operation -> {
+          assertThat(operation.get(SCRIPT_PIN_OPERATION.OPERATION_KIND)).isEqualTo("SET");
+          assertThat(operation.get(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND))
+              .isEqualTo("UNCONDITIONAL");
+        });
   }
 
   @Test
@@ -874,41 +862,38 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
   }
 
   @Test
   void nullExpectedPinKindFailsClosedWithoutMutatingTheInstance() {
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.applyScriptPin(
-                    1L,
-                    7L,
-                    "SET",
-                    "patch-new",
-                    "request-null-kind",
-                    "operator",
-                    "test",
-                    null,
-                    null,
-                    100L))
+        .isThrownBy(() ->
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "SET",
+                "patch-new",
+                "request-null-kind",
+                "operator",
+                "test",
+                null,
+                null,
+                100L))
         .withMessage("expected_pin_kind is required");
     assertThat(
             dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
   }
 
@@ -916,19 +901,18 @@ class ScriptPinOperationRepositoryIntegrationTest {
   void nullOrBlankTargetScriptPatchVersionFailsBeforePersistence() {
     for (String targetScriptPatchVersion : java.util.Arrays.asList(null, " ")) {
       org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-          .isThrownBy(
-              () ->
-                  repository.applyScriptPin(
-                      1L,
-                      7L,
-                      "SET",
-                      targetScriptPatchVersion,
-                      "request-invalid-target",
-                      "operator",
-                      "pin",
-                      "EXPECT_EPOCH",
-                      1L,
-                      100L))
+          .isThrownBy(() ->
+              repository.applyScriptPin(
+                  1L,
+                  7L,
+                  "SET",
+                  targetScriptPatchVersion,
+                  "request-invalid-target",
+                  "operator",
+                  "pin",
+                  "EXPECT_EPOCH",
+                  1L,
+                  100L))
           .withMessage("target_script_patch_version is required");
     }
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
@@ -937,30 +921,28 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
   }
 
   @Test
   void recordScriptPinFailureRejectsNullOrBlankTargetBeforePersistence() {
     for (String targetScriptPatchVersion : java.util.Arrays.asList(null, " ")) {
       org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-          .isThrownBy(
-              () ->
-                  repository.recordScriptPinFailure(
-                      1L,
-                      7L,
-                      "SET",
-                      targetScriptPatchVersion,
-                      "request-invalid-failure-target",
-                      "operator",
-                      "authority unavailable",
-                      "EXPECT_EPOCH",
-                      1L,
-                      "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+          .isThrownBy(() ->
+              repository.recordScriptPinFailure(
+                  1L,
+                  7L,
+                  "SET",
+                  targetScriptPatchVersion,
+                  "request-invalid-failure-target",
+                  "operator",
+                  "authority unavailable",
+                  "EXPECT_EPOCH",
+                  1L,
+                  "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
           .withMessage("target_script_patch_version is required");
     }
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
@@ -969,49 +951,46 @@ class ScriptPinOperationRepositoryIntegrationTest {
   @Test
   void expectedPinEpochShapeFailsBeforePersistence() {
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.applyScriptPin(
-                    1L,
-                    7L,
-                    "SET",
-                    "patch-new",
-                    "request-invalid-unpinned-epoch",
-                    "operator",
-                    "pin",
-                    "EXPECT_UNPINNED",
-                    1L,
-                    100L))
+        .isThrownBy(() ->
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "SET",
+                "patch-new",
+                "request-invalid-unpinned-epoch",
+                "operator",
+                "pin",
+                "EXPECT_UNPINNED",
+                1L,
+                100L))
         .withMessage("expected_script_pin_epoch must be null for EXPECT_UNPINNED");
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.applyScriptPin(
-                    1L,
-                    7L,
-                    "SET",
-                    "patch-new",
-                    "request-invalid-epoch",
-                    "operator",
-                    "pin",
-                    "EXPECT_EPOCH",
-                    0L,
-                    100L))
+        .isThrownBy(() ->
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "SET",
+                "patch-new",
+                "request-invalid-epoch",
+                "operator",
+                "pin",
+                "EXPECT_EPOCH",
+                0L,
+                100L))
         .withMessage("expected_script_pin_epoch must be positive for EXPECT_EPOCH");
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.applyScriptPin(
-                    1L,
-                    7L,
-                    "SET",
-                    "patch-new",
-                    "request-invalid-unconditional-epoch",
-                    "operator",
-                    "pin",
-                    "UNCONDITIONAL",
-                    1L,
-                    100L))
+        .isThrownBy(() ->
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "SET",
+                "patch-new",
+                "request-invalid-unconditional-epoch",
+                "operator",
+                "pin",
+                "UNCONDITIONAL",
+                1L,
+                100L))
         .withMessage("expected_script_pin_epoch must be null for UNCONDITIONAL");
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
   }
@@ -1020,34 +999,32 @@ class ScriptPinOperationRepositoryIntegrationTest {
   void controlPlaneRequestIdMustBeNonBlankBeforePersistence() {
     for (String controlPlaneRequestId : java.util.Arrays.asList(null, " ")) {
       org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-          .isThrownBy(
-              () ->
-                  repository.applyScriptPin(
-                      1L,
-                      7L,
-                      "SET",
-                      "patch-new",
-                      controlPlaneRequestId,
-                      "operator",
-                      "pin",
-                      "EXPECT_EPOCH",
-                      1L,
-                      100L))
+          .isThrownBy(() ->
+              repository.applyScriptPin(
+                  1L,
+                  7L,
+                  "SET",
+                  "patch-new",
+                  controlPlaneRequestId,
+                  "operator",
+                  "pin",
+                  "EXPECT_EPOCH",
+                  1L,
+                  100L))
           .withMessage("control_plane_request_id is required");
       org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-          .isThrownBy(
-              () ->
-                  repository.recordScriptPinFailure(
-                      1L,
-                      7L,
-                      "SET",
-                      "patch-new",
-                      controlPlaneRequestId,
-                      "operator",
-                      "authority unavailable",
-                      "EXPECT_EPOCH",
-                      1L,
-                      "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+          .isThrownBy(() ->
+              repository.recordScriptPinFailure(
+                  1L,
+                  7L,
+                  "SET",
+                  "patch-new",
+                  controlPlaneRequestId,
+                  "operator",
+                  "authority unavailable",
+                  "EXPECT_EPOCH",
+                  1L,
+                  "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
           .withMessage("control_plane_request_id is required");
     }
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
@@ -1056,19 +1033,18 @@ class ScriptPinOperationRepositoryIntegrationTest {
   @Test
   void unsupportedExpectedPinKindFailsBeforePersistence() {
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.applyScriptPin(
-                    1L,
-                    7L,
-                    "SET",
-                    "patch-new",
-                    "request-unsupported-kind",
-                    "operator",
-                    "pin",
-                    "UNKNOWN",
-                    null,
-                    100L))
+        .isThrownBy(() ->
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "SET",
+                "patch-new",
+                "request-unsupported-kind",
+                "operator",
+                "pin",
+                "UNKNOWN",
+                null,
+                100L))
         .withMessage("expected_pin_kind is not supported");
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
   }
@@ -1133,29 +1109,27 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(SCRIPT_PIN_OPERATION)
                 .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-failure"))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
-                  .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST)).isNotBlank();
-              assertThat(record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION))
-                  .isEqualTo("patch-1");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
-                  .isEqualTo("patch-1");
-              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
+              .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST)).isNotBlank();
+          assertThat(record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION))
+              .isEqualTo("patch-1");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
+              .isEqualTo("patch-1");
+          assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
     assertThat(
             dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+        });
   }
 
   @Test
@@ -1180,11 +1154,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
                   .from(GAME_INSTANCES)
                   .where(GAME_INSTANCES.ID.eq(7L))
                   .fetchOne())
-          .satisfies(
-              record -> {
-                assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-same");
-                assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
-              });
+          .satisfies(record -> {
+            assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-same");
+            assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+          });
     }
   }
 
@@ -1204,11 +1177,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-a");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-a");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+        });
   }
 
   @Test
@@ -1306,13 +1278,12 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID))
-                  .isEqualTo("initial");
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID))
+              .isEqualTo("initial");
+        });
   }
 
   @Test
@@ -1343,11 +1314,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
                 .from(GAME_INSTANCES)
                 .where(GAME_INSTANCES.ID.eq(7L))
                 .fetchOne())
-        .satisfies(
-            record -> {
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
-              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
-            });
+        .satisfies(record -> {
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+          assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
+        });
   }
 
   private void assertConstraintRejected(String constraintName, Object... values) {

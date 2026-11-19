@@ -70,17 +70,15 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     assertThatThrownBy(() -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2}))
         .isInstanceOf(SecurityException.class)
         .hasMessageContaining("same-namespace Game Design");
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("other", "game-design-service"),
-                    () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("other", "game-design-service"),
+                () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-session-service"),
-                    () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-session-service"),
+                () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
         .isInstanceOf(SecurityException.class);
 
     verifyNoInteractions(client);
@@ -92,11 +90,10 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     var verifier = new WorldGameDesignPublicationTerminalVerifier(NAMESPACE, client);
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertThatThrownBy(
-              () ->
-                  withPeer(
-                      peer(NAMESPACE, "game-design-service"),
-                      () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
+      assertThatThrownBy(() ->
+              withPeer(
+                  peer(NAMESPACE, "game-design-service"),
+                  () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("outside owner transactions");
     } finally {
@@ -104,11 +101,10 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     }
     verifyNoInteractions(client);
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-design-service"),
-                    () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-design-service"),
+                () -> verifier.authenticateAndVerifyAndHold(new byte[] {1}, new byte[] {2})))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(client);
   }
@@ -121,12 +117,11 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     var operation = operation();
     var terminal = terminal(operation, Outcome.NO_PUBLICATION);
     try (var upstream = new StubbedGameDesignClient(directory)) {
-      upstream.respondWith(
-          wireRequest -> {
-            var readRequest = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wireRequest);
-            return GameDesignPublicationTerminalReadGrpcCodec.toResponse(
-                readRequest, terminalResult(readRequest, terminal));
-          });
+      upstream.respondWith(wireRequest -> {
+        var readRequest = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wireRequest);
+        return GameDesignPublicationTerminalReadGrpcCodec.toResponse(
+            readRequest, terminalResult(readRequest, terminal));
+      });
       var verifier = new WorldGameDesignPublicationTerminalVerifier(NAMESPACE, upstream.client);
       var verified =
           withPeer(
@@ -156,41 +151,34 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     var substitutedTerminal = terminal(operation, Outcome.PUBLISHED);
     try (var upstream = new StubbedGameDesignClient(directory)) {
       var verifier = new WorldGameDesignPublicationTerminalVerifier(NAMESPACE, upstream.client);
-      upstream.respondWith(
-          wireRequest -> {
-            var readRequest = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wireRequest);
-            var changed =
-                new GameDesignPublicationTerminalReadEvidence.ReadRequest(
-                    1,
-                    readRequest.targetNamespace(),
-                    UUID.randomUUID(),
-                    readRequest.operationBytes());
-            return GameDesignPublicationTerminalReadGrpcCodec.toResponse(
-                changed, terminalResult(changed, expectedTerminal));
-          });
-      assertThatThrownBy(
-              () ->
-                  withPeer(
-                      peer(NAMESPACE, "game-design-service"),
-                      () ->
-                          verifier.authenticateAndVerifyAndHold(
-                              operation.canonicalBytes(), expectedTerminal.canonicalBytes())))
+      upstream.respondWith(wireRequest -> {
+        var readRequest = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wireRequest);
+        var changed =
+            new GameDesignPublicationTerminalReadEvidence.ReadRequest(
+                1, readRequest.targetNamespace(), UUID.randomUUID(), readRequest.operationBytes());
+        return GameDesignPublicationTerminalReadGrpcCodec.toResponse(
+            changed, terminalResult(changed, expectedTerminal));
+      });
+      assertThatThrownBy(() ->
+              withPeer(
+                  peer(NAMESPACE, "game-design-service"),
+                  () ->
+                      verifier.authenticateAndVerifyAndHold(
+                          operation.canonicalBytes(), expectedTerminal.canonicalBytes())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("invalid publication terminal read evidence");
 
-      upstream.respondWith(
-          wireRequest -> {
-            var readRequest = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wireRequest);
-            return GameDesignPublicationTerminalReadGrpcCodec.toResponse(
-                readRequest, terminalResult(readRequest, substitutedTerminal));
-          });
-      assertThatThrownBy(
-              () ->
-                  withPeer(
-                      peer(NAMESPACE, "game-design-service"),
-                      () ->
-                          verifier.authenticateAndVerifyAndHold(
-                              operation.canonicalBytes(), expectedTerminal.canonicalBytes())))
+      upstream.respondWith(wireRequest -> {
+        var readRequest = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wireRequest);
+        return GameDesignPublicationTerminalReadGrpcCodec.toResponse(
+            readRequest, terminalResult(readRequest, substitutedTerminal));
+      });
+      assertThatThrownBy(() ->
+              withPeer(
+                  peer(NAMESPACE, "game-design-service"),
+                  () ->
+                      verifier.authenticateAndVerifyAndHold(
+                          operation.canonicalBytes(), expectedTerminal.canonicalBytes())))
           .isInstanceOf(SecurityException.class)
           .hasMessageContaining("differs from the submitted exact operation or result");
     }
@@ -202,20 +190,18 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     var expected = terminal(operation, Outcome.NO_PUBLICATION);
     var client = mock(GameDesignPublicationTerminalClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            call ->
-                new GameDesignPublicationTerminalReadEvidence.ReadResult(
-                    call.getArgument(0),
-                    GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN,
-                    Optional.empty()));
+        .thenAnswer(call ->
+            new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                call.getArgument(0),
+                GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN,
+                Optional.empty()));
     var verifier = new WorldGameDesignPublicationTerminalVerifier(NAMESPACE, client);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-design-service"),
-                    () ->
-                        verifier.authenticateAndVerifyAndHold(
-                            operation.canonicalBytes(), expected.canonicalBytes())))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-design-service"),
+                () ->
+                    verifier.authenticateAndVerifyAndHold(
+                        operation.canonicalBytes(), expected.canonicalBytes())))
         .isInstanceOf(SecurityException.class)
         .hasMessageContaining("unknown");
   }
@@ -290,15 +276,14 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
             publicationSources);
     var tuples =
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     String workflow =
         PublicationDigestRequestBinding.full(
@@ -348,19 +333,18 @@ public class WorldGameDesignPublicationTerminalVerifierTest {
     var world = operation.world().request();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        owner,
-                        Long.toString(selection.target().gameDesignVersionRowId()),
-                        null,
-                        world.appliedCommitId(),
-                        "WORLD_MANAGEMENT".equals(owner) ? world.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
-                        null,
-                        null))
+            .map(owner ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    owner,
+                    Long.toString(selection.target().gameDesignVersionRowId()),
+                    null,
+                    world.appliedCommitId(),
+                    "WORLD_MANAGEMENT".equals(owner) ? world.contentDigest() : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
+                    null,
+                    null))
             .toList();
     var release =
         new GameDesignPublicationTerminalEvidence.ReleaseContent(

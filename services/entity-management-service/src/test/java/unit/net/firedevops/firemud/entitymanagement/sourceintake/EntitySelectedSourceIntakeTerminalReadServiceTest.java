@@ -167,17 +167,15 @@ class EntitySelectedSourceIntakeTerminalReadServiceTest {
 
         assertThatThrownBy(() -> service.read(terminalRequest))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                error -> {
-                  var status = Status.fromThrowable(error);
-                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-                  assertThat(status.getDescription())
-                      .isEqualTo("Entity terminal receipt storage is unavailable");
-                  assertThat(status.getDescription())
-                      .doesNotContain("private jOOQ", "private Spring");
-                  assertThat(((StatusRuntimeException) error).getCause()).isNull();
-                  assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
-                });
+            .satisfies(error -> {
+              var status = Status.fromThrowable(error);
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription())
+                  .isEqualTo("Entity terminal receipt storage is unavailable");
+              assertThat(status.getDescription()).doesNotContain("private jOOQ", "private Spring");
+              assertThat(((StatusRuntimeException) error).getCause()).isNull();
+              assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+            });
 
         var recovered = service.read(terminalRequest);
         assertThat(recovered.request()).isSameAs(terminalRequest);
@@ -223,10 +221,9 @@ class EntitySelectedSourceIntakeTerminalReadServiceTest {
       otherAccount.detach(previous);
     }
 
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(
-                    NAMESPACE, fixture.wrongOwnerAuthorization()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(
+                NAMESPACE, fixture.wrongOwnerAuthorization()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var accountContext = accountPeer(NAMESPACE);

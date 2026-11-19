@@ -493,10 +493,9 @@ public class DraftCommitCoordinatorRepository {
     }
     VisibilityFence current =
         readVisibilityFence(target)
-            .orElseThrow(
-                () ->
-                    new DraftCommitStateConflictException(
-                        "Selected authored Draft commit is not the current synchronized fence"));
+            .orElseThrow(() ->
+                new DraftCommitStateConflictException(
+                    "Selected authored Draft commit is not the current synchronized fence"));
     if (!current.requestId().equals(requestId)
         || !current.commitId().equals(commitId)
         || !current.inputDigest().equals(inputDigest)
@@ -544,17 +543,14 @@ public class DraftCommitCoordinatorRepository {
     boolean anyApplied = outcomes.stream().anyMatch(state -> state.status() == OwnerStatus.APPLIED);
     boolean unresolved =
         outcomes.stream()
-            .anyMatch(
-                state ->
-                    state.status() == OwnerStatus.UNKNOWN
-                        || state.status() == OwnerStatus.IN_PROGRESS);
+            .anyMatch(state ->
+                state.status() == OwnerStatus.UNKNOWN || state.status() == OwnerStatus.IN_PROGRESS);
     boolean allApplied = outcomes.stream().allMatch(state -> state.status() == OwnerStatus.APPLIED);
     boolean definiteNoApply =
         outcomes.stream()
-                .allMatch(
-                    state ->
-                        state.status() == OwnerStatus.NOT_ATTEMPTED
-                            || state.status() == OwnerStatus.REJECTED)
+                .allMatch(state ->
+                    state.status() == OwnerStatus.NOT_ATTEMPTED
+                        || state.status() == OwnerStatus.REJECTED)
             && outcomes.stream().anyMatch(state -> state.status() == OwnerStatus.REJECTED);
     if (unresolved || (anyApplied && !allApplied) || (!allApplied && !definiteNoApply)) {
       throw new DraftCommitStateConflictException(
@@ -729,10 +725,9 @@ public class DraftCommitCoordinatorRepository {
           ownerStates.stream()
               .filter(candidate -> candidate.owner() == owner)
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new DraftCommitStateConflictException(
-                          "Definitive final-abort evidence cannot omit a required owner result"));
+              .orElseThrow(() ->
+                  new DraftCommitStateConflictException(
+                      "Definitive final-abort evidence cannot omit a required owner result"));
       if (state.status() != OwnerStatus.APPLIED && state.status() != OwnerStatus.REJECTED) {
         throw new DraftCommitStateConflictException(
             "Definitive final-abort evidence requires only exact terminal APPLIED or REJECTED owners");
@@ -740,10 +735,9 @@ public class DraftCommitCoordinatorRepository {
       OwnerOutcome outcome =
           state
               .outcome()
-              .orElseThrow(
-                  () ->
-                      new DraftCommitStateConflictException(
-                          "Definitive final-abort evidence requires durable owner result bytes"));
+              .orElseThrow(() ->
+                  new DraftCommitStateConflictException(
+                      "Definitive final-abort evidence requires durable owner result bytes"));
       requireOutcomeMatches(binding, outcome);
     }
   }
@@ -757,10 +751,9 @@ public class DraftCommitCoordinatorRepository {
           ownerStates.stream()
               .filter(candidate -> candidate.owner() == owner)
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new DraftCommitStateConflictException(
-                          "Definitive final-abort evidence cannot omit a required owner result"));
+              .orElseThrow(() ->
+                  new DraftCommitStateConflictException(
+                      "Definitive final-abort evidence cannot omit a required owner result"));
       resultVector.add(ownerResultJson(state.outcome().orElseThrow()));
     }
     return canonicalJson(resultVector);
@@ -1090,10 +1083,8 @@ public class DraftCommitCoordinatorRepository {
           ownerStates.stream()
               .filter(candidate -> candidate.owner() == owner)
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new DraftCommitStateConflictException(
-                          "Required Draft owner result is missing"));
+              .orElseThrow(() ->
+                  new DraftCommitStateConflictException("Required Draft owner result is missing"));
       OwnerOutcome outcome = state.outcome().orElse(null);
       if (state.status() != OwnerStatus.APPLIED || outcome == null) {
         throw new DraftCommitStateConflictException(

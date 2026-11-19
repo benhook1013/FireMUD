@@ -117,10 +117,9 @@ class CanonicalGameplayLegacyMigrationRepositoryIntegrationTest {
       assertThat(canonical.inventoryRevision()).isEqualTo(java.math.BigInteger.valueOf(7));
       assertThat(canonical.bindings()).isEmpty();
 
-      assertThatThrownBy(
-              () ->
-                  repository.captureSnapshots(
-                      operation.operationId(), emptyLegacySnapshot(), canonical))
+      assertThatThrownBy(() ->
+              repository.captureSnapshots(
+                  operation.operationId(), emptyLegacySnapshot(), canonical))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("rows beyond the inventory clock");
       assertThat(repository.read(operation.operationId()).state())
@@ -304,13 +303,12 @@ class CanonicalGameplayLegacyMigrationRepositoryIntegrationTest {
 
       assertThatThrownBy(owner::migrate)
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-          .satisfies(
-              failure -> {
-                assertThat(failure.getCause()).isSameAs(originalFailure);
-                assertThat(originalFailure.getSuppressed()).hasSize(1);
-                assertThat(originalFailure.getSuppressed()[0])
-                    .hasMessageContaining("reject_owner_block_for_test");
-              });
+          .satisfies(failure -> {
+            assertThat(failure.getCause()).isSameAs(originalFailure);
+            assertThat(originalFailure.getSuppressed()).hasSize(1);
+            assertThat(originalFailure.getSuppressed()[0])
+                .hasMessageContaining("reject_owner_block_for_test");
+          });
       UUID operationId =
           java.util.Objects.requireNonNull(
                   dsl.fetchOne(

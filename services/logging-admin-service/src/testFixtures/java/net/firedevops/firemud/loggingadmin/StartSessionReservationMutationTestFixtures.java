@@ -129,9 +129,8 @@ public final class StartSessionReservationMutationTestFixtures {
     return Arrays.stream(owner.getDeclaredClasses())
         .filter(candidate -> candidate.getSimpleName().equals(MUTATION_CAPABILITY))
         .findFirst()
-        .orElseThrow(
-            () ->
-                new IllegalStateException("private mutation capability is missing from " + owner));
+        .orElseThrow(() ->
+            new IllegalStateException("private mutation capability is missing from " + owner));
   }
 
   private static Object instantiateCapability(Class<?> capabilityType) {

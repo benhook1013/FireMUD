@@ -363,19 +363,17 @@ public class TickServiceImpl implements TickService {
           int max = solo ? 1 : tickMaxCommands;
           String stageMode = solo ? "S" : "N";
           lease.requireOwned();
-          luaTimer.record(
-              () ->
-                  executeFencedScript(
-                      stageScript,
-                      lease,
-                      List.of(
-                          tickQueueControlService.queueKey(
-                              normalizedTenantId, normalizedQueueTargetId),
-                          tickQueueControlService.pendingKey(
-                              normalizedTenantId, normalizedQueueTargetId)),
-                      "stage",
-                      String.valueOf(max),
-                      stageMode));
+          luaTimer.record(() ->
+              executeFencedScript(
+                  stageScript,
+                  lease,
+                  List.of(
+                      tickQueueControlService.queueKey(normalizedTenantId, normalizedQueueTargetId),
+                      tickQueueControlService.pendingKey(
+                          normalizedTenantId, normalizedQueueTargetId)),
+                  "stage",
+                  String.valueOf(max),
+                  stageMode));
           TickStagingService.PendingEntriesReadResult stagedResult =
               tickStagingService.readPendingEntriesForReplay(
                   normalizedTenantId, normalizedQueueTargetId);
@@ -441,20 +439,19 @@ public class TickServiceImpl implements TickService {
             } else {
               try {
                 Object[] rollbackArguments = rollbackArguments(terminalizedBatchEntries);
-                luaTimer.record(
-                    () ->
-                        executeFencedScript(
-                            rollbackScript,
-                            lease,
-                            List.of(
-                                tickQueueControlService.pendingKey(
-                                    normalizedTenantId, normalizedQueueTargetId),
-                                tickQueueControlService.queueKey(
-                                    normalizedTenantId, normalizedQueueTargetId),
-                                tickQueueControlService.commandIndexKey(
-                                    normalizedTenantId, normalizedQueueTargetId)),
-                            "rollback",
-                            rollbackArguments));
+                luaTimer.record(() ->
+                    executeFencedScript(
+                        rollbackScript,
+                        lease,
+                        List.of(
+                            tickQueueControlService.pendingKey(
+                                normalizedTenantId, normalizedQueueTargetId),
+                            tickQueueControlService.queueKey(
+                                normalizedTenantId, normalizedQueueTargetId),
+                            tickQueueControlService.commandIndexKey(
+                                normalizedTenantId, normalizedQueueTargetId)),
+                        "rollback",
+                        rollbackArguments));
                 rollbackSucceeded = true;
               } catch (RuntimeException rollbackFailure) {
                 logger.error(
@@ -533,15 +530,14 @@ public class TickServiceImpl implements TickService {
 
   private void commitPending(
       TickQueueControlService.QueueLockLease lease, Long tenantId, Long queueTargetId) {
-    luaTimer.record(
-        () ->
-            executeFencedScript(
-                commitScript,
-                lease,
-                List.of(
-                    tickQueueControlService.pendingKey(tenantId, queueTargetId),
-                    tickQueueControlService.commandIndexKey(tenantId, queueTargetId)),
-                "commit"));
+    luaTimer.record(() ->
+        executeFencedScript(
+            commitScript,
+            lease,
+            List.of(
+                tickQueueControlService.pendingKey(tenantId, queueTargetId),
+                tickQueueControlService.commandIndexKey(tenantId, queueTargetId)),
+            "commit"));
   }
 
   private void requireResolvedPendingEntries(

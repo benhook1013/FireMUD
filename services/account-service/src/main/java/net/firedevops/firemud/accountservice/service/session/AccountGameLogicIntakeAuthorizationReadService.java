@@ -42,11 +42,10 @@ public final class AccountGameLogicIntakeAuthorizationReadService {
         || TransactionSynchronizationManager.isSynchronizationActive())
       throw Status.FAILED_PRECONDITION.asRuntimeException();
     try {
-      transaction.execute(
-          ignored -> {
-            repository.readHeld(request.binding(), namespace);
-            return null;
-          });
+      transaction.execute(ignored -> {
+        repository.readHeld(request.binding(), namespace);
+        return null;
+      });
     } catch (StatusRuntimeException failure) {
       throw sanitized(Status.fromCode(failure.getStatus().getCode()));
     } catch (IllegalArgumentException | IllegalStateException changed) {

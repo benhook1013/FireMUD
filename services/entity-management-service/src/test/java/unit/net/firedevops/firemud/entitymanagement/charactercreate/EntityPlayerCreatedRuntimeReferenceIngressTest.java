@@ -170,13 +170,12 @@ class EntityPlayerCreatedRuntimeReferenceIngressTest {
                 () -> game.readPlayerCreatedActorRuntimeReference(request))) {
           assertThatThrownBy(read::run)
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure -> {
-                    var status = Status.fromThrowable(failure);
-                    assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-                    assertThat(status.getDescription())
-                        .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
-                  });
+              .satisfies(failure -> {
+                var status = Status.fromThrowable(failure);
+                assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                assertThat(status.getDescription())
+                    .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
+              });
         }
         org.mockito.Mockito.doThrow(new org.jooq.exception.DataAccessException("private detail"))
             .when(creation)
@@ -228,10 +227,9 @@ class EntityPlayerCreatedRuntimeReferenceIngressTest {
         mock(StreamObserver.class);
     var failure = new IllegalStateException("controlled completion callback failure");
     doThrow(failure).when(observer).onCompleted();
-    assertThatThrownBy(
-            () ->
-                new EntityPlayerCreatedRuntimeReferenceGrpcService(owner)
-                    .readPlayerCreatedActorRuntimeReference(validRequest(), observer))
+    assertThatThrownBy(() ->
+            new EntityPlayerCreatedRuntimeReferenceGrpcService(owner)
+                .readPlayerCreatedActorRuntimeReference(validRequest(), observer))
         .isSameAs(failure);
     verify(observer, never()).onError(any());
   }

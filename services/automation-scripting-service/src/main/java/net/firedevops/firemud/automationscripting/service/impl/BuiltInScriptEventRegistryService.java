@@ -140,14 +140,13 @@ public class BuiltInScriptEventRegistryService implements ScriptEventRegistrySer
       throw new IllegalStateException("Built-in event registry field '" + key + "' is required");
     }
     return listValue.stream()
-        .map(
-            element -> {
-              if (!(element instanceof String stringValue) || stringValue.isBlank()) {
-                throw new IllegalStateException(
-                    "Built-in event registry field '" + key + "' must contain strings");
-              }
-              return stringValue;
-            })
+        .map(element -> {
+          if (!(element instanceof String stringValue) || stringValue.isBlank()) {
+            throw new IllegalStateException(
+                "Built-in event registry field '" + key + "' must contain strings");
+          }
+          return stringValue;
+        })
         .toList();
   }
 }

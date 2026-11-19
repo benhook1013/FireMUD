@@ -65,24 +65,22 @@ public final class FreshTenantIdentityEnrollmentService {
     }
 
     FreshTenantCreationEvidence committed =
-        transactionTemplate.execute(
-            status -> {
-              FreshTenantCreationEvidence imported =
-                  associationRepository.importVerified(ownerEvidence);
-              FreshTenantCreationEvidence readback =
-                  associationRepository
-                      .read(ownerEvidence.canonicalTenantId())
-                      .orElseThrow(
-                          () ->
-                              new IllegalStateException(
-                                  "Fresh Account tenant association readback is absent"));
-              if (!ownerEvidence.equals(imported) || !ownerEvidence.equals(readback)) {
-                throw new IllegalStateException(
-                    "Fresh Account tenant association readback differs from owner evidence");
-              }
-              generationRepository.initializeTenantIfAbsent(readback.canonicalTenantId());
-              return readback;
-            });
+        transactionTemplate.execute(status -> {
+          FreshTenantCreationEvidence imported =
+              associationRepository.importVerified(ownerEvidence);
+          FreshTenantCreationEvidence readback =
+              associationRepository
+                  .read(ownerEvidence.canonicalTenantId())
+                  .orElseThrow(() ->
+                      new IllegalStateException(
+                          "Fresh Account tenant association readback is absent"));
+          if (!ownerEvidence.equals(imported) || !ownerEvidence.equals(readback)) {
+            throw new IllegalStateException(
+                "Fresh Account tenant association readback differs from owner evidence");
+          }
+          generationRepository.initializeTenantIfAbsent(readback.canonicalTenantId());
+          return readback;
+        });
     return Objects.requireNonNull(
         committed, "Fresh tenant enrollment transaction returned no result");
   }

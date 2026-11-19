@@ -60,138 +60,133 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
     requireNoAmbientTransaction("Canonical World hold acquisition");
     requireLifecycleTarget(request, lifecycleRequest);
-    return writeTransaction.execute(
-        status -> {
-          requireWritableOwnerTransaction();
-          WorldCanonicalInstanceAssociation association =
-              associationRepository
-                  .readOwnerAssociationInActivationTransaction(request.canonicalGameInstanceId())
-                  .orElseThrow(
-                      () ->
-                          new InvalidHoldEvidenceException(
-                              "Canonical World association is unavailable"));
-          requireAssociationTarget(request, association);
-          if (association.isRunOwnedFixture()) {
-            throw new InvalidHoldEvidenceException(
-                "Run-owned fixture rows cannot acquire canonical initial-admission holds");
-          }
-          requireLifecycleRequestAssociation(lifecycleRequest, association);
-          LockedWorldLifecycle lockedLifecycle = lockWorldLifecycleRow(request, association);
+    return writeTransaction.execute(status -> {
+      requireWritableOwnerTransaction();
+      WorldCanonicalInstanceAssociation association =
+          associationRepository
+              .readOwnerAssociationInActivationTransaction(request.canonicalGameInstanceId())
+              .orElseThrow(() ->
+                  new InvalidHoldEvidenceException("Canonical World association is unavailable"));
+      requireAssociationTarget(request, association);
+      if (association.isRunOwnedFixture()) {
+        throw new InvalidHoldEvidenceException(
+            "Run-owned fixture rows cannot acquire canonical initial-admission holds");
+      }
+      requireLifecycleRequestAssociation(lifecycleRequest, association);
+      LockedWorldLifecycle lockedLifecycle = lockWorldLifecycleRow(request, association);
 
-          long localTenantKey = association.worldPrepareFields().privateTenantKey();
-          Record existing =
-              dsl.fetchOne(
-                  "SELECT * FROM initial_admission_bind_hold "
-                      + "WHERE tenant_id=? AND initial_admission_request_id=? FOR UPDATE",
-                  localTenantKey,
-                  request.initialAdmissionRequestId());
-          if (existing != null) {
-            HoldIdentity identity = requireStoredIdentity(existing, request);
-            String existingStatus = required(existing, "status", String.class);
-            if ("PENDING".equals(existingStatus)) {
-              if (!"ACTIVE".equals(lockedLifecycle.status())
-                  || lockedLifecycle.epoch() != request.activeLifecycleEpoch()) {
-                throw new InvalidHoldEvidenceException(
-                    "Pending canonical World hold lost its exact ACTIVE lifecycle epoch");
-              }
-            } else if (!"COMMITTED".equals(existingStatus) && !"ABORTED".equals(existingStatus)) {
-              throw new InvalidHoldEvidenceException(
-                  "Retained canonical World hold has an unsupported status");
-            }
-            return identity;
-          }
+      long localTenantKey = association.worldPrepareFields().privateTenantKey();
+      Record existing =
+          dsl.fetchOne(
+              "SELECT * FROM initial_admission_bind_hold "
+                  + "WHERE tenant_id=? AND initial_admission_request_id=? FOR UPDATE",
+              localTenantKey,
+              request.initialAdmissionRequestId());
+      if (existing != null) {
+        HoldIdentity identity = requireStoredIdentity(existing, request);
+        String existingStatus = required(existing, "status", String.class);
+        if ("PENDING".equals(existingStatus)) {
           if (!"ACTIVE".equals(lockedLifecycle.status())
               || lockedLifecycle.epoch() != request.activeLifecycleEpoch()) {
             throw new InvalidHoldEvidenceException(
-                "Canonical World hold requires the exact current ACTIVE lifecycle epoch");
+                "Pending canonical World hold lost its exact ACTIVE lifecycle epoch");
           }
+        } else if (!"COMMITTED".equals(existingStatus) && !"ABORTED".equals(existingStatus)) {
+          throw new InvalidHoldEvidenceException(
+              "Retained canonical World hold has an unsupported status");
+        }
+        return identity;
+      }
+      if (!"ACTIVE".equals(lockedLifecycle.status())
+          || lockedLifecycle.epoch() != request.activeLifecycleEpoch()) {
+        throw new InvalidHoldEvidenceException(
+            "Canonical World hold requires the exact current ACTIVE lifecycle epoch");
+      }
 
-          WorldCanonicalInstanceLifecycleEvidence lifecycle =
-              lifecycleRepository
-                  .readForActivationInOwnerTransaction(lifecycleRequest)
-                  .orElseThrow(
-                      () ->
-                          new InvalidHoldEvidenceException(
-                              "Exact canonical World lifecycle evidence is unavailable"));
-          if (!"ACTIVE".equals(lifecycle.lifecycleStatus())
-              || lifecycle.lifecycleEpoch() != request.activeLifecycleEpoch()) {
-            throw new InvalidHoldEvidenceException(
-                "Canonical World hold requires the exact current ACTIVE lifecycle evidence");
-          }
+      WorldCanonicalInstanceLifecycleEvidence lifecycle =
+          lifecycleRepository
+              .readForActivationInOwnerTransaction(lifecycleRequest)
+              .orElseThrow(() ->
+                  new InvalidHoldEvidenceException(
+                      "Exact canonical World lifecycle evidence is unavailable"));
+      if (!"ACTIVE".equals(lifecycle.lifecycleStatus())
+          || lifecycle.lifecycleEpoch() != request.activeLifecycleEpoch()) {
+        throw new InvalidHoldEvidenceException(
+            "Canonical World hold requires the exact current ACTIVE lifecycle evidence");
+      }
 
-          Record activeForRealm =
-              dsl.fetchOne(
-                  "SELECT hold_id FROM initial_admission_bind_hold "
-                      + "WHERE tenant_id=? AND realm_uuid=? "
-                      + "AND status IN ('PENDING','RECONCILIATION_REQUIRED') LIMIT 1",
-                  localTenantKey,
-                  request.realmId());
-          if (activeForRealm != null) {
-            throw new HoldConflictException(
-                "A nonterminal initial-admission hold already owns this canonical realm");
-          }
-
-          UUID holdId = UUID.randomUUID();
-          UUID holdFence = UUID.randomUUID();
-          byte[] canonicalRequestBytes = request.canonicalRequestBytes();
-          dsl.execute(
-              "INSERT INTO initial_admission_bind_hold ("
-                  + "hold_id,hold_fence,tenant_id,realm_uuid,playable_state_namespace_uuid,"
-                  + "playable_state_scope,game_instance_id,version_id,active_lifecycle_epoch,"
-                  + "initial_admission_request_id,request_digest,expected_no_prior_pointer,"
-                  + "expected_catalog_revision,status,diagnostic_expires_at,canonical_target_namespace,"
-                  + "canonical_tenant_id,canonical_world_slug,canonical_game_instance_id,"
-                  + "canonical_version_id,initial_admission_origin,expected_prior_pointer_version,"
-                  + "canonical_request_bytes,hold_binding_digest) "
-                  + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING',CURRENT_TIMESTAMP + INTERVAL '15 minutes',?,?,?,?,?,?,?,?,?)",
-              holdId,
-              holdFence,
+      Record activeForRealm =
+          dsl.fetchOne(
+              "SELECT hold_id FROM initial_admission_bind_hold "
+                  + "WHERE tenant_id=? AND realm_uuid=? "
+                  + "AND status IN ('PENDING','RECONCILIATION_REQUIRED') LIMIT 1",
               localTenantKey,
-              request.realmId(),
-              request.playableStateNamespaceId(),
-              request.playableStateScope(),
-              association.worldPrepareFields().privateGameInstanceKey(),
-              association.worldPrepareFields().localVersionKey(),
-              request.activeLifecycleEpoch(),
-              request.initialAdmissionRequestId(),
-              request.initialAdmissionRequestDigest(),
-              request.initialAdmissionOrigin()
-                  == WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
-              request.expectedCatalogRevision(),
-              request.targetNamespace(),
-              request.canonicalTenantId(),
-              request.worldSlug(),
-              request.canonicalGameInstanceId(),
-              request.canonicalVersionId(),
-              request.initialAdmissionOrigin().name(),
-              request.expectedPriorPointerVersion(),
-              canonicalRequestBytes,
-              request.holdBindingDigest());
-          return new HoldIdentity(request, holdId, holdFence);
-        });
+              request.realmId());
+      if (activeForRealm != null) {
+        throw new HoldConflictException(
+            "A nonterminal initial-admission hold already owns this canonical realm");
+      }
+
+      UUID holdId = UUID.randomUUID();
+      UUID holdFence = UUID.randomUUID();
+      byte[] canonicalRequestBytes = request.canonicalRequestBytes();
+      dsl.execute(
+          "INSERT INTO initial_admission_bind_hold ("
+              + "hold_id,hold_fence,tenant_id,realm_uuid,playable_state_namespace_uuid,"
+              + "playable_state_scope,game_instance_id,version_id,active_lifecycle_epoch,"
+              + "initial_admission_request_id,request_digest,expected_no_prior_pointer,"
+              + "expected_catalog_revision,status,diagnostic_expires_at,canonical_target_namespace,"
+              + "canonical_tenant_id,canonical_world_slug,canonical_game_instance_id,"
+              + "canonical_version_id,initial_admission_origin,expected_prior_pointer_version,"
+              + "canonical_request_bytes,hold_binding_digest) "
+              + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING',CURRENT_TIMESTAMP + INTERVAL '15 minutes',?,?,?,?,?,?,?,?,?)",
+          holdId,
+          holdFence,
+          localTenantKey,
+          request.realmId(),
+          request.playableStateNamespaceId(),
+          request.playableStateScope(),
+          association.worldPrepareFields().privateGameInstanceKey(),
+          association.worldPrepareFields().localVersionKey(),
+          request.activeLifecycleEpoch(),
+          request.initialAdmissionRequestId(),
+          request.initialAdmissionRequestDigest(),
+          request.initialAdmissionOrigin()
+              == WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+          request.expectedCatalogRevision(),
+          request.targetNamespace(),
+          request.canonicalTenantId(),
+          request.worldSlug(),
+          request.canonicalGameInstanceId(),
+          request.canonicalVersionId(),
+          request.initialAdmissionOrigin().name(),
+          request.expectedPriorPointerVersion(),
+          canonicalRequestBytes,
+          request.holdBindingDigest());
+      return new HoldIdentity(request, holdId, holdFence);
+    });
   }
 
   /** Historical immutable identity read. Absence is not an abort or a release signal. */
   public Optional<HoldIdentity> readIdentity(Request request) {
     Objects.requireNonNull(request, "request");
     requireNoAmbientTransaction("Canonical World hold identity read");
-    return readTransaction.execute(
-        status -> {
-          requireReadOnlyRepeatableReadOwnerTransaction();
-          Record row =
-              dsl.fetchOne(
-                  "SELECT * FROM initial_admission_bind_hold "
-                      + "WHERE canonical_target_namespace=? AND canonical_tenant_id=? "
-                      + "AND canonical_world_slug=? AND canonical_game_instance_id=? "
-                      + "AND initial_admission_request_id=? AND canonical_request_bytes=?",
-                  request.targetNamespace(),
-                  request.canonicalTenantId(),
-                  request.worldSlug(),
-                  request.canonicalGameInstanceId(),
-                  request.initialAdmissionRequestId(),
-                  request.canonicalRequestBytes());
-          return row == null ? Optional.empty() : Optional.of(requireStoredIdentity(row, request));
-        });
+    return readTransaction.execute(status -> {
+      requireReadOnlyRepeatableReadOwnerTransaction();
+      Record row =
+          dsl.fetchOne(
+              "SELECT * FROM initial_admission_bind_hold "
+                  + "WHERE canonical_target_namespace=? AND canonical_tenant_id=? "
+                  + "AND canonical_world_slug=? AND canonical_game_instance_id=? "
+                  + "AND initial_admission_request_id=? AND canonical_request_bytes=?",
+              request.targetNamespace(),
+              request.canonicalTenantId(),
+              request.worldSlug(),
+              request.canonicalGameInstanceId(),
+              request.initialAdmissionRequestId(),
+              request.canonicalRequestBytes());
+      return row == null ? Optional.empty() : Optional.of(requireStoredIdentity(row, request));
+    });
   }
 
   /** Read-only same-snapshot observation of durable hold status and current World lifecycle. */
@@ -201,36 +196,32 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
     requireNoAmbientTransaction("Canonical World hold state read");
     requireLifecycleTarget(identity.request(), lifecycleRequest);
-    return readTransaction.execute(
-        status -> {
-          requireReadOnlyRepeatableReadOwnerTransaction();
-          Record row =
-              dsl.fetchOne(
-                  "SELECT * FROM initial_admission_bind_hold WHERE hold_id=? AND hold_fence=?",
-                  identity.holdId(),
-                  identity.holdFence());
-          if (row == null) return Optional.empty();
-          requireStoredIdentity(row, identity.request(), identity);
-          WorldCanonicalInstanceAssociation association =
-              associationRepository
-                  .readOwnerAssociationInOwnerTransaction(
-                      identity.request().canonicalGameInstanceId())
-                  .orElseThrow(
-                      () ->
-                          new InvalidHoldEvidenceException(
-                              "Canonical World association is unavailable in the hold snapshot"));
-          requireAssociationTarget(identity.request(), association);
-          WorldCanonicalInstanceLifecycleEvidence lifecycle =
-              lifecycleRepository
-                  .readForCurrentLocationInOwnerTransaction(lifecycleRequest)
-                  .orElseThrow(
-                      () ->
-                          new InvalidHoldEvidenceException(
-                              "Canonical World lifecycle is unavailable in the hold snapshot"));
-          return Optional.of(
-              new WorldCanonicalInitialAdmissionHoldState(
-                  identity, parseStatus(required(row, "status", String.class)), lifecycle));
-        });
+    return readTransaction.execute(status -> {
+      requireReadOnlyRepeatableReadOwnerTransaction();
+      Record row =
+          dsl.fetchOne(
+              "SELECT * FROM initial_admission_bind_hold WHERE hold_id=? AND hold_fence=?",
+              identity.holdId(),
+              identity.holdFence());
+      if (row == null) return Optional.empty();
+      requireStoredIdentity(row, identity.request(), identity);
+      WorldCanonicalInstanceAssociation association =
+          associationRepository
+              .readOwnerAssociationInOwnerTransaction(identity.request().canonicalGameInstanceId())
+              .orElseThrow(() ->
+                  new InvalidHoldEvidenceException(
+                      "Canonical World association is unavailable in the hold snapshot"));
+      requireAssociationTarget(identity.request(), association);
+      WorldCanonicalInstanceLifecycleEvidence lifecycle =
+          lifecycleRepository
+              .readForCurrentLocationInOwnerTransaction(lifecycleRequest)
+              .orElseThrow(() ->
+                  new InvalidHoldEvidenceException(
+                      "Canonical World lifecycle is unavailable in the hold snapshot"));
+      return Optional.of(
+          new WorldCanonicalInitialAdmissionHoldState(
+              identity, parseStatus(required(row, "status", String.class)), lifecycle));
+    });
   }
 
   /** Applies only an exact terminal Game Session owner proof through the guarded SQL finalizer. */
@@ -250,54 +241,53 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     String proofBytesDigest = prefixedDigest(proofBytes);
     String ownerProofDigest = proof.proofDigest().substring("sha256:".length());
 
-    writeTransaction.executeWithoutResult(
-        status -> {
-          requireWritableOwnerTransaction();
-          // Keep the preliminary status check unlocked. The guarded finalizer locks the actual
-          // World lifecycle row first and the hold second, matching acquisition and termination.
-          Record held =
-              dsl.fetchOne(
-                  "SELECT * FROM initial_admission_bind_hold WHERE hold_id=?", identity.holdId());
-          if (held == null) {
-            throw new InvalidHoldEvidenceException("Canonical World hold identity is not retained");
-          }
-          requireStoredIdentity(held, identity.request(), identity);
-          String currentStatus = required(held, "status", String.class);
-          if ("COMMITTED".equals(currentStatus) || "ABORTED".equals(currentStatus)) {
-            byte[] currentProof = held.get("canonical_owner_proof_bytes", byte[].class);
-            String currentDigest = held.get("canonical_owner_proof_digest", String.class);
-            if (currentStatus.equals(proof.outcome().name())
-                && Arrays.equals(currentProof, proofBytes)
-                && proofBytesDigest.equals(currentDigest)) {
-              return;
-            }
-            throw new InvalidHoldEvidenceException(
-                "Canonical World hold is already settled by a different terminal proof");
-          }
-          if (!"PENDING".equals(currentStatus)) {
-            throw new InvalidHoldEvidenceException(
-                "Canonical World hold is not in its exact pending state");
-          }
-
-          Long pointerVersion = proof.committedPointerVersion();
-          String auditEventId =
-              proof.auditEventId() == null ? null : Long.toString(proof.auditEventId());
+    writeTransaction.executeWithoutResult(status -> {
+      requireWritableOwnerTransaction();
+      // Keep the preliminary status check unlocked. The guarded finalizer locks the actual
+      // World lifecycle row first and the hold second, matching acquisition and termination.
+      Record held =
           dsl.fetchOne(
-              "SELECT world_finalize_canonical_initial_admission_hold("
-                  + "?::uuid,?::uuid,?::text,?::text,?::text,?::text,?::bigint,"
-                  + "?::timestamptz,?::boolean,?::bytea,?::text)",
-              identity.holdId(),
-              identity.holdFence(),
-              proof.outcome().name(),
-              identity.request().initialAdmissionRequestId(),
-              ownerProofDigest,
-              auditEventId,
-              pointerVersion,
-              OffsetDateTime.ofInstant(proof.terminalAt(), ZoneOffset.UTC),
-              proof.positiveDurableAbort(),
-              proofBytes,
-              proofBytesDigest);
-        });
+              "SELECT * FROM initial_admission_bind_hold WHERE hold_id=?", identity.holdId());
+      if (held == null) {
+        throw new InvalidHoldEvidenceException("Canonical World hold identity is not retained");
+      }
+      requireStoredIdentity(held, identity.request(), identity);
+      String currentStatus = required(held, "status", String.class);
+      if ("COMMITTED".equals(currentStatus) || "ABORTED".equals(currentStatus)) {
+        byte[] currentProof = held.get("canonical_owner_proof_bytes", byte[].class);
+        String currentDigest = held.get("canonical_owner_proof_digest", String.class);
+        if (currentStatus.equals(proof.outcome().name())
+            && Arrays.equals(currentProof, proofBytes)
+            && proofBytesDigest.equals(currentDigest)) {
+          return;
+        }
+        throw new InvalidHoldEvidenceException(
+            "Canonical World hold is already settled by a different terminal proof");
+      }
+      if (!"PENDING".equals(currentStatus)) {
+        throw new InvalidHoldEvidenceException(
+            "Canonical World hold is not in its exact pending state");
+      }
+
+      Long pointerVersion = proof.committedPointerVersion();
+      String auditEventId =
+          proof.auditEventId() == null ? null : Long.toString(proof.auditEventId());
+      dsl.fetchOne(
+          "SELECT world_finalize_canonical_initial_admission_hold("
+              + "?::uuid,?::uuid,?::text,?::text,?::text,?::text,?::bigint,"
+              + "?::timestamptz,?::boolean,?::bytea,?::text)",
+          identity.holdId(),
+          identity.holdFence(),
+          proof.outcome().name(),
+          identity.request().initialAdmissionRequestId(),
+          ownerProofDigest,
+          auditEventId,
+          pointerVersion,
+          OffsetDateTime.ofInstant(proof.terminalAt(), ZoneOffset.UTC),
+          proof.positiveDurableAbort(),
+          proofBytes,
+          proofBytesDigest);
+    });
   }
 
   private static void requireTerminalProof(

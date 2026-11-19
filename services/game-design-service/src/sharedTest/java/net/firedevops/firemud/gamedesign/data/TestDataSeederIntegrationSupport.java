@@ -294,16 +294,15 @@ public abstract class TestDataSeederIntegrationSupport {
 
   protected void writeVersionStateEpoch(
       TransactionTemplate transaction, String tenantId, Long versionId, long epoch) {
-    transaction.executeWithoutResult(
-        status -> {
-          int updated =
-              dsl.execute(
-                  "update version set version_state_epoch = ? where tenant_id = ? and id = ?",
-                  epoch,
-                  tenantId,
-                  versionId);
-          assertThat(updated).isOne();
-        });
+    transaction.executeWithoutResult(status -> {
+      int updated =
+          dsl.execute(
+              "update version set version_state_epoch = ? where tenant_id = ? and id = ?",
+              epoch,
+              tenantId,
+              versionId);
+      assertThat(updated).isOne();
+    });
   }
 
   protected Fixture prepareFixture(Path testDirectory) throws Exception {
@@ -524,10 +523,9 @@ public abstract class TestDataSeederIntegrationSupport {
     flyway.migrate();
     if (prepareExistingOwner) {
       new TransactionTemplate(transactionManager)
-          .executeWithoutResult(
-              status ->
-                  creationRepository.createCandidate(
-                      NAMESPACE, operationId, "1", "Demo Game", "Seed game"));
+          .executeWithoutResult(status ->
+              creationRepository.createCandidate(
+                  NAMESPACE, operationId, "1", "Demo Game", "Seed game"));
       ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
       seeder.run(new DefaultApplicationArguments(new String[] {}));
     }

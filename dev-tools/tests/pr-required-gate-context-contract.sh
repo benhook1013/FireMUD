@@ -3703,7 +3703,7 @@ function markerAccepted(overrides = {}) {
   ]) assert.equal(markerAccepted(overrides), false);
   assert.equal(await verify(), true);
   const withDependencyScope = d => {
-    const base = "fe9873c01fc006c5d9238673d047127e90ef01f5";
+    const base = "3b81c438ddf473c94ad0424ad9a979d7070091e4";
     d.pr = "3469";
     d.source.display_title = d.source.display_title.replace("pr-3390", "pr-3469").replace(baseSha, base);
     d.identity.baseSha = base;

@@ -54,12 +54,11 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
         .save(Mono.just(definition))
         .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
         .then(
-            Mono.fromSupplier(
-                () -> {
-                  routes.put(route.routeId(), route);
-                  logger.info("Upserted route {} -> {}", route.routeId(), route.uri());
-                  return route;
-                }));
+            Mono.fromSupplier(() -> {
+              routes.put(route.routeId(), route);
+              logger.info("Upserted route {} -> {}", route.routeId(), route.uri());
+              return route;
+            }));
   }
 
   @Override
@@ -69,19 +68,17 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
         .delete(Mono.just(routeId))
         .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
         .thenReturn(true)
-        .doOnNext(
-            removed -> {
-              routes.remove(routeId);
-              logger.info("Removed route {}", routeId);
-            })
+        .doOnNext(removed -> {
+          routes.remove(routeId);
+          logger.info("Removed route {}", routeId);
+        })
         .onErrorResume(
             NotFoundException.class,
             ex ->
-                Mono.fromSupplier(
-                    () -> {
-                      routes.remove(routeId);
-                      logger.info("Route {} not found", routeId);
-                      return false;
-                    }));
+                Mono.fromSupplier(() -> {
+                  routes.remove(routeId);
+                  logger.info("Route {} not found", routeId);
+                  return false;
+                }));
   }
 }

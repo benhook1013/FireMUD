@@ -206,10 +206,9 @@ class AccountGameplayAdmissionCallerVerifierTest {
     AccountJwtJwksTrustedSource source = mock(AccountJwtJwksTrustedSource.class);
     when(source.sourceIdentity()).thenAnswer(invocation -> activeIdentity.get());
     when(source.load())
-        .thenAnswer(
-            invocation ->
-                new PublicJwksSnapshot(
-                    activeIdentity.get(), activeJwks.get().getBytes(StandardCharsets.UTF_8)));
+        .thenAnswer(invocation ->
+            new PublicJwksSnapshot(
+                activeIdentity.get(), activeJwks.get().getBytes(StandardCharsets.UTF_8)));
     String oldToken = fixture.signedToken(signingPair, fixture.initialClaims());
     CommittedCandidateVerificationData oldCandidate =
         fixture.candidate(oldToken, ACCOUNT_ID, false, false);

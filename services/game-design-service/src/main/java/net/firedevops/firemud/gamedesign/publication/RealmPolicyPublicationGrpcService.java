@@ -178,10 +178,9 @@ public final class RealmPolicyPublicationGrpcService
   private static boolean containsSelector(
       PublishedRealmEntryPolicySetEvidence evidence, String worldSlug, String realmSlug) {
     return evidence.policies().stream()
-        .anyMatch(
-            policy ->
-                policy.policy().worldSlug().equals(worldSlug)
-                    && policy.policy().realmSlug().equals(realmSlug));
+        .anyMatch(policy ->
+            policy.policy().worldSlug().equals(worldSlug)
+                && policy.policy().realmSlug().equals(realmSlug));
   }
 
   private static void requireExactTarget(

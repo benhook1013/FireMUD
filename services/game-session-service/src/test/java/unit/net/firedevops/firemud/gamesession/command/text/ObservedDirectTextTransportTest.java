@@ -32,10 +32,8 @@ class ObservedDirectTextTransportTest {
 
   @Test
   void constructorRejectsNonNumericTransportIdAndNonV4ProxyId() {
-    assertThatThrownBy(
-            () ->
-                new ObservedDirectTextTransport(
-                    "transport-hash", UUID.fromString(PROXY_CONNECTION_ID)))
+    assertThatThrownBy(() ->
+            new ObservedDirectTextTransport("transport-hash", UUID.fromString(PROXY_CONNECTION_ID)))
         .isInstanceOf(IllegalArgumentException.class);
     for (String invalidSession : List.of("0", "-1", "9223372036854775808")) {
       assertThat(
@@ -43,10 +41,9 @@ class ObservedDirectTextTransportTest {
                   "trusted_tcp_proxy", invalidSession, PROXY_CONNECTION_ID))
           .isEmpty();
     }
-    assertThatThrownBy(
-            () ->
-                new ObservedDirectTextTransport(
-                    "41", UUID.fromString("00000000-0000-0000-0000-000000000000")))
+    assertThatThrownBy(() ->
+            new ObservedDirectTextTransport(
+                "41", UUID.fromString("00000000-0000-0000-0000-000000000000")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -55,14 +52,13 @@ class ObservedDirectTextTransportTest {
     ObservedDirectTextTransport observed =
         new ObservedDirectTextTransport("41", UUID.fromString(PROXY_CONNECTION_ID));
 
-    assertThatThrownBy(
-            () ->
-                new TextCommandDispatchRequest(
-                    "42",
-                    new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
-                    false,
-                    Optional.empty(),
-                    Optional.of(observed)))
+    assertThatThrownBy(() ->
+            new TextCommandDispatchRequest(
+                "42",
+                new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+                false,
+                Optional.empty(),
+                Optional.of(observed)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

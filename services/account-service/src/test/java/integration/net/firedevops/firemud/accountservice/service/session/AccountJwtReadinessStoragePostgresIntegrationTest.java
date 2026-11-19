@@ -166,13 +166,12 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     ReadinessProbePlan planTemplate =
         context
             .transaction()
-            .execute(
-                status -> {
-                  ReadinessProbePlan candidate =
-                      owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory);
-                  status.setRollbackOnly();
-                  return candidate;
-                });
+            .execute(status -> {
+              ReadinessProbePlan candidate =
+                  owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt, inventory);
+              status.setRollbackOnly();
+              return candidate;
+            });
     assertThat(planTemplate).isNotNull();
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
 
@@ -190,13 +189,12 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     ReadinessProbePlan legacyPlanTemplate =
         context
             .transaction()
-            .execute(
-                status -> {
-                  ReadinessProbePlan candidate =
-                      owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt);
-                  status.setRollbackOnly();
-                  return candidate;
-                });
+            .execute(status -> {
+              ReadinessProbePlan candidate =
+                  owner.readiness().planCurrent(BINDING, owner.trust(), plannedAt);
+              status.setRollbackOnly();
+              return candidate;
+            });
     assertThat(legacyPlanTemplate).isNotNull();
     assertThat(legacyPlanTemplate.planVersion()).isEqualTo(1);
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
@@ -520,11 +518,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(plan.expectedFence().publishedActive()).isEmpty();
     assertThat(plan.entries())
         .hasSize(8)
-        .allSatisfy(
-            entry -> {
-              assertThat(entry.expectedActive()).isEmpty();
-              assertThat(entry.state()).isEqualTo(ProbeState.PLANNED);
-            });
+        .allSatisfy(entry -> {
+          assertThat(entry.expectedActive()).isEmpty();
+          assertThat(entry.state()).isEqualTo(ProbeState.PLANNED);
+        });
     assertThat(count(context, "account_jwt_readiness_validator_pods")).isEqualTo(12L);
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_entries")).isEqualTo(8L);
@@ -608,42 +605,39 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             observationContext.operationDigest());
     InventorySnapshot wrongPurposeInventory =
         completeInventorySnapshot(Instant.ofEpochSecond(databaseNow), wrongPurpose);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .planCurrent(
-                                BINDING,
-                                owner.trust(),
-                                Instant.ofEpochSecond(databaseNow),
-                                wrongPurposeInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .planCurrent(
+                            BINDING,
+                            owner.trust(),
+                            Instant.ofEpochSecond(databaseNow),
+                            wrongPurposeInventory)))
         .isInstanceOf(AccountJwtReadinessProbeRepository.InventoryPlanConflictException.class);
     InventorySnapshot changedInventory =
         completeInventorySnapshot(
             Instant.ofEpochSecond(databaseNow), "10.11.0.99", observationContext);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .planCurrent(
-                                BINDING,
-                                owner.trust(),
-                                Instant.ofEpochSecond(databaseNow),
-                                changedInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .planCurrent(
+                            BINDING,
+                            owner.trust(),
+                            Instant.ofEpochSecond(databaseNow),
+                            changedInventory)))
         .isInstanceOf(AccountJwtReadinessProbeRepository.InventoryPlanConflictException.class);
 
     ProbeEntry plannedCanary =
         plan.entries().stream()
-            .filter(
-                entry ->
-                    entry.validatorId().equals("account-service")
-                        && entry.probeKind() == AccountMountedJwtSignerBundle.ProbeKind.CANARY)
+            .filter(entry ->
+                entry.validatorId().equals("account-service")
+                    && entry.probeKind() == AccountMountedJwtSignerBundle.ProbeKind.CANARY)
             .findFirst()
             .orElseThrow();
     Path privateMount = Files.createDirectory(tempDirectory.resolve("private-mount"));
@@ -742,23 +736,21 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
         .extracting(pod -> pod.target().exactPodEndpoint().orElseThrow().toString())
         .containsExactly("grpcs://10.11.0.11:9443", "grpcs://10.11.0.12:9443");
     assertThat(expectedPods)
-        .allSatisfy(
-            pod -> {
-              assertThat(pod.planDigest()).isEqualTo(plan.planDigest());
-              assertThat(pod.jti()).isEqualTo(issuedEntry.jti());
-              assertThat(pod.target().inventorySnapshotDigest())
-                  .isEqualTo(planningInventory.digest());
-              assertThat(pod.target().inventoryBindingDigest())
-                  .isEqualTo(planningInventory.inventoryBindingDigest());
-              assertThat(pod.target().applicabilityMatrixDigest())
-                  .isEqualTo(plan.applicabilityMatrixDigest());
-              assertThat(pod.target().namespaceUid()).isEqualTo(NAMESPACE_UID);
-              assertThat(pod.target().exactPodEndpoint()).isPresent();
-              assertThat(pod.target().canonicalServiceUri())
-                  .contains("spiffe://firemud/ns/firemud-prod/sa/account-jwt-validator");
-              assertThat(pod.target().podLeafSpkiSha256()).isPresent();
-              assertThat(pod.target().expectation()).isEqualTo(ProbeExpectation.ACCEPT);
-            });
+        .allSatisfy(pod -> {
+          assertThat(pod.planDigest()).isEqualTo(plan.planDigest());
+          assertThat(pod.jti()).isEqualTo(issuedEntry.jti());
+          assertThat(pod.target().inventorySnapshotDigest()).isEqualTo(planningInventory.digest());
+          assertThat(pod.target().inventoryBindingDigest())
+              .isEqualTo(planningInventory.inventoryBindingDigest());
+          assertThat(pod.target().applicabilityMatrixDigest())
+              .isEqualTo(plan.applicabilityMatrixDigest());
+          assertThat(pod.target().namespaceUid()).isEqualTo(NAMESPACE_UID);
+          assertThat(pod.target().exactPodEndpoint()).isPresent();
+          assertThat(pod.target().canonicalServiceUri())
+              .contains("spiffe://firemud/ns/firemud-prod/sa/account-jwt-validator");
+          assertThat(pod.target().podLeafSpkiSha256()).isPresent();
+          assertThat(pod.target().expectation()).isEqualTo(ProbeExpectation.ACCEPT);
+        });
 
     var selector = ownerSelector(plan, issuedEntry, expectedPods.getFirst());
     var ownerEvidence =
@@ -772,65 +764,62 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertThat(ownerEvidence.plan().planDigest()).isEqualTo(plan.planDigest());
     assertThat(ownerEvidence.entry()).isEqualTo(issuedEntry);
     assertThat(ownerEvidence.expectedPod()).isEqualTo(expectedPods.getFirst());
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .readCurrentProbeOwner(
-                                BINDING,
-                                owner.trust(),
-                                ownerSelector(
-                                    plan,
-                                    issuedEntry,
-                                    expectedPods.getFirst(),
-                                    issuedEntry.expectedActive(),
-                                    "inventory-r2",
-                                    expectedPods.getFirst().target().inventorySnapshotDigest()),
-                                refreshedInventory,
-                                BINDING.namespace())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .readCurrentProbeOwner(
+                            BINDING,
+                            owner.trust(),
+                            ownerSelector(
+                                plan,
+                                issuedEntry,
+                                expectedPods.getFirst(),
+                                issuedEntry.expectedActive(),
+                                "inventory-r2",
+                                expectedPods.getFirst().target().inventorySnapshotDigest()),
+                            refreshedInventory,
+                            BINDING.namespace())))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .readCurrentProbeOwner(
-                                BINDING,
-                                owner.trust(),
-                                ownerSelector(
-                                    plan,
-                                    issuedEntry,
-                                    expectedPods.getFirst(),
-                                    issuedEntry.expectedActive(),
-                                    "inventory-r1",
-                                    "e".repeat(64)),
-                                refreshedInventory,
-                                BINDING.namespace())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .readCurrentProbeOwner(
+                            BINDING,
+                            owner.trust(),
+                            ownerSelector(
+                                plan,
+                                issuedEntry,
+                                expectedPods.getFirst(),
+                                issuedEntry.expectedActive(),
+                                "inventory-r1",
+                                "e".repeat(64)),
+                            refreshedInventory,
+                            BINDING.namespace())))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .readCurrentProbeOwner(
-                                BINDING,
-                                owner.trust(),
-                                ownerSelector(
-                                    plan,
-                                    issuedEntry,
-                                    expectedPods.getFirst(),
-                                    issuedEntry.expectedActive(),
-                                    expectedPods.getFirst().target().inventoryBindingRevision(),
-                                    expectedPods.getFirst().target().inventoryBindingDigest()),
-                                refreshedInventory,
-                                BINDING.namespace())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .readCurrentProbeOwner(
+                            BINDING,
+                            owner.trust(),
+                            ownerSelector(
+                                plan,
+                                issuedEntry,
+                                expectedPods.getFirst(),
+                                issuedEntry.expectedActive(),
+                                expectedPods.getFirst().target().inventoryBindingRevision(),
+                                expectedPods.getFirst().target().inventoryBindingDigest()),
+                            refreshedInventory,
+                            BINDING.namespace())))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
     var inventedActiveFence =
         ownerSelector(
@@ -838,37 +827,35 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             issuedEntry,
             expectedPods.getFirst(),
             Optional.of(new AccountJwtSignerDesiredStateRepository.ActiveSigner("2", "old-key")));
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .readCurrentProbeOwner(
-                                BINDING,
-                                owner.trust(),
-                                inventedActiveFence,
-                                refreshedInventory,
-                                BINDING.namespace())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .readCurrentProbeOwner(
+                            BINDING,
+                            owner.trust(),
+                            inventedActiveFence,
+                            refreshedInventory,
+                            BINDING.namespace())))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
 
     AuthenticatedAcceptance firstAcceptance =
         testAcceptance(issuedEntry, expectedPods.getFirst(), databaseNow);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .recordPodAcceptance(
-                                BINDING,
-                                owner.trust(),
-                                issuedEntry,
-                                expectedPods.getFirst(),
-                                firstAcceptance,
-                                changedInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordPodAcceptance(
+                            BINDING,
+                            owner.trust(),
+                            issuedEntry,
+                            expectedPods.getFirst(),
+                            firstAcceptance,
+                            changedInventory)))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
     assertThat(count(context, "account_jwt_readiness_pod_receipts")).isZero();
 
@@ -879,38 +866,36 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             databaseNow,
             issuedEntry.targetKid(),
             "grpcs://192.0.2.1:9443");
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .recordPodAcceptance(
-                                BINDING,
-                                owner.trust(),
-                                issuedEntry,
-                                expectedPods.getFirst(),
-                                wrongEndpoint,
-                                refreshedInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordPodAcceptance(
+                            BINDING,
+                            owner.trust(),
+                            issuedEntry,
+                            expectedPods.getFirst(),
+                            wrongEndpoint,
+                            refreshedInventory)))
         .isInstanceOf(AccountJwtReadinessProbeRepository.IdempotencyConflictException.class);
     AuthenticatedAcceptance wrongKid =
         testAcceptance(
             issuedEntry, expectedPods.getFirst(), databaseNow, issuedEntry.targetKid() + "-wrong");
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .recordPodAcceptance(
-                                BINDING,
-                                owner.trust(),
-                                issuedEntry,
-                                expectedPods.getFirst(),
-                                wrongKid,
-                                refreshedInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordPodAcceptance(
+                            BINDING,
+                            owner.trust(),
+                            issuedEntry,
+                            expectedPods.getFirst(),
+                            wrongKid,
+                            refreshedInventory)))
         .isInstanceOf(AccountJwtReadinessProbeRepository.IdempotencyConflictException.class);
 
     ProbeEntry partial =
@@ -952,20 +937,19 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             databaseNow,
             issuedEntry.targetKid(),
             "grpcs://192.0.2.2:9443");
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .recordPodAcceptance(
-                                BINDING,
-                                owner.trust(),
-                                issuedEntry,
-                                expectedPods.getFirst(),
-                                mismatchedDuplicate,
-                                refreshedInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordPodAcceptance(
+                            BINDING,
+                            owner.trust(),
+                            issuedEntry,
+                            expectedPods.getFirst(),
+                            mismatchedDuplicate,
+                            refreshedInventory)))
         .isInstanceOf(AccountJwtReadinessProbeRepository.IdempotencyConflictException.class);
     assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(1L);
 
@@ -1018,20 +1002,19 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             databaseNow,
             issuedEntry.targetKid(),
             "grpcs://192.0.2.3:9443");
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .recordPodAcceptance(
-                                BINDING,
-                                owner.trust(),
-                                verified,
-                                expectedPods.get(1),
-                                changedClosedReceipt,
-                                refreshedInventory)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .recordPodAcceptance(
+                            BINDING,
+                            owner.trust(),
+                            verified,
+                            expectedPods.get(1),
+                            changedClosedReceipt,
+                            refreshedInventory)))
         .isInstanceOf(AccountJwtReadinessProbeRepository.IdempotencyConflictException.class);
 
     AccountJwtReadinessProbeRepository restartedRepository =
@@ -1088,44 +1071,38 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     assertIndependentPartialPromotionInsertsRejected(context, owner, proof, exactPreimage);
     assertThatThrownBy(
             () -> insertDirectPromotion(context, owner, proof, "0".repeat(64), exactPreimage))
-        .satisfies(
-            failure ->
-                assertThat(postgresConstraint(failure))
-                    .isEqualTo("account_jwt_signer_promotion_readiness_digest"));
+        .satisfies(failure ->
+            assertThat(postgresConstraint(failure))
+                .isEqualTo("account_jwt_signer_promotion_readiness_digest"));
     String changedProofText =
         new String(exactPreimage, StandardCharsets.UTF_8)
             .replace(
                 proof.inventoryEvidenceReference(),
                 proof.inventoryEvidenceReference() + ":changed");
     byte[] changedPreimage = changedProofText.getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                insertDirectPromotion(
-                    context, owner, proof, sha256(changedPreimage), changedPreimage))
-        .satisfies(
-            failure ->
-                assertThat(postgresConstraint(failure))
-                    .isEqualTo("account_jwt_signer_promotion_readiness_binding"));
+    assertThatThrownBy(() ->
+            insertDirectPromotion(context, owner, proof, sha256(changedPreimage), changedPreimage))
+        .satisfies(failure ->
+            assertThat(postgresConstraint(failure))
+                .isEqualTo("account_jwt_signer_promotion_readiness_binding"));
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () -> {
-                      insertDirectGenerationAbortReceipt(context, owner);
-                      insertDirectPromotionInCurrentTransaction(
-                          context,
-                          owner,
-                          proof,
-                          UUID.randomUUID(),
-                          proof.readinessEvidenceDigest(),
-                          exactPreimage);
-                      return null;
-                    }))
-        .satisfies(
-            failure ->
-                assertThat(postgresConstraint(failure))
-                    .isEqualTo("account_jwt_signer_promotion_insert_binding"));
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () -> {
+                  insertDirectGenerationAbortReceipt(context, owner);
+                  insertDirectPromotionInCurrentTransaction(
+                      context,
+                      owner,
+                      proof,
+                      UUID.randomUUID(),
+                      proof.readinessEvidenceDigest(),
+                      exactPreimage);
+                  return null;
+                }))
+        .satisfies(failure ->
+            assertThat(postgresConstraint(failure))
+                .isEqualTo("account_jwt_signer_promotion_insert_binding"));
     assertThat(count(context, "account_jwt_signer_generation_abort_receipts")).isZero();
 
     var publicationEvidence = proof.publication();
@@ -1184,40 +1161,36 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                 "Prepared promotion must retain its exact readiness preimage")
             .get("readiness_evidence_preimage", byte[].class);
     assertThat(persistedPreimage).isEqualTo(exactPreimage);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "UPDATE account_jwt_signer_promotion_operations "
-                                    + "SET readiness_evidence_digest = ? WHERE operation_id = ?",
-                                "0".repeat(64),
-                                prepared.operationId())))
-        .satisfies(
-            failure ->
-                assertThat(postgresConstraint(failure))
-                    .isEqualTo("account_jwt_signer_operation_immutable"));
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_jwt_signer_promotion_operations "
+                                + "SET readiness_evidence_digest = ? WHERE operation_id = ?",
+                            "0".repeat(64),
+                            prepared.operationId())))
+        .satisfies(failure ->
+            assertThat(postgresConstraint(failure))
+                .isEqualTo("account_jwt_signer_operation_immutable"));
     byte[] changedStoredPreimage = exactPreimage.clone();
     changedStoredPreimage[0] ^= 1;
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "UPDATE account_jwt_signer_promotion_operations "
-                                    + "SET readiness_evidence_preimage = ? WHERE operation_id = ?",
-                                changedStoredPreimage,
-                                prepared.operationId())))
-        .satisfies(
-            failure ->
-                assertThat(postgresConstraint(failure))
-                    .isEqualTo("account_jwt_signer_operation_immutable"));
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_jwt_signer_promotion_operations "
+                                + "SET readiness_evidence_preimage = ? WHERE operation_id = ?",
+                            changedStoredPreimage,
+                            prepared.operationId())))
+        .satisfies(failure ->
+            assertThat(postgresConstraint(failure))
+                .isEqualTo("account_jwt_signer_operation_immutable"));
 
     AccountJwtSignerDesiredStateRepository restartedDesired =
         new AccountJwtSignerDesiredStateRepository(context.dsl());
@@ -1228,11 +1201,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     AccountJwtReadinessProbeRepository restartedReadiness =
         new AccountJwtReadinessProbeRepository(
             context.dsl(), restartedDesired, restartedPublication, restartedInventory);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () -> restartedDesired.readCurrentGenerationRequest(BINDING, owner.trust())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () -> restartedDesired.readCurrentGenerationRequest(BINDING, owner.trust())))
         .isInstanceOf(
             AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
         .hasMessage("Existing PREPARED signer state requires unavailable lifecycle evidence");
@@ -1448,12 +1420,11 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     owner.readiness().readCurrentPlan(BINDING, owner.trust(), plan.operationId())))
         .isEqualTo(plan);
     assertThat(plan.entries())
-        .allSatisfy(
-            entry -> {
-              assertThat(entry.state()).isEqualTo(ProbeState.PLANNED);
-              assertThat(entry.signingAttemptedAtEpochSecond()).isEmpty();
-              assertThat(entry.compactTokenSha256()).isEmpty();
-            });
+        .allSatisfy(entry -> {
+          assertThat(entry.state()).isEqualTo(ProbeState.PLANNED);
+          assertThat(entry.signingAttemptedAtEpochSecond()).isEmpty();
+          assertThat(entry.compactTokenSha256()).isEmpty();
+        });
     assertThat(count(context, "account_jwt_readiness_delivery_claims")).isZero();
 
     var harnessBinding = deliveryHarnessBinding(plan.expiresAtEpochSecond() + 600);
@@ -1537,11 +1508,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     () -> restarted.readCurrentPlan(BINDING, owner.trust(), plan.operationId()));
             assertThat(verifiedReadback.entries())
                 .hasSize(8)
-                .allSatisfy(
-                    entry -> {
-                      assertThat(entry.state()).isEqualTo(ProbeState.VERIFIED);
-                      assertThat(entry).isEqualTo(verifiedBeforeFailure.get(entry.jti()));
-                    });
+                .allSatisfy(entry -> {
+                  assertThat(entry.state()).isEqualTo(ProbeState.VERIFIED);
+                  assertThat(entry).isEqualTo(verifiedBeforeFailure.get(entry.jti()));
+                });
             assertThat(count(context, "account_jwt_readiness_pod_receipts")).isEqualTo(12L);
             verifiedInterruptionReached[0] = true;
             throw new IllegalStateException(
@@ -1549,16 +1519,12 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                     + new String(compactJwt, StandardCharsets.US_ASCII));
           }
         };
-    assertThatThrownBy(
-            () ->
-                producer.issueCurrentPlan(
-                    BINDING, owner.trust(), plan.operationId(), claim, delivery))
-        .satisfies(
-            failure ->
-                assertThat(verifiedInterruptionReached[0])
-                    .as(
-                        "the controlled interruption follows durable verification of all eight probes")
-                    .isTrue())
+    assertThatThrownBy(() ->
+            producer.issueCurrentPlan(BINDING, owner.trust(), plan.operationId(), claim, delivery))
+        .satisfies(failure ->
+            assertThat(verifiedInterruptionReached[0])
+                .as("the controlled interruption follows durable verification of all eight probes")
+                .isTrue())
         // The mounted signer sanitizes callback RuntimeExceptions, including the producer's
         // delivery-quarantine exception, rather than exposing callback details or credentials.
         .isInstanceOf(AccountMountedJwtSignerBundle.InvalidMountedSignerBundleException.class)
@@ -1576,19 +1542,18 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     List<ProbeEntry> cleaned = cleanedPlan.entries();
     assertThat(cleaned)
         .hasSize(8)
-        .allSatisfy(
-            entry -> {
-              ProbeEntry verified =
-                  java.util.Objects.requireNonNull(
-                      verifiedBeforeFailure.get(entry.jti()),
-                      "Every cleaned entry must retain its independently observed V2 receipt");
-              assertThat(entry.state()).isEqualTo(ProbeState.CLEANED);
-              assertThat(entry.terminalOutcome()).contains("ABORTED");
-              assertThat(entry.compactTokenSha256()).isEqualTo(verified.compactTokenSha256());
-              assertThat(entry.signingAttemptedAtEpochSecond())
-                  .isEqualTo(verified.signingAttemptedAtEpochSecond());
-              assertThat(entry.verificationReceipt()).isEqualTo(verified.verificationReceipt());
-            });
+        .allSatisfy(entry -> {
+          ProbeEntry verified =
+              java.util.Objects.requireNonNull(
+                  verifiedBeforeFailure.get(entry.jti()),
+                  "Every cleaned entry must retain its independently observed V2 receipt");
+          assertThat(entry.state()).isEqualTo(ProbeState.CLEANED);
+          assertThat(entry.terminalOutcome()).contains("ABORTED");
+          assertThat(entry.compactTokenSha256()).isEqualTo(verified.compactTokenSha256());
+          assertThat(entry.signingAttemptedAtEpochSecond())
+              .isEqualTo(verified.signingAttemptedAtEpochSecond());
+          assertThat(entry.verificationReceipt()).isEqualTo(verified.verificationReceipt());
+        });
     assertThat(
             producer.issueCurrentPlan(BINDING, owner.trust(), plan.operationId(), claim, delivery))
         .isEqualTo(cleaned);
@@ -1600,47 +1565,44 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                 () ->
                     owner.readiness().readCurrentPlan(BINDING, owner.trust(), plan.operationId())))
         .isEqualTo(cleanedPlan);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "UPDATE account_jwt_readiness_probe_entries SET state = 'VERIFIED', "
-                                    + "entry_version = entry_version + 1 WHERE rotation_operation_id = ?",
-                                plan.operationId())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_jwt_readiness_probe_entries SET state = 'VERIFIED', "
+                                + "entry_version = entry_version + 1 WHERE rotation_operation_id = ?",
+                            plan.operationId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .claimSingleDelivery(
-                                BINDING,
-                                owner.trust(),
-                                cleanedPlan,
-                                harnessBinding,
-                                peer,
-                                Instant.ofEpochSecond(now))))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .claimSingleDelivery(
+                            BINDING,
+                            owner.trust(),
+                            cleanedPlan,
+                            harnessBinding,
+                            peer,
+                            Instant.ofEpochSecond(now))))
         .isInstanceOf(AccountJwtReadinessProbeRepository.DeliveryAlreadyClaimedException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        owner
-                            .readiness()
-                            .claimSingleDelivery(
-                                BINDING,
-                                owner.trust(),
-                                plan,
-                                harnessBinding,
-                                peer,
-                                Instant.ofEpochSecond(now))))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    owner
+                        .readiness()
+                        .claimSingleDelivery(
+                            BINDING,
+                            owner.trust(),
+                            plan,
+                            harnessBinding,
+                            peer,
+                            Instant.ofEpochSecond(now))))
         .isInstanceOf(AccountJwtReadinessProbeRepository.StaleOperationException.class);
     assertThat(
             inTransaction(
@@ -1843,27 +1805,25 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     String validRow =
         context
             .transaction()
-            .execute(
-                status -> {
-                  insertDirectPromotionInCurrentTransaction(
-                      context,
-                      owner,
-                      proof,
-                      UUID.randomUUID(),
-                      proof.readinessEvidenceDigest(),
-                      exactPreimage);
-                  String row =
-                      java.util.Objects.requireNonNull(
-                              context
-                                  .dsl()
-                                  .fetchOne(
-                                      "SELECT to_jsonb(promotion)::text FROM account_jwt_signer_promotion_operations AS promotion"))
-                          .get(0, String.class);
-                  assertThat(count(context, "account_jwt_signer_promotion_operations"))
-                      .isEqualTo(1L);
-                  status.setRollbackOnly();
-                  return row;
-                });
+            .execute(status -> {
+              insertDirectPromotionInCurrentTransaction(
+                  context,
+                  owner,
+                  proof,
+                  UUID.randomUUID(),
+                  proof.readinessEvidenceDigest(),
+                  exactPreimage);
+              String row =
+                  java.util.Objects.requireNonNull(
+                          context
+                              .dsl()
+                              .fetchOne(
+                                  "SELECT to_jsonb(promotion)::text FROM account_jwt_signer_promotion_operations AS promotion"))
+                      .get(0, String.class);
+              assertThat(count(context, "account_jwt_signer_promotion_operations")).isEqualTo(1L);
+              status.setRollbackOnly();
+              return row;
+            });
     assertThat(validRow).isNotNull();
     for (String field :
         List.of(
@@ -1871,22 +1831,21 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             "api_config_revision",
             "expected_public_config_map_uid")) {
       for (boolean explicitNull : new boolean[] {false, true}) {
-        assertThatThrownBy(
-                () ->
-                    inTransaction(
-                        context,
-                        () ->
-                            context
-                                .dsl()
-                                .execute(
-                                    "INSERT INTO account_jwt_signer_promotion_operations SELECT * FROM "
-                                        + "jsonb_populate_record(NULL::account_jwt_signer_promotion_operations, "
-                                        + (explicitNull
-                                            ? "?::jsonb || jsonb_build_object(?, NULL)"
-                                            : "?::jsonb - ?::text")
-                                        + ")",
-                                    validRow,
-                                    field)))
+        assertThatThrownBy(() ->
+                inTransaction(
+                    context,
+                    () ->
+                        context
+                            .dsl()
+                            .execute(
+                                "INSERT INTO account_jwt_signer_promotion_operations SELECT * FROM "
+                                    + "jsonb_populate_record(NULL::account_jwt_signer_promotion_operations, "
+                                    + (explicitNull
+                                        ? "?::jsonb || jsonb_build_object(?, NULL)"
+                                        : "?::jsonb - ?::text")
+                                    + ")",
+                                validRow,
+                                field)))
             .as("independent promotion INSERT with %s %s", explicitNull ? "null" : "missing", field)
             .isInstanceOf(DataAccessException.class)
             .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
@@ -1900,20 +1859,19 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             "expected_private_secret_resource_version",
             "expected_public_jwks_resource_version")) {
       String invalid = field.endsWith("resource_version") ? "r\n" : "not-a-sha256";
-      assertThatThrownBy(
-              () ->
-                  inTransaction(
-                      context,
-                      () ->
-                          context
-                              .dsl()
-                              .execute(
-                                  "INSERT INTO account_jwt_signer_promotion_operations SELECT * FROM "
-                                      + "jsonb_populate_record(NULL::account_jwt_signer_promotion_operations, "
-                                      + "?::jsonb || jsonb_build_object(?, ?))",
-                                  validRow,
-                                  field,
-                                  invalid)))
+      assertThatThrownBy(() ->
+              inTransaction(
+                  context,
+                  () ->
+                      context
+                          .dsl()
+                          .execute(
+                              "INSERT INTO account_jwt_signer_promotion_operations SELECT * FROM "
+                                  + "jsonb_populate_record(NULL::account_jwt_signer_promotion_operations, "
+                                  + "?::jsonb || jsonb_build_object(?, ?))",
+                              validRow,
+                              field,
+                              invalid)))
           .as("independent malformed promotion INSERT: %s", field)
           .isInstanceOf(DataAccessException.class)
           .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
@@ -2317,18 +2275,16 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       ReadinessProbePlan plan,
       String mismatchedMatrixJson,
       String mismatchDescription) {
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () -> {
-                      insertRawReadinessPlanClosure(context, plan, mismatchedMatrixJson, false);
-                      assertThat(count(context, "account_jwt_readiness_probe_entries"))
-                          .isEqualTo(plan.entries().size());
-                      assertThat(count(context, "account_jwt_readiness_validator_pods"))
-                          .isEqualTo(12L);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () -> {
+                  insertRawReadinessPlanClosure(context, plan, mismatchedMatrixJson, false);
+                  assertThat(count(context, "account_jwt_readiness_probe_entries"))
+                      .isEqualTo(plan.entries().size());
+                  assertThat(count(context, "account_jwt_readiness_validator_pods")).isEqualTo(12L);
+                  return null;
+                }))
         .as("deferred V2 closure must reject %s", mismatchDescription)
         .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
@@ -2446,14 +2402,13 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
             readinessMatrixWithMissingOrNullField(
                 plan.applicabilityMatrixJson(), field, explicitNull);
         String fieldState = explicitNull ? "null " : "missing ";
-        assertThatThrownBy(
-                () ->
-                    inTransaction(
-                        context,
-                        () -> {
-                          insertRawReadinessPlan(context, plan, malformedMatrix);
-                          return null;
-                        }))
+        assertThatThrownBy(() ->
+                inTransaction(
+                    context,
+                    () -> {
+                      insertRawReadinessPlan(context, plan, malformedMatrix);
+                      return null;
+                    }))
             .as("raw SQL must reject V%s %s%s", plan.planVersion(), fieldState, field)
             .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
         assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
@@ -2462,13 +2417,12 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
 
     context
         .transaction()
-        .execute(
-            status -> {
-              insertRawReadinessPlan(context, plan, plan.applicabilityMatrixJson());
-              assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
-              status.setRollbackOnly();
-              return null;
-            });
+        .execute(status -> {
+          insertRawReadinessPlan(context, plan, plan.applicabilityMatrixJson());
+          assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(1L);
+          status.setRollbackOnly();
+          return null;
+        });
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isZero();
   }
 
@@ -2552,29 +2506,26 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
 
     for (String table : tables) {
       for (String cascade : List.of("", " CASCADE")) {
-        assertThatThrownBy(
-                () ->
-                    inTransaction(
-                        context,
-                        () -> {
-                          context.dsl().execute("TRUNCATE TABLE " + table + cascade);
-                          return null;
-                        }))
+        assertThatThrownBy(() ->
+                inTransaction(
+                    context,
+                    () -> {
+                      context.dsl().execute("TRUNCATE TABLE " + table + cascade);
+                      return null;
+                    }))
             .as("raw TRUNCATE must retain readiness evidence in %s%s", table, cascade)
-            .satisfies(
-                failure -> {
-                  String sqlState = postgresSqlState(failure);
-                  List<String> expectedSqlStates =
-                      cascade.isEmpty() ? List.of("23514", "0A000") : List.of("23514");
-                  assertThat(sqlState).isIn(expectedSqlStates);
-                  if ("23514".equals(sqlState)) {
-                    assertThat(postgresServerMessage(failure))
-                        .contains("Account JWT readiness evidence");
-                  }
-                });
-        retainedCounts.forEach(
-            (retainedTable, expectedCount) ->
-                assertThat(count(context, retainedTable)).isEqualTo(expectedCount));
+            .satisfies(failure -> {
+              String sqlState = postgresSqlState(failure);
+              List<String> expectedSqlStates =
+                  cascade.isEmpty() ? List.of("23514", "0A000") : List.of("23514");
+              assertThat(sqlState).isIn(expectedSqlStates);
+              if ("23514".equals(sqlState)) {
+                assertThat(postgresServerMessage(failure))
+                    .contains("Account JWT readiness evidence");
+              }
+            });
+        retainedCounts.forEach((retainedTable, expectedCount) ->
+            assertThat(count(context, retainedTable)).isEqualTo(expectedCount));
       }
     }
   }
@@ -2602,11 +2553,10 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     expectedActive.put("present", entry.expectedActive().isPresent());
     entry
         .expectedActive()
-        .ifPresent(
-            active -> {
-              expectedActive.put("generation", active.generation());
-              expectedActive.put("kid", active.kid());
-            });
+        .ifPresent(active -> {
+          expectedActive.put("generation", active.generation());
+          expectedActive.put("kid", active.kid());
+        });
     digestFields.put("expectedActive", expectedActive);
     digestFields.put("outcome", acceptance.result().name());
     digestFields.put("observedPodUid", acceptance.podUid());
@@ -2668,43 +2618,42 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       int expectedPodCount,
       long verifiedAtEpochSecond) {
     String alteredReceiptDigest = "f".repeat(64);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () -> {
-                      context
-                          .dsl()
-                          .execute(
-                              "UPDATE account_jwt_readiness_probe_entries SET "
-                                  + "state = 'VERIFIED', entry_version = entry_version + 1, "
-                                  + "signing_attempted_at_epoch_seconds = "
-                                  + "signing_attempted_at_epoch_seconds + 1, "
-                                  + "verification_receipt_version = 2, "
-                                  + "verification_source_entry_version = entry_version, "
-                                  + "verified_at_epoch_seconds = ?, verified_kid = target_kid, "
-                                  + "validator_instance_id = 'raw-sql-validator-1', "
-                                  + "validator_binding_digest = ?, "
-                                  + "validator_config_revision = 'config-r1', "
-                                  + "validator_peer_uri = ?, validator_peer_spki_sha256 = ?, "
-                                  + "verification_receipt_sha256 = ?, pod_receipt_count = ?, "
-                                  + "pod_receipt_closure_sha256 = ? "
-                                  + "WHERE rotation_operation_id = ? AND validator_id = ? "
-                                  + "AND token_profile = ? AND audience = ? AND probe_kind = ?",
-                              verifiedAtEpochSecond,
-                              "d".repeat(64),
-                              "spiffe://firemud/ns/firemud-prod/sa/account-jwt-validator",
-                              "e".repeat(64),
-                              alteredReceiptDigest,
-                              expectedPodCount,
-                              alteredReceiptDigest,
-                              issuedEntry.rotationOperationId(),
-                              issuedEntry.validatorId(),
-                              issuedEntry.tokenProfile(),
-                              issuedEntry.audience(),
-                              issuedEntry.probeKind().name());
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () -> {
+                  context
+                      .dsl()
+                      .execute(
+                          "UPDATE account_jwt_readiness_probe_entries SET "
+                              + "state = 'VERIFIED', entry_version = entry_version + 1, "
+                              + "signing_attempted_at_epoch_seconds = "
+                              + "signing_attempted_at_epoch_seconds + 1, "
+                              + "verification_receipt_version = 2, "
+                              + "verification_source_entry_version = entry_version, "
+                              + "verified_at_epoch_seconds = ?, verified_kid = target_kid, "
+                              + "validator_instance_id = 'raw-sql-validator-1', "
+                              + "validator_binding_digest = ?, "
+                              + "validator_config_revision = 'config-r1', "
+                              + "validator_peer_uri = ?, validator_peer_spki_sha256 = ?, "
+                              + "verification_receipt_sha256 = ?, pod_receipt_count = ?, "
+                              + "pod_receipt_closure_sha256 = ? "
+                              + "WHERE rotation_operation_id = ? AND validator_id = ? "
+                              + "AND token_profile = ? AND audience = ? AND probe_kind = ?",
+                          verifiedAtEpochSecond,
+                          "d".repeat(64),
+                          "spiffe://firemud/ns/firemud-prod/sa/account-jwt-validator",
+                          "e".repeat(64),
+                          alteredReceiptDigest,
+                          expectedPodCount,
+                          alteredReceiptDigest,
+                          issuedEntry.rotationOperationId(),
+                          issuedEntry.validatorId(),
+                          issuedEntry.tokenProfile(),
+                          issuedEntry.audience(),
+                          issuedEntry.probeKind().name());
+                  return null;
+                }))
         .satisfies(failure -> assertThat(postgresSqlState(failure)).isEqualTo("23514"));
 
     var retainedEntry =
@@ -3053,28 +3002,26 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     result.put(
         "profiles",
         validator.profiles().stream()
-            .map(
-                profile ->
-                    Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
+            .map(profile ->
+                Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
             .toList());
     result.put(
         "pods",
         validator.pods().stream()
-            .map(
-                pod ->
-                    Map.ofEntries(
-                        Map.entry("name", pod.name()),
-                        Map.entry("uid", pod.uid()),
-                        Map.entry("resourceVersion", pod.resourceVersion()),
-                        Map.entry("ownerReplicaSetName", pod.ownerName()),
-                        Map.entry("ownerReplicaSetUid", pod.ownerUid()),
-                        Map.entry("podTemplateHash", pod.podTemplateHash()),
-                        Map.entry("image", pod.image()),
-                        Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
-                        Map.entry("podIp", pod.podIp()),
-                        Map.entry("exactPodEndpoint", pod.endpoint().toString()),
-                        Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
-                        Map.entry("leafSpkiSha256", pod.leafSpkiSha256())))
+            .map(pod ->
+                Map.ofEntries(
+                    Map.entry("name", pod.name()),
+                    Map.entry("uid", pod.uid()),
+                    Map.entry("resourceVersion", pod.resourceVersion()),
+                    Map.entry("ownerReplicaSetName", pod.ownerName()),
+                    Map.entry("ownerReplicaSetUid", pod.ownerUid()),
+                    Map.entry("podTemplateHash", pod.podTemplateHash()),
+                    Map.entry("image", pod.image()),
+                    Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
+                    Map.entry("podIp", pod.podIp()),
+                    Map.entry("exactPodEndpoint", pod.endpoint().toString()),
+                    Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
+                    Map.entry("leafSpkiSha256", pod.leafSpkiSha256())))
             .toList());
     result.put("receiverServiceUri", serviceUri);
     result.put("receiverPort", receiverPort);

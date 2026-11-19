@@ -160,12 +160,10 @@ class WorldCanonicalInstanceTopologyPlanTest {
     for (Entry entry : first.entries()) {
       String exactPayload =
           fixture.plan().binding().revisions().stream()
-              .filter(
-                  revision ->
-                      revision
-                          .revisionId()
-                          .equals(
-                              uuidFrom(entry.source().authoredRevision().getLogicalRevisionId())))
+              .filter(revision ->
+                  revision
+                      .revisionId()
+                      .equals(uuidFrom(entry.source().authoredRevision().getLogicalRevisionId())))
               .findFirst()
               .orElseThrow()
               .payload();
@@ -195,10 +193,8 @@ class WorldCanonicalInstanceTopologyPlanTest {
 
     List<Row> missingRegion = new ArrayList<>(fixture.rows());
     missingRegion.removeIf(row -> row.template().equals(new Template(Family.REGION, REGION_B)));
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceTopologyPlan.create(
-                    withRows(fixture, missingRegion).source()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceTopologyPlan.create(withRows(fixture, missingRegion).source()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("omits or adds");
 
@@ -220,9 +216,8 @@ class WorldCanonicalInstanceTopologyPlanTest {
             zone.privateRowKey(),
             zone.authored(),
             zone.content()));
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceTopologyPlan.create(withRows(fixture, typeConfused).source()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceTopologyPlan.create(withRows(fixture, typeConfused).source()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("confuses authored family");
 
@@ -241,10 +236,9 @@ class WorldCanonicalInstanceTopologyPlanTest {
             exit.privateRowKey(),
             exit.authored(),
             badExitContent));
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceTopologyPlan.create(
-                    withRows(fixture, missingRoomReference).source()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceTopologyPlan.create(
+                withRows(fixture, missingRoomReference).source()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Frozen content differs");
   }
@@ -363,15 +357,14 @@ class WorldCanonicalInstanceTopologyPlanTest {
     var owner = plan.ownerBinding();
     List<OwnedAffectedTuple> affected =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     String publicationRequestId = "publication-request";
     return new CaptureRequest(

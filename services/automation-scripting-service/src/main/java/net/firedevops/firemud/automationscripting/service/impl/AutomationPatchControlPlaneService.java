@@ -122,12 +122,11 @@ final class AutomationPatchControlPlaneService {
             request.getChangedAfterMs(),
             request.getChangedBeforeMs())
         .stream()
-        .map(
-            summary ->
-                toProto(
-                    summary,
-                    workflowMetadataResolver.resolve(
-                        request.getTenantId(), summary.scriptPatchVersion())))
+        .map(summary ->
+            toProto(
+                summary,
+                workflowMetadataResolver.resolve(
+                    request.getTenantId(), summary.scriptPatchVersion())))
         .forEach(response::addPatches);
     return response.build();
   }
@@ -400,12 +399,11 @@ final class AutomationPatchControlPlaneService {
         loadGameplayCommandStatuses(request.getTenantId(), summaries);
     ListScriptHandoffEventsResponse.Builder response = ListScriptHandoffEventsResponse.newBuilder();
     summaries.stream()
-        .map(
-            summary ->
-                toProto(
-                    summary,
-                    currentScopes.get(summary.targetGameInstanceId()),
-                    commandStatuses.get(summary.gameSessionCommandId())))
+        .map(summary ->
+            toProto(
+                summary,
+                currentScopes.get(summary.targetGameInstanceId()),
+                commandStatuses.get(summary.gameSessionCommandId())))
         .forEach(response::addEvents);
     return response.build();
   }
@@ -452,15 +450,14 @@ final class AutomationPatchControlPlaneService {
             .setRejectedCount(result.rejectedCount())
             .setRequestFingerprint(result.requestFingerprint());
     result.results().stream()
-        .map(
-            item ->
-                ReplayDeadLetteredWorkItemResult.newBuilder()
-                    .setWorkItemId(item.workItemId())
-                    .setOutcome(item.outcome())
-                    .setRejectionReason(item.rejectionReason())
-                    .setFailureReason(item.failureReason())
-                    .setFailureGeneration(item.failureGeneration())
-                    .build())
+        .map(item ->
+            ReplayDeadLetteredWorkItemResult.newBuilder()
+                .setWorkItemId(item.workItemId())
+                .setOutcome(item.outcome())
+                .setRejectionReason(item.rejectionReason())
+                .setFailureReason(item.failureReason())
+                .setFailureGeneration(item.failureGeneration())
+                .build())
         .forEach(response::addResults);
     return response.build();
   }

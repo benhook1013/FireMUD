@@ -78,29 +78,23 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
         RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     assertThatThrownBy(() -> withControlledPeer(null, null, evidence::requireFixedGameSessionPeer))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withControlledPeer(
-                    peer("dev", "game-session-service"),
-                    null,
-                    evidence::requireFixedGameSessionPeer))
+    assertThatThrownBy(() ->
+            withControlledPeer(
+                peer("dev", "game-session-service"), null, evidence::requireFixedGameSessionPeer))
         .isInstanceOf(SecurityException.class);
     for (GrpcPeerIdentity wrongPeer :
         new GrpcPeerIdentity[] {
           peer("dev", "world-management-service"), peer("other", "game-session-service")
         }) {
-      assertThatThrownBy(
-              () ->
-                  withControlledPeer(
-                      wrongPeer, "a".repeat(64), evidence::requireFixedGameSessionPeer))
+      assertThatThrownBy(() ->
+              withControlledPeer(wrongPeer, "a".repeat(64), evidence::requireFixedGameSessionPeer))
           .isInstanceOf(SecurityException.class);
     }
-    assertThatThrownBy(
-            () ->
-                withControlledPeer(
-                    peer("dev", "game-session-service"),
-                    "d".repeat(64),
-                    evidence::requireFixedGameSessionPeer))
+    assertThatThrownBy(() ->
+            withControlledPeer(
+                peer("dev", "game-session-service"),
+                "d".repeat(64),
+                evidence::requireFixedGameSessionPeer))
         .isInstanceOf(SecurityException.class);
     withControlledPeer(
         peer("dev", "game-session-service"),
@@ -188,11 +182,10 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
             .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureResponse(original);
     for (var status : java.util.List.of("RUNNING", "STOPPED")) {
       var changed = response.toBuilder().setCurrentGameInstanceStatus(status).build();
-      assertThatThrownBy(
-              () ->
-                  net.firedevops.firemud.common.gamesession
-                      .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
-                      original.request(), changed))
+      assertThatThrownBy(() ->
+              net.firedevops.firemud.common.gamesession
+                  .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+                  original.request(), changed))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Fixture launch association read requires the current STARTING snapshot");
     }
@@ -811,8 +804,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
   private static String capabilityJson(
       RunOwnedInitialAdmissionFixtureWireCodec.Capability capability) {
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"%s","worldDisplayName":"%s","realmSlug":"%s","realmDisplayName":"%s","visible":%s,"publicProductionRealm":%s,"requiresCharacterSelection":%s,"stateScope":"%s","characterCreationPolicy":"%s","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}%n\
-        """
+    {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"%s","worldDisplayName":"%s","realmSlug":"%s","realmDisplayName":"%s","visible":%s,"publicProductionRealm":%s,"requiresCharacterSelection":%s,"stateScope":"%s","characterCreationPolicy":"%s","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}%n\
+    """
         .formatted(
             capability.schema(),
             capability.runId(),
@@ -845,8 +838,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     var launch = receipt.launchReadEvidence();
     var seal = receipt.fixturePolicySeal();
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"%s","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":%d,"targetNamespace":"%s","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"%s","gameTemplateId":%d,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"},"creationEvidence":{"schemaVersion":%d,"targetNamespace":"%s","creationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"fixturePolicySeal":{"schema":"%s","ownerService":"%s","operationId":"%s","requestDigest":"%s","evidenceDigest":"%s"}}%n\
-        """
+    {"schema":"%s","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"%s","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":%d,"targetNamespace":"%s","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"%s","gameTemplateId":%d,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"},"creationEvidence":{"schemaVersion":%d,"targetNamespace":"%s","creationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"fixturePolicySeal":{"schema":"%s","ownerService":"%s","operationId":"%s","requestDigest":"%s","evidenceDigest":"%s"}}%n\
+    """
         .formatted(
             receipt.schema(),
             receipt.runId(),

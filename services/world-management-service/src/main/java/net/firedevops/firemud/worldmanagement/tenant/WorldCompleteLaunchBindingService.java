@@ -304,10 +304,9 @@ public final class WorldCompleteLaunchBindingService {
     WorldCompleteLaunchBindingRepository.StoredBinding stored =
         repository
             .read(workloadNamespace, expected.canonicalTenantId(), expected.controlPlaneRequestId())
-            .orElseThrow(
-                () ->
-                    new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
-                        "World current-version verification requires a committed launch binding"));
+            .orElseThrow(() ->
+                new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+                    "World current-version verification requires a committed launch binding"));
     requireStoredRequest(stored, request);
     WorldCompleteLaunchBindingReceipt committed = loadExactSourceReceipt(stored);
     requireStoredRequest(committed, request);
@@ -379,10 +378,9 @@ public final class WorldCompleteLaunchBindingService {
             descriptor.worldSlug(),
             descriptor.authoredWorldSourceOperationId(),
             descriptor.authoredWorldSourceEvidenceDigest())
-        .orElseThrow(
-            () ->
-                new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
-                    "Complete launch binding has no exact committed World source intake"));
+        .orElseThrow(() ->
+            new WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException(
+                "Complete launch binding has no exact committed World source intake"));
   }
 
   private void requireFreshCommittedLaunchReadId(

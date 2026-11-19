@@ -50,16 +50,14 @@ public class TextCommandParser {
     TextCommandDefinition resolvedDefinition =
         registry
             .findDefinitionByAlias(aliasUsed)
-            .orElseGet(
-                () ->
-                    registry
-                        .findDefinition(aliasUsed)
-                        .or(
-                            () ->
-                                normalizedCommandId.equals(aliasUsed)
-                                    ? java.util.Optional.empty()
-                                    : registry.findDefinition(normalizedCommandId))
-                        .orElse(null));
+            .orElseGet(() ->
+                registry
+                    .findDefinition(aliasUsed)
+                    .or(() ->
+                        normalizedCommandId.equals(aliasUsed)
+                            ? java.util.Optional.empty()
+                            : registry.findDefinition(normalizedCommandId))
+                    .orElse(null));
     TextCommandType type =
         resolvedDefinition == null ? TextCommandType.UNKNOWN : resolvedDefinition.type();
     String commandId =

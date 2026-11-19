@@ -75,39 +75,37 @@ class CanonicalInitialPlayerLocationServiceTest {
     var preseeded = mock(CanonicalInitialPlayerLocationService.EntityReceiptReader.class);
     var created = mock(CanonicalInitialPlayerLocationService.EntityCreatedReceiptReader.class);
     when(created.read(any()))
-        .thenAnswer(
-            call -> {
-              verifyNoInteractions(location);
-              var selector =
-                  (net.firedevops.firemud.entitymanagement.v1
-                          .PlayerCreatedActorRuntimeReferenceRequest)
-                      call.getArgument(0);
-              assertThat(selector.getAccountUuid())
-                  .isEqualTo(selection.canonicalAccountId().toString());
-              assertThat(selector.getOrigin()).isEqualTo(selection.playerCreatedOrigin());
-              // Explicit controlled authenticated-response input; no genuine Entity producer claim.
-              var verified =
-                  mock(
-                      net.firedevops.firemud.worldmanagement.client
-                          .EntityPlayerCreatedActorPlacementReceiptClient.VerifiedReceipt.class);
-              when(verified.response())
-                  .thenReturn(
-                      net.firedevops.firemud.entitymanagement.v1
-                          .PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
-                          .setSchemaVersion(1)
-                          .setSelector(selector)
-                          .setRuntimeEntityId(23L)
-                          .setProjectionGeneration(1L)
-                          .setProjectionFence(1L)
-                          .setOriginalCatalogRevision(1L)
-                          .setOriginalPointerVersion(1L)
-                          .setOriginalActiveLifecycleEpoch(1L)
-                          .setOriginalDescriptorDigest("sha256:" + "a".repeat(64))
-                          .setOriginalAuthoredBindingDigest("sha256:" + "b".repeat(64))
-                          .setOriginalPolicyContentDigest("sha256:" + "c".repeat(64))
-                          .build());
-              return verified;
-            });
+        .thenAnswer(call -> {
+          verifyNoInteractions(location);
+          var selector =
+              (net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest)
+                  call.getArgument(0);
+          assertThat(selector.getAccountUuid())
+              .isEqualTo(selection.canonicalAccountId().toString());
+          assertThat(selector.getOrigin()).isEqualTo(selection.playerCreatedOrigin());
+          // Explicit controlled authenticated-response input; no genuine Entity producer claim.
+          var verified =
+              mock(
+                  net.firedevops.firemud.worldmanagement.client
+                      .EntityPlayerCreatedActorPlacementReceiptClient.VerifiedReceipt.class);
+          when(verified.response())
+              .thenReturn(
+                  net.firedevops.firemud.entitymanagement.v1
+                      .PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
+                      .setSchemaVersion(1)
+                      .setSelector(selector)
+                      .setRuntimeEntityId(23L)
+                      .setProjectionGeneration(1L)
+                      .setProjectionFence(1L)
+                      .setOriginalCatalogRevision(1L)
+                      .setOriginalPointerVersion(1L)
+                      .setOriginalActiveLifecycleEpoch(1L)
+                      .setOriginalDescriptorDigest("sha256:" + "a".repeat(64))
+                      .setOriginalAuthoredBindingDigest("sha256:" + "b".repeat(64))
+                      .setOriginalPolicyContentDigest("sha256:" + "c".repeat(64))
+                      .build());
+          return verified;
+        });
     when(location.readByOperationId(eq(selection.placementOperationId()), any()))
         .thenReturn(Optional.empty());
     var service =
@@ -139,10 +137,8 @@ class CanonicalInitialPlayerLocationServiceTest {
             });
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
     verifyNoInteractions(association, location, holds, gameSession, preseeded);
   }
 
@@ -185,10 +181,9 @@ class CanonicalInitialPlayerLocationServiceTest {
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.UNAVAILABLE));
 
     verifyNoInteractions(holds, gameSession);
     verify(location, never()).store(any());
@@ -363,10 +358,9 @@ class CanonicalInitialPlayerLocationServiceTest {
 
     assertThatThrownBy(() -> service.readRegion(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     assertThat(entityReads.get()).isZero();
     verify(location, never()).readInitialPlayerLocationRegion(any(RequestSelector.class));
@@ -408,10 +402,9 @@ class CanonicalInitialPlayerLocationServiceTest {
 
     assertThatThrownBy(() -> service.readRegion(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     assertThat(entityReads.get()).isEqualTo(1);
     verify(location, never()).readInitialPlayerLocationRegion(any(RequestSelector.class));
@@ -431,10 +424,9 @@ class CanonicalInitialPlayerLocationServiceTest {
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     verifyNoInteractions(holds, gameSession);
     verify(location, never()).store(any());
@@ -452,10 +444,9 @@ class CanonicalInitialPlayerLocationServiceTest {
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     verifyNoInteractions(gameSession);
     verify(location, never()).store(any());
@@ -467,29 +458,27 @@ class CanonicalInitialPlayerLocationServiceTest {
     var location = emptyLocation(selection);
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
     when(holds.readState(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              HoldIdentity requested = invocation.getArgument(0);
-              var mismatchedIdentity =
-                  new HoldIdentity(
-                      requested.request(),
-                      requested.holdId(),
-                      uuid("12121212-1212-4212-8212-121212121212"));
-              var state = mock(WorldCanonicalInitialAdmissionHoldState.class);
-              when(state.holdIdentity()).thenReturn(mismatchedIdentity);
-              when(state.holdStatus()).thenReturn(HoldStatus.COMMITTED);
-              return Optional.of(state);
-            });
+        .thenAnswer(invocation -> {
+          HoldIdentity requested = invocation.getArgument(0);
+          var mismatchedIdentity =
+              new HoldIdentity(
+                  requested.request(),
+                  requested.holdId(),
+                  uuid("12121212-1212-4212-8212-121212121212"));
+          var state = mock(WorldCanonicalInitialAdmissionHoldState.class);
+          when(state.holdIdentity()).thenReturn(mismatchedIdentity);
+          when(state.holdStatus()).thenReturn(HoldStatus.COMMITTED);
+          return Optional.of(state);
+        });
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     var service =
         service(selection, location, holds, gameSession, ignored -> entityReceipt(selection));
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     verifyNoInteractions(gameSession);
     verify(location, never()).store(any());
@@ -501,27 +490,25 @@ class CanonicalInitialPlayerLocationServiceTest {
     var location = emptyLocation(selection);
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
     when(holds.readState(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              var state = mock(WorldCanonicalInitialAdmissionHoldState.class);
-              when(state.holdIdentity()).thenReturn(invocation.getArgument(0));
-              when(state.holdStatus()).thenReturn(HoldStatus.COMMITTED);
-              var lifecycle = mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
-              when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch() - 1);
-              when(state.lifecycleEvidence()).thenReturn(lifecycle);
-              return Optional.of(state);
-            });
+        .thenAnswer(invocation -> {
+          var state = mock(WorldCanonicalInitialAdmissionHoldState.class);
+          when(state.holdIdentity()).thenReturn(invocation.getArgument(0));
+          when(state.holdStatus()).thenReturn(HoldStatus.COMMITTED);
+          var lifecycle = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
+          when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch() - 1);
+          when(state.lifecycleEvidence()).thenReturn(lifecycle);
+          return Optional.of(state);
+        });
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     var service =
         service(selection, location, holds, gameSession, ignored -> entityReceipt(selection));
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     verifyNoInteractions(gameSession);
     verify(location, never()).store(any());
@@ -534,28 +521,27 @@ class CanonicalInitialPlayerLocationServiceTest {
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
     var readIdentity = new AtomicReference<HoldIdentity>();
     when(holds.readState(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              readIdentity.set(invocation.getArgument(0));
-              var lifecycleRequest = mock(Request.class);
-              when(lifecycleRequest.canonicalGameInstanceId()).thenReturn(GAME_INSTANCE);
-              when(lifecycleRequest.canonicalTenantId()).thenReturn(TENANT);
-              when(lifecycleRequest.canonicalVersionId()).thenReturn(VERSION);
-              when(lifecycleRequest.playableStateNamespaceId()).thenReturn(PLAYABLE_NAMESPACE);
-              var start = mock(RoomTemplateRef.class);
-              when(start.tenantId()).thenReturn(TENANT);
-              when(start.versionId()).thenReturn(VERSION);
-              var lifecycle = mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
-              when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch());
-              when(lifecycle.request()).thenReturn(lifecycleRequest);
-              when(lifecycle.startLocation()).thenReturn(start);
-              var state = mock(WorldCanonicalInitialAdmissionHoldState.class);
-              when(state.holdIdentity()).thenReturn(invocation.getArgument(0));
-              when(state.holdStatus()).thenReturn(HoldStatus.COMMITTED);
-              when(state.lifecycleEvidence()).thenReturn(lifecycle);
-              return Optional.of(state);
-            });
+        .thenAnswer(invocation -> {
+          readIdentity.set(invocation.getArgument(0));
+          var lifecycleRequest = mock(Request.class);
+          when(lifecycleRequest.canonicalGameInstanceId()).thenReturn(GAME_INSTANCE);
+          when(lifecycleRequest.canonicalTenantId()).thenReturn(TENANT);
+          when(lifecycleRequest.canonicalVersionId()).thenReturn(VERSION);
+          when(lifecycleRequest.playableStateNamespaceId()).thenReturn(PLAYABLE_NAMESPACE);
+          var start = mock(RoomTemplateRef.class);
+          when(start.tenantId()).thenReturn(TENANT);
+          when(start.versionId()).thenReturn(VERSION);
+          var lifecycle = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
+          when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch());
+          when(lifecycle.request()).thenReturn(lifecycleRequest);
+          when(lifecycle.startLocation()).thenReturn(start);
+          var state = mock(WorldCanonicalInitialAdmissionHoldState.class);
+          when(state.holdIdentity()).thenReturn(invocation.getArgument(0));
+          when(state.holdStatus()).thenReturn(HoldStatus.COMMITTED);
+          when(state.lifecycleEvidence()).thenReturn(lifecycle);
+          return Optional.of(state);
+        });
     var terminal = mock(GameSessionCanonicalInitialAdmissionOwnerProof.class);
     when(terminal.holdIdentity()).thenAnswer(invocation -> readIdentity.get());
     when(terminal.outcome())
@@ -585,10 +571,9 @@ class CanonicalInitialPlayerLocationServiceTest {
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     verify(gameSession).read(any());
     verify(location, never()).store(any());

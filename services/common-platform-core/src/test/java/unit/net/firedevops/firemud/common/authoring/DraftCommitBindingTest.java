@@ -82,19 +82,17 @@ class DraftCommitBindingTest {
 
     ObjectNode missingRevisions = (ObjectNode) json.readTree(original.canonicalJson());
     missingRevisions.remove("revisions");
-    assertThatThrownBy(
-            () ->
-                DraftCommitBinding.fromStored(
-                    json.writeValueAsString(missingRevisions), original.digest()))
+    assertThatThrownBy(() ->
+            DraftCommitBinding.fromStored(
+                json.writeValueAsString(missingRevisions), original.digest()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("corrupt");
 
     ObjectNode invalidAffectedUnits = (ObjectNode) json.readTree(original.canonicalJson());
     invalidAffectedUnits.put("affectedUnits", "not-an-array");
-    assertThatThrownBy(
-            () ->
-                DraftCommitBinding.fromStored(
-                    json.writeValueAsString(invalidAffectedUnits), original.digest()))
+    assertThatThrownBy(() ->
+            DraftCommitBinding.fromStored(
+                json.writeValueAsString(invalidAffectedUnits), original.digest()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("corrupt");
   }
@@ -102,37 +100,34 @@ class DraftCommitBindingTest {
   @Test
   void rejectsOmittedDuplicateOrInconsistentCanonicalOrder() {
     DraftCommitBinding original = binding();
-    assertThatThrownBy(
-            () ->
-                DraftCommitBinding.create(
-                    original.target(),
-                    original.requestId(),
-                    original.commitId(),
-                    original.baseCommitId(),
-                    List.of(original.revisions().get(0)),
-                    original.affectedUnits()))
+    assertThatThrownBy(() ->
+            DraftCommitBinding.create(
+                original.target(),
+                original.requestId(),
+                original.commitId(),
+                original.baseCommitId(),
+                List.of(original.revisions().get(0)),
+                original.affectedUnits()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("owner set");
-    assertThatThrownBy(
-            () ->
-                DraftCommitBinding.create(
-                    original.target(),
-                    original.requestId(),
-                    original.commitId(),
-                    original.baseCommitId(),
-                    List.of(original.revisions().get(0), original.revisions().get(0)),
-                    original.affectedUnits()))
+    assertThatThrownBy(() ->
+            DraftCommitBinding.create(
+                original.target(),
+                original.requestId(),
+                original.commitId(),
+                original.baseCommitId(),
+                List.of(original.revisions().get(0), original.revisions().get(0)),
+                original.affectedUnits()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical array order");
-    assertThatThrownBy(
-            () ->
-                DraftCommitBinding.create(
-                    original.target(),
-                    original.requestId(),
-                    original.commitId(),
-                    original.baseCommitId(),
-                    original.revisions(),
-                    List.of(original.affectedUnits().get(0), original.affectedUnits().get(0))))
+    assertThatThrownBy(() ->
+            DraftCommitBinding.create(
+                original.target(),
+                original.requestId(),
+                original.commitId(),
+                original.baseCommitId(),
+                original.revisions(),
+                List.of(original.affectedUnits().get(0), original.affectedUnits().get(0))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate affected");
   }
@@ -141,39 +136,36 @@ class DraftCommitBindingTest {
   void rejectsNonCanonicalCountersAndNilOrUnprovedTargetIdentity() {
     DraftCommitBinding original = binding();
     AffectedUnit affected = original.affectedUnits().getFirst();
-    assertThatThrownBy(
-            () ->
-                new AffectedUnit(
-                    affected.owner(),
-                    affected.aggregateType(),
-                    affected.aggregateId(),
-                    affected.scopeType(),
-                    affected.scopeId(),
-                    "01"))
+    assertThatThrownBy(() ->
+            new AffectedUnit(
+                affected.owner(),
+                affected.aggregateType(),
+                affected.aggregateId(),
+                affected.scopeType(),
+                affected.scopeId(),
+                "01"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical nonnegative decimal");
-    assertThatThrownBy(
-            () ->
-                new TargetProof(
-                    new UUID(0L, 0L),
-                    original.target().canonicalVersionId(),
-                    1,
-                    "tenant-source",
-                    2,
-                    "tenant-source",
-                    "NEW_GAME_ROW"))
+    assertThatThrownBy(() ->
+            new TargetProof(
+                new UUID(0L, 0L),
+                original.target().canonicalVersionId(),
+                1,
+                "tenant-source",
+                2,
+                "tenant-source",
+                "NEW_GAME_ROW"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil UUID");
-    assertThatThrownBy(
-            () ->
-                new TargetProof(
-                    original.target().canonicalTenantId(),
-                    original.target().canonicalVersionId(),
-                    1,
-                    "tenant-source",
-                    2,
-                    "different-source",
-                    "NEW_GAME_ROW"))
+    assertThatThrownBy(() ->
+            new TargetProof(
+                original.target().canonicalTenantId(),
+                original.target().canonicalVersionId(),
+                1,
+                "tenant-source",
+                2,
+                "different-source",
+                "NEW_GAME_ROW"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must match exactly");
   }

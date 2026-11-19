@@ -509,12 +509,11 @@ class TelnetServerHandlerTest {
     CountDownLatch allowSend = new CountDownLatch(1);
     CompletableFuture<WebSocket> sendFuture = new CompletableFuture<>();
     when(socket.sendText(anyString(), eq(true)))
-        .thenAnswer(
-            invocation -> {
-              sendEntered.countDown();
-              assertTrue(allowSend.await(5, TimeUnit.SECONDS));
-              return sendFuture;
-            });
+        .thenAnswer(invocation -> {
+          sendEntered.countDown();
+          assertTrue(allowSend.await(5, TimeUnit.SECONDS));
+          return sendFuture;
+        });
 
     handler.channelRead0(ctx, "look");
     assertEquals(1, handler.getBufferedSize());
@@ -523,26 +522,24 @@ class TelnetServerHandlerTest {
     drainBuffer.setAccessible(true);
     AtomicReference<Throwable> drainFailure = new AtomicReference<>();
     Thread drainThread =
-        new Thread(
-            () -> {
-              try {
-                drainBuffer.invoke(handler);
-              } catch (Throwable error) {
-                drainFailure.set(error);
-              }
-            });
+        new Thread(() -> {
+          try {
+            drainBuffer.invoke(handler);
+          } catch (Throwable error) {
+            drainFailure.set(error);
+          }
+        });
     drainThread.start();
     assertTrue(sendEntered.await(5, TimeUnit.SECONDS));
 
     CountDownLatch disconnectStarted = new CountDownLatch(1);
     CountDownLatch disconnectFinished = new CountDownLatch(1);
     Thread disconnectThread =
-        new Thread(
-            () -> {
-              disconnectStarted.countDown();
-              handler.channelInactive(ctx);
-              disconnectFinished.countDown();
-            });
+        new Thread(() -> {
+          disconnectStarted.countDown();
+          handler.channelInactive(ctx);
+          disconnectFinished.countDown();
+        });
     disconnectThread.start();
     assertTrue(disconnectStarted.await(5, TimeUnit.SECONDS));
     assertFalse(disconnectFinished.await(100, TimeUnit.MILLISECONDS));
@@ -810,11 +807,10 @@ class TelnetServerHandlerTest {
     AtomicReference<Runnable> fallback = new AtomicReference<>();
     when(context.executor()).thenReturn(executor);
     when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
-        .thenAnswer(
-            invocation -> {
-              fallback.set(invocation.getArgument(0));
-              return task;
-            });
+        .thenAnswer(invocation -> {
+          fallback.set(invocation.getArgument(0));
+          return task;
+        });
     ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
     setField(handler, "context", context);
 
@@ -838,11 +834,10 @@ class TelnetServerHandlerTest {
     AtomicReference<Runnable> fallback = new AtomicReference<>();
     when(context.executor()).thenReturn(executor);
     when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
-        .thenAnswer(
-            invocation -> {
-              fallback.set(invocation.getArgument(0));
-              return task;
-            });
+        .thenAnswer(invocation -> {
+          fallback.set(invocation.getArgument(0));
+          return task;
+        });
     ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
     setField(handler, "context", context);
     setField(handler, "closing", true);
@@ -1709,14 +1704,13 @@ class TelnetServerHandlerTest {
     List<ScheduledTask> scheduledTasks = new ArrayList<>();
     EventExecutor executor = mock(EventExecutor.class);
     when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
-        .thenAnswer(
-            invocation -> {
-              Runnable command = invocation.getArgument(0);
-              long delay = invocation.getArgument(1);
-              TimeUnit unit = invocation.getArgument(2);
-              scheduledTasks.add(new ScheduledTask(command, unit.toMillis(delay)));
-              return mockScheduledFutureTyped();
-            });
+        .thenAnswer(invocation -> {
+          Runnable command = invocation.getArgument(0);
+          long delay = invocation.getArgument(1);
+          TimeUnit unit = invocation.getArgument(2);
+          scheduledTasks.add(new ScheduledTask(command, unit.toMillis(delay)));
+          return mockScheduledFutureTyped();
+        });
     when(executor.scheduleAtFixedRate(
             any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
         .thenReturn(mockScheduledFutureTyped());

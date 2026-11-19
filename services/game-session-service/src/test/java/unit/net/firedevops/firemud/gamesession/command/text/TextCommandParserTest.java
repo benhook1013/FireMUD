@@ -215,19 +215,18 @@ class TextCommandParserTest {
     TextCommandParser parser =
         new TextCommandParser(
             new AggregatingTextCommandRegistry(
-                List.of(
-                    () ->
-                        List.of(
-                            new TextCommandDefinition(
-                                "wave-salute",
-                                TextCommandType.AUTHORED,
-                                List.of(),
-                                TextCommandDispatchGroup.AUTHORED,
-                                TextCommandStageRequirement.GAMEPLAY,
-                                TextCommandPromptPolicy.WHEN_GAMEPLAY,
-                                TextCommandActionCategory.GAMEPLAY,
-                                List.of(),
-                                TextCommandSource.GAME_AUTHORED)))));
+                List.of(() ->
+                    List.of(
+                        new TextCommandDefinition(
+                            "wave-salute",
+                            TextCommandType.AUTHORED,
+                            List.of(),
+                            TextCommandDispatchGroup.AUTHORED,
+                            TextCommandStageRequirement.GAMEPLAY,
+                            TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                            TextCommandActionCategory.GAMEPLAY,
+                            List.of(),
+                            TextCommandSource.GAME_AUTHORED)))));
 
     TextCommand command = parser.parse("WAVE-SALUTE captain");
 

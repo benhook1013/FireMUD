@@ -54,14 +54,12 @@ public final class RealmPolicyPublicationService {
       throw new IllegalArgumentException("Canonical realm policy selectors required");
     }
     return readPublishedSet(target)
-        .flatMap(
-            set ->
-                set.policies().stream()
-                    .filter(
-                        policy ->
-                            policy.source().policy().worldSlug().equals(worldSlug)
-                                && policy.source().policy().realmSlug().equals(realmSlug))
-                    .findFirst());
+        .flatMap(set ->
+            set.policies().stream()
+                .filter(policy ->
+                    policy.source().policy().worldSlug().equals(worldSlug)
+                        && policy.source().policy().realmSlug().equals(realmSlug))
+                .findFirst());
   }
 
   private static void requireIndependentRead() {

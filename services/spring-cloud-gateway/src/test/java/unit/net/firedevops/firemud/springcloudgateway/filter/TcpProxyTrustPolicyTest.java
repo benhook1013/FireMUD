@@ -253,10 +253,9 @@ class TcpProxyTrustPolicyTest {
     legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     legacy.getTcpProxy().setInsecureTrustedCidrs(List.of("127.0.0.1/32"));
 
-    assertThatThrownBy(
-            () ->
-                new TcpProxyTrustPolicy(
-                    new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("prod")))
+    assertThatThrownBy(() ->
+            new TcpProxyTrustPolicy(
+                new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("prod")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("restricted to explicit test/dev/local profiles");
   }
@@ -268,10 +267,9 @@ class TcpProxyTrustPolicyTest {
     legacy.getTcpProxy().setInsecureTrustedCidrs(List.of("127.0.0.1/32"));
 
     for (Set<String> activeProfiles : List.of(Set.of("test", "prod"), Set.<String>of())) {
-      assertThatThrownBy(
-              () ->
-                  new TcpProxyTrustPolicy(
-                      new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, activeProfiles))
+      assertThatThrownBy(() ->
+              new TcpProxyTrustPolicy(
+                  new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, activeProfiles))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("restricted to explicit test/dev/local profiles");
     }
@@ -299,10 +297,9 @@ class TcpProxyTrustPolicyTest {
       legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
       legacy.getTcpProxy().setInsecureTrustedCidrs(List.of(cidr));
 
-      assertThatThrownBy(
-              () ->
-                  new TcpProxyTrustPolicy(
-                      new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("test")))
+      assertThatThrownBy(() ->
+              new TcpProxyTrustPolicy(
+                  new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("test")))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("contains an invalid source CIDR");
     }

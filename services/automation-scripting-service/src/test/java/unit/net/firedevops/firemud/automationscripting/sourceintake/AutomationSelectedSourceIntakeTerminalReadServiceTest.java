@@ -78,10 +78,8 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
     try {
       assertThatThrownBy(() -> service.read(request(binding)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.NOT_FOUND));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
     } finally {
       accountContext.detach(previous);
     }
@@ -101,10 +99,9 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
     try {
       assertThatThrownBy(() -> service.read(request(binding)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.ALREADY_EXISTS));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.ALREADY_EXISTS));
 
       doThrow(
               new AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException(
@@ -113,10 +110,8 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
           .readCommittedTerminal(binding);
       assertThatThrownBy(() -> service.read(request(binding)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.DATA_LOSS));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.DATA_LOSS));
     } finally {
       accountContext.detach(previous);
     }
@@ -143,17 +138,15 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
 
         assertThatThrownBy(() -> service.read(terminalRequest))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                error -> {
-                  var status = Status.fromThrowable(error);
-                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-                  assertThat(status.getDescription())
-                      .isEqualTo("Automation terminal receipt storage is unavailable");
-                  assertThat(status.getDescription())
-                      .doesNotContain("private jOOQ", "private Spring");
-                  assertThat(((StatusRuntimeException) error).getCause()).isNull();
-                  assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
-                });
+            .satisfies(error -> {
+              var status = Status.fromThrowable(error);
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription())
+                  .isEqualTo("Automation terminal receipt storage is unavailable");
+              assertThat(status.getDescription()).doesNotContain("private jOOQ", "private Spring");
+              assertThat(((StatusRuntimeException) error).getCause()).isNull();
+              assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+            });
 
         var recovered = service.read(terminalRequest);
         assertThat(recovered.request()).isSameAs(terminalRequest);
@@ -174,10 +167,9 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
 
     assertThatThrownBy(() -> service.read(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
 
     var wrongPeer =
         new GrpcPeerIdentity(
@@ -187,10 +179,9 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
     try {
       assertThatThrownBy(() -> service.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     } finally {
       wrongContext.detach(previous);
     }
@@ -201,28 +192,25 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
       SessionContext.setContext("1001", List.of(), Map.of());
       assertThatThrownBy(() -> service.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       SessionContext.clear();
 
       TransactionSynchronizationManager.setActualTransactionActive(true);
       assertThatThrownBy(() -> service.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
       TransactionSynchronizationManager.setActualTransactionActive(false);
 
       TransactionSynchronizationManager.initSynchronization();
       assertThatThrownBy(() -> service.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
       TransactionSynchronizationManager.clearSynchronization();
     } finally {
       accountContext.detach(previous);

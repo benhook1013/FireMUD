@@ -78,14 +78,13 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
           UUID.fromString("4cae05e8-7a6b-3b14-9d44-665e3eec450b"),
           UUID.fromString("4cae05e8-7a6b-4b14-7d44-665e3eec450b")
         }) {
-      assertThatThrownBy(
-              () ->
-                  repository.beginPendingForAccount(
-                      UUID.randomUUID(),
-                      accountId,
-                      "spiffe://firemud/ns/test/sa/game-session-service",
-                      UUID.randomUUID(),
-                      AccountGameplayCredentialRequestBindingFixture.binding()))
+      assertThatThrownBy(() ->
+              repository.beginPendingForAccount(
+                  UUID.randomUUID(),
+                  accountId,
+                  "spiffe://firemud/ns/test/sa/game-session-service",
+                  UUID.randomUUID(),
+                  AccountGameplayCredentialRequestBindingFixture.binding()))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("A canonical version-4 Account UUID is required");
     }
@@ -189,14 +188,13 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
             .AccountGameplayDelegationAuthorityProjection.ProjectionObservation(
             issuerProjectionValue.digest(), canonicalAccount.digest(), 7L, 1L),
         source);
-    assertThatThrownBy(
-            () ->
-                method.invoke(
-                    null,
-                    new net.firedevops.firemud.accountservice.service.session
-                        .AccountGameplayDelegationAuthorityProjection.ProjectionObservation(
-                        issuerProjectionValue.digest(), "b".repeat(64), 7L, 1L),
-                    source))
+    assertThatThrownBy(() ->
+            method.invoke(
+                null,
+                new net.firedevops.firemud.accountservice.service.session
+                    .AccountGameplayDelegationAuthorityProjection.ProjectionObservation(
+                    issuerProjectionValue.digest(), "b".repeat(64), 7L, 1L),
+                source))
         .hasCauseInstanceOf(
             AccountGameplayDelegationIssuanceRepository.StaleAuthorityException.class);
   }
@@ -771,12 +769,11 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
         current
             .account()
             .accountSecurityCutoff()
-            .map(
-                cutoff ->
-                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                        cutoff.accountAuthorityGeneration(),
-                        cutoff.outboxStreamKey(),
-                        cutoff.outboxSequence()));
+            .map(cutoff ->
+                new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                    cutoff.accountAuthorityGeneration(),
+                    cutoff.outboxStreamKey(),
+                    cutoff.outboxSequence()));
     return AccountAuthEvidenceBundle.fromOwnerEvaluation(
         new OwnerEvaluation(
             new BundleReference("1", "11", "9", "3"),
@@ -873,12 +870,11 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
             current
                 .account()
                 .accountSecurityCutoff()
-                .map(
-                    cutoff ->
-                        new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                            cutoff.accountAuthorityGeneration(),
-                            cutoff.outboxStreamKey(),
-                            cutoff.outboxSequence()))),
+                .map(cutoff ->
+                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                        cutoff.accountAuthorityGeneration(),
+                        cutoff.outboxStreamKey(),
+                        cutoff.outboxSequence()))),
         "authority tuple and Account cutoff");
     assertCanonicalBundleSubtree(fields.get("membershipVersion"), Map.of(), "membership version");
     assertThat(fields.get("issuanceFence"))

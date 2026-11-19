@@ -57,13 +57,11 @@ class TemplateReferencePhasePostgresIntegrationTest {
     assertThat(phase.sourceGameRowId()).isEqualTo(fixture.creation().sourceGameRowId());
     assertThat(phase.sourceGameTenantKey()).isEqualTo(fixture.creation().sourceGameTenantKey());
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .tx()
-                    .execute(
-                        ignored ->
-                            references.validateAndEnforce(fixture.target().canonicalTenantId())))
+    assertThatThrownBy(() ->
+            fixture
+                .tx()
+                .execute(
+                    ignored -> references.validateAndEnforce(fixture.target().canonicalTenantId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("TEMPLATE_REFERENCE_INVENTORY_EMPTY");
     assertThat(references.readPhase(fixture.target().canonicalTenantId()).orElseThrow())
@@ -74,14 +72,12 @@ class TemplateReferencePhasePostgresIntegrationTest {
         applyTemplateSourceMutation(
             fixture, TemplateConfigSource.deletePayload(deletedTemplateId), "1");
     assertThat(sourceSnapshot(fixture, deleted).entries()).isEmpty();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .tx()
-                    .execute(
-                        ignored ->
-                            new TemplateReferenceRepository(fixture.dsl())
-                                .validateAndEnforce(fixture.target().canonicalTenantId())))
+    assertThatThrownBy(() ->
+            fixture
+                .tx()
+                .execute(ignored ->
+                    new TemplateReferenceRepository(fixture.dsl())
+                        .validateAndEnforce(fixture.target().canonicalTenantId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("TEMPLATE_REFERENCE_INVENTORY_EMPTY");
     assertThat(
@@ -135,10 +131,9 @@ class TemplateReferencePhasePostgresIntegrationTest {
     var enforced =
         fixture
             .tx()
-            .execute(
-                ignored ->
-                    new TemplateReferenceRepository(fixture.dsl())
-                        .validateAndEnforce(fixture.target().canonicalTenantId()));
+            .execute(ignored ->
+                new TemplateReferenceRepository(fixture.dsl())
+                    .validateAndEnforce(fixture.target().canonicalTenantId()));
     assertThat(enforced).isNotNull();
     assertThat(enforced.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
     assertThat(enforced.inventoryTemplateCount()).isEqualTo(1L);
@@ -167,13 +162,11 @@ class TemplateReferencePhasePostgresIntegrationTest {
     assertThat(currentSource.entries().getFirst().sourceBinding().commitId())
         .isEqualTo(active.commitId());
 
-    assertThatThrownBy(
-            () ->
-                applyTemplateSourceMutation(
-                    fixture,
-                    TemplateConfigSource.upsertPayload(
-                        reactivatedTemplateId, templateConfig(fixture)),
-                    "3"))
+    assertThatThrownBy(() ->
+            applyTemplateSourceMutation(
+                fixture,
+                TemplateConfigSource.upsertPayload(reactivatedTemplateId, templateConfig(fixture)),
+                "3"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Template source identity is not an existing qualified entry");
     assertThat(sourceSnapshot(fixture, deleted)).isEqualTo(currentSource);
@@ -224,10 +217,9 @@ class TemplateReferencePhasePostgresIntegrationTest {
     var enforced =
         fixture
             .tx()
-            .execute(
-                ignored ->
-                    new TemplateReferenceRepository(fixture.dsl())
-                        .validateAndEnforce(fixture.target().canonicalTenantId()));
+            .execute(ignored ->
+                new TemplateReferenceRepository(fixture.dsl())
+                    .validateAndEnforce(fixture.target().canonicalTenantId()));
     assertThat(enforced).isNotNull();
     assertThat(enforced.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
     assertThat(enforced.inventoryTemplateCount()).isEqualTo(1L);
@@ -263,18 +255,16 @@ class TemplateReferencePhasePostgresIntegrationTest {
     assertThat(enforced.inventoryTemplateCount()).isEqualTo(1L);
     assertThat(enforced.inventoryDigest()).startsWith("sha256:");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .tx()
-                    .executeWithoutResult(
-                        ignored ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "INSERT INTO game_templates (tenant_id, name, config) "
-                                        + "VALUES (?, 'Raw bypass', '{}'::JSONB)",
-                                    fixture.creation().sourceGameTenantKey())))
+    assertThatThrownBy(() ->
+            fixture
+                .tx()
+                .executeWithoutResult(ignored ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "INSERT INTO game_templates (tenant_id, name, config) "
+                                + "VALUES (?, 'Raw bypass', '{}'::JSONB)",
+                            fixture.creation().sourceGameTenantKey())))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining(
             "validated template create requires exact active owner source binding");
@@ -356,23 +346,20 @@ class TemplateReferencePhasePostgresIntegrationTest {
     createTemplate(fixture, "Qualified");
     fixture
         .tx()
-        .executeWithoutResult(
-            ignored ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO game_templates (tenant_id, name, config) "
-                            + "VALUES (?, 'Unqualified', '{}'::JSONB)",
-                        fixture.creation().sourceGameTenantKey()));
+        .executeWithoutResult(ignored ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO game_templates (tenant_id, name, config) "
+                        + "VALUES (?, 'Unqualified', '{}'::JSONB)",
+                    fixture.creation().sourceGameTenantKey()));
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .tx()
-                    .execute(
-                        ignored ->
-                            new TemplateReferenceRepository(fixture.dsl())
-                                .validateAndEnforce(fixture.target().canonicalTenantId())))
+    assertThatThrownBy(() ->
+            fixture
+                .tx()
+                .execute(ignored ->
+                    new TemplateReferenceRepository(fixture.dsl())
+                        .validateAndEnforce(fixture.target().canonicalTenantId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("TEMPLATE_REFERENCE_INVENTORY_UNQUALIFIED");
     assertThat(
@@ -443,32 +430,29 @@ class TemplateReferencePhasePostgresIntegrationTest {
     var sources = new GameDesignSourceRepository(fixture.dsl());
     fixture
         .tx()
-        .executeWithoutResult(
-            ignored -> {
-              var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl());
-              var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
-              sources.claimReviewed(
-                  binding,
-                  reviewed.resolve(
-                      fixture.target(), DraftBaseReference.parse(binding.baseCommitId())));
-              coordinator.claimApplicationSlot(binding);
-              coordinator.markOwnerInProgress(
-                  binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-              var applied = sources.apply(binding);
-              if (sourceAwareVisibility) {
-                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                    .advanceIsolatedSourceVisibility(
-                        fixture.dsl(), binding, List.of(applied.ownerOutcome()));
-              } else {
-                // These primitive-level cases deliberately leave promotion to the explicit
-                // validator.
-                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                    .advanceIsolatedVisibility(
-                        fixture.dsl(), binding, List.of(applied.ownerOutcome()));
-                sources.captureSynchronized(binding);
-              }
-              coordinator.releaseApplicationSlot(binding);
-            });
+        .executeWithoutResult(ignored -> {
+          var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl());
+          var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+          sources.claimReviewed(
+              binding,
+              reviewed.resolve(fixture.target(), DraftBaseReference.parse(binding.baseCommitId())));
+          coordinator.claimApplicationSlot(binding);
+          coordinator.markOwnerInProgress(
+              binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+          var applied = sources.apply(binding);
+          if (sourceAwareVisibility) {
+            net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                .advanceIsolatedSourceVisibility(
+                    fixture.dsl(), binding, List.of(applied.ownerOutcome()));
+          } else {
+            // These primitive-level cases deliberately leave promotion to the explicit
+            // validator.
+            net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                .advanceIsolatedVisibility(fixture.dsl(), binding, List.of(applied.ownerOutcome()));
+            sources.captureSynchronized(binding);
+          }
+          coordinator.releaseApplicationSlot(binding);
+        });
     return binding;
   }
 
@@ -530,15 +514,14 @@ class TemplateReferencePhasePostgresIntegrationTest {
     String tenantKey = UUID.randomUUID().toString();
     FreshTenantCreationEvidence creation =
         Objects.requireNonNull(
-            tx.execute(
-                ignored ->
-                    new GameTenantCreationRepository(dsl, new GameRepository(dsl))
-                        .createCandidate(
-                            "template-phase-test",
-                            requestId,
-                            tenantKey,
-                            "Template reference phase fixture",
-                            null)));
+            tx.execute(ignored ->
+                new GameTenantCreationRepository(dsl, new GameRepository(dsl))
+                    .createCandidate(
+                        "template-phase-test",
+                        requestId,
+                        tenantKey,
+                        "Template reference phase fixture",
+                        null)));
     Version version = new Version();
     version.setTenantId(tenantKey);
     version.setVersionNumber(1);

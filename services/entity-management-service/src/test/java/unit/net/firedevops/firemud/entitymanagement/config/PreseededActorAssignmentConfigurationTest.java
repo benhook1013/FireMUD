@@ -45,19 +45,17 @@ class PreseededActorAssignmentConfigurationTest {
     assertThatThrownBy(() -> service.assign(request))
         .isInstanceOf(AdminAuthorizationException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_RUN_OWNED_ACTION_GRANT_UNAVAILABLE");
-    assertThatThrownBy(
-            () ->
-                accountIdentityPort.resolveRuntimeAccountIdentity(
-                    request.canonicalAccountUuid().toString(), request.assignmentUuid().toString()))
+    assertThatThrownBy(() ->
+            accountIdentityPort.resolveRuntimeAccountIdentity(
+                request.canonicalAccountUuid().toString(), request.assignmentUuid().toString()))
         .isInstanceOf(
             PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_OWNER_EVIDENCE_UNAVAILABLE");
-    assertThatThrownBy(
-            () ->
-                stagingEligibilityPort.resolvePreseededActorStagingEligibility(
-                    request.canonicalAccountUuid().toString(),
-                    request.expectedTarget().canonicalTenantUuid().toString(),
-                    request.assignmentUuid().toString()))
+    assertThatThrownBy(() ->
+            stagingEligibilityPort.resolvePreseededActorStagingEligibility(
+                request.canonicalAccountUuid().toString(),
+                request.expectedTarget().canonicalTenantUuid().toString(),
+                request.assignmentUuid().toString()))
         .isInstanceOf(
             PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_OWNER_EVIDENCE_UNAVAILABLE");

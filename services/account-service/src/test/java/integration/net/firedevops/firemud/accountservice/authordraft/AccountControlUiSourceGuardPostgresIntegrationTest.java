@@ -96,34 +96,29 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
   void rawProtectedMutationCannotBypassOriginalFenceButNoOpAndUnrelatedAccountRemainWritable() {
     Context c = context();
     var binding = binding(c);
-    c.tx(
-        () -> {
-          c.fences.reserve(binding);
-          c.fences.claimCommitOrder(binding);
-          return null;
-        });
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
-                            "test-only-bypass",
-                            binding.actorAccountId())))
+    c.tx(() -> {
+      c.fences.reserve(binding);
+      c.fences.claimCommitOrder(binding);
+      return null;
+    });
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
+                    "test-only-bypass",
+                    binding.actorAccountId())))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("every original owner settles");
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "UPDATE accounts SET id = id WHERE account_uuid = ?", binding.actorAccountId()));
+    c.tx(() ->
+        c.dsl.execute(
+            "UPDATE accounts SET id = id WHERE account_uuid = ?", binding.actorAccountId()));
     // Username/email are not captured Account security/role fields. Existing protections still
     // apply.
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "UPDATE accounts SET username = ? WHERE account_uuid = ?",
-                "test-noop-metadata",
-                binding.actorAccountId()));
+    c.tx(() ->
+        c.dsl.execute(
+            "UPDATE accounts SET username = ? WHERE account_uuid = ?",
+            "test-noop-metadata",
+            binding.actorAccountId()));
     UUID unrelated = account(c);
     changePassword(c, unrelated, "test-only-unrelated-account-change");
     var ordering =
@@ -140,12 +135,11 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     for (Outcome outcome : Outcome.values()) {
       Context c = context();
       var binding = binding(c);
-      c.tx(
-          () -> {
-            c.fences.reserve(binding);
-            c.fences.claimCommitOrder(binding);
-            return null;
-          });
+      c.tx(() -> {
+        c.fences.reserve(binding);
+        c.fences.claimCommitOrder(binding);
+        return null;
+      });
       terminal(c, binding, Owner.WORLD, outcome);
       assertThatThrownBy(() -> changePassword(c, binding.actorAccountId(), "test-only-blocked"))
           .isInstanceOf(DataAccessException.class);
@@ -161,12 +155,11 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     }
     Context c = context();
     var binding = binding(c);
-    c.tx(
-        () -> {
-          c.fences.reserve(binding);
-          c.fences.claimCommitOrder(binding);
-          return null;
-        });
+    c.tx(() -> {
+      c.fences.reserve(binding);
+      c.fences.claimCommitOrder(binding);
+      return null;
+    });
     terminal(c, binding, Owner.WORLD, Outcome.COMMITTED);
     terminal(c, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
     assertThatThrownBy(() -> changePassword(c, binding.actorAccountId(), "test-only-mixed-denied"))
@@ -187,17 +180,15 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
         statement.executeQuery().close();
       }
       Instant started = Instant.now();
-      assertThatThrownBy(
-              () ->
-                  c.tx(
-                      () -> {
-                        c.dsl.fetchOne(
-                            "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-                            binding.actorAccountId());
-                        c.fences.lockProducerSourcesNowait(binding.sources());
-                        c.fences.reserve(binding);
-                        return c.fences.claimCommitOrder(binding);
-                      }))
+      assertThatThrownBy(() ->
+              c.tx(() -> {
+                c.dsl.fetchOne(
+                    "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                    binding.actorAccountId());
+                c.fences.lockProducerSourcesNowait(binding.sources());
+                c.fences.reserve(binding);
+                return c.fences.claimCommitOrder(binding);
+              }))
           .isInstanceOf(DataAccessException.class);
       assertThat(Duration.between(started, Instant.now())).isLessThan(Duration.ofSeconds(2));
       assertThat(c.dsl.fetchCount(DSL.table("account_draft_authorization_fences"))).isZero();
@@ -205,12 +196,11 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
           .isZero();
       writer.rollback();
     }
-    c.tx(
-        () -> {
-          c.fences.lockProducerSourcesNowait(binding.sources());
-          c.fences.reserve(binding);
-          return c.fences.claimCommitOrder(binding);
-        });
+    c.tx(() -> {
+      c.fences.lockProducerSourcesNowait(binding.sources());
+      c.fences.reserve(binding);
+      return c.fences.claimCommitOrder(binding);
+    });
     assertThatThrownBy(
             () -> changePassword(c, binding.actorAccountId(), "test-only-producer-first"))
         .isInstanceOf(DataAccessException.class);
@@ -249,16 +239,15 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
           Context c = context();
           var binding = binding(c);
           var change = sourceChange(binding);
-          c.tx(
-              () -> {
-                c.fences.reserve(binding);
-                if (ordering == DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER) {
-                  c.fences.claimCommitOrder(binding);
-                } else {
-                  assertThat(c.fences.requestSourceChange(change)).isFalse();
-                }
-                return null;
-              });
+          c.tx(() -> {
+            c.fences.reserve(binding);
+            if (ordering == DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER) {
+              c.fences.claimCommitOrder(binding);
+            } else {
+              assertThat(c.fences.requestSourceChange(change)).isFalse();
+            }
+            return null;
+          });
           terminal(c, binding, Owner.WORLD, worldOutcome);
           terminal(c, binding, Owner.GAME_DESIGN, gameDesignOutcome);
 
@@ -294,16 +283,15 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
         new Thread(
             () -> {
               try {
-                c.tx(
-                    () -> {
-                      firstPid.set(
-                          Objects.requireNonNull(c.dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      assertThat(c.fences.requestSourceChange(firstChange)).isFalse();
-                      firstIntentRecorded.countDown();
-                      await(releaseFirstIntent);
-                      return null;
-                    });
+                c.tx(() -> {
+                  firstPid.set(
+                      Objects.requireNonNull(c.dsl.fetchOne("SELECT pg_backend_pid()"))
+                          .get(0, Integer.class));
+                  assertThat(c.fences.requestSourceChange(firstChange)).isFalse();
+                  firstIntentRecorded.countDown();
+                  await(releaseFirstIntent);
+                  return null;
+                });
               } catch (Throwable failure) {
                 firstFailure.set(failure);
                 firstIntentRecorded.countDown();
@@ -366,14 +354,12 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     Map<String, Integer> before = authorizationRowCounts(c);
     String passwordBefore = accountPassword(c, binding.actorAccountId());
 
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () -> {
-                      c.fences.reserve(binding);
-                      assertThat(c.fences.requestSourceChange(change)).isFalse();
-                      throw new IllegalStateException("test-only transaction rollback");
-                    }))
+    assertThatThrownBy(() ->
+            c.tx(() -> {
+              c.fences.reserve(binding);
+              assertThat(c.fences.requestSourceChange(change)).isFalse();
+              throw new IllegalStateException("test-only transaction rollback");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test-only transaction rollback");
 
@@ -400,21 +386,19 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     Context c = context();
     var binding = binding(c);
     var change = sourceChange(binding);
-    c.tx(
-        () -> {
-          c.fences.reserve(binding);
-          assertThat(c.fences.requestSourceChange(change)).isFalse();
-          return null;
-        });
+    c.tx(() -> {
+      c.fences.reserve(binding);
+      assertThat(c.fences.requestSourceChange(change)).isFalse();
+      return null;
+    });
     terminal(c, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
     terminal(c, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
     assertThat(c.tx(() -> c.fences.sourceAbortPermitted(change))).isTrue();
 
-    c.tx(
-        () -> {
-          c.fences.markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
-          return null;
-        });
+    c.tx(() -> {
+      c.fences.markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
+      return null;
+    });
     var aborted = c.tx(() -> c.fences.readSourceChange(change));
     String abortedRowVersion = sourceChangeRowVersion(c, change.changeId());
     assertThat(aborted.status()).isEqualTo("SOURCE_ABORTED");
@@ -423,21 +407,18 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     assertThat(aborted.abortedAt()).isNotNull();
     assertThat(aborted.abortReason()).isEqualTo(SourceChangeAbortReason.EXPIRED);
 
-    c.tx(
-        () -> {
-          c.fences.markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
-          return null;
-        });
+    c.tx(() -> {
+      c.fences.markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
+      return null;
+    });
     assertSourceChangeUnchanged(c.tx(() -> c.fences.readSourceChange(change)), aborted);
     assertThat(sourceChangeRowVersion(c, change.changeId())).isEqualTo(abortedRowVersion);
 
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () -> {
-                      c.fences.markSourceAborted(change, SourceChangeAbortReason.DEFINITIVE_ABORT);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            c.tx(() -> {
+              c.fences.markSourceAborted(change, SourceChangeAbortReason.DEFINITIVE_ABORT);
+              return null;
+            }))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Source change abort reason differs from readback");
     assertSourceChangeUnchanged(c.tx(() -> c.fences.readSourceChange(change)), aborted);
@@ -445,13 +426,11 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     assertThatThrownBy(() -> c.tx(() -> c.fences.requestSourceChange(change)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Aborted source change cannot be requested again");
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () -> {
-                      c.fences.markSourceCommitted(change);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            c.tx(() -> {
+              c.fences.markSourceCommitted(change);
+              return null;
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Aborted source change cannot be committed");
     assertSourceChangeUnchanged(c.tx(() -> c.fences.readSourceChange(change)), aborted);
@@ -559,15 +538,14 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
         new Thread(
             () -> {
               try {
-                c.tx(
-                    () -> {
-                      backendPid.set(
-                          Objects.requireNonNull(c.dsl.fetchOne("SELECT pg_backend_pid()"))
-                              .get(0, Integer.class));
-                      started.countDown();
-                      action.run();
-                      return null;
-                    });
+                c.tx(() -> {
+                  backendPid.set(
+                      Objects.requireNonNull(c.dsl.fetchOne("SELECT pg_backend_pid()"))
+                          .get(0, Integer.class));
+                  started.countDown();
+                  action.run();
+                  return null;
+                });
               } catch (Throwable thrown) {
                 failure.set(thrown);
                 started.countDown();
@@ -659,42 +637,39 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
 
   private static void terminal(
       Context c, DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
-    c.tx(
-        () -> {
-          c.fences.recordOwnerReadback(
-              binding,
-              new OwnerReadback(
-                  owner,
-                  outcome,
-                  binding.operationId(),
-                  binding.commitId(),
-                  binding.fenceId(),
-                  binding.inputDigest(),
-                  binding.canonicalBytes(),
-                  new byte[] {7}));
-          return null;
-        });
+    c.tx(() -> {
+      c.fences.recordOwnerReadback(
+          binding,
+          new OwnerReadback(
+              owner,
+              outcome,
+              binding.operationId(),
+              binding.commitId(),
+              binding.fenceId(),
+              binding.inputDigest(),
+              binding.canonicalBytes(),
+              new byte[] {7}));
+      return null;
+    });
   }
 
   private static void changePassword(Context c, UUID id, String hash) {
-    c.tx(
-        () -> {
-          Account account = new AccountRepository(c.dsl).findByAccountUuid(id).orElseThrow();
-          account.setPasswordHash(hash);
-          return new AccountRepository(c.dsl).save(account);
-        });
+    c.tx(() -> {
+      Account account = new AccountRepository(c.dsl).findByAccountUuid(id).orElseThrow();
+      account.setPasswordHash(hash);
+      return new AccountRepository(c.dsl).save(account);
+    });
   }
 
   private static UUID account(Context c) {
-    return c.tx(
-        () -> {
-          Account row = new Account();
-          String suffix = UUID.randomUUID().toString();
-          row.setUsername("test-" + suffix);
-          row.setEmail(suffix + "@example.test");
-          row.setPasswordHash("test-only-hash");
-          return new AccountRepository(c.dsl).save(row).getAccountUuid();
-        });
+    return c.tx(() -> {
+      Account row = new Account();
+      String suffix = UUID.randomUUID().toString();
+      row.setUsername("test-" + suffix);
+      row.setEmail(suffix + "@example.test");
+      row.setPasswordHash("test-only-hash");
+      return new AccountRepository(c.dsl).save(row).getAccountUuid();
+    });
   }
 
   private static DraftAuthorizationFenceBinding binding(Context c) {

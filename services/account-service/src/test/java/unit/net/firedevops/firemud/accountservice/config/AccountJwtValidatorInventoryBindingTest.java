@@ -125,20 +125,18 @@ class AccountJwtValidatorInventoryBindingTest {
   @Test
   void rejectsDigestTamperingUnknownFieldsAndUnpinnedImage() throws Exception {
     byte[] valid = validBindingBytes();
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    new String(valid, StandardCharsets.UTF_8)
-                        .replace("cluster-test", "other-cluster")
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                new String(valid, StandardCharsets.UTF_8)
+                    .replace("cluster-test", "other-cluster")
+                    .getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalStateException.class);
 
     Map<String, Object> withUnknown = parseMap(valid);
     withUnknown.put("ambientTrust", true);
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(withUnknown)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(withUnknown)))
         .isInstanceOf(IllegalStateException.class);
 
     byte[] unpinnedImage = validBindingBytes("registry.example/firemud/player:latest");
@@ -162,10 +160,9 @@ class AccountJwtValidatorInventoryBindingTest {
     List<?> pins = (List<?>) validator.get("receiverPods");
     validator.put("receiverPods", List.of(pins.get(1), pins.get(0)));
     rebindDigest(unsorted);
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(unsorted)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(unsorted)))
         .isInstanceOf(IllegalStateException.class);
 
     Map<String, Object> noncanonicalIp = parseMap(validBindingBytes());
@@ -177,10 +174,9 @@ class AccountJwtValidatorInventoryBindingTest {
         (Map<String, Object>) ((List<?>) noncanonicalValidator.get("receiverPods")).get(0);
     firstPin.put("podIp", "010.0.0.10");
     rebindDigest(noncanonicalIp);
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(noncanonicalIp)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(noncanonicalIp)))
         .isInstanceOf(IllegalStateException.class);
 
     Map<String, Object> uppercaseSpki = parseMap(validBindingBytes());
@@ -192,10 +188,9 @@ class AccountJwtValidatorInventoryBindingTest {
         (Map<String, Object>) ((List<?>) uppercaseValidator.get("receiverPods")).get(1);
     secondPin.put("leafSpkiSha256", "D".repeat(64));
     rebindDigest(uppercaseSpki);
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(uppercaseSpki)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(uppercaseSpki)))
         .isInstanceOf(IllegalStateException.class);
 
     Map<String, Object> sharedPodKey = parseMap(validBindingBytes());
@@ -207,10 +202,9 @@ class AccountJwtValidatorInventoryBindingTest {
         (List<Map<String, Object>>) sharedKeyValidator.get("receiverPods");
     sharedKeyPins.get(1).put("leafSpkiSha256", sharedKeyPins.get(0).get("leafSpkiSha256"));
     rebindDigest(sharedPodKey);
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(sharedPodKey)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(sharedPodKey)))
         .isInstanceOf(IllegalStateException.class);
 
     Map<String, Object> canonicalIpv6 = parseMap(validBindingBytes());
@@ -234,10 +228,9 @@ class AccountJwtValidatorInventoryBindingTest {
 
     ipv6Pin.put("podIp", "2001:0db8:0:0:0:0:0:1");
     rebindDigest(canonicalIpv6);
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(canonicalIpv6)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(canonicalIpv6)))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -267,10 +260,9 @@ class AccountJwtValidatorInventoryBindingTest {
     sharedIdentity.put("validators", List.of(firstValidator, secondValidator));
     rebindDigest(sharedIdentity);
 
-    assertThatThrownBy(
-            () ->
-                AccountJwtValidatorInventoryBinding.parseProtectedBytes(
-                    JSON.writeValueAsBytes(sharedIdentity)))
+    assertThatThrownBy(() ->
+            AccountJwtValidatorInventoryBinding.parseProtectedBytes(
+                JSON.writeValueAsBytes(sharedIdentity)))
         .isInstanceOf(IllegalStateException.class);
   }
 

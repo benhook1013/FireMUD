@@ -180,10 +180,9 @@ public class GameSessionCurrentPrivatePlaytestRepository {
         preparations
             .readExact(
                 targetNamespace, tenantId, worldSlug, realmSlug, selected.playtestLifecycleId())
-            .orElseThrow(
-                () ->
-                    new SourceUnavailableException(
-                        "Current private preparation source is unavailable"));
+            .orElseThrow(() ->
+                new SourceUnavailableException(
+                    "Current private preparation source is unavailable"));
     requireQualifiedPreparation(selected.request(), snapshot);
     return Optional.of(new Current(selected, snapshot));
   }

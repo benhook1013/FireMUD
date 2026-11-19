@@ -158,90 +158,88 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(saved.getLifecycleRevision()).isEqualTo(9L);
     assertThat(bindings).hasValueSatisfying(values -> assertThat(values).contains(7L, 9L));
     assertThat(insertSql)
-        .hasValueSatisfying(
-            sql ->
-                assertThat(sql)
-                    .contains(
-                        "on conflict",
-                        "event_id",
-                        "script_pin_epoch",
-                        "script_pin_control_plane_request_id",
-                        "plugin_activation_epoch",
-                        "lifecycle_revision",
-                        "do update",
-                        "handoff_outcome")
-                    .doesNotContain("uuid"));
+        .hasValueSatisfying(sql ->
+            assertThat(sql)
+                .contains(
+                    "on conflict",
+                    "event_id",
+                    "script_pin_epoch",
+                    "script_pin_control_plane_request_id",
+                    "plugin_activation_epoch",
+                    "lifecycle_revision",
+                    "do update",
+                    "handoff_outcome")
+                .doesNotContain("uuid"));
     assertThat(conflictTarget(insertSql.get()))
         .contains("event_id")
         .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
     assertThat(insertSql)
-        .hasValueSatisfying(
-            sql -> {
-              int updateStart = sql.indexOf(" do update");
-              int whereStart = sql.indexOf(" where ", updateStart);
-              assertThat(updateStart).isGreaterThanOrEqualTo(0);
-              assertThat(whereStart).isGreaterThan(updateStart);
-              assertThat(sql.substring(updateStart, whereStart))
-                  .doesNotContain(
-                      "tenant_id",
-                      "game_instance_id",
-                      "script_patch_version",
-                      "script_pin_epoch",
-                      "script_id",
-                      "binding_id",
-                      "plugin_id",
-                      "plugin_version_id",
-                      "plugin_activation_epoch",
-                      "lifecycle_revision",
-                      "work_item_id",
-                      "command_ordinal",
-                      "automation_dispatch_id",
-                      "target_game_instance_id",
-                      "target_region_id",
-                      "target_region_epoch",
-                      "target_entity_id",
-                      "playable_state_scope",
-                      "world_slug",
-                      "realm_slug",
-                      "pointer_version",
-                      "source_kind",
-                      "source_state",
-                      "source_ordinal",
-                      "source_due_tick_id",
-                      "source_due_at_ms",
-                      "emitted_command_text");
-              assertThat(sql.substring(whereStart))
-                  .contains(
-                      "event_id",
-                      "tenant_id",
-                      "game_instance_id",
-                      "script_patch_version",
-                      "script_pin_epoch",
-                      "script_pin_control_plane_request_id",
-                      "script_id",
-                      "binding_id",
-                      "plugin_id",
-                      "plugin_version_id",
-                      "plugin_activation_epoch",
-                      "lifecycle_revision",
-                      "work_item_id",
-                      "command_ordinal",
-                      "automation_dispatch_id",
-                      "target_game_instance_id",
-                      "target_region_id",
-                      "target_region_epoch",
-                      "target_entity_id",
-                      "playable_state_scope",
-                      "world_slug",
-                      "realm_slug",
-                      "pointer_version",
-                      "source_kind",
-                      "source_state",
-                      "source_ordinal",
-                      "source_due_tick_id",
-                      "source_due_at_ms",
-                      "emitted_command_text");
-            });
+        .hasValueSatisfying(sql -> {
+          int updateStart = sql.indexOf(" do update");
+          int whereStart = sql.indexOf(" where ", updateStart);
+          assertThat(updateStart).isGreaterThanOrEqualTo(0);
+          assertThat(whereStart).isGreaterThan(updateStart);
+          assertThat(sql.substring(updateStart, whereStart))
+              .doesNotContain(
+                  "tenant_id",
+                  "game_instance_id",
+                  "script_patch_version",
+                  "script_pin_epoch",
+                  "script_id",
+                  "binding_id",
+                  "plugin_id",
+                  "plugin_version_id",
+                  "plugin_activation_epoch",
+                  "lifecycle_revision",
+                  "work_item_id",
+                  "command_ordinal",
+                  "automation_dispatch_id",
+                  "target_game_instance_id",
+                  "target_region_id",
+                  "target_region_epoch",
+                  "target_entity_id",
+                  "playable_state_scope",
+                  "world_slug",
+                  "realm_slug",
+                  "pointer_version",
+                  "source_kind",
+                  "source_state",
+                  "source_ordinal",
+                  "source_due_tick_id",
+                  "source_due_at_ms",
+                  "emitted_command_text");
+          assertThat(sql.substring(whereStart))
+              .contains(
+                  "event_id",
+                  "tenant_id",
+                  "game_instance_id",
+                  "script_patch_version",
+                  "script_pin_epoch",
+                  "script_pin_control_plane_request_id",
+                  "script_id",
+                  "binding_id",
+                  "plugin_id",
+                  "plugin_version_id",
+                  "plugin_activation_epoch",
+                  "lifecycle_revision",
+                  "work_item_id",
+                  "command_ordinal",
+                  "automation_dispatch_id",
+                  "target_game_instance_id",
+                  "target_region_id",
+                  "target_region_epoch",
+                  "target_entity_id",
+                  "playable_state_scope",
+                  "world_slug",
+                  "realm_slug",
+                  "pointer_version",
+                  "source_kind",
+                  "source_state",
+                  "source_ordinal",
+                  "source_due_tick_id",
+                  "source_due_at_ms",
+                  "emitted_command_text");
+        });
   }
 
   @Test
@@ -430,73 +428,72 @@ class ScriptHandoffEventRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Handoff event owner tuple conflict");
     assertThat(updateSql)
-        .hasValueSatisfying(
-            sql -> {
-              int whereStart = sql.indexOf(" where ");
-              assertThat(whereStart).isGreaterThanOrEqualTo(0);
-              assertThat(sql.substring(0, whereStart))
-                  .doesNotContain(
-                      "event_id",
-                      "tenant_id",
-                      "game_instance_id",
-                      "script_patch_version",
-                      "script_pin_epoch",
-                      "script_id",
-                      "binding_id",
-                      "plugin_id",
-                      "plugin_version_id",
-                      "plugin_activation_epoch",
-                      "lifecycle_revision",
-                      "work_item_id",
-                      "command_ordinal",
-                      "automation_dispatch_id",
-                      "target_game_instance_id",
-                      "target_region_id",
-                      "target_region_epoch",
-                      "target_entity_id",
-                      "playable_state_scope",
-                      "world_slug",
-                      "realm_slug",
-                      "pointer_version",
-                      "source_kind",
-                      "source_state",
-                      "source_ordinal",
-                      "source_due_tick_id",
-                      "source_due_at_ms",
-                      "emitted_command_text");
-              assertThat(sql.substring(whereStart))
-                  .contains(
-                      "event_id",
-                      "tenant_id",
-                      "game_instance_id",
-                      "row_version",
-                      "script_patch_version",
-                      "script_pin_epoch",
-                      "script_pin_control_plane_request_id",
-                      "script_id",
-                      "binding_id",
-                      "plugin_id",
-                      "plugin_version_id",
-                      "plugin_activation_epoch",
-                      "lifecycle_revision",
-                      "work_item_id",
-                      "command_ordinal",
-                      "automation_dispatch_id",
-                      "target_game_instance_id",
-                      "target_region_id",
-                      "target_region_epoch",
-                      "target_entity_id",
-                      "playable_state_scope",
-                      "world_slug",
-                      "realm_slug",
-                      "pointer_version",
-                      "source_kind",
-                      "source_state",
-                      "source_ordinal",
-                      "source_due_tick_id",
-                      "source_due_at_ms",
-                      "emitted_command_text");
-            });
+        .hasValueSatisfying(sql -> {
+          int whereStart = sql.indexOf(" where ");
+          assertThat(whereStart).isGreaterThanOrEqualTo(0);
+          assertThat(sql.substring(0, whereStart))
+              .doesNotContain(
+                  "event_id",
+                  "tenant_id",
+                  "game_instance_id",
+                  "script_patch_version",
+                  "script_pin_epoch",
+                  "script_id",
+                  "binding_id",
+                  "plugin_id",
+                  "plugin_version_id",
+                  "plugin_activation_epoch",
+                  "lifecycle_revision",
+                  "work_item_id",
+                  "command_ordinal",
+                  "automation_dispatch_id",
+                  "target_game_instance_id",
+                  "target_region_id",
+                  "target_region_epoch",
+                  "target_entity_id",
+                  "playable_state_scope",
+                  "world_slug",
+                  "realm_slug",
+                  "pointer_version",
+                  "source_kind",
+                  "source_state",
+                  "source_ordinal",
+                  "source_due_tick_id",
+                  "source_due_at_ms",
+                  "emitted_command_text");
+          assertThat(sql.substring(whereStart))
+              .contains(
+                  "event_id",
+                  "tenant_id",
+                  "game_instance_id",
+                  "row_version",
+                  "script_patch_version",
+                  "script_pin_epoch",
+                  "script_pin_control_plane_request_id",
+                  "script_id",
+                  "binding_id",
+                  "plugin_id",
+                  "plugin_version_id",
+                  "plugin_activation_epoch",
+                  "lifecycle_revision",
+                  "work_item_id",
+                  "command_ordinal",
+                  "automation_dispatch_id",
+                  "target_game_instance_id",
+                  "target_region_id",
+                  "target_region_epoch",
+                  "target_entity_id",
+                  "playable_state_scope",
+                  "world_slug",
+                  "realm_slug",
+                  "pointer_version",
+                  "source_kind",
+                  "source_state",
+                  "source_ordinal",
+                  "source_due_tick_id",
+                  "source_due_at_ms",
+                  "emitted_command_text");
+        });
   }
 
   @Test
@@ -544,13 +541,12 @@ class ScriptHandoffEventRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Handoff event immutable identity conflict");
     assertThat(updateSql)
-        .hasValueSatisfying(
-            sql -> {
-              int whereStart = sql.indexOf(" where ");
-              assertThat(whereStart).isGreaterThanOrEqualTo(0);
-              assertThat(sql.substring(0, whereStart)).doesNotContain("event_id =");
-              assertThat(sql.substring(whereStart)).contains("event_id", "row_version");
-            });
+        .hasValueSatisfying(sql -> {
+          int whereStart = sql.indexOf(" where ");
+          assertThat(whereStart).isGreaterThanOrEqualTo(0);
+          assertThat(sql.substring(0, whereStart)).doesNotContain("event_id =");
+          assertThat(sql.substring(whereStart)).contains("event_id", "row_version");
+        });
   }
 
   @Test
@@ -578,11 +574,10 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(bindingsRef.get()).contains("2026-08-02 00:00:00+00:00");
     assertThat(bindingsRef.get()).contains("DEAD_LETTERED");
     assertThat(bindingsRef.get())
-        .anySatisfy(
-            binding -> {
-              assertThat(binding).isInstanceOf(Number.class);
-              assertThat(((Number) binding).longValue()).isEqualTo(500L);
-            });
+        .anySatisfy(binding -> {
+          assertThat(binding).isInstanceOf(Number.class);
+          assertThat(((Number) binding).longValue()).isEqualTo(500L);
+        });
     String renderedSql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
     assertThat(renderedSql).contains("select \"retention_candidates\".\"id\"");
     assertThat(renderedSql)

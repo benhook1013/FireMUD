@@ -232,25 +232,24 @@ class GameSessionFixtureLaunchAssociationReadGrpcServiceTest {
         withCoordinator ? mock(RunOwnedCanonicalLaunchPreparationOwner.class) : null;
     if (coordinator != null) {
       when(coordinator.loadFixedVerifiedEvidenceForWorldPeer())
-          .thenAnswer(
-              invocation -> {
-                GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-                GrpcPeerCertificateEvidence certificate = GrpcPeerCertificateEvidence.current();
-                if (peer == null
-                    || !TARGET_NAMESPACE.equals(peer.namespace())
-                    || !"world-management-service".equals(peer.service())
-                    || !WORLD_URI.equals(peer.uri())
-                    || SessionContext.hasAuthenticatedCallerContext()
-                    || certificate == null
-                    || !evidence
-                        .fixtureCapability()
-                        .worldManagementLeafSha256()
-                        .equals(certificate.leafSha256())) {
-                  throw new AdminAuthorizationException(
-                      "Fixed fixture read requires the exact World workload peer and leaf");
-                }
-                return evidence;
-              });
+          .thenAnswer(invocation -> {
+            GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+            GrpcPeerCertificateEvidence certificate = GrpcPeerCertificateEvidence.current();
+            if (peer == null
+                || !TARGET_NAMESPACE.equals(peer.namespace())
+                || !"world-management-service".equals(peer.service())
+                || !WORLD_URI.equals(peer.uri())
+                || SessionContext.hasAuthenticatedCallerContext()
+                || certificate == null
+                || !evidence
+                    .fixtureCapability()
+                    .worldManagementLeafSha256()
+                    .equals(certificate.leafSha256())) {
+              throw new AdminAuthorizationException(
+                  "Fixed fixture read requires the exact World workload peer and leaf");
+            }
+            return evidence;
+          });
       when(coordinator.readFixedFixtureLaunch(same(evidence))).thenReturn(launch);
     }
 

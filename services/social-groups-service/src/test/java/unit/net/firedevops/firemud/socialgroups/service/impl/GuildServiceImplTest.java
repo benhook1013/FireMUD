@@ -163,13 +163,11 @@ class GuildServiceImplTest {
       performLifecycle("ADD_MEMBER");
       verify(memberRepository).save(any(GuildMember.class));
       org.junit.jupiter.api.Assertions.assertFalse(attempted.get());
-      org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-          () ->
-              org.springframework.transaction.support.TransactionSynchronizationManager
-                  .getSynchronizations()
-                  .forEach(
-                      org.springframework.transaction.support.TransactionSynchronization
-                          ::afterCommit));
+      org.junit.jupiter.api.Assertions.assertDoesNotThrow(() ->
+          org.springframework.transaction.support.TransactionSynchronizationManager
+              .getSynchronizations()
+              .forEach(
+                  org.springframework.transaction.support.TransactionSynchronization::afterCommit));
       org.junit.jupiter.api.Assertions.assertTrue(attempted.get());
     } finally {
       org.springframework.transaction.support.TransactionSynchronizationManager
@@ -183,12 +181,11 @@ class GuildServiceImplTest {
     switch (action) {
       case "CREATE" -> {
         when(guildRepository.save(any(Guild.class)))
-            .thenAnswer(
-                invocation -> {
-                  Guild guild = invocation.getArgument(0);
-                  guild.setId(2L);
-                  return guild;
-                });
+            .thenAnswer(invocation -> {
+              Guild guild = invocation.getArgument(0);
+              guild.setId(2L);
+              return guild;
+            });
         service.createGuild(new CreateGuildRequest(1L, accountUuid(3L), "guild"));
       }
       case "ADD_MEMBER" -> {

@@ -55,21 +55,20 @@ class InitialAdmissionBindServiceTest {
     assertThat(tx(harness, () -> harness.service.beginIntent(request)))
         .usingRecursiveComparison()
         .isEqualTo(intent);
-    assertThatThrownBy(
-            () ->
-                tx(
-                    harness,
-                    () ->
-                        harness.service.beginIntent(
-                            new InitialAdmissionBindRequest(
-                                17L,
-                                "demo",
-                                "production",
-                                "bind-17-93",
-                                "b".repeat(64),
-                                93L,
-                                44L,
-                                8L))))
+    assertThatThrownBy(() ->
+            tx(
+                harness,
+                () ->
+                    harness.service.beginIntent(
+                        new InitialAdmissionBindRequest(
+                            17L,
+                            "demo",
+                            "production",
+                            "bind-17-93",
+                            "b".repeat(64),
+                            93L,
+                            44L,
+                            8L))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
 
@@ -123,26 +122,25 @@ class InitialAdmissionBindServiceTest {
     assertThat(delayedCommit.outcome()).isEqualTo(InitialAdmissionBindOwnerProof.Outcome.ABORTED);
     assertThat(harness.dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
     assertThat(harness.dsl.fetchCount(DSL.table("gameplay_admission_pointer_event"))).isZero();
-    assertThatThrownBy(
-            () ->
-                tx(
-                    harness,
-                    () ->
-                        harness.service.attachHold(
-                            new InitialAdmissionBindHoldBinding(
-                                UUID.randomUUID().toString(),
-                                UUID.randomUUID().toString(),
-                                binding.tenantId(),
-                                binding.realmUuid(),
-                                binding.playableStateNamespaceUuid(),
-                                binding.playableStateScope(),
-                                binding.gameInstanceId(),
-                                binding.versionId(),
-                                binding.activeLifecycleEpoch(),
-                                binding.initialAdmissionRequestId(),
-                                binding.requestDigest(),
-                                true,
-                                binding.expectedCatalogRevision()))))
+    assertThatThrownBy(() ->
+            tx(
+                harness,
+                () ->
+                    harness.service.attachHold(
+                        new InitialAdmissionBindHoldBinding(
+                            UUID.randomUUID().toString(),
+                            UUID.randomUUID().toString(),
+                            binding.tenantId(),
+                            binding.realmUuid(),
+                            binding.playableStateNamespaceUuid(),
+                            binding.playableStateScope(),
+                            binding.gameInstanceId(),
+                            binding.versionId(),
+                            binding.activeLifecycleEpoch(),
+                            binding.initialAdmissionRequestId(),
+                            binding.requestDigest(),
+                            true,
+                            binding.expectedCatalogRevision()))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
   }
@@ -153,20 +151,19 @@ class InitialAdmissionBindServiceTest {
     var catalog =
         tx(harness, () -> harness.service.registerPublicSharedFixtureCatalog(descriptor()));
 
-    assertThatThrownBy(
-            () ->
-                tx(
-                    harness,
-                    () ->
-                        harness.service.registerPublicSharedFixtureCatalog(
-                            new InitialAdmissionBindCatalogDescriptor(
-                                17L,
-                                700L,
-                                "demo",
-                                "Changed Demo Name",
-                                "production",
-                                "Production Realm",
-                                true))))
+    assertThatThrownBy(() ->
+            tx(
+                harness,
+                () ->
+                    harness.service.registerPublicSharedFixtureCatalog(
+                        new InitialAdmissionBindCatalogDescriptor(
+                            17L,
+                            700L,
+                            "demo",
+                            "Changed Demo Name",
+                            "production",
+                            "Production Realm",
+                            true))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
     assertThat(harness.catalogRepository.findByTenantId(17L).orElseThrow().realmId())

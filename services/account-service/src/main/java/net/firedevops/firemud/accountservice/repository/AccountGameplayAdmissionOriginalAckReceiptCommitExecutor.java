@@ -146,16 +146,15 @@ final class AccountGameplayAdmissionOriginalAckReceiptCommitExecutor {
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setReadOnly(false);
     var result =
-        transaction.execute(
-            status -> {
-              if (!status.isNewTransaction()) throw denied();
-              Connection connection = manager.bindConnection();
-              var dsl = DSL.using(connection, SQLDialect.POSTGRES);
-              var repository =
-                  new AccountGameplayAdmissionOriginalAckReceiptRepository(
-                      dsl, new AccountGameplayAdmissionLeaseRepository(dsl));
-              return Objects.requireNonNull(operation.apply(repository));
-            });
+        transaction.execute(status -> {
+          if (!status.isNewTransaction()) throw denied();
+          Connection connection = manager.bindConnection();
+          var dsl = DSL.using(connection, SQLDialect.POSTGRES);
+          var repository =
+              new AccountGameplayAdmissionOriginalAckReceiptRepository(
+                  dsl, new AccountGameplayAdmissionLeaseRepository(dsl));
+          return Objects.requireNonNull(operation.apply(repository));
+        });
     if (!manager.committed) throw denied();
     return Objects.requireNonNull(result);
   }

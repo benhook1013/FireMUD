@@ -67,22 +67,21 @@ public final class PostgresBackedServiceTestSupport {
           .alias("PostgreSQL mapped JDBC readiness at " + jdbcUrl)
           .pollInterval(Duration.ofMillis(100))
           .atMost(Duration.ofSeconds(60))
-          .until(
-              () -> {
-                try (Connection connection =
-                        DriverManager.getConnection(jdbcUrl, connectionProperties);
-                    Statement statement = connection.createStatement();
-                    ResultSet result = statement.executeQuery("SELECT 1")) {
-                  if (result.next() && result.getInt(1) == 1) {
-                    return true;
-                  }
-                  lastFailure.set(new SQLException("PostgreSQL readiness query did not return 1"));
-                  return false;
-                } catch (SQLException failure) {
-                  lastFailure.set(failure);
-                  return false;
-                }
-              });
+          .until(() -> {
+            try (Connection connection =
+                    DriverManager.getConnection(jdbcUrl, connectionProperties);
+                Statement statement = connection.createStatement();
+                ResultSet result = statement.executeQuery("SELECT 1")) {
+              if (result.next() && result.getInt(1) == 1) {
+                return true;
+              }
+              lastFailure.set(new SQLException("PostgreSQL readiness query did not return 1"));
+              return false;
+            } catch (SQLException failure) {
+              lastFailure.set(failure);
+              return false;
+            }
+          });
     } catch (ConditionTimeoutException timeout) {
       SQLException failure = lastFailure.get();
       if (failure == null) {

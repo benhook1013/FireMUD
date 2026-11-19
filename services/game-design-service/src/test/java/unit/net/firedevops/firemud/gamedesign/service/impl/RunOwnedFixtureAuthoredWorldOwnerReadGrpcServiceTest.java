@@ -44,43 +44,39 @@ class RunOwnedFixtureAuthoredWorldOwnerReadGrpcServiceTest {
             .withUserConfiguration(
                 RunOwnedFixtureAuthoredWorldSourceReadGrpcService.class,
                 RunOwnedFixtureAuthoredWorldVersionStateGrpcService.class);
-    runner.run(
-        context -> {
+    runner.run(context -> {
+      assertThat(context).doesNotHaveBean(RunOwnedFixtureAuthoredWorldSourceReadGrpcService.class);
+      assertThat(context)
+          .doesNotHaveBean(RunOwnedFixtureAuthoredWorldVersionStateGrpcService.class);
+    });
+    runner
+        .withPropertyValues("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false")
+        .run(context -> {
           assertThat(context)
               .doesNotHaveBean(RunOwnedFixtureAuthoredWorldSourceReadGrpcService.class);
           assertThat(context)
               .doesNotHaveBean(RunOwnedFixtureAuthoredWorldVersionStateGrpcService.class);
         });
     runner
-        .withPropertyValues("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false")
-        .run(
-            context -> {
-              assertThat(context)
-                  .doesNotHaveBean(RunOwnedFixtureAuthoredWorldSourceReadGrpcService.class);
-              assertThat(context)
-                  .doesNotHaveBean(RunOwnedFixtureAuthoredWorldVersionStateGrpcService.class);
-            });
-    runner
         .withPropertyValues(
             "FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true",
             "firemud.grpc.workload-namespace=dev")
-        .run(
-            context -> {
-              assertThat(
-                      context
-                          .getBean(RunOwnedFixtureAuthoredWorldSourceReadGrpcService.class)
-                          .bindService()
-                          .getServiceDescriptor()
-                          .getName())
-                  .isEqualTo("gamedesign.v1.AuthoredWorldSourceReadService");
-              assertThat(
-                      context
-                          .getBean(RunOwnedFixtureAuthoredWorldVersionStateGrpcService.class)
-                          .bindService()
-                          .getServiceDescriptor()
-                          .getName())
-                  .isEqualTo("gamedesign.v1.AuthoredWorldVersionStateService");
-            });
+        .run(context -> {
+          assertThat(
+                  context
+                      .getBean(RunOwnedFixtureAuthoredWorldSourceReadGrpcService.class)
+                      .bindService()
+                      .getServiceDescriptor()
+                      .getName())
+              .isEqualTo("gamedesign.v1.AuthoredWorldSourceReadService");
+          assertThat(
+                  context
+                      .getBean(RunOwnedFixtureAuthoredWorldVersionStateGrpcService.class)
+                      .bindService()
+                      .getServiceDescriptor()
+                      .getName())
+              .isEqualTo("gamedesign.v1.AuthoredWorldVersionStateService");
+        });
     verifyNoInteractions(repository, transactions, authorization);
   }
 
@@ -202,15 +198,13 @@ class RunOwnedFixtureAuthoredWorldOwnerReadGrpcServiceTest {
         }
         var sourceFailure = new AtomicReference<Throwable>();
         var versionFailure = new AtomicReference<Throwable>();
-        peer.run(
-            () -> {
-              new RunOwnedFixtureAuthoredWorldSourceReadGrpcService(
-                      authorization, repository, "dev")
-                  .resolveAuthoredWorldSource(sourceRequest, refusingObserver(sourceFailure));
-              new RunOwnedFixtureAuthoredWorldVersionStateGrpcService(
-                      authorization, transactions, repository, "dev")
-                  .getAuthoredWorldVersionState(versionRequest, refusingObserver(versionFailure));
-            });
+        peer.run(() -> {
+          new RunOwnedFixtureAuthoredWorldSourceReadGrpcService(authorization, repository, "dev")
+              .resolveAuthoredWorldSource(sourceRequest, refusingObserver(sourceFailure));
+          new RunOwnedFixtureAuthoredWorldVersionStateGrpcService(
+                  authorization, transactions, repository, "dev")
+              .getAuthoredWorldVersionState(versionRequest, refusingObserver(versionFailure));
+        });
         assertThat(Status.fromThrowable(sourceFailure.get()).getCode())
             .as("authorized source storage %s", failure.exception().getClass().getSimpleName())
             .isEqualTo(failure.expectedCode());

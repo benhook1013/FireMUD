@@ -58,33 +58,27 @@ public final class CanonicalGameplayRosterRetentionService {
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("CANONICAL_ROSTER_SWEEP_REQUIRES_NO_AMBIENT_TRANSACTION");
     }
-    runCleanupStage(
-        () ->
-            transactions.executeWithoutResult(
-                ignored -> repository.classifyRetainedDependencies(policy.batchSize())));
+    runCleanupStage(() ->
+        transactions.executeWithoutResult(
+            ignored -> repository.classifyRetainedDependencies(policy.batchSize())));
     runCleanupStage(this::sweepSnapshots);
     runCleanupStage(this::sweepClosedAdmissions);
     runCleanupStage(this::sweepRetirementTransfers);
-    runCleanupStage(
-        () ->
-            transactions.executeWithoutResult(
-                ignored -> repository.purgeOrphanOpenAdmissions(policy, policy.batchSize())));
-    runCleanupStage(
-        () ->
-            transactions.executeWithoutResult(
-                ignored -> repository.purgeDisposedTombstones(policy.batchSize())));
-    runCleanupStage(
-        () ->
-            transactions.executeWithoutResult(
-                ignored -> repository.purgeConfirmedRetirementTransfers(policy.batchSize())));
-    runCleanupStage(
-        () ->
-            transactions.executeWithoutResult(
-                ignored -> repository.purgeRetiredTargets(policy.batchSize())));
-    runCleanupStage(
-        () ->
-            transactions.executeWithoutResult(
-                ignored -> repository.purgeTargetClassifications(policy.batchSize())));
+    runCleanupStage(() ->
+        transactions.executeWithoutResult(
+            ignored -> repository.purgeOrphanOpenAdmissions(policy, policy.batchSize())));
+    runCleanupStage(() ->
+        transactions.executeWithoutResult(
+            ignored -> repository.purgeDisposedTombstones(policy.batchSize())));
+    runCleanupStage(() ->
+        transactions.executeWithoutResult(
+            ignored -> repository.purgeConfirmedRetirementTransfers(policy.batchSize())));
+    runCleanupStage(() ->
+        transactions.executeWithoutResult(
+            ignored -> repository.purgeRetiredTargets(policy.batchSize())));
+    runCleanupStage(() ->
+        transactions.executeWithoutResult(
+            ignored -> repository.purgeTargetClassifications(policy.batchSize())));
     refreshHealth();
   }
 
@@ -230,9 +224,8 @@ public final class CanonicalGameplayRosterRetentionService {
                         transfer.acknowledgementRequest()));
             boolean acknowledged =
                 Boolean.TRUE.equals(
-                    transactions.execute(
-                        ignored ->
-                            repository.recordRetirementAcknowledgement(transfer, acknowledgement)));
+                    transactions.execute(ignored ->
+                        repository.recordRetirementAcknowledgement(transfer, acknowledgement)));
             if (acknowledged) {
               metrics
                   .counter("firemud.canonical.roster.cleanup", "result", "acknowledged")

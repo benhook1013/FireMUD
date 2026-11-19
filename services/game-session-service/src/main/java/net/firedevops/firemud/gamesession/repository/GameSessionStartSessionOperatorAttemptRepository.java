@@ -531,15 +531,14 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       throw new IllegalStateException(
           "StartSession owner attempt requires a writable READ COMMITTED owner transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "StartSession owner attempt requires a writable READ COMMITTED owner transaction");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "StartSession owner attempt requires a writable READ COMMITTED owner transaction");
+      }
+      return null;
+    });
     Record transaction =
         dsl.fetchOne(
             "SELECT current_setting('transaction_isolation') AS isolation, "

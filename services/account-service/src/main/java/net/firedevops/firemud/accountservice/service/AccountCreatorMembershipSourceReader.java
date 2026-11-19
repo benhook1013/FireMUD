@@ -401,10 +401,9 @@ public class AccountCreatorMembershipSourceReader {
         source
             .account()
             .accountSecurityCutoff()
-            .map(
-                c ->
-                    new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
-                        c.accountAuthorityGeneration(), c.outboxStreamKey(), c.outboxSequence())));
+            .map(c ->
+                new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
+                    c.accountAuthorityGeneration(), c.outboxStreamKey(), c.outboxSequence())));
   }
 
   private CompositeSnapshot readSnapshot(UUID accountUuid, UUID tenantUuid) {

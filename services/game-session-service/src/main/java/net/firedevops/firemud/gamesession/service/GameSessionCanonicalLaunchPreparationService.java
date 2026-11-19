@@ -161,10 +161,9 @@ public class GameSessionCanonicalLaunchPreparationService {
     CanonicalRealmCatalogSnapshot catalog =
         catalogRepository
             .readByRequest(workloadNamespace, request.catalogCreationRequestId())
-            .orElseThrow(
-                () ->
-                    new InvalidLaunchPreparationEvidenceException(
-                        "Exact committed canonical realm catalog is missing"));
+            .orElseThrow(() ->
+                new InvalidLaunchPreparationEvidenceException(
+                    "Exact committed canonical realm catalog is missing"));
     requireCatalogBinding(request, catalog);
     IntakeReceipt source =
         sourceRepository
@@ -173,10 +172,9 @@ public class GameSessionCanonicalLaunchPreparationService {
                 request.canonicalTenantId(),
                 catalog.worldSlug(),
                 workloadNamespace)
-            .orElseThrow(
-                () ->
-                    new InvalidLaunchPreparationEvidenceException(
-                        "Exact committed authored-world source intake is missing"));
+            .orElseThrow(() ->
+                new InvalidLaunchPreparationEvidenceException(
+                    "Exact committed authored-world source intake is missing"));
     requireSourceBinding(request, catalog, source);
 
     AuthoredWorldLaunchDescriptorEvidence.Request descriptorRequest =
@@ -199,19 +197,18 @@ public class GameSessionCanonicalLaunchPreparationService {
     }
 
     CanonicalLaunchPreparationSnapshot written =
-        ownerTransaction.execute(
-            status -> {
-              if (authorizedAttempt != null) {
-                AttemptSnapshot current =
-                    Objects.requireNonNull(attemptRepository, "attempt repository is required")
-                        .validateCurrentClaim(authorizedAttempt.claim());
-                StartSessionPostAuthorizationExecutionTuple currentTuple =
-                    validateAuthorizedAttempt(authorizedAttempt.claim(), request, current);
-                requireSameAuthorizedAttempt(
-                    authorizedAttempt.snapshot(), authorizedAttempt.tuple(), current, currentTuple);
-              }
-              return preparationRepository.persistPrepared(request, catalog, source, readback);
-            });
+        ownerTransaction.execute(status -> {
+          if (authorizedAttempt != null) {
+            AttemptSnapshot current =
+                Objects.requireNonNull(attemptRepository, "attempt repository is required")
+                    .validateCurrentClaim(authorizedAttempt.claim());
+            StartSessionPostAuthorizationExecutionTuple currentTuple =
+                validateAuthorizedAttempt(authorizedAttempt.claim(), request, current);
+            requireSameAuthorizedAttempt(
+                authorizedAttempt.snapshot(), authorizedAttempt.tuple(), current, currentTuple);
+          }
+          return preparationRepository.persistPrepared(request, catalog, source, readback);
+        });
     if (written == null) {
       throw new InvalidLaunchPreparationEvidenceException(
           "Game Session owner transaction returned no launch preparation result");
@@ -338,10 +335,9 @@ public class GameSessionCanonicalLaunchPreparationService {
         preparationRepository
             .readByControlPlaneRequestId(
                 workloadNamespace, snapshot.request().controlPlaneRequestId())
-            .orElseThrow(
-                () ->
-                    new InvalidLaunchPreparationEvidenceException(
-                        "Committed launch preparation is missing before complete binding read"));
+            .orElseThrow(() ->
+                new InvalidLaunchPreparationEvidenceException(
+                    "Committed launch preparation is missing before complete binding read"));
     committed.requireValid();
     if (!snapshot.equals(committed)) {
       throw new InvalidLaunchPreparationEvidenceException(

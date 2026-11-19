@@ -355,15 +355,14 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     ScriptPatchReadinessProjectionServiceImpl service =
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.applyIfCurrent(
-                    "1",
-                    "patch-active",
-                    List.of("script-a"),
-                    ignored -> {
-                      throw new IllegalStateException("schedule_refresh_failed");
-                    }))
+    assertThatThrownBy(() ->
+            service.applyIfCurrent(
+                "1",
+                "patch-active",
+                List.of("script-a"),
+                ignored -> {
+                  throw new IllegalStateException("schedule_refresh_failed");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("schedule_refresh_failed");
     assertThat(projection.isDatabaseDownstreamReconciled()).isFalse();

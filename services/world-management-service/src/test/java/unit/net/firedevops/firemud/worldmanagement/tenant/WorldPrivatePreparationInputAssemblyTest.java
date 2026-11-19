@@ -51,14 +51,13 @@ class WorldPrivatePreparationInputAssemblyTest {
                     index == 1
                         ? facts
                         : WorldPrivatePreparationSourceClientMtlsTest.changedReceipt(facts)))) {
-      assertThatThrownBy(
-              () ->
-                  new WorldPrivatePreparationInputAssembly(
-                          f.client,
-                          Clock.fixed(
-                              WorldPrivatePreparationSourceClientMtlsTest.NOW.plusSeconds(2),
-                              ZoneOffset.UTC))
-                      .assemble(facts.scope(), facts.preparation().requestId()))
+      assertThatThrownBy(() ->
+              new WorldPrivatePreparationInputAssembly(
+                      f.client,
+                      Clock.fixed(
+                          WorldPrivatePreparationSourceClientMtlsTest.NOW.plusSeconds(2),
+                          ZoneOffset.UTC))
+                  .assemble(facts.scope(), facts.preparation().requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("changed between committed reads");
       assertThat(f.requests).hasSize(2);
@@ -74,11 +73,10 @@ class WorldPrivatePreparationInputAssemblyTest {
             "gs",
             WorldPrivatePreparationSourceClientMtlsTest.CLOCK,
             (request, index) -> PrivateWorldPreparationReadGrpcCodec.toResponse(request, facts))) {
-      assertThatThrownBy(
-              () ->
-                  new WorldPrivatePreparationInputAssembly(
-                          f.client, WorldPrivatePreparationSourceClientMtlsTest.CLOCK)
-                      .assemble(facts.scope(), UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              new WorldPrivatePreparationInputAssembly(
+                      f.client, WorldPrivatePreparationSourceClientMtlsTest.CLOCK)
+                  .assemble(facts.scope(), UUID.randomUUID()))
           .isInstanceOf(RuntimeException.class);
     }
     Clock expired = Clock.fixed(facts.preparation().forkExpiresAt(), ZoneOffset.UTC);
@@ -88,10 +86,9 @@ class WorldPrivatePreparationInputAssemblyTest {
             "gs",
             expired,
             (request, index) -> PrivateWorldPreparationReadGrpcCodec.toResponse(request, facts))) {
-      assertThatThrownBy(
-              () ->
-                  new WorldPrivatePreparationInputAssembly(f.client, expired)
-                      .assemble(facts.scope(), facts.preparation().requestId()))
+      assertThatThrownBy(() ->
+              new WorldPrivatePreparationInputAssembly(f.client, expired)
+                  .assemble(facts.scope(), facts.preparation().requestId()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

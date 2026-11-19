@@ -146,10 +146,8 @@ final class WorldSelectedDraftPublicationFreezeService {
                 request.canonicalTenantId(),
                 request.canonicalVersionId(),
                 selection)
-            .orElseThrow(
-                () ->
-                    conflict(
-                        "World selected-publication request has no exact retained APPLIED graph"));
+            .orElseThrow(() ->
+                conflict("World selected-publication request has no exact retained APPLIED graph"));
     WorldDraftTopologyCommitPlan selectedPlan = application.plan();
     WorldDraftTerminalOperation operation = application.operation();
     WorldDesignPublicationFenceEvidence.OwnerBinding owner = operation.ownerBinding();
@@ -232,10 +230,9 @@ final class WorldSelectedDraftPublicationFreezeService {
       AccountPublicationAuthorizationBinding retained =
           authorizationRepository
               .readCommitted(stored)
-              .orElseThrow(
-                  () ->
-                      conflict(
-                          "World freeze attempt has no original Account publication qualification"));
+              .orElseThrow(() ->
+                  conflict(
+                      "World freeze attempt has no original Account publication qualification"));
       requireSameAccountBinding(accountBinding, retained);
       artifactInventoryRepository.readCommitted(stored, retained);
       return stored;
@@ -251,55 +248,48 @@ final class WorldSelectedDraftPublicationFreezeService {
         capturedCheckpoint = new AtomicReference<>();
     FrozenAttempt transactionResult =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                status -> {
-                  if (!TransactionSynchronizationManager.isActualTransactionActive()
-                      || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
-                    throw new IllegalStateException(
-                        "World selected-publication freeze requires a writable owner transaction");
-                  }
-                  FrozenAttempt attempt =
-                      fence.claimFreeze(
-                          evidence,
-                          () -> {
-                            var captured =
-                                checkpointRepository.captureWithSource(evidence, selectedPlan);
-                            capturedCheckpoint.set(captured);
-                            attemptCreatedInTransaction.set(true);
-                            return captured.checkpoint();
-                          });
-                  AccountPublicationAuthorizationBinding retained =
-                      authorizationRepository.retainOrRequireExact(
-                          attempt, accountBinding, attemptCreatedInTransaction.get());
-                  requireSameAccountBinding(accountBinding, retained);
-                  artifactInventoryRepository.retainOrRequireExact(
-                      attempt,
-                      retained,
-                      attemptCreatedInTransaction.get(),
-                      capturedCheckpoint.get());
-                  requireCheckpointMatchesSelection(
-                      attempt, selectedPlan, accountBinding.input().selection());
-                  return attempt;
-                }),
+            ownerTransaction.execute(status -> {
+              if (!TransactionSynchronizationManager.isActualTransactionActive()
+                  || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+                throw new IllegalStateException(
+                    "World selected-publication freeze requires a writable owner transaction");
+              }
+              FrozenAttempt attempt =
+                  fence.claimFreeze(
+                      evidence,
+                      () -> {
+                        var captured =
+                            checkpointRepository.captureWithSource(evidence, selectedPlan);
+                        capturedCheckpoint.set(captured);
+                        attemptCreatedInTransaction.set(true);
+                        return captured.checkpoint();
+                      });
+              AccountPublicationAuthorizationBinding retained =
+                  authorizationRepository.retainOrRequireExact(
+                      attempt, accountBinding, attemptCreatedInTransaction.get());
+              requireSameAccountBinding(accountBinding, retained);
+              artifactInventoryRepository.retainOrRequireExact(
+                  attempt, retained, attemptCreatedInTransaction.get(), capturedCheckpoint.get());
+              requireCheckpointMatchesSelection(
+                  attempt, selectedPlan, accountBinding.input().selection());
+              return attempt;
+            }),
             "World selected-publication freeze transaction did not commit");
 
     // Acknowledgement follows the owner transaction's commit and exact immutable readback.
     FrozenAttempt committed =
         fence
             .readAttempt(evidence)
-            .orElseThrow(
-                () ->
-                    conflict("Committed World selected-publication freeze has no exact readback"));
+            .orElseThrow(() ->
+                conflict("Committed World selected-publication freeze has no exact readback"));
     if (!transactionResult.equals(committed)) {
       throw conflict("Committed World freeze differs from its owner-transaction result");
     }
     AccountPublicationAuthorizationBinding retained =
         authorizationRepository
             .readCommitted(committed)
-            .orElseThrow(
-                () ->
-                    conflict(
-                        "Committed World freeze has no exact Account publication qualification"));
+            .orElseThrow(() ->
+                conflict("Committed World freeze has no exact Account publication qualification"));
     requireSameAccountBinding(accountBinding, retained);
     artifactInventoryRepository.readCommitted(committed, retained);
     requireCheckpointMatchesSelection(committed, selectedPlan, accountBinding.input().selection());

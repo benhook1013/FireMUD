@@ -148,10 +148,9 @@ class CharacterCreateOperatorActionCodecTest {
         raw.replace(
             "\"canonicalCreationInput\":\"{}\"",
             "\"canonicalCreationInput\":\"" + tooLongValue + "\""));
-    assertThatThrownBy(
-            () ->
-                CharacterCreateOperatorActionCodec.decode(
-                    new byte[CharacterCreateOperatorActionCodec.MAX_RAW_BYTES + 1]))
+    assertThatThrownBy(() ->
+            CharacterCreateOperatorActionCodec.decode(
+                new byte[CharacterCreateOperatorActionCodec.MAX_RAW_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -546,9 +545,8 @@ class CharacterCreateOperatorActionCodecTest {
   }
 
   private static void assertRejected(String raw) {
-    assertThatThrownBy(
-            () ->
-                CharacterCreateOperatorActionCodec.decode(raw.getBytes(StandardCharsets.US_ASCII)))
+    assertThatThrownBy(() ->
+            CharacterCreateOperatorActionCodec.decode(raw.getBytes(StandardCharsets.US_ASCII)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

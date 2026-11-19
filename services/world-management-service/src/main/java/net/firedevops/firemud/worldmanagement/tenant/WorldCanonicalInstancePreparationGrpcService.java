@@ -117,10 +117,9 @@ public final class WorldCanonicalInstancePreparationGrpcService
       WorldCanonicalInstanceLifecycleEvidence lifecycle =
           lifecycleRepository
               .read(lifecycleRequest)
-              .orElseThrow(
-                  () ->
-                      new PreparationPreconditionException(
-                          "Canonical World lifecycle readback is required after materialization"));
+              .orElseThrow(() ->
+                  new PreparationPreconditionException(
+                      "Canonical World lifecycle readback is required after materialization"));
       requireLifecycleMatchesPreparation(lifecycleRequest, input, prepared, lifecycle);
 
       PrepareCanonicalWorldInstanceResponse response =
