@@ -517,12 +517,23 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
                     }));
     try {
       assertThat(peerEntered.await(2, TimeUnit.SECONDS)).isTrue();
-      long started = System.nanoTime();
-      assertThatThrownBy(() -> fixture.observe(NOW + 500L))
-          .isInstanceOf(
-              CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
-      assertThat(entered.getCount()).isZero();
-      assertThat(System.nanoTime() - started).isLessThan(TimeUnit.SECONDS.toNanos(2));
+      long deadline = NOW + 2_000L;
+      var stopped = new java.util.concurrent.CompletableFuture<Void>();
+      Thread.ofVirtual()
+          .start(() -> {
+            try {
+              assertThatThrownBy(() -> fixture.observe(deadline))
+                  .isInstanceOf(
+                      CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException
+                          .class);
+              stopped.complete(null);
+            } catch (Throwable failure) {
+              stopped.completeExceptionally(failure);
+            }
+          });
+      assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      fixture.now.set(deadline);
+      stopped.get(3, TimeUnit.SECONDS);
       var denied = new Fixture();
       assertThatThrownBy(() -> denied.observe(NOW + 500L))
           .isInstanceOf(
@@ -547,7 +558,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
 
   private static void awaitRelease(CountDownLatch release) {
     try {
-      if (!release.await(3, TimeUnit.SECONDS)) {
+      // The stalled worker must not self-release before the caller's 3-second watchdog.
+      if (!release.await(8, TimeUnit.SECONDS)) {
         throw new IllegalStateException("Controlled observation was not released");
       }
     } catch (InterruptedException interrupted) {
