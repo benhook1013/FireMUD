@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'rc=$?; printf "Preview priority contract failed at line %s (exit %s)\n" "$LINENO" "$rc" >&2' ERR
+report_contract_failure() {
+  printf 'Preview priority contract failed at line %s (exit %s)\n' "$2" "$1" >&2
+}
+trap 'report_contract_failure "$?" "$LINENO"' ERR
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
