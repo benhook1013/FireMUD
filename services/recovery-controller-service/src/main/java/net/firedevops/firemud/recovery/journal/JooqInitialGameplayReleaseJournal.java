@@ -365,6 +365,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             }
             throw conflict("effect readback changed after acknowledgement");
           }
+          if (readback.observedAt().isAfter(now)) {
+            throw conflict("effect readback observation is in the future");
+          }
           if (current.lastAttemptId() == null || !current.lastAttemptId().equals(attemptId)) {
             throw conflict("effect readback belongs to another attempt");
           }

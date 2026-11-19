@@ -159,6 +159,21 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             "gamesession-preparation-readback-1",
             base.plusSeconds(6));
     UUID prepareEffectId = prepare.effect().effectId();
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    scope.operationId(),
+                    prepareEffectId,
+                    prepareAttempt,
+                    prepareReadback,
+                    base.plusSeconds(5)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("observation is in the future");
+    assertThat(journal.find(scope.operationId())).contains(authorized);
+    assertThat(journal.findEffect(scope.operationId(), EffectKind.PREPARE_PLAYABLE_STATE_FENCED))
+        .contains(prepare);
+    assertThat(journal.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isEmpty();
     EffectReadback otherAttempt =
         new EffectReadback(
             scope.operationId(),
@@ -185,15 +200,23 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         prepare.effect().effectId(),
         prepareAttempt,
         "TRANSPORT_OUTCOME_UNKNOWN",
-        base.plusSeconds(7));
+        base.plusSeconds(5));
     Operation releasing =
         journal.recordEffectReadback(
             scope.operationId(),
             prepare.effect().effectId(),
             prepareAttempt,
             prepareReadback,
-            base.plusSeconds(7));
+            prepareReadback.observedAt());
     assertThat(releasing.phase()).isEqualTo(Phase.RELEASING);
+    assertThat(
+            journal.recordEffectReadback(
+                scope.operationId(),
+                prepareEffectId,
+                prepareAttempt,
+                prepareReadback,
+                base.plusSeconds(5)))
+        .isEqualTo(releasing);
     assertThat(
             journal
                 .recordAmbiguousEffect(
