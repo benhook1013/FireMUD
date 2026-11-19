@@ -202,7 +202,8 @@ class State:
         self.projection_dir = args.projection_dir
         self.validators = Validators(args.inventory, args.namespace)
         self.resource_version = 1
-        self.data = {}
+        # Helm seeds the public ConfigMap with an empty key set; Account enrolls against it.
+        self.data = {"jwks.json": json.dumps({"keys": []}, separators=(",", ":"))}
 
     def project(self):
         """Mirror ConfigMap data into a mounted directory with kubelet's AtomicWriter layout.
@@ -367,6 +368,7 @@ def main():
     parser.add_argument("--inventory", help="protected validator inventory binding to serve")
     args = parser.parse_args()
     state = State(args)
+    state.project()
     server = ThreadingHTTPServer(("0.0.0.0", args.port), make_handler(state))
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2

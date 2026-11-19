@@ -252,7 +252,7 @@ def main():
                 time.sleep(0.5)
                 continue
         except grpc.RpcError as failure:
-            print(f"materializer stand-in: {failure.code().name}", file=sys.stderr, flush=True)
+            print(f"materializer stand-in: {failure.code().name}: {failure.details()}", file=sys.stderr, flush=True)
         time.sleep(args.interval)
 
 
