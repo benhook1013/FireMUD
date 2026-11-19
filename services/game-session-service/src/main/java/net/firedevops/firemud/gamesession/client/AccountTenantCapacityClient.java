@@ -167,7 +167,8 @@ public final class AccountTenantCapacityClient
 
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
-    return endpoints.getAccountService();
+    String target = endpoints.getAccountService();
+    return target == null || target.isBlank() ? null : target;
   }
 
   @Override

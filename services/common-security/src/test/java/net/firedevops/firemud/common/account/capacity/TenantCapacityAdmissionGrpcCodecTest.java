@@ -173,7 +173,7 @@ class TenantCapacityAdmissionGrpcCodecTest {
   }
 
   @Test
-  void matchedRearmCannotCarryOriginalQuotaDenial() {
+  void matchedRearmCannotCarryEitherOriginalRefusal() {
     var original = CapacityAdmissionTestFixture.playerRequest();
     var request =
         new Request(
@@ -200,8 +200,23 @@ class TenantCapacityAdmissionGrpcCodecTest {
                 TenantCapacityAdmissionGrpcCodec.toRefusal(
                     request, Failure.CAPACITY_QUOTA_EXCEEDED))
         .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED))
+        .isInstanceOf(IllegalArgumentException.class);
+    var originalBilling =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(original, Failure.TENANT_BILLING_BLOCKED);
     var billing =
-        TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED);
+        originalBilling.toBuilder()
+            .setRefusal(
+                0,
+                originalBilling.getRefusal(0).toBuilder()
+                    .setAdmissionAttemptId(0, request.admissionAttemptId().toString())
+                    .setCapacityRearmFence(0, request.capacityRearmFence())
+                    .setMutationDigest(0, request.mutationDigest()))
+            .build();
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, billing))
+        .isInstanceOf(IllegalArgumentException.class);
     var wire =
         billing.toBuilder()
             .setRefusal(

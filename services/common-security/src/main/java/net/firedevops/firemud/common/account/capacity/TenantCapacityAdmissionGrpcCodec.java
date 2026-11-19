@@ -298,11 +298,10 @@ public final class TenantCapacityAdmissionGrpcCodec {
   }
 
   private static void requireRefusalAuthority(Request request, Refusal refusal) {
+    if (request.capacityRearmFence() != 1) throw invalid();
     if (refusal.code() == Failure.CAPACITY_QUOTA_EXCEEDED
         && (!request.evidence().permitsCreation()
-            || request.operation() != Operation.CAPACITY_CREATING
-            || request.capacityRearmFence() != 1)) throw invalid();
-    if (refusal.durableDenialId() != null && request.capacityRearmFence() != 1) throw invalid();
+            || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();
   }
 
   private static TenantCapacityShape shape(Shape value) {

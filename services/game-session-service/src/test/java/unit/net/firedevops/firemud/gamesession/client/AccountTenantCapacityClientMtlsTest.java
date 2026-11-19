@@ -75,6 +75,27 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
+  void blankEndpointIsUnsetAndExplicitAccountEndpointIsPreserved() throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    var factory = new GrpcChannelFactory();
+    try (var client =
+        new AccountTenantCapacityClient(
+            endpoints,
+            pki.clientProperties(directory, pki.identity("client")),
+            factory,
+            "prod",
+            Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC))) {
+      assertThat(client.defaultTarget()).isEqualTo("account-service:6565");
+      for (String blank : new String[] {null, "", " \t "}) {
+        endpoints.setAccountService(blank);
+        assertThat(client.configuredTarget(endpoints)).isNull();
+      }
+      endpoints.setAccountService("account.internal:7443");
+      assertThat(client.configuredTarget(endpoints)).isEqualTo("account.internal:7443");
+    }
+  }
+
+  @Test
   void exactAccountPeerReceivesCompleteRequestAndExactRetryKeepsReservation() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     Server server = server("account", calls, false);
