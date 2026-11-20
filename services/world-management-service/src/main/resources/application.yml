@@ -87,6 +87,11 @@ firemud:
     grpc:
       public-methods:
         - world_management.v1.WorldManagementService/Ping
+        # Registered only for the run-owned fixture; the service authenticates the exact
+        # same-namespace Game Session mTLS peer itself and carries no bearer token.
+        - world_management.v1.WorldCanonicalInitialAdmissionHoldService/AcquireCanonicalInitialAdmissionHold
+        - world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldIdentity
+        - world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldState
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

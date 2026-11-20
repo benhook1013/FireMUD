@@ -132,6 +132,13 @@ services:
       - pre-v1-jwt-secret:/var/run/secrets/firemud/jwt:ro
       - pre-v1-jwks-projection:/var/run/secrets/firemud/jwks:ro
 
+  world-management-service:
+    environment:
+      FIREMUD_WORLD_RUNTIME_INSTALLATION_INVENTORY_PATH: /etc/firemud/world-runtime-installation/inventory.json
+    volumes:
+      # Pre-v1 waiver: read-only runtime installation inventory for the run-owned fixture.
+      - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}/world-runtime-installation:/etc/firemud/world-runtime-installation:ro
+
   game-session-service:
     # Authenticated LOGIN needs a promoted Account signer; start only once it is live.
     depends_on:

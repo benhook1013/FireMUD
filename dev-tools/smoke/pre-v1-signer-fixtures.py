@@ -276,6 +276,72 @@ def main():
         "firemud-account-response-envelope-keyring-v1\n" f"active compose-1 {key()}\n"
     )
 
+    # Pre-v1 waiver: the World runtime installation inventory the run-owned fixture freezes its
+    # launch owners against (PreV1ComposeRuntimeInstallationSource reads it read-only).
+    world = out / "world-runtime-installation"
+    world.mkdir(parents=True, exist_ok=True)
+    world_inventory = {
+        "schema": "firemud-runtime-installation-inventory/v1",
+        "artifactId": "8d6a7f0e-2f0c-4f5e-9a51-0c7d3c2e9b11",
+        "installationId": "1f3b9c4a-7e2d-4b8a-8f61-5d2e0a9c7b33",
+        "environment": "local-dev",
+        "generation": "pre-v1-compose-installation-v1",
+        "clusterUid": "compose",
+        "namespaceUid": "compose-dev",
+        "namespace": "dev",
+        "sourceCommit": "0" * 40,
+        "renderedManifestDigest": "sha256:" + sha256_hex(b"docker-compose.yml"),
+        "declarationsDigest": "sha256:" + sha256_hex(b"pre-v1-compose-declarations"),
+        "executor": {
+            "identity": "pre-v1-compose-fixtures/v1",
+            "versionDigest": "sha256:" + sha256_hex(b"pre-v1-signer-fixtures.py"),
+        },
+        "inputBindings": {
+            "migrations": [],
+            "configurations": [],
+            "mountedResources": [],
+            "secretContracts": [],
+            "externalBindings": [],
+        },
+        "members": [
+            {
+                "workloadApiVersion": "v1",
+                "workloadKind": "Pod",
+                "workloadNamespace": "dev",
+                "workloadName": "world-management-service",
+                "containerKind": "APPLICATION",
+                "containerName": "world-management-service",
+                "image": "firemud/world-management-service@sha256:" + sha256_hex(b"compose-world"),
+                "ownerId": "world-management-service",
+                "ownership": "RUNTIME_OWNER",
+                "catalogSources": [
+                    {
+                        "sourceId": "compose-world-sql",
+                        "contract": "firemud/world/catalog/v1",
+                        "epoch": "1",
+                        "digest": "sha256:" + sha256_hex(b"compose-world-sql"),
+                    }
+                ],
+                "families": [
+                    {
+                        "familyId": "compose-world-state",
+                        "catalogSourceId": "compose-world-sql",
+                        "replacementClass": "S3",
+                        "cleanupContract": {
+                            field: f"firemud/world/{field}/v1"
+                            for field in ("operation", "requestIdentity", "acknowledgement", "retention")
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    inventory_path = world / "inventory.json"
+    if inventory_path.exists():
+        inventory_path.unlink()
+    inventory_path.write_text(json.dumps(world_inventory, separators=(",", ":")))
+    os.chmod(inventory_path, 0o444)
+
     (out / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     os.chmod(out, 0o755)
 
