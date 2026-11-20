@@ -846,6 +846,27 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void createAccountPropagatesOwnerBirthFailureBeforeRegistrationAudit() {
+    IllegalStateException ownerFailure =
+        new IllegalStateException("Account source birth unavailable");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenThrow(ownerFailure);
+
+    IllegalStateException observed =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createAccount(
+                    new CreateAccountRequest("demo", "demo@example.com", "password")));
+
+    assertSame(ownerFailure, observed);
+    org.mockito.Mockito.verify(accountRepository)
+        .save(org.mockito.ArgumentMatchers.any(Account.class));
+    verifyNoInteractions(
+        accountAuditOutboxRepository, profileRepository, accountTenantMembershipRepository);
+  }
+
+  @Test
   void createAccountReturnsExplicitConflictForCanonicalIdentityCollision() {
     CreateAccountRequest request =
         new CreateAccountRequest("demo", " DEMO@EXAMPLE.COM ", "password");

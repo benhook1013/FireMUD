@@ -1,0 +1,17 @@
+# Isolated repository-root context for the frontend image only.
+**
+!web-client/
+!web-client/**
+!config/
+!config/ts/
+!config/ts/tsconfig.base.json
+web-client/node_modules
+web-client/dist
+web-client/dist-ssr
+web-client/.gradle
+web-client/.env
+web-client/.env.*
+web-client/*.local
+web-client/*.log
+web-client/.vscode
+web-client/.idea

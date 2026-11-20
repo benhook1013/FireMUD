@@ -47,7 +47,18 @@ class GatewayRoutesConfigurationTest {
           "admin-sagas",
           "admin-tick-remediation",
           "design",
-          "account-auth",
+          "account-auth-login",
+          "account-auth-player-bootstrap",
+          "account-auth-bootstrap-worlds",
+          "account-auth-bootstrap-realms",
+          "account-auth-bootstrap-characters",
+          "account-auth-bootstrap-join",
+          "account-auth-connect-token",
+          "account-auth-request-password-reset",
+          "account-auth-complete-password-reset",
+          "account-auth-request-email-verification",
+          "account-auth-verify-email",
+          "account-auth-recover-username",
           "account-accounts",
           "account-profiles",
           "account-ping",
@@ -133,13 +144,13 @@ class GatewayRoutesConfigurationTest {
     assertHasPath(gatewayProperties, "design", "/api/design/**");
     assertHasStripPrefixTwo(gatewayProperties, "design");
 
-    assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
+    GatewayAuthRoutesTest.assertCatalog(gatewayProperties);
     assertHasPath(gatewayProperties, "account-accounts", "/api/account/accounts/**");
     assertHasPath(gatewayProperties, "account-profiles", "/api/account/profiles/**");
     assertHasPath(gatewayProperties, "account-ping", "/api/account/ping");
     assertHasPath(gatewayProperties, "account-jwks", "/api/account/.well-known/jwks.json");
 
-    assertHasStripPrefixTwo(gatewayProperties, "account-auth");
+    assertHasStripPrefixTwo(gatewayProperties, "account-auth-login");
     assertHasStripPrefixTwo(gatewayProperties, "account-accounts");
     assertHasStripPrefixTwo(gatewayProperties, "account-profiles");
     assertHasStripPrefixTwo(gatewayProperties, "account-ping");

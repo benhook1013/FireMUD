@@ -31,17 +31,29 @@ class GatewayRateLimiterConfigTest {
   }
 
   @Test
-  void fallsBackToForwardedForWhenGatewayOwnedHeaderMissing() {
+  void ignoresUncanonicalizedForwardedForWhenGatewayOwnedHeaderMissing() {
     KeyResolver resolver = new GatewayRateLimiterConfig().gatewayClientIpKeyResolver();
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/api/account/auth/player-bootstrap")
                 .header(X_FORWARDED_FOR, "203.0.113.77, 10.0.0.1")
+                .remoteAddress(new java.net.InetSocketAddress("192.0.2.44", 0))
                 .build());
 
     String key = resolver.resolve(exchange).block();
 
-    assertThat(key).isEqualTo("203.0.113.77");
+    assertThat(key).isEqualTo("192.0.2.44");
+  }
+
+  @Test
+  void ignoresForwardedHeaderWithoutTransportAddress() {
+    KeyResolver resolver = new GatewayRateLimiterConfig().gatewayClientIpKeyResolver();
+    var exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/account/auth/verify-email")
+                .header(X_FORWARDED_FOR, "203.0.113.77")
+                .build());
+    assertThat(resolver.resolve(exchange).block()).isEqualTo("unknown-client");
   }
 
   @Test

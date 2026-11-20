@@ -170,8 +170,6 @@ components:
         connectScopeId:
           type: string
           description: Opaque signed scope with canonical UUID Account identity; obtain fresh scope through discovery rather than interpreting its payload.
-        jti:
-          type: string
         requestId:
           type: string
         issuedAt:
