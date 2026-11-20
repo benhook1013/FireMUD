@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
 import net.firedevops.firemud.socialgroups.client.ModerationPolicyClient;
 import net.firedevops.firemud.socialgroups.config.ChatProperties;
@@ -187,6 +188,7 @@ public class ChatServiceImpl implements ChatService {
   @Override
   @Timed(value = "chat.tells")
   public java.util.List<String> getRecentTells(Long tenantId, String accountId) {
+    JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
     String key = String.format("chat:tell:%d:%s", tenantId, accountId);
     try {
       java.util.List<Object> raw = redisTemplate.opsForList().range(key, 0, -1);

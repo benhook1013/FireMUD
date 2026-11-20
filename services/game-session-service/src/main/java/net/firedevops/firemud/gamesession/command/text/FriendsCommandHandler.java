@@ -481,15 +481,32 @@ public class FriendsCommandHandler {
                   return toEntry(ordinal, entry);
                 })
             .toList();
+    boolean disclosureFiltered =
+        filter == FriendListFilter.ONLINE || filter == FriendListFilter.RECENT;
     boolean canonicalFiltered =
         filter == FriendListFilter.ALL
             || response.getFilter() == mapRosterFilter(filter)
             || response.getMatchCount() > 0
             || response.getTotalCount() > 0;
-    List<FriendPresenceViewOutput.Entry> mapped =
-        canonicalFiltered ? allEntries : allEntries.stream().filter(filter::matches).toList();
+    List<FriendPresenceViewOutput.Entry> mapped;
+    if (disclosureFiltered) {
+      mapped =
+          allEntries.stream()
+              .filter(
+                  entry ->
+                      "PUBLIC".equals(entry.visibilityPolicy())
+                          || "FRIENDS_ONLY".equals(entry.visibilityPolicy()))
+              .filter(filter::matches)
+              .toList();
+    } else {
+      mapped =
+          canonicalFiltered ? allEntries : allEntries.stream().filter(filter::matches).toList();
+    }
     int totalCount = response.getTotalCount() > 0 ? response.getTotalCount() : allEntries.size();
-    int matchCount = response.getMatchCount() > 0 ? response.getMatchCount() : mapped.size();
+    int matchCount =
+        disclosureFiltered
+            ? mapped.size()
+            : response.getMatchCount() > 0 ? response.getMatchCount() : mapped.size();
     return new FriendPresenceViewOutput(filter.name(), totalCount, matchCount, mapped);
   }
 

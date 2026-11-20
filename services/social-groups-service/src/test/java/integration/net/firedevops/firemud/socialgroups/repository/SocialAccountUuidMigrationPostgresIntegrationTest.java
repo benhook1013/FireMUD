@@ -4,11 +4,19 @@ import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accou
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.ChatMessage;
 import net.firedevops.firemud.socialgroups.entity.Guild;
@@ -52,16 +60,36 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
 
   @Test
   void emptyLegacyFrontierConvergesAndTypedRepositoriesRoundTripCanonicalAccountUuids() {
+    String freshSchema = schema();
+    migrate(freshSchema, "1003");
+    List<String> freshConstraints;
+    try (var dsl = database(freshSchema)) {
+      assertCanonicalIdentityTypes(dsl);
+      freshConstraints = constraints(dsl);
+      assertThat(freshConstraints).isNotEmpty();
+      assertThat(
+              dsl.fetchCount(
+                  DSL.table("flyway_schema_history"),
+                  DSL.field("version").eq("1003").and(DSL.field("success").eq(true))))
+          .isOne();
+    }
+
     String schema = schema();
     migrate(schema, "1002");
     List<String> parentHistory;
+    List<String> parentConstraints;
     try (var dsl = database(schema)) {
       assertParentFrontier(dsl);
       parentHistory = migrationHistory(dsl);
+      parentConstraints = constraints(dsl);
+      assertThat(parentConstraints).isNotEmpty();
     }
     migrate(schema, "1003");
     try (var dsl = database(schema)) {
       List<String> currentHistory = migrationHistory(dsl);
+      assertThat(constraints(dsl))
+          .containsAll(parentConstraints)
+          .containsExactlyElementsOf(freshConstraints);
       assertThat(currentHistory).hasSize(parentHistory.size() + 1);
       assertThat(currentHistory.subList(0, parentHistory.size())).isEqualTo(parentHistory);
       assertThat(
@@ -251,6 +279,118 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void concurrentWriterCommitsBeforeEmptyCheckAndItsEvidenceIsPreserved() throws Exception {
+    String schema = schema();
+    migrate(schema, "1002");
+    List<String> historyBefore;
+    Map<String, List<String>> expectedRows;
+    try (var dsl = database(schema)) {
+      assertParentFrontier(dsl);
+      historyBefore = migrationHistory(dsl);
+      expectedRows = rowImages(dsl);
+    }
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection writer =
+        DriverManager.getConnection(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+      writer.setAutoCommit(false);
+      int writerPid;
+      try (Statement statement = writer.createStatement()) {
+        statement.setQueryTimeout(5);
+        statement.execute("SET search_path TO " + schema);
+        try (var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+          result.next();
+          writerPid = result.getInt(1);
+        }
+        statement.executeUpdate(
+            "INSERT INTO mail_messages (tenant_id, sender_account_id, recipient_account_id, subject, content) VALUES (7, 9007199254740993, 102, 'retained', 'concurrent mail')");
+        try (var result =
+            statement.executeQuery("SELECT row_to_json(m)::text FROM mail_messages m")) {
+          result.next();
+          expectedRows.put("mail_messages", List.of(result.getString(1)));
+        }
+      }
+      Future<?> migration = executor.submit(() -> migrate(schema, "1003"));
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      boolean blocked = false;
+      try (Connection observer =
+              DriverManager.getConnection(
+                  postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+          var query =
+              observer.prepareStatement(
+                  "SELECT EXISTS (SELECT 1 FROM pg_locks l WHERE l.relation = ?::regclass AND l.mode = 'AccessExclusiveLock' AND NOT l.granted AND ? = ANY(pg_blocking_pids(l.pid)))")) {
+        query.setQueryTimeout(2);
+        query.setString(1, schema + ".mail_messages");
+        query.setInt(2, writerPid);
+        while (System.nanoTime() < deadline && !migration.isDone()) {
+          try (var result = query.executeQuery()) {
+            result.next();
+            blocked = result.getBoolean(1);
+          }
+          if (blocked) {
+            break;
+          }
+          Thread.sleep(25);
+        }
+      }
+      assertThat(blocked).as("V1003 must wait on the uncommitted legacy mail writer").isTrue();
+      assertThat(migration.isDone()).isFalse();
+      writer.commit();
+      assertThatThrownBy(() -> migration.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasStackTraceContaining("SOCIAL_ACCOUNT_UUID_MIGRATION_BLOCKED");
+      try (var dsl = database(schema)) {
+        assertThat(rowImages(dsl)).isEqualTo(expectedRows);
+        assertThat(migrationHistory(dsl)).isEqualTo(historyBefore);
+        assertThat(
+                dsl.fetch(
+                        "SELECT data_type FROM information_schema.columns WHERE table_schema = ? AND column_name IN ('account_id', 'friend_account_id', 'owner_account_id', 'sender_account_id', 'recipient_account_id')",
+                        schema)
+                    .getValues(0, String.class))
+            .hasSize(10)
+            .containsOnly("bigint");
+      }
+    } finally {
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(25, TimeUnit.SECONDS))
+          .as("bounded migration task must finish before fixture reuse")
+          .isTrue();
+    }
+  }
+
+  private static void assertCanonicalIdentityTypes(DSLContext dsl) {
+    assertThat(
+            dsl.fetch(
+                    "SELECT data_type FROM information_schema.columns WHERE table_schema = ? "
+                        + "AND column_name IN ('account_id', 'friend_account_id', 'owner_account_id', 'sender_account_id', 'recipient_account_id')",
+                    java.util.Objects.requireNonNull(dsl.fetchOne("SELECT current_schema()"))
+                        .get(0, String.class))
+                .getValues(0, String.class))
+        .hasSize(10)
+        .containsOnly("uuid");
+    assertThat(
+            dsl.fetch(
+                    "SELECT data_type FROM information_schema.columns WHERE table_schema = ? "
+                        + "AND column_name IN ('id', 'tenant_id', 'guild_id', 'city_id')",
+                    java.util.Objects.requireNonNull(dsl.fetchOne("SELECT current_schema()"))
+                        .get(0, String.class))
+                .getValues(0, String.class))
+        .isNotEmpty()
+        .containsOnly("bigint");
+  }
+
+  private static List<String> constraints(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT c.relname || ':' || k.conname || ':' || pg_get_constraintdef(k.oid) "
+                + "FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid "
+                + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                + "WHERE n.nspname = current_schema() AND c.relname IN "
+                + "('guilds', 'guild_members', 'chat_messages', 'friend_links', 'mail_messages', 'account_friend_links') "
+                + "ORDER BY c.relname, k.conname")
+        .getValues(0, String.class);
+  }
+
   private static void assertParentFrontier(DSLContext dsl) {
     assertThat(
             dsl.fetch(
@@ -301,6 +441,7 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
   private static void migrate(String schema, String target) {
     Flyway.configure()
         .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .initSql("SET lock_timeout = '15s'; SET statement_timeout = '20s'")
         .schemas(schema)
         .defaultSchema(schema)
         .locations("classpath:db/migration")

@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
@@ -65,6 +66,7 @@ public class LoggingAdminClient
    * @param description details of the violation
    */
   public void reportChatViolation(long tenantId, String accountId, String description) {
+    JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
     CreateReportRequest request =
         CreateReportRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
