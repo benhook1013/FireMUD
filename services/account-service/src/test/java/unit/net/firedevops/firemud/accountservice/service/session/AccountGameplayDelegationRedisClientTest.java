@@ -423,7 +423,10 @@ class AccountGameplayDelegationRedisClientTest {
                 keys.getAllValues().get(1)[0],
                 ascii("session:auth:generation:account:" + ACCOUNT_ID)))
         .isTrue();
-    assertThat(Arrays.equals(args.getAllValues().get(0)[0], values[0])).isTrue();
+    assertThat(new String(args.getAllValues().get(0)[0], StandardCharsets.US_ASCII))
+        .isEqualTo("VERIFY");
+    assertThat(args.getAllValues().get(0)[1]).containsExactly(values[0]);
+    assertThat(args.getAllValues().get(0)[2]).isEmpty();
     assertThat(new String(args.getAllValues().get(1)[0], StandardCharsets.US_ASCII))
         .isEqualTo("VERIFY");
     assertThat(args.getAllValues().get(1)[1]).containsExactly(values[1]);
@@ -431,7 +434,7 @@ class AccountGameplayDelegationRedisClientTest {
     verify(commands).aclWhoami();
     verify(commands, times(1))
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
-    verify(commands)
+    verify(commands, times(2))
         .get(
             argThat(
                 key ->
@@ -441,6 +444,31 @@ class AccountGameplayDelegationRedisClientTest {
         .get(
             argThat(
                 key -> Arrays.equals(key, ascii("session:auth:generation:account:" + ACCOUNT_ID))));
+    verify(connection).close();
+  }
+
+  @Test
+  void malformedRetainedIssuerDeniesBeforeAnyProjectionScriptOrAccountWrite() throws Exception {
+    byte[][] values =
+        AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot());
+    StatefulRedisConnection<byte[], byte[]> connection = connection();
+    RedisCommands<byte[], byte[]> commands = connection.sync();
+    when(commands.get(any(byte[].class))).thenReturn(ascii("{not-canonical}"));
+    assertThatThrownBy(
+            () -> client(connection).publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+    verify(commands, org.mockito.Mockito.never()).scriptLoad(any(byte[].class));
+    verify(commands, org.mockito.Mockito.never())
+        .<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
+    verify(commands, org.mockito.Mockito.never())
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    verify(commands, times(1))
+        .get(
+            argThat(
+                key ->
+                    Arrays.equals(
+                        key, ascii("session:auth:generation:issuer:firemud-account-service"))));
     verify(connection).close();
   }
 
@@ -562,7 +590,7 @@ class AccountGameplayDelegationRedisClientTest {
                 client(noAckConnection)
                     .publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
-    verify(noAckCommands, times(1)).get(any(byte[].class));
+    verify(noAckCommands, times(2)).get(any(byte[].class));
 
     StatefulRedisConnection<byte[], byte[]> readbackConnection = connection();
     RedisCommands<byte[], byte[]> readbackCommands = readbackConnection.sync();
@@ -574,20 +602,24 @@ class AccountGameplayDelegationRedisClientTest {
     doReturn(List.of(1L, 1L))
         .when(readbackCommands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
-    when(readbackCommands.get(any(byte[].class))).thenReturn(null, ascii("wrong projection"));
+    when(readbackCommands.get(any(byte[].class)))
+        .thenReturn(null, null, ascii("wrong projection"), values[1]);
 
     assertThatThrownBy(
             () ->
                 client(readbackConnection)
                     .publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+    verify(readbackCommands, times(1))
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    verify(readbackCommands, times(4)).get(any(byte[].class));
   }
 
   @Test
   void staleOrConflictingIssuerProjectionStopsBeforeAccountWriteOrDurabilityAck() throws Exception {
     byte[][] values =
         AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot());
-    for (long result : List.of(-1L, -2L, -4L, -5L)) {
+    for (long result : List.of(-1L, -2L, -3L, -4L, -5L)) {
       StatefulRedisConnection<byte[], byte[]> connection = connection();
       RedisCommands<byte[], byte[]> commands = connection.sync();
       when(commands.scriptLoad(any(byte[].class)))
@@ -607,7 +639,12 @@ class AccountGameplayDelegationRedisClientTest {
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
       verify(commands, org.mockito.Mockito.never())
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
-      verify(commands, org.mockito.Mockito.never()).get(any(byte[].class));
+      verify(commands, times(1))
+          .get(
+              argThat(
+                  key ->
+                      Arrays.equals(
+                          key, ascii("session:auth:generation:issuer:firemud-account-service"))));
       verify(connection).close();
     }
   }
@@ -651,12 +688,16 @@ class AccountGameplayDelegationRedisClientTest {
     assertThat(account.keys().getFirst().hashTagDeclaration())
         .isEqualTo(RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED);
     assertThat(issuer.arguments().stream().map(RedisScriptDescriptor.ArgumentSpec::name).toList())
-        .containsExactly("canonicalProjectionUtf8");
+        .containsExactly("expectedMode", "expectedBytes", "candidateBytes");
     assertThat(account.arguments().stream().map(RedisScriptDescriptor.ArgumentSpec::name).toList())
         .containsExactly("expectedMode", "expectedBytes", "candidateBytes");
     assertThat(account.resourcePath()).isEqualTo("redis/account_generation_projection_cas.lua");
     assertThat(issuer.resourcePath())
-        .isEqualTo("redis/lua/account-game-session-delegation-authority-project.lua");
+        .isEqualTo("redis/lua/account-game-session-delegation-authority-project-v2.lua");
+    assertThat(issuer.supportedCoexistence())
+        .containsExactly(new RedisScriptDescriptor.SupportedCoexistence("v2", "v1"));
+    assertThat(issuer.compatibilityLevel())
+        .isEqualTo(RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET);
     assertThat(issuer.sha256()).isNotEqualTo(account.sha256());
 
     byte[] source;

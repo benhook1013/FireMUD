@@ -58,8 +58,10 @@ import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOper
 import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -327,6 +329,124 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     assertWriterGateAllowed(c, "ISSUER:firemud-account-service");
     assertThat(c.tx(() -> sourceChangeRepository.sourceMutationPermitted(waitingChange))).isTrue();
     assertThat(c.tx(() -> repository.readPending(null, 10))).isEmpty();
+  }
+
+  @Test
+  void creationTerminalCannotReleaseSharedSourceBeforeEveryOriginalDraftOwnerSettles()
+      throws Exception {
+    Context c = context();
+    Fixture fixture = fixture(c);
+    List<SourceEvidence> sources = controlledSources(c, fixture);
+    seedSerializationRows(c, sources);
+    var repository = repository(c);
+    var creation =
+        c.tx(() -> repository.acquireLocked(fixture.intent(), fixture.admitted(), sources));
+    var draftRepository = new DraftAuthorizationFenceRepository(c.dsl);
+    var complete =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1,
+                "test-creation",
+                2,
+                "test-creation",
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "test/base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-payload")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    // Controlled shared source bytes and owner results, not creator or remote publisher authority.
+    var draft =
+        new DraftAuthorizationFenceBinding(
+            UUID.randomUUID(),
+            complete.requestId(),
+            complete.commitId(),
+            UUID.randomUUID(),
+            fixture.intent().initiatingAccountId(),
+            complete.target().canonicalTenantId(),
+            complete.target().canonicalVersionId(),
+            complete.baseCommitId(),
+            "0",
+            complete.canonicalBytes(),
+            complete.canonicalBytes(),
+            complete.digest(),
+            List.of(
+                sources.stream()
+                    .filter(x -> x.kind() == SourceKind.ISSUER)
+                    .findFirst()
+                    .orElseThrow()));
+    c.tx(() -> draftRepository.reserve(draft));
+    var change =
+        new DraftAuthorizationFenceRepository.SourceChange(
+            UUID.randomUUID(),
+            sources,
+            "shared creation and draft source change".getBytes(StandardCharsets.UTF_8));
+    assertThat(c.tx(() -> draftRepository.requestSourceChange(change))).isFalse();
+    String originalXmin = xmin(c, creation.creationOperationId());
+    var notCreated = terminalEvidence(creation.outcomeBinding(), Outcome.NOT_CREATED);
+    var verified = readTerminal(notCreated, creation.outcomeBinding());
+    c.tx(() -> repository.settleLocked(creation, verified));
+    assertThat(c.tx(() -> draftRepository.sourceMutationPermitted(change))).isFalse();
+    assertWriterGateDenied(c, "ISSUER:firemud-account-service");
+    var required = draft.requiredOwners();
+    assertThat(required).hasSizeGreaterThan(1);
+    int settled = 0;
+    for (var owner : required) {
+      var readback =
+          new DraftAuthorizationFenceBinding.OwnerReadback(
+              owner,
+              DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED,
+              draft.operationId(),
+              draft.commitId(),
+              draft.fenceId(),
+              draft.inputDigest(),
+              draft.canonicalBytes(),
+              new byte[] {12});
+      c.tx(
+          () -> {
+            draftRepository.recordOwnerReadback(draft, readback);
+            return null;
+          });
+      settled++;
+      if (settled < required.size()) {
+        assertThat(c.tx(() -> draftRepository.sourceMutationPermitted(change))).isFalse();
+        assertWriterGateDenied(c, "ISSUER:firemud-account-service");
+      }
+    }
+    assertThat(c.tx(() -> draftRepository.sourceMutationPermitted(change))).isTrue();
+    assertWriterGateAllowed(c, "ISSUER:firemud-account-service");
+    c.tx(
+        () -> {
+          draftRepository.markSourceCommitted(change);
+          return null;
+        });
+    assertThat(c.tx(() -> draftRepository.inspectSourceChange(change).status()))
+        .isEqualTo("SOURCE_COMMITTED");
+    assertThat(
+            c.tx(
+                () ->
+                    repository
+                        .readOriginal(creation.creationOperationId())
+                        .orElseThrow()
+                        .canonicalBytes()))
+        .containsExactly(creation.canonicalBytes());
+    assertThat(xmin(c, creation.creationOperationId())).isEqualTo(originalXmin);
+    assertThat(c.tx(() -> repository.settleLocked(creation, verified).canonicalBytes()))
+        .containsExactly(notCreated.canonicalBytes());
   }
 
   @Test

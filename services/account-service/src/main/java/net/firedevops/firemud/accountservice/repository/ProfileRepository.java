@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
+import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_TENANT_MEMBERSHIP;
 import static net.firedevops.firemud.accountservice.jooq.Tables.PROFILES;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -43,6 +44,14 @@ public class ProfileRepository {
     }
     return baseSelect()
         .where(PROFILES.TENANT_ID.eq(tenantId).and(PROFILES.ACCOUNT_ID.in(accountIds)))
+        .andExists(
+            org.jooq
+                .impl
+                .DSL
+                .selectOne()
+                .from(ACCOUNT_TENANT_MEMBERSHIP)
+                .where(ACCOUNT_TENANT_MEMBERSHIP.ACCOUNT_ID.eq(PROFILES.ACCOUNT_ID))
+                .and(ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID.eq(PROFILES.TENANT_ID)))
         .orderBy(PROFILES.ACCOUNT_ID.asc())
         .fetch(this::toEntity);
   }

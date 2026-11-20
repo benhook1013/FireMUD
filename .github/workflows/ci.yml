@@ -1066,6 +1066,10 @@ jobs:
           npm run format -- -c
         working-directory: web-client
 
+      - name: Run email-link regression tests
+        run: npm run test:email-link
+        working-directory: web-client
+
       - name: Run first-invoice checkout regression tests
         run: npm run test:checkout
         working-directory: web-client

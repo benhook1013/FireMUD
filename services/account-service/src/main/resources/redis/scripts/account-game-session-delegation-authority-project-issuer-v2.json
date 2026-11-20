@@ -1,0 +1,75 @@
+{
+  "scriptId": "account.game-session-delegation-authority-project-issuer.v2",
+  "resourcePath": "redis/lua/account-game-session-delegation-authority-project-v2.lua",
+  "sha256": "4a19728c0d6f1495adc188f908909a01d6bca0fddb733b9e2c3a8b43f8cdcb85",
+  "owner": "account-service",
+  "principal": "account_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "authorityProjection",
+      "ownedPrefix": "session:auth:generation:issuer:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "expectedMode"
+    },
+    {
+      "name": "expectedBytes"
+    },
+    {
+      "name": "candidateBytes"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "PROJECTION_ADVANCED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "EXACT_PROJECTION_RETRY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "STALE_GENERATION",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "EQUAL_GENERATION_CONFLICT",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CONDITIONAL_STORE_FAILED",
+      "category": "CONTENTION",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "STORED_PROJECTION_MALFORMED",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "Missing or stale source projection denies delegation use until Account reprojects exact owner evidence.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v2",
+      "payloadVersion": "v1"
+    }
+  ],
+  "legacyPayloadShape": null
+}

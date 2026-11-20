@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -19,6 +21,9 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEv
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.*;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -37,6 +42,143 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void mixedOriginalOwnersKeepTenantMutationAndExactRetryFenced() {
+    for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
+      Context c = context();
+      var f = c.fixture();
+      var prior = c.provisionDemo(null, true);
+      var original = c.select().checkpoint();
+      var complete =
+          DraftCommitBinding.create(
+              new DraftCommitBinding.TargetProof(
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  1,
+                  "test-tenant",
+                  2,
+                  "test-tenant",
+                  "NEW_GAME_ROW"),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              "test/base",
+              List.of(
+                  new DraftCommitBinding.RevisionPayload(
+                      "0",
+                      UUID.randomUUID(),
+                      DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                      "test-payload")),
+              List.of(
+                  new DraftCommitBinding.AffectedUnit(
+                      DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                      "region",
+                      "test-region",
+                      "aggregate",
+                      "test-region",
+                      "0")));
+      // Controlled source-storage capture only: this is not authenticated creator authorization.
+      var holder =
+          new DraftAuthorizationFenceBinding(
+              UUID.randomUUID(),
+              complete.requestId(),
+              complete.commitId(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              complete.target().canonicalTenantId(),
+              complete.target().canonicalVersionId(),
+              complete.baseCommitId(),
+              "0",
+              complete.canonicalBytes(),
+              complete.canonicalBytes(),
+              complete.digest(),
+              List.of(
+                  new SourceEvidence(
+                      DraftAuthorizationFenceBinding.SourceKind.TENANT,
+                      f.tenantId().toString(),
+                      Long.toString(original.tenantAuthorityGeneration()),
+                      Long.toString(original.tenantAuthoritySourceVersion()),
+                      original.outboxStreamKey(),
+                      Long.toString(original.outboxSequence()),
+                      original.payload())));
+      var fences = new DraftAuthorizationFenceRepository(f.dsl());
+      f.transaction()
+          .executeWithoutResult(
+              status -> {
+                fences.reserve(holder);
+                fences.claimCommitOrder(holder);
+              });
+      // Owner terminal evidence is stipulated, not an authenticated publisher.
+      for (Owner owner : List.of(Owner.WORLD, Owner.GAME_DESIGN)) {
+        Outcome outcome =
+            owner == Owner.WORLD
+                ? worldOutcome
+                : worldOutcome == Outcome.COMMITTED
+                    ? Outcome.DEFINITIVELY_ABORTED
+                    : Outcome.COMMITTED;
+        var readback =
+            new OwnerReadback(
+                owner,
+                outcome,
+                holder.operationId(),
+                holder.commitId(),
+                holder.fenceId(),
+                holder.inputDigest(),
+                holder.canonicalBytes(),
+                new byte[] {(byte) owner.ordinal(), (byte) outcome.ordinal()});
+        f.transaction()
+            .executeWithoutResult(status -> fences.recordOwnerReadback(holder, readback));
+      }
+      var retained = tenantSnapshot(f);
+      UUID requestId = UUID.randomUUID();
+      for (int attempt = 0; attempt < 2; attempt++) {
+        RuntimeException failure =
+            assertThrows(RuntimeException.class, () -> c.provisionDemo(prior, false, requestId));
+        Throwable cause = failure;
+        while (cause != null && !(cause instanceof SQLException)) cause = cause.getCause();
+        assertThat(cause).isInstanceOf(SQLException.class);
+        assertThat(((SQLException) cause).getSQLState()).isEqualTo("55P03");
+        assertThat(cause)
+            .hasMessageContaining(
+                "Required creator source is held until every original owner settles");
+        assertThat(tenantSnapshot(f)).isEqualTo(retained);
+      }
+      assertThat(
+              f.dsl()
+                  .fetchSingle(
+                      "SELECT account_draft_authorization_is_settled(?)", holder.operationId())
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(c.select().matches(original)).isTrue();
+      assertThat(f.transport().reads()).isZero();
+    }
+  }
+
+  private static Map<String, List<Map<String, Object>>> tenantSnapshot(
+      CanonicalHostingSubscriptionTestFixture.Fixture f) {
+    Map<String, List<Map<String, Object>>> rows = new java.util.LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "account_authority_generations",
+            "account_tenant_authority_source_records",
+            "account_authority_outbox_events",
+            "account_authority_outbox_streams",
+            "account_tenant_entitlement_outbox_events",
+            "account_tenant_entitlement_outbox_streams",
+            "account_draft_authorization_fences",
+            "account_draft_authorization_sources",
+            "account_draft_authorization_owner_readbacks")) {
+      rows.put(
+          table,
+          f.dsl()
+              .fetch(
+                  "SELECT to_jsonb(t)::text AS evidence, xmin::text AS row_version FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::text")
+              .intoMaps());
+    }
+    return rows;
+  }
 
   @Test
   void retainedPendingSubscriptionWithoutCommittedTenantSourceIsUnavailable() {
@@ -298,6 +440,11 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
 
     private DemoTenantEntitlementSnapshot provisionDemo(
         DemoTenantEntitlementSnapshot prior, boolean publicJoin) {
+      return provisionDemo(prior, publicJoin, UUID.randomUUID());
+    }
+
+    private DemoTenantEntitlementSnapshot provisionDemo(
+        DemoTenantEntitlementSnapshot prior, boolean publicJoin, UUID requestId) {
       return Objects.requireNonNull(
           fixture
               .transaction()
@@ -309,7 +456,7 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
                             .orElseThrow();
                     return demos.provision(
                         new DemoTenantEntitlementRequest(
-                            UUID.randomUUID(),
+                            requestId,
                             fixture.tenantId(),
                             source.creationRequestId(),
                             source.requestDigest(),

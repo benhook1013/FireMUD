@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -154,6 +155,107 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isEqualTo(1L);
     assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void concurrentExactTerminalAttemptsShareOneMembershipEventAuditAndReceipt() throws Exception {
+    Fixture fixture = newFixture();
+    var locked = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var firstPid = new java.util.concurrent.atomic.AtomicInteger();
+    var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      // Real owner transactions, not a synthetic COMMITTED-to-PENDING rewrite or a reconciler.
+      var first =
+          executor.submit(
+              () ->
+                  fixture.inReadCommittedTransaction(
+                      () -> {
+                        firstPid.set(
+                            fixture
+                                .dsl
+                                .fetchSingle("SELECT pg_backend_pid()")
+                                .get(0, Integer.class));
+                        fixture.operations.lockAccount(fixture.account.getId());
+                        locked.countDown();
+                        try {
+                          if (!release.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                            throw new IllegalStateException(
+                                "First terminal attempt release timed out");
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        }
+                        return fixture.commitFirstJoin();
+                      }));
+      assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      var second =
+          executor.submit(
+              () ->
+                  fixture.inReadCommittedTransaction(
+                      () -> {
+                        waiterPid.set(
+                            fixture
+                                .dsl
+                                .fetchSingle("SELECT pg_backend_pid()")
+                                .get(0, Integer.class));
+                        return fixture.commitFirstJoin();
+                      }));
+      long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+      boolean blocked = false;
+      while (System.nanoTime() < deadline) {
+        blocked =
+            Boolean.TRUE.equals(
+                fixture
+                    .dsl
+                    .fetchSingle(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
+                            + "AND wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)))",
+                        waiterPid.get(),
+                        firstPid.get())
+                    .get(0, Boolean.class));
+        if (blocked) break;
+        Thread.sleep(10);
+      }
+      assertThat(blocked)
+          .as("exact retry physically waits on the first owner transaction")
+          .isTrue();
+      assertThat(second.isDone()).isFalse();
+      release.countDown();
+      var committed = first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(second.get(30, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(committed);
+      var operation =
+          fixture.inTransaction(
+              () ->
+                  fixture
+                      .operations
+                      .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                      .orElseThrow());
+      assertThat(operation.status()).isEqualTo("COMMITTED");
+      assertThat(operation.outcome()).isEqualTo("JOINED");
+      assertThat(operation.terminalProof()).isEqualTo(committed);
+      assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
+          .isEqualTo(1L);
+      assertThat(
+              fixture.count(
+                  "account_tenant_membership_role_snapshots",
+                  "membership_id",
+                  committed.membershipId()))
+          .isEqualTo(1L);
+      assertThat(
+              fixture.count(
+                  "account_authority_outbox_events",
+                  "outbox_stream_key",
+                  fixture.membershipStream()))
+          .isEqualTo(1L);
+      assertThat(fixture.count("account_audit_outbox", "audit_event_id", committed.auditEventId()))
+          .isEqualTo(1L);
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   @Test
@@ -584,6 +686,343 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   @Test
+  void canonicalLeaveCommitsMembershipFenceWithoutAnySecurityMutationAndReplaysHistoricalReceipt() {
+    Fixture fixture = newFixture();
+    fixture.commitFirstJoin();
+    var binding = fixture.leaveBinding();
+    var securityBefore = fixture.securityRows();
+    var result = fixture.commitLeave(binding);
+    assertThat(result.terminal().outcome()).isEqualTo("LEFT");
+    assertThat(result.terminal().beforeVersion()).isEqualTo(2L);
+    assertThat(result.terminal().version()).isEqualTo(3L);
+    assertThat(result.terminal().generation()).isEqualTo(2L);
+    assertThat(result.terminal().fence()).isEqualTo(result.terminal().beforeFence() + 1L);
+    assertThat(fixture.securityRows()).isEqualTo(securityBefore);
+    var runtimeReader =
+        new net.firedevops.firemud.accountservice.repository
+            .AccountCanonicalRuntimeMembershipSnapshotRepository(
+            fixture.accounts,
+            fixture.generations,
+            fixture.sourceEvidence,
+            fixture.tenantAuthorityEvents,
+            fixture.freshTenants,
+            fixture.memberships,
+            fixture.pairs,
+            fixture.roles,
+            fixture.outbox);
+    var negative =
+        fixture.inTransaction(
+            () -> runtimeReader.readCurrent(binding.accountId(), binding.tenantId()));
+    assertThat(negative.membershipExists()).isTrue();
+    assertThat(negative.membershipLifecycleState()).isEqualTo("INACTIVE");
+    assertThat(negative.gameplayAdmissionAllowed()).isFalse();
+    assertThat(negative.roles()).isEmpty();
+    assertThat(negative.issuanceFence()).isEqualTo(Long.toString(result.terminal().fence()));
+    var allAfter = fixture.leaveRows();
+    assertThat(fixture.commitLeave(binding)).isEqualTo(result);
+    assertThat(fixture.leaveRows()).isEqualTo(allAfter);
+    assertThatThrownBy(
+            () ->
+                fixture.commitLeave(
+                    new net.firedevops.firemud.accountservice.dto.AccountLeaveMembershipBinding(
+                        binding.requestId(),
+                        binding.accountId(),
+                        binding.tenantId(),
+                        "different-caller")))
+        .hasMessageContaining("idempotency conflict");
+    assertThat(fixture.leaveRows()).isEqualTo(allAfter);
+    var noOp = fixture.commitLeave(fixture.leaveBinding());
+    assertThat(noOp.terminal().outcome()).isEqualTo("ALREADY_LEFT");
+    assertThat(noOp.terminal().fence()).isEqualTo(result.terminal().fence());
+    assertThat(fixture.securityRows()).isEqualTo(securityBefore);
+    var restored = fixture.commitExistingJoin(fixture.prepareAnotherJoin());
+    assertThat(restored.membershipVersion()).isEqualTo(4L);
+    assertThat(restored.membershipAuthorityGeneration()).isEqualTo(2L);
+    var restoredRows = fixture.leaveRows();
+    assertThat(fixture.commitLeave(binding)).isEqualTo(result);
+    assertThat(fixture.leaveRows()).isEqualTo(restoredRows);
+  }
+
+  @Test
+  void canonicalLeaveTerminalFailureRollsBackMembershipFenceRolesEventAuditAndIntent() {
+    Fixture fixture = newFixture();
+    fixture.commitFirstJoin();
+    var binding = fixture.leaveBinding();
+    fixture.dsl.execute(
+        "CREATE FUNCTION fail_leave_terminal() RETURNS trigger LANGUAGE plpgsql AS $$ "
+            + "BEGIN IF NEW.status='COMMITTED' THEN RAISE EXCEPTION 'deliberate leave terminal failure'; END IF; RETURN NEW; END $$");
+    fixture.dsl.execute(
+        "CREATE TRIGGER fail_leave_terminal BEFORE UPDATE ON account_leave_operations FOR EACH ROW EXECUTE FUNCTION fail_leave_terminal()");
+    var before = fixture.leaveRows();
+    assertThatThrownBy(() -> fixture.commitLeave(binding))
+        .hasMessageContaining("deliberate leave terminal failure");
+    assertThat(fixture.leaveRows()).isEqualTo(before);
+    fixture.dsl.execute("DROP TRIGGER fail_leave_terminal ON account_leave_operations");
+    assertThat(fixture.commitLeave(binding).terminal().outcome()).isEqualTo("LEFT");
+  }
+
+  @Test
+  void canonicalLeaveInvalidatesCapturedSourceWithoutChangingSecurityGeneration() {
+    Fixture fixture = newFixture();
+    fixture.commitFirstJoin();
+    var captured =
+        fixture.inTransaction(
+            () ->
+                fixture.generations.read(
+                    AccountAuthorityGenerationRepository.AuthorityScope.account(
+                        fixture.account.getAccountUuid())));
+    fixture.commitLeave(fixture.leaveBinding());
+    var beforeRead = fixture.leaveRows();
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        fixture.sourceEvidence.readCurrentAccountSource(
+                            fixture.account.getAccountUuid(), captured)))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    var current = fixture.inTransaction(() -> fixture.generations.read(captured.scope()));
+    assertThat(current.generation()).isEqualTo(captured.generation());
+    assertThat(current.sourceVersion()).isEqualTo(captured.sourceVersion());
+    assertThat(current.issuanceFence().value()).isEqualTo(captured.issuanceFence().value() + 1L);
+    assertThat(fixture.leaveRows()).isEqualTo(beforeRead);
+  }
+
+  @Test
+  void canonicalLeaveOfAbsentMembershipReturnsNoOpWithoutInitializingAuthority() {
+    Fixture fixture = newFixture();
+    var before =
+        fixture.rows(
+            "account_tenant_membership",
+            "account_membership_pair_authority",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_issuance_fence_provenance",
+            "account_authority_outbox_events",
+            "account_audit_outbox");
+    var binding = fixture.leaveBinding();
+    var result = fixture.commitLeave(binding);
+    assertThat(result.terminal().outcome()).isEqualTo("ALREADY_LEFT");
+    assertThat(result.terminal().membershipId()).isNull();
+    assertThat(fixture.commitLeave(binding)).isEqualTo(result);
+    assertThat(
+            fixture.rows(
+                "account_tenant_membership",
+                "account_membership_pair_authority",
+                "account_authority_generations",
+                "account_authority_issuance_fences",
+                "account_issuance_fence_provenance",
+                "account_authority_outbox_events",
+                "account_audit_outbox"))
+        .isEqualTo(before);
+  }
+
+  @Test
+  void canonicalLeaveCutoverPreservesExactLegacySecuritySourceAndEventBytes() {
+    TestContext context = newTestContext("1049");
+    Fixture fixture = new Fixture(context);
+    fixture.commitFirstJoin();
+    fixture.commitIndependentSecurityChange();
+    var retained =
+        fixture.rows(
+            "accounts",
+            "account_authority_source_records",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_events",
+            "account_authority_outbox_streams");
+    Flyway.configure()
+        .dataSource(context.dataSource())
+        .schemas(context.schema())
+        .defaultSchema(context.schema())
+        .placeholders(Map.of("serviceSchema", context.schema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(
+            fixture.rows(
+                "accounts",
+                "account_authority_source_records",
+                "account_authority_generations",
+                "account_authority_issuance_fences",
+                "account_authority_outbox_events",
+                "account_authority_outbox_streams"))
+        .isEqualTo(retained);
+    var anchor =
+        fixture.dsl.fetchSingle(
+            "SELECT cause_kind, issuance_fence, event_sequence FROM account_issuance_fence_provenance WHERE account_uuid=?",
+            fixture.account.getAccountUuid());
+    assertThat(anchor.get("cause_kind", String.class)).isEqualTo("CUTOVER");
+    assertThat(anchor.get("issuance_fence", Long.class)).isEqualTo(2L);
+    assertThat(anchor.get("event_sequence", Long.class)).isEqualTo(1L);
+    var security = fixture.securityRows();
+    assertThat(fixture.commitLeave(fixture.leaveBinding()).terminal().fence()).isEqualTo(3L);
+    assertThat(fixture.securityRows()).isEqualTo(security);
+  }
+
+  @Test
+  void canonicalLeaveRejectsUnbackedFenceAdvanceAndWrongCausalEventWithFullRollback() {
+    for (boolean supplyWrongEvent : List.of(false, true)) {
+      Fixture fixture = newFixture();
+      fixture.commitFirstJoin();
+      var before = fixture.leaveRows();
+      assertThatThrownBy(
+              () ->
+                  fixture.inTransaction(
+                      () -> {
+                        fixture.operations.lockAccount(fixture.account.getId());
+                        var scope =
+                            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                                fixture.account.getAccountUuid(), fixture.tenantUuid);
+                        var old = fixture.generations.read(scope);
+                        var advanced = fixture.generations.advance(old, old.issuanceFence());
+                        if (supplyWrongEvent) {
+                          var original =
+                              fixture
+                                  .outbox
+                                  .findEvent(fixture.membershipStream(), 1L)
+                                  .orElseThrow();
+                          fixture.dsl.execute(
+                              "INSERT INTO account_issuance_fence_provenance "
+                                  + "(account_uuid,issuance_fence,source_version,prior_fence,cause_kind,tenant_uuid,source_stream_key,event_sequence,event_id,event_digest,prior_generation,generation,prior_authority_source_version,authority_source_version) "
+                                  + "VALUES (?,?,?,?, 'MEMBERSHIP',?,?,?,?,?,?,?,?,?)",
+                              fixture.account.getAccountUuid(),
+                              advanced.issuanceFence().value(),
+                              advanced.issuanceFence().sourceVersion(),
+                              old.issuanceFence().value(),
+                              fixture.tenantUuid,
+                              original.outboxStreamKey(),
+                              original.outboxSequence(),
+                              original.eventId(),
+                              original.eventDigest(),
+                              old.generation(),
+                              advanced.generation(),
+                              old.sourceVersion(),
+                              advanced.sourceVersion());
+                        }
+                        return null;
+                      }))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(fixture.leaveRows()).isEqualTo(before);
+    }
+  }
+
+  @Test
+  void canonicalLeaveAndSecurityWriterSerializeAtTheAccountLockInBothOrders() throws Exception {
+    for (boolean securityFirst : List.of(true, false)) {
+      Fixture fixture = newFixture();
+      fixture.commitFirstJoin();
+      var binding = fixture.leaveBinding();
+      var locked = new java.util.concurrent.CountDownLatch(1);
+      var release = new java.util.concurrent.CountDownLatch(1);
+      var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+      var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+      java.util.function.Consumer<Boolean> change =
+          security -> {
+            if (security) {
+              fixture.commitControlledClosedAccountSecurityChange(
+                  fixture
+                      .sourceEvidence
+                      .readCurrentIssuerAccountSources(
+                          ACCOUNT_ISSUER, fixture.account.getAccountUuid())
+                      .account());
+            } else {
+              fixture.commitLeave(binding);
+            }
+          };
+      try {
+        var first =
+            executor.submit(
+                () ->
+                    fixture.inReadCommittedTransaction(
+                        () -> {
+                          fixture.operations.lockAccount(fixture.account.getId());
+                          locked.countDown();
+                          try {
+                            if (!release.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                              throw new IllegalStateException("First owner release timed out");
+                          } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(interrupted);
+                          }
+                          change.accept(securityFirst);
+                          return null;
+                        }));
+        assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        var second =
+            executor.submit(
+                () ->
+                    fixture.inReadCommittedTransaction(
+                        () -> {
+                          waiterPid.set(
+                              fixture
+                                  .dsl
+                                  .fetchSingle("SELECT pg_backend_pid()")
+                                  .get(0, Integer.class));
+                          fixture.operations.lockAccount(fixture.account.getId());
+                          change.accept(!securityFirst);
+                          return null;
+                        }));
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        boolean blocked = false;
+        while (System.nanoTime() < deadline) {
+          blocked =
+              Boolean.TRUE.equals(
+                  fixture
+                      .dsl
+                      .fetchSingle(
+                          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock')",
+                          waiterPid.get())
+                      .get(0, Boolean.class));
+          if (blocked) break;
+          Thread.sleep(10);
+        }
+        assertThat(blocked).as("second owner physically waits on Account row lock").isTrue();
+        assertThat(second.isDone()).isFalse();
+        release.countDown();
+        first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        second.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        var current =
+            fixture.inTransaction(
+                () ->
+                    fixture.sourceEvidence.readCurrentIssuerAccountSources(
+                        ACCOUNT_ISSUER, fixture.account.getAccountUuid()));
+        assertThat(current.account().generation()).isEqualTo(2L);
+        assertThat(current.account().checkpoint().sequence()).isEqualTo(1L);
+        assertThat(current.issuanceFence().value()).isEqualTo(3L);
+      } finally {
+        release.countDown();
+        executor.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void canonicalLeaveAndIndependentSecurityChangeAdvanceOneCompositeFenceInBothOrders() {
+    for (boolean securityFirst : List.of(true, false)) {
+      Fixture fixture = newFixture();
+      fixture.commitFirstJoin();
+      var binding = fixture.leaveBinding();
+      if (securityFirst) fixture.commitIndependentSecurityChange();
+      var securityAtLeave = fixture.securityRows();
+      var left = fixture.commitLeave(binding);
+      assertThat(fixture.securityRows()).isEqualTo(securityAtLeave);
+      if (!securityFirst) fixture.commitIndependentSecurityChange();
+      var current =
+          fixture.inTransaction(
+              () ->
+                  fixture.sourceEvidence.readCurrentIssuerAccountSources(
+                      ACCOUNT_ISSUER, fixture.account.getAccountUuid()));
+      assertThat(current.account().generation()).isEqualTo(2L);
+      assertThat(current.account().checkpoint().sequence()).isEqualTo(1L);
+      assertThat(current.issuanceFence().value()).isEqualTo(3L);
+      var beforeReplay = fixture.leaveRows();
+      assertThat(fixture.commitLeave(binding)).isEqualTo(left);
+      assertThat(fixture.leaveRows()).isEqualTo(beforeReplay);
+    }
+  }
+
+  @Test
   void inactiveJoinRestoresOneVersionAndEventWithoutChangingIndependentGeneration() {
     Fixture fixture = newFixture();
     var first = fixture.commitFirstJoin();
@@ -905,21 +1344,29 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   private TestContext newTestContext() {
+    return newTestContext(null);
+  }
+
+  private TestContext newTestContext(String target) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     runOwnedSchemas.add(schema);
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (target != null) configuration.target(target);
+    configuration.load().migrate();
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     return new TestContext(
-        dsl, new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
+        dsl,
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+        dataSource,
+        schema);
   }
 
   private static final class Fixture {
@@ -1000,6 +1447,83 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
               tenantEvidence.evidenceDigest());
       this.scope = canonicalScope(account.getAccountUuid(), tenantUuid);
       seedOwnerRowsAndOperation();
+    }
+
+    private net.firedevops.firemud.accountservice.dto.AccountLeaveMembershipBinding leaveBinding() {
+      return new net.firedevops.firemud.accountservice.dto.AccountLeaveMembershipBinding(
+          UUID.randomUUID().toString(), account.getAccountUuid(), tenantUuid, callerBinding);
+    }
+
+    private net.firedevops.firemud.accountservice.repository.AccountLeaveOperationRepository.Receipt
+        commitLeave(
+            net.firedevops.firemud.accountservice.dto.AccountLeaveMembershipBinding binding) {
+      var owner =
+          new net.firedevops.firemud.accountservice.service
+              .AccountCanonicalLeaveMembershipCoordinator(
+              accounts,
+              operations,
+              new net.firedevops.firemud.accountservice.repository.AccountLeaveOperationRepository(
+                  dsl),
+              memberships,
+              sourceEvidence,
+              producer,
+              auditOutbox);
+      return inTransaction(() -> owner.leave(binding));
+    }
+
+    private <T> T inReadCommittedTransaction(java.util.function.Supplier<T> callback) {
+      var owner = new TransactionTemplate(transaction.getTransactionManager());
+      owner.setPropagationBehavior(
+          org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      owner.setIsolationLevel(
+          org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+      return owner.execute(status -> callback.get());
+    }
+
+    private void commitIndependentSecurityChange() {
+      inReadCommittedTransaction(
+          () -> {
+            operations.lockAccount(account.getId());
+            commitControlledClosedAccountSecurityChange(
+                sourceEvidence
+                    .readCurrentIssuerAccountSources(ACCOUNT_ISSUER, account.getAccountUuid())
+                    .account());
+            return null;
+          });
+    }
+
+    private List<List<Map<String, Object>>> rows(String... tables) {
+      return java.util.Arrays.stream(tables)
+          .map(
+              table ->
+                  dsl.fetch(
+                          "SELECT xmin::text AS row_version, to_jsonb(t)::text AS row_data FROM "
+                              + table
+                              + " t ORDER BY to_jsonb(t)::text")
+                      .intoMaps())
+          .toList();
+    }
+
+    private List<List<Map<String, Object>>> securityRows() {
+      return rows("accounts", "account_authority_source_records", "account_global_role_sources");
+    }
+
+    private List<List<Map<String, Object>>> leaveRows() {
+      return rows(
+          "accounts",
+          "account_authority_source_records",
+          "account_global_role_sources",
+          "account_tenant_membership",
+          "account_tenant_membership_role_snapshots",
+          "account_tenant_membership_role_snapshot_roles",
+          "account_membership_pair_authority",
+          "account_authority_generations",
+          "account_authority_issuance_fences",
+          "account_issuance_fence_provenance",
+          "account_authority_outbox_events",
+          "account_authority_outbox_streams",
+          "account_audit_outbox",
+          "account_leave_operations");
     }
 
     private Account createAccount() {
@@ -1755,7 +2279,11 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     return value == 0L ? 1L : value;
   }
 
-  private record TestContext(DSLContext dsl, TransactionTemplate transaction) {}
+  private record TestContext(
+      DSLContext dsl,
+      TransactionTemplate transaction,
+      DriverManagerDataSource dataSource,
+      String schema) {}
 
   private record BrowserFacade(
       net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl service,

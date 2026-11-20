@@ -18,7 +18,7 @@ public final class AccountGameplayDelegationRedisScriptContribution
   private static final String[] DESCRIPTOR_RESOURCES = {
     "/redis/scripts/account-game-session-delegation-pending-register.json",
     "/redis/scripts/account-game-session-delegation-activate-committed.json",
-    "/redis/scripts/account-game-session-delegation-authority-project-issuer.json",
+    "/redis/scripts/account-game-session-delegation-authority-project-issuer-v2.json",
     "/redis/scripts/account-selected-tenant-generation-projection.json",
     "/redis/scripts/account-selected-membership-generation-projection.json",
     "/redis/scripts/account-initial-gameplay-login-dispose.json"

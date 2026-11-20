@@ -5,12 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -153,6 +155,37 @@ class AccountControlUiCurrentActorVerifierTest {
     KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
     generator.initialize(3072);
     signingKey = generator.generateKeyPair();
+  }
+
+  @Test
+  void bothActorScopesRejectAmbientSqlBeforeExternalOrOwnerReads() throws Exception {
+    Fixture fixture = accountFixture(List.of());
+    Object[] dependencies = {
+      fixture.publicJwks,
+      fixture.signerStates,
+      fixture.issuances,
+      fixture.sourceEvidence,
+      fixture.generations,
+      fixture.tenantEvents,
+      fixture.memberships,
+      fixture.membershipPairs,
+      fixture.roleSnapshots,
+      fixture.outbox,
+      fixture.authority,
+      fixture.accountSnapshot
+    };
+    clearInvocations(dependencies);
+    for (boolean readOnly : new boolean[] {false, true}) {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(readOnly);
+      assertThatThrownBy(() -> fixture.verifier.verifyAccount(fixture.compactJwt))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account JWT and Coordination reads must precede SQL ownership");
+      assertThatThrownBy(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account JWT and Coordination reads must precede SQL ownership");
+      verifyNoInteractions(dependencies);
+    }
   }
 
   @Test

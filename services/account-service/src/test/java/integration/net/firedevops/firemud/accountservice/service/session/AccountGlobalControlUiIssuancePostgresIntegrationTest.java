@@ -3,6 +3,8 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.UUID;
@@ -14,8 +16,11 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
 import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
 import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseSubjectKeys;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.GenericContainer;
@@ -42,6 +47,11 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
 
   @Container
   static GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
+
+  @BeforeAll
+  static void awaitMappedOwnerJdbc() {
+    net.firedevops.firemud.test.PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
 
   @TempDir Path temporary;
 
@@ -189,6 +199,156 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
                 .class);
     assertNoMembership(fixture, account);
     fixture.assertNoIssuance();
+  }
+
+  @Test
+  void consumedOtpCannotAuthenticateASecondNewPrimaryAttempt() throws Exception {
+    var fixture = fixture();
+    var account = fixture.createGlobalAccount(PASSWORD);
+    fixture.installGlobalOtp(account, OTP);
+    assertThat(
+            fixture
+                .tx(
+                    () ->
+                        fixture.primary.authenticateControlUiPrimaryIdentity(
+                            account.getEmail(), OTP))
+                .accountId())
+        .isEqualTo(account.getAccountUuid());
+    assertThat(fixture.challenges.findByAccountId(account.getId())).isEmpty();
+    var before = retainedOwners(fixture);
+
+    // A new primary attempt, not recovery of an original issuance request.
+    assertInvalidCredentials(
+        () ->
+            fixture.tx(
+                () ->
+                    fixture.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), OTP)));
+
+    assertThat(fixture.challenges.findByAccountId(account.getId())).isEmpty();
+    assertThat(retainedOwners(fixture)).isEqualTo(before);
+    assertNoMembership(fixture, account);
+    fixture.assertNoIssuance();
+  }
+
+  @Test
+  void invalidPasswordAndOtpCommitOnlyChallengeFailuresAndRealSharedAbuseAccounting()
+      throws Exception {
+    var admin =
+        RedisClient.create(
+            RedisURI.Builder.redis(credentialCache.getHost(), credentialCache.getMappedPort(6379))
+                .withTimeout(java.time.Duration.ofSeconds(2))
+                .build());
+    try (var inspector = admin.connect();
+        var abuse = new AccountCredentialAbuseCacheFixture(credentialCache)) {
+      var fixture = fixture(abuse.service());
+      var account = fixture.createGlobalAccount(PASSWORD);
+      fixture.installGlobalOtp(account, OTP);
+      var ownersBefore = retainedOwners(fixture);
+      var challengeBefore = challengeContent(fixture, account);
+      var oldKeys =
+          new java.util.HashSet<>(
+              inspector.sync().keys(AccountCredentialAbuseSubjectKeys.PREFIX + "subject:*"));
+      try (var ignored =
+          AccountControlUiOwnerSourcesFixture.withPeer(
+              AccountControlUiOwnerSourcesFixture.CALLER)) {
+        int failures = 0;
+        for (String secret : java.util.List.of("incorrect-password", "incorrect-otp")) {
+          var request =
+              new AccountControlUiIssuanceService.AccountSignInRequest(
+                  UUID.randomUUID(),
+                  account.getEmail(),
+                  secret,
+                  UUID.randomUUID(),
+                  new SourceContext("192.0.2.41"));
+          assertInvalidCredentials(() -> fixture.service.issueAccount(request));
+          failures++;
+          assertThat(
+                  fixture
+                      .challenges
+                      .findByAccountId(account.getId())
+                      .orElseThrow()
+                      .getInvalidAttemptCount())
+              .isEqualTo(failures);
+          assertThat(challengeContent(fixture, account)).isEqualTo(challengeBefore);
+          assertThat(retainedOwners(fixture)).isEqualTo(ownersBefore);
+          assertNoMembership(fixture, account);
+          fixture.assertNoIssuance();
+
+          var keys = inspector.sync().keys(AccountCredentialAbuseSubjectKeys.PREFIX + "subject:*");
+          keys.removeAll(oldKeys);
+          // The fixture uses a unique policy scope; only this new attempt creates these buckets.
+          // Sum across retained windows so a wall-clock window boundary cannot lose accounting.
+          for (String subject : java.util.List.of("source", "candidate")) {
+            var subjectKeys =
+                keys.stream().filter(key -> key.contains(":" + subject + ":")).toList();
+            assertThat(subjectKeys).isNotEmpty();
+            long actualFailures = 0;
+            for (String key : subjectKeys) {
+              String[] fields = inspector.sync().get(key).split("\\|", -1);
+              assertThat(fields).hasSize(4);
+              assertThat(fields[0]).isEqualTo("v1");
+              assertThat(fields[3]).isEqualTo("0000000000000000");
+              actualFailures += Long.parseLong(fields[2]);
+              assertThat(inspector.sync().pttl(key)).isPositive();
+            }
+            assertThat(actualFailures).isEqualTo(failures);
+          }
+        }
+      }
+    } finally {
+      admin.shutdown();
+    }
+  }
+
+  private static void assertInvalidCredentials(Runnable action) {
+    assertThatThrownBy(action::run)
+        .isInstanceOf(AuthenticationException.class)
+        .satisfies(
+            failure ->
+                assertThat(((AuthenticationException) failure).getCode())
+                    .isEqualTo("AUTH_INVALID_CREDENTIALS"));
+  }
+
+  private static java.util.Map<String, Object> challengeContent(
+      AccountControlUiOwnerSourcesFixture fixture, Account account) {
+    var row =
+        Objects.requireNonNull(
+                fixture.dsl.fetchOne(
+                    "SELECT * FROM account_email_login_challenge WHERE account_id = ?",
+                    account.getId()))
+            .intoMap();
+    // These two fields are the intended, committed failed-attempt change.
+    row.remove("invalid_attempt_count");
+    row.remove("updated_at");
+    return row;
+  }
+
+  private static java.util.Map<String, java.util.List<java.util.Map<String, Object>>>
+      retainedOwners(AccountControlUiOwnerSourcesFixture fixture) {
+    var result =
+        new java.util.LinkedHashMap<String, java.util.List<java.util.Map<String, Object>>>();
+    for (String table :
+        java.util.List.of(
+            "accounts",
+            "account_global_role_sources",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_events",
+            "account_platform_restriction_current_projections",
+            "account_tenant_membership",
+            "account_control_ui_issuance_operations",
+            "account_control_ui_response_envelopes")) {
+      result.put(
+          table,
+          fixture
+              .dsl
+              .fetch(
+                  "SELECT to_jsonb(t)::text AS content, xmin::text AS row_version FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::text")
+              .intoMaps());
+    }
+    return result;
   }
 
   private AccountControlUiOwnerSourcesFixture fixture() throws Exception {
