@@ -44,19 +44,29 @@ public final class CanonicalInitialAdmissionIntentRepository {
   /** Locks both Game Session owner sources and commits exact World request bytes before acquire. */
   public CanonicalInitialAdmissionIntentSnapshot reserve(
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
-    return reserve(holdRequest, lifecycleRequest, false);
+    return reserve(holdRequest, lifecycleRequest, LaunchMode.RUNNING);
   }
 
   /** Retains the exact Human pre-hold intent while its launch is still STARTING. */
   public CanonicalInitialAdmissionIntentSnapshot reserveHumanStarting(
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
-    return reserve(holdRequest, lifecycleRequest, true);
+    return reserve(holdRequest, lifecycleRequest, LaunchMode.HUMAN_STARTING);
+  }
+
+  /**
+   * Retains the exact run-owned fixture pre-hold intent while its launch is still STARTING. The
+   * fixture has no original StartSession tuple; its policy-seal evidence digest stands in for the
+   * release attestation.
+   */
+  public CanonicalInitialAdmissionIntentSnapshot reserveFixtureStarting(
+      Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    return reserve(holdRequest, lifecycleRequest, LaunchMode.FIXTURE_STARTING);
   }
 
   private CanonicalInitialAdmissionIntentSnapshot reserve(
       Request holdRequest,
       WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
-      boolean requireStarting) {
+      LaunchMode mode) {
     Objects.requireNonNull(holdRequest, "holdRequest");
     Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
     requireIntentRequestId(holdRequest.initialAdmissionRequestId());
@@ -65,7 +75,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
         boundedRequestBytes(lifecycleRequest.canonicalBytes(), "lifecycle request");
     requireWritableReadCommittedOwnerTransaction();
 
-    LockedSources sources = lockSources(holdRequest, requireStarting);
+    LockedSources sources = lockSources(holdRequest, mode);
     CanonicalInitialAdmissionIntentSnapshot.requireExactBinding(
         holdRequest, lifecycleRequest, sources.binding());
 
@@ -103,17 +113,23 @@ public final class CanonicalInitialAdmissionIntentRepository {
   /** Attaches only World-issued acquisition identity to an already committed exact intent. */
   public CanonicalInitialAdmissionIntentSnapshot attach(
       Request exactHoldRequest, HoldIdentity holdIdentity) {
-    return attach(exactHoldRequest, holdIdentity, false);
+    return attach(exactHoldRequest, holdIdentity, LaunchMode.RUNNING);
   }
 
   /** Attaches the exact World identity to a retained Human STARTING intent. */
   public CanonicalInitialAdmissionIntentSnapshot attachHumanStarting(
       Request exactHoldRequest, HoldIdentity holdIdentity) {
-    return attach(exactHoldRequest, holdIdentity, true);
+    return attach(exactHoldRequest, holdIdentity, LaunchMode.HUMAN_STARTING);
+  }
+
+  /** Attaches the exact World identity to a retained run-owned fixture STARTING intent. */
+  public CanonicalInitialAdmissionIntentSnapshot attachFixtureStarting(
+      Request exactHoldRequest, HoldIdentity holdIdentity) {
+    return attach(exactHoldRequest, holdIdentity, LaunchMode.FIXTURE_STARTING);
   }
 
   private CanonicalInitialAdmissionIntentSnapshot attach(
-      Request exactHoldRequest, HoldIdentity holdIdentity, boolean requireStarting) {
+      Request exactHoldRequest, HoldIdentity holdIdentity, LaunchMode mode) {
     Objects.requireNonNull(exactHoldRequest, "exactHoldRequest");
     Objects.requireNonNull(holdIdentity, "holdIdentity");
     requireIntentRequestId(exactHoldRequest.initialAdmissionRequestId());
@@ -129,7 +145,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
     }
     requireWritableReadCommittedOwnerTransaction();
 
-    LockedSources sources = lockSources(exactHoldRequest, requireStarting);
+    LockedSources sources = lockSources(exactHoldRequest, mode);
     Record existing =
         findIntent(
             exactHoldRequest.targetNamespace(), exactHoldRequest.initialAdmissionRequestId(), true);
@@ -196,7 +212,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
     return row == null ? Optional.empty() : Optional.of(decodeSnapshot(row));
   }
 
-  private LockedSources lockSources(Request request, boolean requireStarting) {
+  private LockedSources lockSources(Request request, LaunchMode mode) {
     CanonicalRealmCatalogSnapshot catalog =
         catalogRepository.lockInitialAdmissionTarget(
             request.targetNamespace(),
@@ -204,21 +220,38 @@ public final class CanonicalInitialAdmissionIntentRepository {
             request.realmId(),
             request.expectedCatalogRevision());
     CanonicalInitialAdmissionLaunchTarget launch =
-        requireStarting
-            ? launchRepository.lockStartingForHumanRuntimeCompletion(
-                request.targetNamespace(),
-                request.canonicalTenantId(),
-                request.realmId(),
-                request.canonicalGameInstanceId())
-            : launchRepository.lockForInitialAdmission(
-                request.targetNamespace(),
-                request.canonicalTenantId(),
-                request.realmId(),
-                request.canonicalGameInstanceId());
+        switch (mode) {
+          case HUMAN_STARTING ->
+              launchRepository.lockStartingForHumanRuntimeCompletion(
+                  request.targetNamespace(),
+                  request.canonicalTenantId(),
+                  request.realmId(),
+                  request.canonicalGameInstanceId());
+          case FIXTURE_STARTING ->
+              launchRepository.lockStartingForFixtureRuntimeCompletion(
+                  request.targetNamespace(),
+                  request.canonicalTenantId(),
+                  request.realmId(),
+                  request.canonicalGameInstanceId());
+          case RUNNING ->
+              launchRepository.lockForInitialAdmission(
+                  request.targetNamespace(),
+                  request.canonicalTenantId(),
+                  request.realmId(),
+                  request.canonicalGameInstanceId());
+        };
+    boolean fixture = mode == LaunchMode.FIXTURE_STARTING;
+    if (launch.association().isRunOwnedFixture() != fixture) {
+      throw conflict(
+          fixture
+              ? "Run-owned fixture intent requires the exact fixture launch"
+              : "Human initial-admission intent cannot use a run-owned fixture launch");
+    }
     SourceBinding source = sourceBinding(catalog, launch);
     Record retainedLaunch =
         dsl.fetchOne(
-            "SELECT original_start_session_tuple, catalog_source_intake_operation_id, "
+            "SELECT original_start_session_tuple, fixture_policy_request_bytes, "
+                + "fixture_policy_seal_evidence_digest, catalog_source_intake_operation_id, "
                 + "catalog_source_intake_request_id FROM game_session_canonical_instance_launch "
                 + "WHERE target_namespace = ? AND control_plane_request_id = ? "
                 + "AND canonical_tenant_id = ? AND canonical_realm_id = ? "
@@ -234,9 +267,25 @@ public final class CanonicalInitialAdmissionIntentRepository {
     if (retainedLaunch == null) {
       throw conflict("Exact captured original launch evidence is unavailable for intent storage");
     }
-    byte[] originalTuple = required(retainedLaunch, "original_start_session_tuple", byte[].class);
     UUID intakeOperation = catalog.sourceIntakeReceipt().operationId();
     UUID intakeRequest = catalog.sourceIntakeReceipt().intakeRequestId();
+    if (fixture) {
+      // The fixture retains no original StartSession tuple; its exact policy seal is the source.
+      if (retainedLaunch.get("original_start_session_tuple", byte[].class) != null
+          || retainedLaunch.get("fixture_policy_request_bytes", byte[].class) == null
+          || !launch
+              .association()
+              .attestationDigest()
+              .equals(retainedLaunch.get("fixture_policy_seal_evidence_digest", String.class))
+          || !intakeOperation.equals(
+              required(retainedLaunch, "catalog_source_intake_operation_id", UUID.class))
+          || !intakeRequest.equals(
+              required(retainedLaunch, "catalog_source_intake_request_id", UUID.class))) {
+        throw conflict("Captured fixture launch differs from the locked catalog source identity");
+      }
+      return new LockedSources(source, null, intakeOperation, intakeRequest);
+    }
+    byte[] originalTuple = required(retainedLaunch, "original_start_session_tuple", byte[].class);
     if (originalTuple.length == 0
         || originalTuple.length > 262_144
         || !intakeOperation.equals(
@@ -245,7 +294,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
             required(retainedLaunch, "catalog_source_intake_request_id", UUID.class))) {
       throw conflict("Captured original launch differs from the locked catalog source identity");
     }
-    if (requireStarting) {
+    if (mode == LaunchMode.HUMAN_STARTING) {
       final StartSessionPostAuthorizationExecutionTuple decodedOriginal;
       try {
         decodedOriginal = StartSessionPostAuthorizationExecutionTuple.decode(originalTuple);
@@ -338,7 +387,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
         source.releaseAttestationDigest(),
         sources.catalogSourceIntakeOperationId(),
         sources.catalogSourceIntakeRequestId(),
-        sources.originalStartSessionTuple(),
+        org.jooq.impl.DSL.val(sources.originalStartSessionTuple(), org.jooq.impl.SQLDataType.BLOB),
         holdBytes,
         lifecycleBytes,
         IntentState.PENDING_HOLD.name());
@@ -570,18 +619,26 @@ public final class CanonicalInitialAdmissionIntentRepository {
         message);
   }
 
+  private enum LaunchMode {
+    RUNNING,
+    HUMAN_STARTING,
+    FIXTURE_STARTING
+  }
+
+  /** Human launches retain their original tuple; the run-owned fixture retains none (null). */
   private record LockedSources(
       SourceBinding binding,
       byte[] originalStartSessionTuple,
       UUID catalogSourceIntakeOperationId,
       UUID catalogSourceIntakeRequestId) {
     private LockedSources {
-      originalStartSessionTuple = originalStartSessionTuple.clone();
+      originalStartSessionTuple =
+          originalStartSessionTuple == null ? null : originalStartSessionTuple.clone();
     }
 
     @Override
     public byte[] originalStartSessionTuple() {
-      return originalStartSessionTuple.clone();
+      return originalStartSessionTuple == null ? null : originalStartSessionTuple.clone();
     }
   }
 }

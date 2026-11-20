@@ -1251,10 +1251,30 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
         lockForInitialAdmission(
             targetNamespace, canonicalTenantId, realmId, canonicalGameInstanceId, false);
     CanonicalGameInstanceLaunchAssociation association = target.association();
-    if (association.currentGameInstanceStatus() != CurrentGameInstanceStatus.STARTING
+    if (association.isRunOwnedFixture()
+        || association.currentGameInstanceStatus() != CurrentGameInstanceStatus.STARTING
         || association.currentRowVersion() != association.capturedStartingRowVersion()) {
       throw new IllegalStateException(
           "Human runtime completion requires the exact captured STARTING owner row");
+    }
+    return target;
+  }
+
+  /**
+   * Purpose-specific run-owned fixture lock for its exact captured STARTING row. Human launches are
+   * refused; ordinary admission readers remain RUNNING-only.
+   */
+  public CanonicalInitialAdmissionLaunchTarget lockStartingForFixtureRuntimeCompletion(
+      String targetNamespace, UUID canonicalTenantId, UUID realmId, UUID canonicalGameInstanceId) {
+    CanonicalInitialAdmissionLaunchTarget target =
+        lockForInitialAdmission(
+            targetNamespace, canonicalTenantId, realmId, canonicalGameInstanceId, false);
+    CanonicalGameInstanceLaunchAssociation association = target.association();
+    if (!association.isRunOwnedFixture()
+        || association.currentGameInstanceStatus() != CurrentGameInstanceStatus.STARTING
+        || association.currentRowVersion() != association.capturedStartingRowVersion()) {
+      throw new IllegalStateException(
+          "Run-owned fixture completion requires the exact captured fixture STARTING owner row");
     }
     return target;
   }

@@ -28,14 +28,14 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Drives the canonical run-owned Compose fixture from its verified source receipt to its first
- * OPEN pointer: Game Session STARTING launch, World prepare and activate, the intent and World
+ * Drives the canonical run-owned Compose fixture from its verified source receipt to its first OPEN
+ * pointer: Game Session STARTING launch, World prepare and activate, the intent and World
  * initial-admission hold, the PENDING attempt, World verification, STARTING to RUNNING, and the
  * pointer commit.
  *
- * <p>Every step is an existing owner's exact, replay-safe operation, so a restart resumes from
- * the retained state. Remote calls run outside SQL transactions; each Game Session write uses its
- * own READ COMMITTED transaction. The fixture carries its policy-seal evidence in place of a Human
+ * <p>Every step is an existing owner's exact, replay-safe operation, so a restart resumes from the
+ * retained state. Remote calls run outside SQL transactions; each Game Session write uses its own
+ * READ COMMITTED transaction. The fixture carries its policy-seal evidence in place of a Human
  * Account StartSession tuple and never grants player admission.
  */
 public final class RunOwnedFixtureFirstOpenCoordinator {
@@ -92,7 +92,8 @@ public final class RunOwnedFixtureFirstOpenCoordinator {
     Optional<CanonicalInitialAdmissionOwnerProof> retained =
         admissions.read(workloadNamespace, requestId);
     if (retained.isPresent()
-        && retained.orElseThrow().outcome() != CanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
+        && retained.orElseThrow().outcome()
+            != CanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
       return retained.orElseThrow();
     }
 
