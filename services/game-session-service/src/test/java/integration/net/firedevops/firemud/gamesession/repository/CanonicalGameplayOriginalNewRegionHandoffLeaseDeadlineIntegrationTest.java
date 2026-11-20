@@ -276,7 +276,8 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     bridge();
     var original = regionBinding.installation();
     String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
-    java.util.concurrent.CompletableFuture<Boolean> handoff = null;
+    record HandoffResult(boolean failedClosed, long elapsedNanos) {}
+    java.util.concurrent.CompletableFuture<HandoffResult> handoff = null;
     try (var lock =
         java.sql.DriverManager.getConnection(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -293,11 +294,12 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
 
       handoff =
           java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            long started = System.nanoTime();
             try {
               actualTransferHandoff();
-              return false;
+              return new HandoffResult(false, System.nanoTime() - started);
             } catch (IllegalStateException unavailable) {
-              return true;
+              return new HandoffResult(true, System.nanoTime() - started);
             } catch (Exception failure) {
               throw new IllegalStateException(failure);
             }
@@ -316,12 +318,15 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
                 != null;
         if (!statusReadBlocked) Thread.sleep(20L);
       }
-      boolean failedClosed = handoff.get(7, java.util.concurrent.TimeUnit.SECONDS);
+      var result = handoff.get(7, java.util.concurrent.TimeUnit.SECONDS);
       assertThat(statusReadBlocked).as("handoff reached the blocked region status read").isTrue();
-      assertThat(failedClosed).as("bounded status read fails closed").isTrue();
+      assertThat(result.failedClosed()).as("bounded status read fails closed").isTrue();
+      assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(result.elapsedNanos()))
+          .as("five-second handoff cap plus 750 ms scheduling allowance")
+          .isLessThanOrEqualTo(5750);
     } finally {
       if (handoff != null && !handoff.isDone()) {
-        assertThat(handoff.get(7, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(handoff.get(7, java.util.concurrent.TimeUnit.SECONDS).failedClosed()).isTrue();
       }
     }
 

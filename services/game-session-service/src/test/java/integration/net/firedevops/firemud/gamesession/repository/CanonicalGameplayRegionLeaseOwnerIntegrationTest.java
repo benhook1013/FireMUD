@@ -1011,8 +1011,21 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           "SELECT phase FROM game_session_region_timeline_preparation WHERE initialization_operation_id = ?",
                           preparation.operationId()))
               .isEqualTo("PREPARED");
-          var next = owner.reserveNoWriteRecovery(preparation.operationId());
-          owner.releaseNoWriteRecovery(preparation.operationId(), next);
+          org.awaitility.Awaitility.await()
+              .atMost(java.time.Duration.ofSeconds(5))
+              .untilAsserted(() -> {
+                CanonicalGameplayRegionLeaseOwner.RetainedNoWriteRecovery next;
+                try {
+                  next = owner.reserveNoWriteRecovery(preparation.operationId());
+                } catch (IllegalStateException busy) {
+                  if (!"Canonical Game Session region owner requires current exact assignment and lease evidence"
+                      .equals(busy.getMessage())) {
+                    throw busy;
+                  }
+                  throw new AssertionError("Reservation cleanup callback is still pending", busy);
+                }
+                owner.releaseNoWriteRecovery(preparation.operationId(), next);
+              });
         } finally {
           release.countDown();
         }
@@ -1063,16 +1076,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         var callbackEntered = new java.util.concurrent.CountDownLatch(1);
         var callbackRelease = new java.util.concurrent.CountDownLatch(1);
         var lifetime = new java.util.concurrent.CompletableFuture<Void>();
-        lifetime.whenComplete((ignored, failure) -> {
-          callbackEntered.countDown();
-          try {
-            if (!callbackRelease.await(5, java.util.concurrent.TimeUnit.SECONDS))
-              throw new AssertionError("completion callback was not released");
-          } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError(interrupted);
-          }
-        });
+        var callback =
+            lifetime.whenComplete((ignored, failure) -> {
+              callbackEntered.countDown();
+              try {
+                if (!callbackRelease.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                  throw new AssertionError("completion callback was not released");
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+              }
+            });
         try (var session =
             deadlineBoundRedisOwner.prepareTimelineInitialization(
                 preparation, Duration.ofSeconds(30), identity)) {
@@ -1086,9 +1100,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                   lifetime);
           assertThat(callbackEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
           assertThat(session.initialize(claim.orElseThrow())).isNotNull();
+          assertThat(callback.isDone()).isFalse();
         } finally {
           callbackRelease.countDown();
         }
+        callback.get(5, java.util.concurrent.TimeUnit.SECONDS);
       }
     } finally {
       dropSchema(testSchema.schema());
