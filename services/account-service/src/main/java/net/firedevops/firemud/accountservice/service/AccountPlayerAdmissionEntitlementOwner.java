@@ -106,8 +106,13 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     this.issuances = Objects.requireNonNull(issuances);
     this.memberships = Objects.requireNonNull(memberships);
     this.scopes = Objects.requireNonNull(scopes);
-    this.hosting = Objects.requireNonNull(hosting);
-    this.observer = Objects.requireNonNull(observer);
+    if ((hosting == null) != (observer == null)) {
+      throw new IllegalArgumentException(
+          "Paid hosting sources are composed together or not at all");
+    }
+    // Null when checkout receiving is not composed; paid tenants then fail closed.
+    this.hosting = hosting;
+    this.observer = observer;
     this.demos = Objects.requireNonNull(demos);
     this.sources = Objects.requireNonNull(sources);
     this.targets = Objects.requireNonNull(targets);
@@ -156,6 +161,9 @@ public final class AccountPlayerAdmissionEntitlementOwner {
 
   private RuntimePlayerAdmissionEntitlementEvidence capturePaidSources(
       Request request, VerifiedCaller caller, Prepared prepared) {
+    if (hosting == null) {
+      throw unavailable();
+    }
     var fence =
         inSourceTransaction(
             () -> {
