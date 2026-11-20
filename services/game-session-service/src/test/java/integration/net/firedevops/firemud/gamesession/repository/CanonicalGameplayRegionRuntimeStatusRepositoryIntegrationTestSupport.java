@@ -406,105 +406,122 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
               .withTimeout(Duration.ofSeconds(5))
               .build();
       redis = RedisClient.create(coordinationUri);
-      redis.setOptions(ClientOptions.builder().autoReconnect(false).build());
-      var dataSource = new DriverManagerDataSource();
-      dataSource.setDriverClassName(postgresContainer().getDriverClassName());
-      String url = postgresContainer().getJdbcUrl();
-      dataSource.setUrl(url + (url.contains("?") ? "&" : "?") + "currentSchema=public");
-      dataSource.setUsername(postgresContainer().getUsername());
-      dataSource.setPassword(postgresContainer().getPassword());
-      var candidate =
-          new Candidate(
-              UUID.randomUUID(),
-              UUID.randomUUID(),
-              UUID.randomUUID(),
-              UUID.randomUUID(),
-              "SHARED",
-              UUID.randomUUID(),
-              1L,
-              UUID.randomUUID(),
-              UUID.randomUUID(),
-              BigInteger.ONE,
-              GameSessionAccountDelegationProfile.ISSUER,
-              BigInteger.ONE,
-              BigInteger.ONE,
-              BigInteger.ONE,
-              BigInteger.valueOf(64));
-      fixture = new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
-      sql =
-          DSL.using(
-              fixture
-                  .dsl()
-                  .configuration()
-                  .deriveAppending(
-                      listener,
-                      new DefaultExecuteListener() {
-                        @Override
-                        public void resultEnd(ExecuteContext context) {
-                          String query = context.sql();
-                          var result = context.result();
-                          if (query != null
-                              && query.contains("JOIN game_session_region_runtime_status r")
-                              && result != null) {
-                            assertThat(result.fields())
-                                .extracting(org.jooq.Field::getName)
-                                .as("current transfer observation has unambiguous field names")
-                                .doesNotHaveDuplicates();
+      CanonicalGameplayAdmissionAbortCompositionFixture acquiredFixture = null;
+      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources
+          acquiredUpstream = null;
+      try {
+        redis.setOptions(ClientOptions.builder().autoReconnect(false).build());
+        var dataSource = new DriverManagerDataSource();
+        dataSource.setDriverClassName(postgresContainer().getDriverClassName());
+        String url = postgresContainer().getJdbcUrl();
+        dataSource.setUrl(url + (url.contains("?") ? "&" : "?") + "currentSchema=public");
+        dataSource.setUsername(postgresContainer().getUsername());
+        dataSource.setPassword(postgresContainer().getPassword());
+        var candidate =
+            new Candidate(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "SHARED",
+                UUID.randomUUID(),
+                1L,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                BigInteger.ONE,
+                GameSessionAccountDelegationProfile.ISSUER,
+                BigInteger.ONE,
+                BigInteger.ONE,
+                BigInteger.ONE,
+                BigInteger.valueOf(64));
+        fixture =
+            new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
+        acquiredFixture = fixture;
+        sql =
+            DSL.using(
+                fixture
+                    .dsl()
+                    .configuration()
+                    .deriveAppending(
+                        listener,
+                        new DefaultExecuteListener() {
+                          @Override
+                          public void resultEnd(ExecuteContext context) {
+                            String query = context.sql();
+                            var result = context.result();
+                            if (query != null
+                                && query.contains("JOIN game_session_region_runtime_status r")
+                                && result != null) {
+                              assertThat(result.fields())
+                                  .extracting(org.jooq.Field::getName)
+                                  .as("current transfer observation has unambiguous field names")
+                                  .doesNotHaveDuplicates();
+                            }
                           }
-                        }
-                      }));
-      tags = new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1);
-      scripts =
-          RedisScriptCatalog.fromContributions(
-              List.of(
-                  new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
-                  new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
-                  new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
-                  new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
-      upstream =
-          new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
-              sql, fixture.originalPreparedDecisionWithControlledAccountLease(), directory);
-      var decision = fixture.originalPreparedDecisionWithControlledAccountLease();
-      var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
-      CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(redis, scripts, inventory, tags)
-          .installOnce(decision);
-      fixture.acknowledgeOriginalIssuer();
-      new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
-          .repair(fixture.transitionId());
-      region =
-          CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
-              sql,
-              redis,
-              coordinationUri,
-              fixture.transitionId(),
-              upstream.request,
-              upstream.resolver,
-              upstream.entity);
-      admission = inventory.readOriginalNewFinalAdmissionSource(decision);
-      scope = region.installation().source;
-      prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
-      var assignment = tags.assignmentForTransition(admission.candidate().bindingDecisionId());
-      sql.execute(
-          "INSERT INTO game_session_capacity_evidence_budget"
-              + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records) VALUES"
-              + " (?,?,?,?) ON CONFLICT DO NOTHING",
-          assignment.tenantId(),
-          maximumRecords,
-          maximumBindingBytes,
-          maximumRetainedRecords);
-      sql.execute(
-          "INSERT INTO game_session_region_transfer_history_budget"
-              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,?,?)",
-          assignment.tenantId(),
-          maximumTransfers,
-          maximumItems);
-      execution = newControlledExecution();
-      precharge(execution);
-      recreateTransferOwners();
+                        }));
+        tags = new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1);
+        scripts =
+            RedisScriptCatalog.fromContributions(
+                List.of(
+                    new net.firedevops.firemud.gamesession.service
+                        .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
+                    new net.firedevops.firemud.gamesession.service
+                        .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
+                    new net.firedevops.firemud.gamesession.service
+                        .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
+                    new net.firedevops.firemud.gamesession.service
+                        .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
+        upstream =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
+                sql, fixture.originalPreparedDecisionWithControlledAccountLease(), directory);
+        acquiredUpstream = upstream;
+        var decision = fixture.originalPreparedDecisionWithControlledAccountLease();
+        var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
+        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
+                redis, scripts, inventory, tags)
+            .installOnce(decision);
+        fixture.acknowledgeOriginalIssuer();
+        new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
+            .repair(fixture.transitionId());
+        region =
+            CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
+                sql,
+                redis,
+                coordinationUri,
+                fixture.transitionId(),
+                upstream.request,
+                upstream.resolver,
+                upstream.entity);
+        admission = inventory.readOriginalNewFinalAdmissionSource(decision);
+        scope = region.installation().source;
+        prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
+        var assignment = tags.assignmentForTransition(admission.candidate().bindingDecisionId());
+        sql.execute(
+            "INSERT INTO game_session_capacity_evidence_budget"
+                + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records) VALUES"
+                + " (?,?,?,?) ON CONFLICT DO NOTHING",
+            assignment.tenantId(),
+            maximumRecords,
+            maximumBindingBytes,
+            maximumRetainedRecords);
+        sql.execute(
+            "INSERT INTO game_session_region_transfer_history_budget"
+                + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,?,?)",
+            assignment.tenantId(),
+            maximumTransfers,
+            maximumItems);
+        execution = newControlledExecution();
+        precharge(execution);
+        recreateTransferOwners();
+      } catch (Exception | Error setupFailure) {
+        // A failed constructor never reaches its owner's try-with-resources.
+        // Rethrowing inside this scope preserves the setup failure and suppresses close failures.
+        try (AutoCloseable redisClose = () -> redis.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+            var fixtureClose = acquiredFixture;
+            var upstreamClose = acquiredUpstream) {
+          throw setupFailure;
+        }
+      }
     }
 
     void replayBridge() {
