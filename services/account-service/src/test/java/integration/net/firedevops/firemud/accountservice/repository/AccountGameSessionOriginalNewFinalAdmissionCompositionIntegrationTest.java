@@ -1304,9 +1304,15 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     @Override
     public void close() throws Exception {
       try {
-        if (capacityClient != null) capacityClient.close();
-        stopCapacityServer();
-        if (client != null) client.close();
+        try {
+          if (capacityClient != null) capacityClient.close();
+        } finally {
+          try {
+            stopCapacityServer();
+          } finally {
+            if (client != null) client.close();
+          }
+        }
       } finally {
         try {
           if (accountServer != null) {
