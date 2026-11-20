@@ -41,7 +41,6 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -890,13 +889,6 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .readRunOwnedFixtureAssociation(
                 evidence, RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence));
     var identity = association.identity();
-    var descriptor =
-        association
-            .runOwnedFixture()
-            .gameSessionAssociation()
-            .fixturePolicyRequest()
-            .launchReadEvidence()
-            .launchDescriptor();
     var holdRequest =
         new WorldCanonicalInitialAdmissionHold.Request(
             identity.targetNamespace(),
@@ -926,8 +918,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             identity.publicProduction(),
             identity.controlPlaneRequestId(),
             association.canonicalVersionId(),
-            WorldRunOwnedFixtureLifecycleEvidence.fixtureDescriptorDigest(descriptor),
-            WorldRunOwnedFixtureLifecycleEvidence.fixtureDescriptorDigest(descriptor),
+            evidence.launchDescriptor().requestDigest(),
+            evidence.launchDescriptor().resultDigest(),
             association.runOwnedFixture().fixtureProvenanceDigest());
     var lifecycleRepository =
         new WorldCanonicalInstanceLifecycleReadRepository(

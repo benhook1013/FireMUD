@@ -21,9 +21,9 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Closed World lifecycle observation for a canonical run-owned fixture instance.
  *
- * <p>The fixture has no Human capture, graph, start-location or complete launch binding. It is
- * identified by the same canonical lifecycle read request, whose release-attestation digest carries
- * the fixture policy-seal evidence digest, and by the World preparation binding digest. This is one
+ * <p>The fixture has no Human capture, graph, start-location or release attestation. It is
+ * identified by the same canonical lifecycle read request, carrying the fixture descriptor digests
+ * and, in place of the release-attestation digest, the fixture policy-seal evidence digest. This is one
  * owner snapshot, not admission authority.
  */
 public record WorldRunOwnedFixtureLifecycleEvidence(
@@ -67,24 +67,6 @@ public record WorldRunOwnedFixtureLifecycleEvidence(
     }
     if (lifecycleEpoch <= 0 || rowVersion < 0) {
       throw new IllegalArgumentException("World fixture lifecycle epoch or row version is invalid");
-    }
-  }
-
-  /**
-   * The fixture lifecycle read request's descriptor digest: SHA-256 of the exact Game Design launch
-   * descriptor bytes retained in the fixture policy request. The fixture descriptor carries no
-   * separate request/result digests, so both request fields use this value.
-   */
-  public static String fixtureDescriptorDigest(
-      net.firedevops.firemud.gamedesign.v1.LaunchDescriptor descriptor) {
-    try {
-      return "sha256:"
-          + java.util.HexFormat.of()
-              .formatHex(
-                  java.security.MessageDigest.getInstance("SHA-256")
-                      .digest(Objects.requireNonNull(descriptor, "descriptor").toByteArray()));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
   }
 

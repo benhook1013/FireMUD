@@ -261,8 +261,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
   private static SourceBinding sourceBinding(
       CanonicalRealmCatalogSnapshot catalog, CanonicalInitialAdmissionLaunchTarget launch) {
     CanonicalGameInstanceLaunchAssociation association = launch.association();
-    var descriptor = association.launchBindingEvidence().descriptor();
-    var release = association.launchBindingEvidence().releaseAttestation();
+    var descriptor = association.descriptor();
     return new SourceBinding(
         catalog.targetNamespace(),
         catalog.tenantId(),
@@ -288,7 +287,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
         association.currentRowVersion(),
         descriptor.requestDigest(),
         descriptor.resultDigest(),
-        release.evidenceDigest());
+        association.attestationDigest());
   }
 
   private void insertIntent(

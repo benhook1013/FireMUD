@@ -143,6 +143,35 @@ BEGIN
 END;
 $migration$;
 
+-- The guarded finalizer may settle a fixture hold from the exact Game Session terminal proof.
+DO $migration$
+DECLARE
+    original TEXT;
+    anchor TEXT := $anchor$    IF EXISTS (
+        SELECT 1
+        FROM "${serviceSchema}".world_canonical_instance_association a
+        JOIN "${serviceSchema}".world_instance wi ON wi.id = a.world_instance_id
+        WHERE a.schema_version = 3
+            AND a.canonical_authority_kind = 'RUN_OWNED_FIXTURE'
+            AND (a.canonical_game_instance_id = candidate.canonical_game_instance_id
+                OR (wi.tenant_id = candidate.tenant_id
+                    AND wi.game_instance_id = candidate.game_instance_id
+                    AND wi.version_id = candidate.version_id))) THEN
+        RAISE EXCEPTION 'Run-owned fixture initial-admission hold finalization is disabled'
+            USING ERRCODE = '23514';
+    END IF;
+$anchor$;
+BEGIN
+    SELECT pg_get_functiondef(
+        '"${serviceSchema}".world_finalize_canonical_initial_admission_hold(uuid,uuid,text,text,text,text,bigint,timestamptz,boolean,bytea,text)'::REGPROCEDURE)
+        INTO STRICT original;
+    IF (length(original)-length(replace(original,anchor,'')))/length(anchor) <> 1 THEN
+        RAISE EXCEPTION 'Expected exactly one run-owned fixture hold finalization refusal';
+    END IF;
+    EXECUTE replace(original, anchor, '');
+END;
+$migration$;
+
 -- V1070 joins the catalog installation set: its own history row is sealed as an installation
 -- marker, exactly as V1046-V1050, so the post-commit history row cannot drift the seal.
 CREATE OR REPLACE FUNCTION world_runtime_family_catalog_installed() RETURNS BOOLEAN

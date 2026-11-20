@@ -1524,11 +1524,42 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
 
   private CanonicalGameInstanceLaunchAssociation toAssociation(Record row) {
     try {
-      CompleteLaunchBindingEvidence evidence =
-          JSON.readValue(
-              row.get("complete_launch_binding_evidence", JSONB.class).data(),
-              CompleteLaunchBindingEvidence.class);
-      ValidatedBinding binding = validateBinding(evidence);
+      boolean fixture = row.get("fixture_policy_request_bytes", byte[].class) != null;
+      CompleteLaunchBindingEvidence evidence = null;
+      net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence
+          fixtureDescriptor = null;
+      String fixtureProvenanceDigest = null;
+      UUID fixtureCanonicalVersionId = null;
+      if (fixture) {
+        // The run-owned fixture retains its verified descriptor and policy seal; its seal evidence
+        // digest takes the release attestation's place.
+        var tree = JSON.readTree(row.get("complete_launch_binding_evidence", JSONB.class).data());
+        fixtureDescriptor =
+            JSON.treeToValue(
+                tree.get("descriptor"),
+                net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence
+                    .class);
+        fixtureDescriptor.requireValid();
+        requireRequestId(fixtureDescriptor.controlPlaneRequestId());
+        fixtureProvenanceDigest = row.get("fixture_policy_seal_evidence_digest", String.class);
+        fixtureCanonicalVersionId =
+            UUID.fromString(
+                net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+                    .parseFixturePolicyRequestBytes(
+                        row.get("fixture_policy_request_bytes", byte[].class))
+                    .launchReadEvidence()
+                    .publishedReleaseBundle()
+                    .getCanonicalVersionId());
+      } else {
+        evidence =
+            JSON.readValue(
+                row.get("complete_launch_binding_evidence", JSONB.class).data(),
+                CompleteLaunchBindingEvidence.class);
+      }
+      DescriptorBinding binding =
+          fixture
+              ? new DescriptorBinding(fixtureDescriptor)
+              : new DescriptorBinding(validateBinding(evidence).descriptor());
       UUID canonicalTenantId = row.get("canonical_tenant_id", UUID.class);
       UUID associationOperationId = row.get("tenant_association_operation_id", UUID.class);
       UUID gameInstanceUuid = row.get("game_instance_uuid", UUID.class);
@@ -1575,7 +1606,7 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
               row.get("current_version_state_epoch", Long.class),
               row.get("current_run_owned_start_request_id", String.class),
               row.get("current_run_owned_start_published_release_bundle_ref", String.class));
-      requireRuntimeBinding(current, evidence);
+      requireRuntimeBinding(current, binding.descriptor());
       if (!gameInstanceUuid.equals(current.gameInstanceUuid())
           || current.rowVersion() < row.get("captured_starting_row_version", Long.class)
           || !RealmEntryPolicy.StateScope.SHARED
@@ -1599,7 +1630,10 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
           row.get("captured_starting_row_version", Long.class),
           evidence,
           CurrentGameInstanceStatus.valueOf(current.status()),
-          current.rowVersion());
+          current.rowVersion(),
+          fixtureDescriptor,
+          fixtureProvenanceDigest,
+          fixtureCanonicalVersionId);
     } catch (RuntimeException exception) {
       if (exception instanceof IllegalStateException illegalState) {
         throw illegalState;
@@ -1669,7 +1703,12 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
 
   private static void requireRuntimeBinding(
       GameInstanceRow runtime, CompleteLaunchBindingEvidence evidence) {
-    var descriptor = evidence.descriptor();
+    requireRuntimeBinding(runtime, evidence.descriptor());
+  }
+
+  private static void requireRuntimeBinding(
+      GameInstanceRow runtime,
+      net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence descriptor) {
     if (runtime.id() <= 0
         || runtime.tenantId() <= 0
         || runtime.gameInstanceUuid() == null
@@ -1829,6 +1868,9 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
       return evidence.descriptor();
     }
   }
+
+  private record DescriptorBinding(
+      net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence descriptor) {}
 
   private record FreshTenantOwnerMapping(UUID operationId) {}
 

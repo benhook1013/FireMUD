@@ -450,23 +450,22 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
   }
 
   /**
-   * A fixture has no Human launch binding: its lifecycle request carries the fixture descriptor
-   * digests from the authenticated policy request and the fixture provenance digest in place of the
-   * release attestation.
+   * A fixture has no Human release attestation: its lifecycle request carries the retained fixture
+   * descriptor digests and the fixture provenance digest in place of the release attestation.
    */
-  private static void requireFixtureLifecycleRequest(
+  private void requireFixtureLifecycleRequest(
       WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
       WorldCanonicalInstanceAssociation association) {
     var identity = association.identity();
     var fixture = association.runOwnedFixture();
-    String descriptorDigest =
-        WorldRunOwnedFixtureLifecycleEvidence.fixtureDescriptorDigest(
-            fixture
-                .gameSessionAssociation()
-                .fixturePolicyRequest()
-                .launchReadEvidence()
-                .launchDescriptor());
-    if (!lifecycleRequest.targetNamespace().equals(identity.targetNamespace())
+    Record descriptor =
+        dsl.fetchOne(
+            "SELECT descriptor_request_digest, descriptor_result_digest "
+                + "FROM world_canonical_instance_association "
+                + "WHERE canonical_game_instance_id = ? AND canonical_authority_kind = 'RUN_OWNED_FIXTURE'",
+            identity.canonicalGameInstanceId());
+    if (descriptor == null
+        || !lifecycleRequest.targetNamespace().equals(identity.targetNamespace())
         || !lifecycleRequest.canonicalTenantId().equals(identity.canonicalTenantId())
         || !lifecycleRequest.worldSlug().equals(identity.worldSlug())
         || !lifecycleRequest.canonicalGameInstanceId().equals(identity.canonicalGameInstanceId())
@@ -475,8 +474,12 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
         || lifecycleRequest.publicProduction() != identity.publicProduction()
         || !lifecycleRequest.controlPlaneRequestId().equals(identity.controlPlaneRequestId())
         || !lifecycleRequest.canonicalVersionId().equals(association.canonicalVersionId())
-        || !lifecycleRequest.expectedDescriptorRequestDigest().equals(descriptorDigest)
-        || !lifecycleRequest.expectedDescriptorResultDigest().equals(descriptorDigest)
+        || !lifecycleRequest
+            .expectedDescriptorRequestDigest()
+            .equals(required(descriptor, "descriptor_request_digest", String.class))
+        || !lifecycleRequest
+            .expectedDescriptorResultDigest()
+            .equals(required(descriptor, "descriptor_result_digest", String.class))
         || !lifecycleRequest
             .expectedReleaseAttestationDigest()
             .equals(fixture.fixtureProvenanceDigest())) {
