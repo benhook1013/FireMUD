@@ -628,7 +628,7 @@ jobs:
               "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
               "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
-              "docker/docker-compose.grpc-mtls.override.yml": "b8378f7e41849b63f95fa2f233c897d65b6ac1b0d3ccf4777aa924b3b35bceb4"
+              "docker/docker-compose.grpc-mtls.override.yml": "65fb30cf802f7f52ea3e09c747231411f23743df2902ce8cec2c5f7ebd4772a4"
             };
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
