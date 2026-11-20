@@ -820,6 +820,58 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
+  void fixtureActivationMovesOriginalPreparingEpochToActiveOnceAndReplaysExactly()
+      throws Exception {
+    var evidence = controlledEvidence();
+    var service = nativeService(evidence);
+    prepareWithInstallation(service, evidence);
+    var association =
+        associationRepository()
+            .readRunOwnedFixtureAssociation(
+                evidence, RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence));
+    long id = association.worldInstanceId();
+    var request = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
+
+    var activated =
+        RunOwnedWorldFixtureLifecycleTestFactory.activate(
+            service, evidence, controlledInstallation, 1L);
+
+    assertThat(activated.status()).isEqualTo("ACTIVE");
+    assertThat(activated.lifecycleEpoch()).isEqualTo(2L);
+    assertThat(activated.tenantId()).isEqualTo(request.tenantId());
+    assertThat(activated.gameInstanceId()).isEqualTo(request.gameInstanceId());
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_run_owned_fixture_activation WHERE world_instance_id = ?",
+                id))
+        .isEqualTo(1L);
+    assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
+
+    var replay =
+        RunOwnedWorldFixtureLifecycleTestFactory.activate(
+            service, evidence, controlledInstallation, 1L);
+    assertThat(replay.status()).isEqualTo("ACTIVE");
+    assertThat(replay.lifecycleEpoch()).isEqualTo(2L);
+    assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                RunOwnedWorldFixtureLifecycleTestFactory.activate(
+                    service, evidence, controlledInstallation, 3L))
+        .hasMessageStartingWith("LIFECYCLE_EPOCH_MISMATCH:");
+    assertSqlState(
+        () ->
+            dsl.execute(
+                "UPDATE world_instance SET status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2 WHERE id = ?",
+                id),
+        "23514");
+    assertSqlState(
+        () ->
+            dsl.execute(
+                "DELETE FROM world_run_owned_fixture_activation WHERE world_instance_id = ?", id),
+        "23514");
+  }
+
+  @Test
   void fixturePreparingCannotActivateAcquireHoldsPlaceActorsOrReuseConsumedManifests()
       throws Exception {
     var evidence = controlledEvidence();
@@ -850,7 +902,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 associationRepository()
                     .activateRunOwnedFixtureInOwnerTransaction(association, 1L, 0L))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageStartingWith("RUN_OWNED_WORLD_ACTIVATION_UNAVAILABLE:");
+        .hasMessageContaining("writable READ COMMITTED owner transaction");
     assertThat(
             dsl.fetchSingle(
                     "SELECT to_regprocedure(?)",
@@ -1501,8 +1553,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 install five consecutive catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L);
+          .as("V1046 through V1050 and V1070 install six consecutive catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -1529,6 +1581,12 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .isNotNull()
             .isEmpty();
       }
+      assertThat(
+              retainedRowsAtDefaultFrontierOriginalColumns.remove(
+                  "world_run_owned_fixture_activation"))
+          .as("new additive V1070 fixture activation table is installed and empty")
+          .isNotNull()
+          .isEmpty();
       for (String extendedTable :
           List.of("world_instance", "world_canonical_instance_topology_identity")) {
         assertThat(
@@ -3284,6 +3342,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1048");
     versions.add("1049");
     versions.add("1050");
+    versions.add("1070");
     return List.copyOf(versions);
   }
 

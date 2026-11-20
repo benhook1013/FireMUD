@@ -26,6 +26,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentit
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.jooq.DSLContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -92,5 +93,17 @@ public final class RunOwnedWorldFixtureLifecycleTestFactory {
       WorldLifecycleCommandServiceImpl service, RunOwnedCanonicalWorldLaunchEvidence evidence) {
     return service.prepareRunOwnedFixture(
         RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence), evidence);
+  }
+
+  /** Canonical fixture activation through the owner path with an explicit installation. */
+  public static WorldInstanceLifecycleSnapshotDto activate(
+      WorldLifecycleCommandServiceImpl service,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      WorldRuntimeInstallationRegistry installation,
+      long expectedLifecycleEpoch) {
+    service.setRuntimeInstallationRegistry(installation);
+    var request = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
+    return service.activateRunOwnedFixture(
+        request.tenantId(), request.gameInstanceId(), expectedLifecycleEpoch, evidence);
   }
 }
