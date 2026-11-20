@@ -2206,7 +2206,13 @@ if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
   case "$*" in
     *actions/runs/101) cat "$CONTRACT_DUPLICATE_DIR/duplicate-source.json"; exit 0 ;;
     "api repos/example/FireMUD") printf '%s\n' '{"full_name":"example/FireMUD","default_branch":"develop"}'; exit 0 ;;
-    *actions/runs/202) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-${CONTRACT_DUPLICATE_PATH:-bare}.json"; exit 0 ;;
+    *actions/runs/202)
+      if [[ -n "${CONTRACT_PUBLISHER_LOOKUP_MARKER:-}" ]]; then
+        : >"$CONTRACT_PUBLISHER_LOOKUP_MARKER"
+      fi
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-${CONTRACT_DUPLICATE_PATH:-bare}.json"
+      exit 0
+      ;;
     *actions/runs/202/attempts/2/jobs?per_page=100)
       cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-$CONTRACT_DUPLICATE_JOB.json"; exit 0 ;;
   esac
@@ -2408,13 +2414,29 @@ for variant in terminal multi terminal-no-proof; do
     require_contains "$contract_fixture_dir/competing-$variant.error" 'completed with failure'
   fi
 done
+# Freeze the fixture clock until the waiter actually looks up a publisher. Only
+# subsequent poll sleeps consume the budget; the outer timeout bounds fixture bugs.
+cat >"$contract_fixture_dir/publisher-clock.sh" <<'EOF'
+if [[ "${0##*/}" == "wait-for-runtime-images.sh" ]]; then
+  unset SECONDS
+  SECONDS=0
+  sleep() {
+    if [[ -f "$CONTRACT_PUBLISHER_LOOKUP_MARKER" ]]; then
+      SECONDS=$((SECONDS + 1))
+    fi
+  }
+fi
+EOF
 for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
-  if CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success CONTRACT_DUPLICATE_PATH="$variant" \
+  lookup_marker="$contract_fixture_dir/publisher-$variant.lookup"
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+    CONTRACT_PUBLISHER_LOOKUP_MARKER="$lookup_marker" \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success CONTRACT_DUPLICATE_PATH="$variant" \
     CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
     CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
       >"$contract_fixture_dir/publisher-$variant.output" 2>"$contract_fixture_dir/publisher-$variant.error"; then
     [[ "$variant" == "qualified" ]] || { echo "Untrusted publisher path bypassed: $variant" >&2; exit 1; }
@@ -2423,6 +2445,7 @@ for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
     [[ "$variant" != "qualified" ]] || { cat "$contract_fixture_dir/publisher-$variant.error" >&2; exit 1; }
     require_contains "$contract_fixture_dir/publisher-$variant.error" 'Timed out waiting for runtime-images workflow'
   fi
+  [[ -f "$lookup_marker" ]] || { echo "Publisher lookup was not reached: $variant" >&2; exit 1; }
 done
 for fixture in missing-url empty-url; do
   if CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
