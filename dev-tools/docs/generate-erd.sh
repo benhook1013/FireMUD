@@ -28,7 +28,7 @@ mkdir -p "$OUT_DIR"
 POSTGRES_CONTAINER="firemud-erd-postgres"
 
 docker run --name "$POSTGRES_CONTAINER" -e POSTGRES_USER=firemud \
-  -e POSTGRES_PASSWORD=firemud -e POSTGRES_DB=firemud -p 5432:5432 -d postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
+  -e POSTGRES_PASSWORD=firemud -e POSTGRES_DB=firemud -p 5432:5432 -d postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
 trap 'docker rm -f "$POSTGRES_CONTAINER" >/dev/null' EXIT
 
 POSTGRES_READY_ATTEMPTS=60
