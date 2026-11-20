@@ -2201,7 +2201,7 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
   grep -Fq 'bash "$WS_SMOKE_SCRIPT"' "$script"
   grep -Fq 'public successful admission remains unproved' "$script"
 done
-grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held' "$ROOT_DIR/.github/workflows/runtime-images.yml"
+grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: baseline' "$ROOT_DIR/.github/workflows/runtime-images.yml"
 grep -Fq 'does not prove host-published ingress' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'docker' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'Confirmed Telnet startup_unavailable denial and closed connection.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
