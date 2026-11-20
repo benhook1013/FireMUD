@@ -191,6 +191,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     var nextConnection = new java.util.concurrent.atomic.AtomicInteger();
     CountDownLatch ready = new CountDownLatch(backgroundMaximum), start = new CountDownLatch(1);
     CountDownLatch entered = new CountDownLatch(backgroundMaximum), release = new CountDownLatch(1);
+    CountDownLatch foregroundEntered = new CountDownLatch(2);
+    CountDownLatch foregroundRelease = new CountDownLatch(1);
     when(redis.connect(ByteArrayCodec.INSTANCE))
         .thenAnswer(invocation -> {
           int index = nextConnection.getAndIncrement();
@@ -206,6 +208,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
               }
             }
             return late;
+          }
+          foregroundEntered.countDown();
+          if (!foregroundRelease.await(2, TimeUnit.SECONDS)) {
+            throw new AssertionError("foreground connector was not released");
           }
           return foregroundConnections.get(index - backgroundMaximum);
         });
@@ -270,10 +276,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
 
       // Background operation permits remain held by the blocked connectors, leaving two permits
       // for foreground calls that complete while both physical background connects remain active.
-      for (int index = 0; index < 2; index++) {
-        assertThat(foregroundOwner.connectForRead()).isSameAs(foregroundConnections.get(index));
-        foregroundConnections.get(index).closeAsync();
-      }
+      var firstForeground = callerThreads.submit(() -> foregroundOwner.connectForRead());
+      var secondForeground = callerThreads.submit(() -> foregroundOwner.connectForRead());
+      assertThat(foregroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(firstForeground.isDone()).isFalse();
+      assertThat(secondForeground.isDone()).isFalse();
+      assertThat(backgroundPermits.availablePermits()).isZero();
+      assertThat(connectors.getActiveCount()).isEqualTo(backgroundMaximum + 2);
+      foregroundRelease.countDown();
+      var firstResult = firstForeground.get(2, TimeUnit.SECONDS);
+      var secondResult = secondForeground.get(2, TimeUnit.SECONDS);
+      assertThat(List.of(firstResult, secondResult))
+          .containsExactlyInAnyOrderElementsOf(foregroundConnections);
+      firstResult.closeAsync();
+      secondResult.closeAsync();
       verify(redis, org.mockito.Mockito.times(backgroundMaximum + 2))
           .connect(ByteArrayCodec.INSTANCE);
       Awaitility.await()
@@ -288,6 +304,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       lateConnections.forEach(org.mockito.Mockito::verifyNoInteractions);
     } finally {
       start.countDown();
+      foregroundRelease.countDown();
       release.countDown();
       scheduler.shutdownNow();
       callerThreads.shutdownNow();
