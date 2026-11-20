@@ -22,6 +22,12 @@ public interface InitialGameplayReleaseEffectPort {
    * Returns evidence bound to this exact attempt. PROVEN_NO_EFFECT requires the owner to have
    * durably closed the attempt so a delayed claimant can no longer apply it; absence alone is not
    * proof.
+   *
+   * <p>AVAILABLE carries the owner's original observation timestamp. The adapter must establish
+   * that it is comparable with the recovery controller's UTC clock. The journal checks it against
+   * the persisted dispatch time and the controller's time after receiving the readback. If that
+   * clock relationship cannot be established, return UNAVAILABLE. Do not replace the observation
+   * with an adapter or controller receipt timestamp.
    */
   EffectReadbackResolution readback(TypedEffect effect, UUID attemptId);
 
