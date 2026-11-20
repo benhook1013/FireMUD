@@ -694,8 +694,19 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
   @Test
   void callerDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit() throws Exception {
+    assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(false);
+  }
+
+  @Test
+  void explicitInstallationDeadlineBoundsRetainedRecoveryWithoutAbandoningSql() throws Exception {
+    assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(true);
+  }
+
+  private void assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(
+      boolean viaInstallation) throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema schema = newTestSchema();
+    boolean safeToDrop = true;
     try (RedisFixture redis = RedisFixture.open()) {
       var status = new CanonicalGameplayRegionRuntimeStatusRepository(schema.dsl());
       var redisOwner =
@@ -727,17 +738,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       org.mockito.Mockito.doAnswer(
               invocation -> {
                 entered.countDown();
-                long stop = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
-                boolean released = false;
-                while (!released && System.nanoTime() < stop) {
-                  try {
-                    released = release.await(50, java.util.concurrent.TimeUnit.MILLISECONDS);
-                  } catch (InterruptedException ignored) {
-                    /* model a SQL driver still executing */
-                  }
-                }
-                if (!released) throw new AssertionError("SQL release missing");
                 try {
+                  long stop = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+                  boolean released = false;
+                  while (!released && System.nanoTime() < stop) {
+                    try {
+                      released = release.await(50, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    } catch (InterruptedException ignored) {
+                      /* model a SQL driver still executing */
+                    }
+                  }
+                  if (!released) throw new AssertionError("SQL release missing");
                   status.releaseInitialTimelineNoWrite(preparation, proof, NOW);
                   return null;
                 } finally {
@@ -749,38 +760,68 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               org.mockito.ArgumentMatchers.eq(preparation),
               org.mockito.ArgumentMatchers.same(proof),
               org.mockito.ArgumentMatchers.any());
+      var inventory =
+          viaInstallation
+              ? mock(CanonicalGameplayBindingInventoryRepository.class)
+              : new CanonicalGameplayBindingInventoryRepository(schema.dsl());
       var owner =
           ownerWithLiveClock(
-              new CanonicalGameplayBindingInventoryRepository(schema.dsl()),
-              controlled,
-              redisOwner,
-              world,
-              "bounded-recovery",
-              incarnationSource);
+              inventory, controlled, redisOwner, world, "bounded-recovery", incarnationSource);
       var retained = owner.reserveNoWriteRecovery(preparation.operationId());
       owner.retainNoWriteProof(preparation, retained, proof);
       owner.releaseNoWriteRecovery(preparation.operationId(), retained);
       var scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+      Thread caller = null;
       try (var context =
-          io.grpc.Context.current()
-              .withDeadlineAfter(500, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler)) {
+          viaInstallation
+              ? io.grpc.Context.ROOT.withCancellation()
+              : io.grpc.Context.current()
+                  .withDeadlineAfter(500, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler)) {
         var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
-        Thread caller =
+        var installWatchdog = new java.util.concurrent.CompletableFuture<Long>();
+        var failureNanos = new java.util.concurrent.atomic.AtomicLong();
+        safeToDrop = false;
+        caller =
             Thread.ofVirtual()
                 .start(() ->
                     context.run(() -> {
                       try {
-                        owner.recoverRetainedNoWriteForTransition(TRANSITION_ID);
+                        if (viaInstallation) {
+                          installWatchdog.complete(
+                              System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(4));
+                          owner.installForTransition(
+                              null,
+                              TRANSITION_ID,
+                              world.request(),
+                              null,
+                              System.currentTimeMillis() + 2_000L);
+                        } else {
+                          owner.recoverRetainedNoWriteForTransition(TRANSITION_ID);
+                        }
                         outcome.complete(new AssertionError("caller ignored deadline"));
                       } catch (Throwable failure) {
+                        failureNanos.set(System.nanoTime());
                         outcome.complete(failure);
                       }
                     }));
         assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-        assertThat(outcome.get(2, java.util.concurrent.TimeUnit.SECONDS))
-            .isInstanceOf(IllegalStateException.class);
+        Throwable failure;
+        if (viaInstallation) {
+          long stop = installWatchdog.get(1, java.util.concurrent.TimeUnit.SECONDS);
+          failure =
+              outcome.get(
+                  Math.max(0L, stop - System.nanoTime()),
+                  java.util.concurrent.TimeUnit.NANOSECONDS);
+          assertThat(failureNanos.get() - stop)
+              .as("caller error before absolute watchdog")
+              .isNegative();
+        } else {
+          failure = outcome.get(2, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(failure).isInstanceOf(IllegalStateException.class);
         caller.join(2000);
         assertThat(caller.isAlive()).isFalse();
+        if (viaInstallation) org.mockito.Mockito.verifyNoInteractions(inventory);
         assertThat(exited.getCount()).isEqualTo(1L);
         assertThatThrownBy(() -> owner.reserveNoWriteRecovery(preparation.operationId()))
             .isInstanceOf(IllegalStateException.class);
@@ -803,9 +844,25 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       } finally {
         release.countDown();
         scheduler.shutdownNow();
+        if (caller != null) {
+          caller.join(5_000);
+          assertThat(caller.isAlive()).as("caller must exit before fixture teardown").isFalse();
+        }
+        if (entered.getCount() == 0) {
+          assertThat(exited.await(10, java.util.concurrent.TimeUnit.SECONDS))
+              .as("SQL callback must exit before fixture teardown")
+              .isTrue();
+        }
+        org.awaitility.Awaitility.await()
+            .atMost(java.time.Duration.ofSeconds(5))
+            .untilAsserted(() -> {
+              var next = owner.reserveNoWriteRecovery(preparation.operationId());
+              owner.releaseNoWriteRecovery(preparation.operationId(), next);
+            });
+        safeToDrop = true;
       }
     } finally {
-      dropSchema(schema.schema());
+      if (safeToDrop) dropSchema(schema.schema());
     }
   }
 

@@ -2360,7 +2360,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         + ")))";
   }
 
-  private static List<String> rowImages(DSLContext dsl, String tableName) {
+  private static String retainedRowImage(DSLContext dsl, String tableName) {
     String image = "to_jsonb(retained_row)";
     if (tableName.equals("game_session_canonical_binding_transition")) {
       // V1035 adds only this nullable field. Keep every other source value and non-null abort UUID.
@@ -2410,6 +2410,11 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
       image = retainedPreBridgeRegionImage(dsl);
     }
+    return image;
+  }
+
+  private static List<String> rowImages(DSLContext dsl, String tableName) {
+    String image = retainedRowImage(dsl, tableName);
     return dsl.fetch(
             "SELECT ("
                 + image
@@ -2420,55 +2425,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static List<String> rowImagesWithXmin(DSLContext dsl, String tableName) {
-    String image = "to_jsonb(retained_row)";
-    if (tableName.equals("game_session_canonical_binding_transition")) {
-      // Preserve xmin and all source data while comparing the one absent-equivalent V1035 field.
-      image =
-          "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
-              + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_candidate_bytes'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_candidate_bytes',"
-              + " 'original_new_candidate_digest', 'original_new_candidate_state',"
-              + " 'original_new_candidate_readback_digest'] ELSE ARRAY[]::text[] END";
-      // Only the wholly absent V1049 extension is absence-equivalent across the upgrade.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_final_session_sha256'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_final_session_sha256',"
-              + " 'original_new_admission_at_ms', 'original_new_continuity_expires_at_ms',"
-              + " 'original_new_session_duration_ms'] ELSE ARRAY[]::text[] END";
-      // Only all-null V1050.2 additions are absence-equivalent; retain material selection evidence.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_abandonment_id' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_state' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_closure_digest' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_orphan_cleanup_id' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_resolution_id' = 'null'::jsonb"
-              + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
-              + " 'original_new_abandonment_closure_digest',"
-              + " 'original_new_abandonment_orphan_cleanup_id', 'original_new_abandonment_resolution_id']"
-              + " ELSE ARRAY[]::text[] END";
-      // V1063 null receipt pointer is absent-equivalent; keep any populated execution digest.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_capacity_execution_digest'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_capacity_execution_digest']"
-              + " ELSE ARRAY[]::text[] END";
-    } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
-      // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
-      image =
-          "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
-              + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
-    } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
-      image = retainedPreBridgeRegionImage(dsl);
-    }
+    String image = retainedRowImage(dsl, tableName);
     return dsl.fetch(
             "SELECT xmin::text || ':' || ("
                 + image
