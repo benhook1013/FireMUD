@@ -148,12 +148,8 @@ public final class InitialGameplayReleaseController {
       applyResult =
           Objects.requireNonNull(effectPort.apply(dispatched.effect(), attemptId), "applyResult");
     } catch (RuntimeException exception) {
-      journal.recordAmbiguousEffect(
-          operation.scope().operationId(),
-          dispatched.effect().effectId(),
-          attemptId,
-          "EFFECT_CALL_OUTCOME_UNKNOWN",
-          clock.instant());
+      journal.recordAmbiguousEffectForDispatch(
+          dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", clock.instant());
       return requireOperation(operation.scope().operationId());
     }
     if (applyResult.status() == ApplyStatus.RETRYABLE_NO_EFFECT
@@ -164,12 +160,8 @@ public final class InitialGameplayReleaseController {
       return requireOperation(operation.scope().operationId());
     }
     if (applyResult.status() == ApplyStatus.AMBIGUOUS) {
-      journal.recordAmbiguousEffect(
-          operation.scope().operationId(),
-          dispatched.effect().effectId(),
-          attemptId,
-          applyResult.outcomeCode(),
-          clock.instant());
+      journal.recordAmbiguousEffectForDispatch(
+          dispatched, applyResult.outcomeCode(), clock.instant());
       return requireOperation(operation.scope().operationId());
     }
     return readBackEffect(operation, dispatched, attemptId);

@@ -32,14 +32,11 @@ public interface InitialGameplayReleaseJournal {
 
   OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now);
 
-  OutboxEntry recordRetryableEffect(
-      UUID operationId, UUID effectId, UUID attemptId, String outcomeCode, Instant now);
-
   /** False only for an exact dispatch superseded after validated durable owner closure. */
   boolean recordRetryableEffectForDispatch(OutboxEntry dispatch, String outcomeCode, Instant now);
 
-  OutboxEntry recordAmbiguousEffect(
-      UUID operationId, UUID effectId, UUID attemptId, String outcomeCode, Instant now);
+  /** False only for an exact dispatch superseded after validated durable owner closure. */
+  boolean recordAmbiguousEffectForDispatch(OutboxEntry dispatch, String outcomeCode, Instant now);
 
   Operation recordEffectReadback(
       UUID operationId, UUID effectId, UUID attemptId, EffectReadback readback, Instant now);

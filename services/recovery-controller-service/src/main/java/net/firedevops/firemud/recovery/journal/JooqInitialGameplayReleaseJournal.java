@@ -287,67 +287,43 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   @Override
-  public OutboxEntry recordRetryableEffect(
-      UUID operationId, UUID effectId, UUID attemptId, String outcomeCode, Instant now) {
-    return recordNonterminalEffectOutcome(
-            operationId, effectId, attemptId, outcomeCode, EffectOutboxState.RETRYABLE, now, null)
-        .orElseThrow();
-  }
-
-  @Override
   public boolean recordRetryableEffectForDispatch(
       OutboxEntry dispatch, String outcomeCode, Instant now) {
-    Objects.requireNonNull(dispatch, "dispatch must not be null");
-    return recordNonterminalEffectOutcome(
-            dispatch.effect().operationId(),
-            dispatch.effect().effectId(),
-            dispatch.lastAttemptId(),
-            outcomeCode,
-            EffectOutboxState.RETRYABLE,
-            now,
-            dispatch)
-        .isPresent();
+    return recordNonterminalEffectOutcome(dispatch, outcomeCode, EffectOutboxState.RETRYABLE, now);
   }
 
   @Override
-  public OutboxEntry recordAmbiguousEffect(
-      UUID operationId, UUID effectId, UUID attemptId, String outcomeCode, Instant now) {
-    return recordNonterminalEffectOutcome(
-            operationId, effectId, attemptId, outcomeCode, EffectOutboxState.AMBIGUOUS, now, null)
-        .orElseThrow();
+  public boolean recordAmbiguousEffectForDispatch(
+      OutboxEntry dispatch, String outcomeCode, Instant now) {
+    return recordNonterminalEffectOutcome(dispatch, outcomeCode, EffectOutboxState.AMBIGUOUS, now);
   }
 
-  private Optional<OutboxEntry> recordNonterminalEffectOutcome(
-      UUID operationId,
-      UUID effectId,
-      UUID attemptId,
-      String outcomeCode,
-      EffectOutboxState resultState,
-      Instant now,
-      OutboxEntry dispatch) {
+  private boolean recordNonterminalEffectOutcome(
+      OutboxEntry dispatch, String outcomeCode, EffectOutboxState resultState, Instant now) {
+    Objects.requireNonNull(dispatch, "dispatch must not be null");
     InitialGameplayReleaseModel.requiredOutcomeCode(outcomeCode);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    UUID attemptId = dispatch.lastAttemptId();
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
-      Operation operation = dispatch == null ? null : selectOperation(tx, operationId, true);
+      Operation operation = selectOperation(tx, operationId, true);
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      if (dispatch != null) {
-        requireEffectMatchesOperation(current.effect(), operation);
-        if (dispatch.state() != EffectOutboxState.DISPATCHED
-            || attemptId == null
-            || !dispatch.outboxId().equals(current.outboxId())
-            || !dispatch.effect().equals(current.effect())
-            || !dispatch.payloadDigest().equals(current.payloadDigest())) {
-          throw conflict("effect dispatch tuple changed");
-        }
+      requireEffectMatchesOperation(current.effect(), operation);
+      if (dispatch.state() != EffectOutboxState.DISPATCHED
+          || attemptId == null
+          || !dispatch.outboxId().equals(current.outboxId())
+          || !dispatch.effect().equals(current.effect())
+          || !dispatch.payloadDigest().equals(current.payloadDigest())) {
+        throw conflict("effect dispatch tuple changed");
       }
       if (!Objects.equals(current.lastAttemptId(), attemptId)) {
-        if (dispatch != null
-            && hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())) {
-          return Optional.empty();
+        if (hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())) {
+          return false;
         }
         throw conflict("effect attempt identity changed");
       }
-      if (dispatch != null && dispatch.attemptCount() != current.attemptCount()) {
+      if (dispatch.attemptCount() != current.attemptCount()) {
         throw conflict("effect dispatch generation changed");
       }
       if (current.state() == resultState
@@ -355,7 +331,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           || (current.lastAttemptId() != null
               && current.state() == EffectOutboxState.RETRYABLE
               && resultState == EffectOutboxState.AMBIGUOUS)) {
-        return Optional.of(current);
+        return true;
       }
       if (current.state() != EffectOutboxState.DISPATCHED
           && !(current.state() == EffectOutboxState.AMBIGUOUS
@@ -375,7 +351,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           operationId,
           effectId,
           attemptId);
-      return Optional.of(selectOutbox(tx, operationId, effectId, false));
+      selectOutbox(tx, operationId, effectId, false);
+      return true;
     });
   }
 

@@ -195,7 +195,9 @@ jobs:
                   throw new Error("Static summary candidate jobs are incomplete.");
                 }
                 const mismatched = data.jobs.some(job => !Number.isSafeInteger(job?.id) || job.id <= 0 ||
-                  job.run_id !== candidate.id || job.run_attempt !== candidate.run_attempt || job.head_sha !== headSha);
+                  job.run_id !== candidate.id ||
+                  (job.run_attempt !== undefined && job.run_attempt !== candidate.run_attempt) ||
+                  job.head_sha !== headSha);
                 const evidenceNames = [gateName, ...(workflowId === "codeql.yml" ? [
                   ...detailChecks.map(([, name]) => name), "CodeQL Analysis ($" + "{{ matrix.language }})",
                 ] : [])];

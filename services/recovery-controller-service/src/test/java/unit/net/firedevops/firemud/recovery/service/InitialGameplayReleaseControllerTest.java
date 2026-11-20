@@ -199,15 +199,20 @@ class InitialGameplayReleaseControllerTest {
 
   @Test
   void pendingEffectClaimedByAnotherAttemptDoesNotDispatch() {
-    assertPendingClaimHandling(false);
+    assertPendingClaimHandling(false, false);
   }
 
   @Test
   void pendingEffectApplyExceptionRecordsAmbiguousNotRetryable() {
-    assertPendingClaimHandling(true);
+    assertPendingClaimHandling(true, true);
   }
 
-  private void assertPendingClaimHandling(boolean ownsClaim) {
+  @Test
+  void pendingEffectAmbiguousResultUsesClaimedDispatch() {
+    assertPendingClaimHandling(true, false);
+  }
+
+  private void assertPendingClaimHandling(boolean ownsClaim, boolean transportException) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var operation = mock(Operation.class);
@@ -230,6 +235,8 @@ class InitialGameplayReleaseControllerTest {
         .thenReturn(java.util.Optional.of(operation), java.util.Optional.of(after));
     when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(pending));
     var claimedAttempt = new java.util.concurrent.atomic.AtomicReference<UUID>();
+    var claimed =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry.class);
     when(journal.claimEffect(
             org.mockito.ArgumentMatchers.eq(operationId),
             org.mockito.ArgumentMatchers.eq(effectId),
@@ -238,10 +245,6 @@ class InitialGameplayReleaseControllerTest {
         .thenAnswer(invocation -> {
           UUID requested = invocation.getArgument(2);
           claimedAttempt.set(requested);
-          var claimed =
-              mock(
-                  net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry
-                      .class);
           when(claimed.state())
               .thenReturn(
                   net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
@@ -256,9 +259,14 @@ class InitialGameplayReleaseControllerTest {
           if (ownsClaim) when(claimed.effect()).thenReturn(effect);
           return claimed;
         });
-    if (ownsClaim)
+    if (ownsClaim && transportException) {
       when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
           .thenThrow(new IllegalStateException("response lost after possible owner send"));
+    } else if (ownsClaim) {
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
+          .thenReturn(
+              InitialGameplayReleaseEffectPort.EffectApplyResult.ambiguous("OWNER_PENDING"));
+    }
     var controller =
         new InitialGameplayReleaseController(
             journal,
@@ -267,21 +275,20 @@ class InitialGameplayReleaseControllerTest {
             port);
     assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
     assertThat(claimedAttempt.get()).isNotNull();
-    verify(journal, never()).recordRetryableEffect(any(), any(), any(), any(), any());
+    verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any());
     verify(journal, never()).recordEffectReadback(any(), any(), any(), any(), any());
     if (ownsClaim) {
       verify(port).apply(effect, claimedAttempt.get());
       verify(port, never()).readback(any(), any());
       verify(journal)
-          .recordAmbiguousEffect(
-              org.mockito.ArgumentMatchers.eq(operationId),
-              org.mockito.ArgumentMatchers.eq(effectId),
-              org.mockito.ArgumentMatchers.eq(claimedAttempt.get()),
-              org.mockito.ArgumentMatchers.eq("EFFECT_CALL_OUTCOME_UNKNOWN"),
+          .recordAmbiguousEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(
+                  transportException ? "EFFECT_CALL_OUTCOME_UNKNOWN" : "OWNER_PENDING"),
               any());
     } else {
       verifyNoInteractions(port);
-      verify(journal, never()).recordAmbiguousEffect(any(), any(), any(), any(), any());
+      verify(journal, never()).recordAmbiguousEffectForDispatch(any(), any(), any());
     }
   }
 

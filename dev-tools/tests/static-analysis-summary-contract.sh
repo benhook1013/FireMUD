@@ -169,7 +169,7 @@ const github = {
     jobRequests.push(input);
     if (input.per_page !== 100) throw new Error("candidate must use bounded jobs");
     const fromAttempt = (row) => ({
-      ...row, run_id: input.run_id, run_attempt: input.attempt_number, head_sha: currentHeadSha,
+      ...row, run_id: input.run_id, head_sha: currentHeadSha,
     });
     if (input.run_id === 270) {
       return {data: {total_count: 1, jobs: [fromAttempt({id: 2701,
