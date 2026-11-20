@@ -211,7 +211,7 @@ jobs:
                       currentRun.display_title !== expectedTitle) {
                     throw new Error("Static summary cannot confirm the current workflow attempt.");
                   }
-                  return { status: "unavailable", conclusion: null, jobs: [] };
+                  return { ...candidate, status: "unavailable", conclusion: null, jobs: [] };
                 }
                 const metadataName = `PR Metadata Edit (${gateName})`;
                 const metadata = data.jobs.some(job => job.status === "completed" &&
@@ -346,6 +346,21 @@ jobs:
             ) {
               core.info("The pull-request base or head changed while static analysis was being summarized.");
               return;
+            }
+
+            // Reruns can advance a producer without changing the PR tuple.
+            for (const run of Object.values(workflowRuns)) {
+              if (!run) continue;
+              const { data: current } = await github.rest.actions.getWorkflowRun({
+                ...context.repo,
+                run_id: run.id,
+              });
+              if (current?.id !== run.id || current.run_attempt !== run.run_attempt ||
+                  current.event !== "pull_request" || current.head_sha !== headSha ||
+                  current.display_title !== run.display_title) {
+                core.info("A selected producer attempt changed while static analysis was being summarized.");
+                return;
+              }
             }
 
             if (existing && existing.body !== body) {

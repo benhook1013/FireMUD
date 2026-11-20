@@ -193,7 +193,20 @@ const github = {
       if (changeBaseDuringRun && pullRequestReads === 2) currentBaseSha = "c".repeat(40);
       return { data: { state: "open", head: { sha: currentHeadSha, repo: { id: 123 }, ref: "feature" }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
     } },
-    actions: { listWorkflowRuns: codeqlListWorkflowRuns },
+    actions: {
+      listWorkflowRuns: codeqlListWorkflowRuns,
+      getWorkflowRun: async ({run_id}) => {
+        const callCount = calls.paginate.length;
+        try {
+          for (const workflow_id of ["codeql.yml", "license-scan.yml"]) {
+            const runs = await github.paginate(codeqlListWorkflowRuns, {workflow_id, head_sha: currentHeadSha, per_page: 100});
+            const run = runs.find(row => row.id === run_id);
+            if (run) return {data: run};
+          }
+        } finally { calls.paginate.splice(callCount); }
+        throw new Error("unexpected current producer read " + run_id);
+      },
+    },
     checks: { listForRef: checksListForRef },
     issues: {
       listComments: commentsList,
@@ -737,11 +750,23 @@ run(github, context, core).then(async () => {
                 }
                 github.paginate = savedPaginate;
                 const savedActions = github.rest.actions;
+                const staleBefore = [calls.updated.length, calls.created.length, calls.deleted.length];
+                github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
+                  const {data} = await savedActions.getWorkflowRun(input);
+                  return {data: {...data, run_attempt: data.run_attempt + 1}};
+                }};
+                try { await run(github, context, core); }
+                finally { github.rest.actions = savedActions; }
+                if (staleBefore.some((length, index) =>
+                    length !== [calls.updated.length, calls.created.length, calls.deleted.length][index])) {
+                  throw new Error("a producer rerun after evidence read must not mutate comments");
+                }
+
                 let currentAttempt = 1;
-                github.rest.actions = {...savedActions, getWorkflowRun: async ({run_id}) => ({data: {
-                  id: run_id, run_attempt: currentAttempt, event: "pull_request", head_sha: currentHeadSha,
-                  display_title: `CodeQL Analysis pr-42 base-${currentBaseSha} head-${currentHeadSha}`,
-                }})};
+                github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
+                  const {data} = await savedActions.getWorkflowRun(input);
+                  return {data: input.run_id === 200 ? {...data, run_attempt: currentAttempt} : data};
+                }};
                 for (const duplicate of [false, true]) {
                   github.request = async (route, input) => {
                     const response = await savedRequest(route, input);

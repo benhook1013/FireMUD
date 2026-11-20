@@ -646,6 +646,26 @@ smoke, runtime = [yaml.load(Path(path).read_text(), Loader=yaml.BaseLoader) for 
 assert set(smoke["on"]["pull_request"]) == {"types"}
 assert set(runtime["on"]["pull_request"]) == {"types", "paths"}
 assert "branches" not in runtime["on"]["workflow_run"]
+
+# Exercise the actual shell from these two named steps with ordinary outcomes.
+import os
+import subprocess
+import tempfile
+
+steps = smoke["jobs"]["smoke-gate"]["steps"]
+classifier = next(step for step in steps if step.get("id") == "smoke_gate_context")
+failure = next(step for step in steps if step.get("name") == "Fail when smoke dependencies did not succeed")
+assert failure["if"] == "${{ steps.smoke_gate_context.outputs.execute != 'true' }}"
+with tempfile.TemporaryDirectory() as directory:
+    output = Path(directory) / "output"
+    for result, expected in (("success", "true"), ("failure", "false")):
+        output.write_text("")
+        env = {**os.environ, "GITHUB_OUTPUT": str(output), "CHANGES_RESULT": result}
+        subprocess.run(["bash", "-e", "-c", classifier["run"]], env=env, check=True)
+        assert output.read_text().strip() == f"execute={expected}"
+        if result == "failure":
+            failed = subprocess.run(["bash", "-e", "-c", failure["run"]], env=env, capture_output=True, text=True)
+            assert failed.returncode != 0, "failed change detection must fail Smoke Gate"
 PYTHON
 
 # Reproduce the metadata-edit sequence structurally: the edit has its own

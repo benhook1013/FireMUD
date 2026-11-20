@@ -87,12 +87,19 @@ def interpret_selector(node):
     if (isinstance(node, ast.Compare) and len(node.ops) == 1
             and isinstance(node.ops[0], (ast.Eq, ast.NotEq))):
         values = interpret_selector(node.left), interpret_selector(node.comparators[0])
+        # Actions compares strings without regard to case.
+        if all(type(value) is str for value in values):
+            values = tuple(value.casefold() for value in values)
         return (values[0] == values[1]) == isinstance(node.ops[0], ast.Eq)
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             and node.func.id == "format" and not node.keywords and node.args
             and isinstance(node.args[0], ast.Constant)):
         return literal_format(*(interpret_selector(arg) for arg in node.args))
     raise ValueError("Unsupported concurrency selector")
+
+
+for expression, expected in (("'Develop' == 'develop'", True), ("'Develop' != 'develop'", False)):
+    assert interpret_selector(ast.parse(expression, mode="eval").body) is expected
 
 
 assert literal_format("metadata-{0}", 123) == "metadata-123"
@@ -499,8 +506,8 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
     cancelledReads.add(input.run_id);
     return {data: cancelledSource(input.run_id)};
   }, paginate: async (method, input) => {
+    assert.equal(input.attempt_number, 1);
     if (!cancelledReads.has(input.run_id)) {
-      assert.equal(input.attempt_number, 1);
       return [{ id: input.run_id + 100, run_id: input.run_id, name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
         steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
     }
