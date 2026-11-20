@@ -239,6 +239,8 @@ jobs:
                   checkName.startsWith("CodeQL Analysis (") &&
                   workflowRun?.status === "completed"
                 ) {
+                  // A failed producer without a language job did not establish a skip.
+                  if (terminalFailure.has(workflowRun.conclusion)) return "unavailable";
                   return "skipped";
                 }
                 if (workflowRun?.status === "completed") {

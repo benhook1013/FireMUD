@@ -726,6 +726,14 @@ run(github, context, core).then(async () => {
                       writes.some(row => row.body.includes("checks passed"))) {
                     throw new Error(`no-gate candidate ${status}/${conclusion} must display ${shown} and ${headline}`);
                   }
+                  if (status === "completed" && ["startup_failure", "failure"].includes(conclusion)) {
+                    const unavailable = String.fromCharCode(96) + "unavailable" + String.fromCharCode(96);
+                    if (!writes.some(row =>
+                      row.body.includes("CodeQL analysis (java): " + unavailable) &&
+                      row.body.includes("CodeQL analysis (javascript-typescript): " + unavailable))) {
+                      throw new Error("missing CodeQL language jobs on " + conclusion + " must display unavailable");
+                    }
+                  }
                 }
                 github.paginate = savedPaginate;
                 const savedActions = github.rest.actions;
