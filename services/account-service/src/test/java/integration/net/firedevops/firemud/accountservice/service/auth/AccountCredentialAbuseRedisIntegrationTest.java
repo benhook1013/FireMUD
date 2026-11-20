@@ -90,7 +90,7 @@ class AccountCredentialAbuseRedisIntegrationTest {
       }
       for (byte[] pressure :
           inspector.sync().keys(AccountCredentialAbuseSubjectKeys.PREFIX + "pressure:*")) {
-        inspector.sync().del(pressure);
+        inspector.sync().del(List.of(pressure).toArray(byte[][]::new));
       }
       for (int i = 0; i < 24; i++) {
         service.admit(source("198.51.100." + (i + 1)), "new" + i + "@example.test");
@@ -333,8 +333,7 @@ class AccountCredentialAbuseRedisIntegrationTest {
         .withStartupTimeout(Duration.ofSeconds(30))
         .withCreateContainerCmdModifier(
             command ->
-                command
-                    .getHostConfig()
+                java.util.Objects.requireNonNull(command.getHostConfig())
                     .withMemory(PROCESS_BYTES)
                     .withMemorySwap(PROCESS_BYTES)
                     .withPidsLimit(128L))
