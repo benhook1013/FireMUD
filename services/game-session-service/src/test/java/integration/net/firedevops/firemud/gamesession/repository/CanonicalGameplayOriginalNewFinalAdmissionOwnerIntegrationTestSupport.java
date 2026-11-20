@@ -117,6 +117,8 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayRegionLeaseRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayRegionBindingBridgeRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
     // Allocate test PKI and start controlled source servers before the short lease starts.
     sources =

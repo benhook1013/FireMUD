@@ -37,6 +37,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
         Objects.requireNonNull(worldRegionResolver, "worldRegionResolver"),
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity"),
         Objects.requireNonNull(leaseTtl, "leaseTtl"),
-        Objects.requireNonNull(clock, "clock"));
+        Objects.requireNonNull(clock, "clock"),
+        true);
   }
 }
