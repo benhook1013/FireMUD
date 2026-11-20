@@ -92,6 +92,7 @@ firemud:
         - world_management.v1.WorldCanonicalInitialAdmissionHoldService/AcquireCanonicalInitialAdmissionHold
         - world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldIdentity
         - world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldState
+        - world_management.v1.WorldCanonicalInstanceLifecycleReadService/ReadWorldCanonicalInstanceLifecycle
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -518,14 +518,18 @@ public class AccountServiceImpl implements AccountService {
     if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(namespace)) {
       throw new IllegalArgumentException("Canonical Account workload namespace required");
     }
+    if ((hosting == null) != (observer == null)) {
+      throw new IllegalArgumentException(
+          "Paid hosting sources are composed together or not at all");
+    }
     canonicalScopeConsumers =
         new CanonicalScopeConsumers(
             Objects.requireNonNull(reader),
             Objects.requireNonNull(targets),
             Objects.requireNonNull(tenantSources),
             Objects.requireNonNull(demos),
-            Objects.requireNonNull(hosting),
-            Objects.requireNonNull(observer),
+            hosting,
+            observer,
             Objects.requireNonNull(firstJoin),
             namespace,
             Objects.requireNonNull(clock));
@@ -639,7 +643,7 @@ public class AccountServiceImpl implements AccountService {
                         operation,
                         source,
                         null,
-                        consumers.hosting().prepareCurrentRead(scope.tenantId()));
+                        consumers.paidHosting().prepareCurrentRead(scope.tenantId()));
                 case NON_PAID_DEMO ->
                     new CanonicalJoinPreparation(
                         operation, source, consumers.demos().readCurrent(scope.tenantId()), null);
@@ -683,7 +687,7 @@ public class AccountServiceImpl implements AccountService {
               final long entitlementVersion;
               if (prepared.fence() != null) {
                 AccountHostingSubscriptionCurrentReceipt receipt =
-                    consumers.hosting().readCurrent(prepared.fence(), observation);
+                    consumers.paidHosting().readCurrent(prepared.fence(), observation);
                 gameplayAvailable = receipt.gameplayAvailable();
                 allowPublicJoin = receipt.allowPublicJoin();
                 entitlementVersion = receipt.entitlementVersion();
@@ -718,7 +722,7 @@ public class AccountServiceImpl implements AccountService {
                           scope,
                           requestId,
                           callerBinding,
-                          prepared.fence() == null ? null : consumers.hosting(),
+                          prepared.fence() == null ? null : consumers.paidHosting(),
                           prepared.fence(),
                           observation);
               requireCanonicalScopeFresh(consumers, scope);
@@ -772,7 +776,26 @@ public class AccountServiceImpl implements AccountService {
       StripeHostingSubscriptionObserver observer,
       AccountCanonicalFirstJoinTerminalCoordinator firstJoin,
       String namespace,
-      Clock clock) {}
+      Clock clock) {
+    /**
+     * Paid hosting is composed only with checkout receiving; without it paid tenants fail closed.
+     */
+    AccountHostingSubscriptionLifecycleRepository paidHosting() {
+      if (hosting == null) {
+        throw new AuthenticationException(
+            "ENTITLEMENT_UNAVAILABLE", "Paid hosting entitlement source is not composed");
+      }
+      return hosting;
+    }
+
+    StripeHostingSubscriptionObserver paidObserver() {
+      if (observer == null) {
+        throw new AuthenticationException(
+            "ENTITLEMENT_UNAVAILABLE", "Paid hosting provider observer is not composed");
+      }
+      return observer;
+    }
+  }
 
   private record CanonicalJoinPreparation(
       CanonicalJoinOperationEvidence operation,
@@ -809,7 +832,7 @@ public class AccountServiceImpl implements AccountService {
                         ? consumers.demos().readCurrent(scope.tenantId())
                         : null,
                     source.kind() == AccountTenantAuthorityEventRepository.SourceKind.PAID_HOSTING
-                        ? consumers.hosting().prepareCurrentRead(scope.tenantId())
+                        ? consumers.paidHosting().prepareCurrentRead(scope.tenantId())
                         : null,
                     consumers.clock().instant());
               } catch (RuntimeException failure) {
@@ -864,7 +887,7 @@ public class AccountServiceImpl implements AccountService {
               throw new IllegalStateException("Bootstrap entitlement source changed");
             }
             if (prepared.fence() != null) {
-              var receipt = consumers.hosting().readCurrent(prepared.fence(), observation);
+              var receipt = consumers.paidHosting().readCurrent(prepared.fence(), observation);
               gameplayAvailable = receipt.gameplayAvailable();
               allowPublicJoin = receipt.allowPublicJoin();
             } else {
@@ -913,7 +936,7 @@ public class AccountServiceImpl implements AccountService {
       CanonicalScopeConsumers consumers, BootstrapCharacterAuthority prepared) {
     if (prepared.fence() == null) return null;
     try {
-      return consumers.observer().observe(prepared.fence().binding());
+      return consumers.paidObserver().observe(prepared.fence().binding());
     } catch (RuntimeException failure) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Bootstrap provider source is unavailable", failure);
@@ -1095,7 +1118,7 @@ public class AccountServiceImpl implements AccountService {
         observation =
             prepared.fence() == null
                 ? null
-                : consumers.observer().observe(prepared.fence().binding());
+                : consumers.paidObserver().observe(prepared.fence().binding());
         if (!target.equals(readCanonicalScopeTarget(consumers, scope))) {
           throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
         }

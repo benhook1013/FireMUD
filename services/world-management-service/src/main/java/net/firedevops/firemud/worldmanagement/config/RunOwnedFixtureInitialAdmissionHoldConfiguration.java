@@ -11,6 +11,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmiss
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwner;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingRepository;
 import org.jooq.DSLContext;
@@ -46,24 +47,42 @@ public class RunOwnedFixtureInitialAdmissionHoldConfiguration {
   }
 
   @Bean
+  WorldCanonicalInstanceAssociationRepository runOwnedFixtureInstanceAssociationRepository(
+      DSLContext dsl) {
+    return new WorldCanonicalInstanceAssociationRepository(
+        dsl,
+        new WorldCompleteLaunchBindingRepository(dsl),
+        new WorldAuthoredSourceIntakeRepository(dsl),
+        new WorldAuthoredVersionIdentityRepository(dsl));
+  }
+
+  @Bean
+  WorldCanonicalInstanceLifecycleReadRepository runOwnedFixtureInstanceLifecycleReadRepository(
+      DSLContext dsl,
+      PlatformTransactionManager transactionManager,
+      WorldCanonicalInstanceAssociationRepository associations) {
+    return new WorldCanonicalInstanceLifecycleReadRepository(dsl, transactionManager, associations);
+  }
+
+  /** Game Session's JOIN resolution reads the exact canonical instance lifecycle here. */
+  @Bean
+  WorldCanonicalInstanceLifecycleReadGrpcService runOwnedFixtureInstanceLifecycleReadGrpcService(
+      WorldCanonicalInstanceLifecycleReadRepository lifecycle,
+      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
+    return new WorldCanonicalInstanceLifecycleReadGrpcService(lifecycle, namespace);
+  }
+
+  @Bean
   WorldCanonicalInitialAdmissionHoldGrpcService runOwnedFixtureInitialAdmissionHoldGrpcService(
       DSLContext dsl,
       PlatformTransactionManager transactionManager,
+      WorldCanonicalInstanceAssociationRepository associations,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycle,
       GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionOwner,
       @Value("${firemud.grpc.workload-namespace:}") String namespace) {
-    var associations =
-        new WorldCanonicalInstanceAssociationRepository(
-            dsl,
-            new WorldCompleteLaunchBindingRepository(dsl),
-            new WorldAuthoredSourceIntakeRepository(dsl),
-            new WorldAuthoredVersionIdentityRepository(dsl));
     var holds =
         new WorldCanonicalInitialAdmissionHoldRepository(
-            dsl,
-            transactionManager,
-            associations,
-            new WorldCanonicalInstanceLifecycleReadRepository(
-                dsl, transactionManager, associations));
+            dsl, transactionManager, associations, lifecycle);
     return new WorldCanonicalInitialAdmissionHoldGrpcService(
         new WorldCanonicalInitialAdmissionHoldOwner(holds, gameSessionOwner), namespace);
   }

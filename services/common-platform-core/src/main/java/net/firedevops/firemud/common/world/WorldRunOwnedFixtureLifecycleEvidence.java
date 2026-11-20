@@ -23,8 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>The fixture has no Human capture, graph, start-location or release attestation. It is
  * identified by the same canonical lifecycle read request, carrying the fixture descriptor digests
- * and, in place of the release-attestation digest, the fixture policy-seal evidence digest. This is one
- * owner snapshot, not admission authority.
+ * and, in place of the release-attestation digest, the fixture policy-seal evidence digest. This is
+ * one owner snapshot, not admission authority.
  */
 public record WorldRunOwnedFixtureLifecycleEvidence(
     WorldCanonicalInstanceLifecycleEvidence.Request request,
