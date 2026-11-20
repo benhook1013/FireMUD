@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -1081,10 +1082,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 executor));
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
       CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
-      assertThatThrownBy(() ->
+      assertPromptBudgetRefusal(
+          executor,
+          () ->
               CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                  CLOCK, CLOCK.millis() + 1000, budget -> execute(budget.sql(source))))
-          .isInstanceOf(IllegalStateException.class);
+                  CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))));
       verify(provider, org.mockito.Mockito.times(maximum)).acquire();
       verifyNoInteractions(connection);
     } finally {
@@ -1129,15 +1131,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 executor));
       assertThat(backgroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
       var refused = new AtomicBoolean();
-      assertThatThrownBy(() ->
+      assertPromptBudgetRefusal(
+          executor,
+          () ->
               CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
                   CLOCK,
                   Long.MAX_VALUE,
                   budget -> {
                     refused.set(true);
                     return true;
-                  }))
-          .isInstanceOf(IllegalStateException.class);
+                  }));
       assertThat(refused).isFalse();
       boolean admitted =
           CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
@@ -1157,16 +1160,33 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(allEntered.await(2, TimeUnit.SECONDS)).isTrue();
       CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
       // Callers timed out, but blocked acquisition still owns all four permits.
-      assertThatThrownBy(() ->
+      assertPromptBudgetRefusal(
+          executor,
+          () ->
               CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                  CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))))
-          .isInstanceOf(IllegalStateException.class);
+                  CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))));
       verify(provider, org.mockito.Mockito.times(maximum)).acquire();
       verifyNoInteractions(connection);
     } finally {
       release.countDown();
       executor.shutdownNow();
       verify(provider, timeout(2000).times(maximum)).release(connection);
+    }
+  }
+
+  private static void assertPromptBudgetRefusal(ExecutorService executor, Runnable extra)
+      throws Exception {
+    // The holders stay blocked. The independent watchdog is shorter than the five-second
+    // operation budget, so an operation that queues and times out cannot satisfy this assertion.
+    var refusal =
+        executor.submit(() ->
+            assertThatThrownBy(extra::run)
+                .isInstanceOf(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class));
+    try {
+      refusal.get(2, TimeUnit.SECONDS);
+    } finally {
+      refusal.cancel(true);
     }
   }
 
