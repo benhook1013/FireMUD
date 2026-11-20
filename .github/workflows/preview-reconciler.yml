@@ -390,6 +390,39 @@ jobs:
               ' <<<"$jobs" >/dev/null || return 1
           }
 
+          trusted_consumer_has_tuple() {
+            local run_id="$1" attempt="$2" run_head="$3" tuple="$4" jobs latest
+            # A workflow_run display title is inherited from its source. Use the
+            # trusted validator's completed attempt evidence to bind the tuple.
+            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || return 2
+            latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
+            jq -e --argjson id "$run_id" --argjson workflow_id "$consumer_workflow_id" \
+              --arg repository "$GITHUB_REPOSITORY" --arg default_branch "$DEFAULT_BRANCH" '
+              .id == $id and .workflow_id == $workflow_id and .event == "workflow_run"
+              and .repository.full_name == $repository and .head_repository.full_name == $repository
+              and .head_branch == $default_branch
+              and (.path | IN(".github/workflows/hosted-identity-request.yml",
+                ".github/workflows/hosted-identity-request.yml@" + $default_branch,
+                ".github/workflows/hosted-identity-request.yml@refs/heads/" + $default_branch))
+              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
+            ' <<<"$latest" >/dev/null || return 2
+            if jq -e '.status == "completed"' <<<"$latest" >/dev/null; then return 1; fi
+            jq -e --argjson attempt "$attempt" --arg head "$run_head" \
+              '.run_attempt == $attempt and .head_sha == $head' <<<"$latest" >/dev/null || return 2
+            jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$run_head" '
+              .jobs as $jobs
+              | (($jobs | type) == "array") and (.total_count == ($jobs | length)) and (.total_count < 100)
+                and ([$jobs[] | select(.name == "Validate Trusted Preview Target")] | length == 1)
+                and any($jobs[]; .name == "Validate Trusted Preview Target" and .run_id == $id
+                  and .run_attempt == $attempt and .head_sha == $head and .status == "completed")
+            ' <<<"$jobs" >/dev/null || return 2
+            jq -e --arg tuple "$tuple" '
+              any(.jobs[] | select(.name == "Validate Trusted Preview Target" and .conclusion == "success");
+                ([.steps[]? | select(.name | startswith("Trusted preview deploy tuple "))] | length) == 1
+                and any(.steps[]?; .name == $tuple and .status == "completed" and .conclusion == "success"))
+            ' <<<"$jobs" >/dev/null || return 1
+          }
+
           dispatch_candidates() {
             while IFS=$'\t' read -r _ pr_number head_sha pr_author pr_base_ref pr_state labels_json_base64; do
             if ! labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||
@@ -571,6 +604,7 @@ jobs:
               jq -c \
                 --arg workflow_name "${preview_workflow_name}" \
                 --argjson workflow_id "$preview_workflow_id" \
+                --argjson consumer_workflow_id "$consumer_workflow_id" \
                 --arg repository "$GITHUB_REPOSITORY" \
                 --arg default_branch "${DEFAULT_BRANCH}" \
                 --arg pr_title "PR preview ${pr_number}" \
@@ -592,11 +626,12 @@ jobs:
                         error("workflow run entry is malformed")
                       else
                         def positive_int: type == "number" and . > 0 and . == floor;
-                        def native_preview:
-                          .workflow_id == $workflow_id
-                          and .repository.full_name == $repository
+                        def native_same_repo:
+                          .repository.full_name == $repository
                           and .head_repository.full_name == $repository
-                          and (.id | positive_int) and (.run_attempt | positive_int)
+                          and (.id | positive_int) and (.run_attempt | positive_int);
+                        def native_preview:
+                          native_same_repo and .workflow_id == $workflow_id
                           and (.name == $workflow_name or .name == .display_title);
                         def trusted_dispatch:
                           native_preview and .event == "repository_dispatch"
@@ -612,13 +647,21 @@ jobs:
                           and (.display_title == $pr_title or (.event == "pull_request" and .display_title == $run_name))
                           and .head_sha == $head_sha
                           and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1;
+                        def trusted_consumer:
+                          native_same_repo and .workflow_id == $consumer_workflow_id and .event == "workflow_run"
+                          and .head_branch == $default_branch
+                          and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+                          and (.path | IN(".github/workflows/hosted-identity-request.yml",
+                            ".github/workflows/hosted-identity-request.yml@" + $default_branch,
+                            ".github/workflows/hosted-identity-request.yml@refs/heads/" + $default_branch))
+                          and (.display_title == $pr_title or .display_title == $run_name);
                         .[]
                         | select(
                             (
                               (.firemud_reconciler_branch_filtered == false)
                               or (.firemud_reconciler_branch_filtered == true and .head_branch == $default_branch)
                             )
-                            and (trusted_dispatch or provisional_pr)
+                            and (trusted_dispatch or provisional_pr or trusted_consumer)
                             and (
                               .status == "requested"
                               or .status == "queued"
@@ -628,7 +671,7 @@ jobs:
                             )
                           )
                         | if trusted_dispatch then {id, exact: true}
-                          else {id, run_attempt, event, exact: false} end
+                          else {id, run_attempt, event, head_sha, exact: false} end
                       end
                     end
                   ' <<<"${active_preview_runs_json}"
@@ -642,18 +685,22 @@ jobs:
             if [[ -z "$active_preview_run_id" ]]; then
               # A same-head title is not proof: the base can move independently.
               tuple_step="Preview resolved tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
-              while IFS=$'\t' read -r run_id run_attempt run_event; do
+              consumer_tuple="Trusted preview deploy tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
+              while IFS=$'\t' read -r run_id run_attempt run_event run_head; do
                 [[ -n "$run_id" ]] || continue
-                if automatic_preview_has_tuple "$run_id" "$run_attempt" "$head_sha" "$tuple_step" "$pr_number" "$run_event"; then
+                lookup_status=0
+                if [[ "$run_event" == workflow_run ]]; then
+                  trusted_consumer_has_tuple "$run_id" "$run_attempt" "$run_head" "$consumer_tuple" || lookup_status=$?
+                else
+                  automatic_preview_has_tuple "$run_id" "$run_attempt" "$head_sha" "$tuple_step" "$pr_number" "$run_event" || lookup_status=$?
+                fi
+                if [[ "$lookup_status" -eq 0 ]]; then
                   active_preview_run_id="$run_id"
                   break
-                else
-                  lookup_status=$?
-                  if [[ "$lookup_status" -eq 2 ]]; then
-                    active_preview_lookup_unknown=true
-                  fi
+                elif [[ "$lookup_status" -eq 2 ]]; then
+                  active_preview_lookup_unknown=true
                 fi
-              done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[:3][] | [.id, .run_attempt, .event] | @tsv' <<<"$preview_candidates")
+              done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[:3][] | [.id, .run_attempt, .event, .head_sha] | @tsv' <<<"$preview_candidates")
             fi
 
             if [[ -n "${active_preview_run_id}" ]]; then
@@ -782,6 +829,13 @@ jobs:
               | .id | select(type == "number" and . > 0 and . == floor)
             ')"; then
               echo "Unable to establish canonical Preview workflow identity; refusing preview reconcile." >&2
+              exit 1
+            fi
+            if ! consumer_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/hosted-identity-request.yml" | jq -er '
+              select(.name == "Trusted Hosted Identity Request" and .path == ".github/workflows/hosted-identity-request.yml")
+              | .id | select(type == "number" and . > 0 and . == floor)
+            ')"; then
+              echo "Unable to establish canonical trusted preview consumer identity; refusing preview reconcile." >&2
               exit 1
             fi
             dispatch_candidates <<<"$candidate_rows"

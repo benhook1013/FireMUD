@@ -427,6 +427,10 @@ jobs:
             echo "cleanup_state=${CLEANUP_STATE}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Trusted preview deploy tuple pr-${{ steps.target.outputs.pr_number }} base-${{ steps.target.outputs.base_sha }} head-${{ steps.target.outputs.head_sha }} merge-${{ steps.target.outputs.merge_sha }}
+        if: ${{ steps.target.outputs.action == 'deploy' }}
+        run: echo 'Validated the exact preview deployment target.'
+
   prepare-runtime:
     name: Prepare Validated Preview Inputs
     timeout-minutes: 45

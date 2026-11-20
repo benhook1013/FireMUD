@@ -434,6 +434,10 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/pre
   printf '%s\n' '{"id":173511323,"name":"PR Preview Environment","path":".github/workflows/preview.yml"}'
   exit 0
 fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/hosted-identity-request.yml' ]]; then
+  printf '%s\n' '{"id":357129350,"name":"Trusted Hosted Identity Request","path":".github/workflows/hosted-identity-request.yml"}'
+  exit 0
+fi
 if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request\&status=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
   active_query_status="${resource##*&status=}"
   active_query_status="${active_query_status%%&*}"
@@ -479,6 +483,14 @@ fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254' ]]; then
   [[ "${FAKE_PREVIEW_SOURCE_LATEST_FAIL:-false}" != true ]] || exit 1
   printf '%s' "${FAKE_PREVIEW_SOURCE_LATEST_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5256/attempts/1/jobs?per_page=100' ]]; then
+  printf '%s' "${FAKE_TRUSTED_CONSUMER_JOBS_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5256' ]]; then
+  printf '%s' "${FAKE_TRUSTED_CONSUMER_LATEST_JSON:-null}"
   exit 0
 fi
 if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
@@ -2626,17 +2638,31 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
   fi
 done
 
-for observation_case in duplicate-rows workflow-run-only; do
+for observation_case in duplicate-rows workflow-run-only consumer-title-only consumer-stale-attempt; do
 reset_case
 reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance-${observation_case}.out"
+consumer_run="$(jq -cn '{id:5256,run_attempt:1,event:"workflow_run",workflow_id:357129350,
+  path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",
+  head_branch:"develop",head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",display_title:"PR preview 901",
+  repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},status:"in_progress"}')"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_TRUSTED_CONSUMER_JOBS_JSON="$(jq -cn \
+      --arg observation "$observation_case" \
+      --arg tuple "Trusted preview deploy tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}" '
+      {total_count:1,jobs:[{name:"Validate Trusted Preview Target",run_id:5256,run_attempt:1,
+        head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",status:"completed",conclusion:"success",
+        steps:[{name:(if $observation == "consumer-title-only" then "Verify workflow source and immutable PR metadata" else $tuple end),
+          status:"completed",conclusion:"success"}]}]}')" \
+    FAKE_TRUSTED_CONSUMER_LATEST_JSON="$(jq -c --arg observation "$observation_case" \
+      'if $observation == "consumer-stale-attempt" then .run_attempt = 2 else . end' <<<"$consumer_run")" \
     FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
       --arg observation "$observation_case" \
+      --argjson consumer "$consumer_run" \
       --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" '
         [{workflow_runs:(
           if $observation == "duplicate-rows" then
@@ -2647,15 +2673,20 @@ reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-adva
              display_title:$title}
             | [. + {status:"queued"}, . + {status:"in_progress"}]
           else
-            [{id:5256,event:"workflow_run",path:".github/workflows/hosted-identity-request.yml",
-              name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]
+            [$consumer]
           end)}]')" \
     PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_active_status_advance_output"
-if [[ "$observation_case" == duplicate-rows ]]; then
+if [[ "$observation_case" == duplicate-rows || "$observation_case" == workflow-run-only ]]; then
   grep -Fqx \
     "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+    "$reconciler_active_status_advance_output"
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+elif [[ "$observation_case" == consumer-stale-attempt ]]; then
+  grep -Fqx \
+    "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
     "$reconciler_active_status_advance_output"
   test ! -e "$FAKE_ANNOTATE_LOG"
   test ! -e "$FAKE_DISPATCH_LOG"

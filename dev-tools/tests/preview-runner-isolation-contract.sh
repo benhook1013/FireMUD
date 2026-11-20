@@ -106,7 +106,8 @@ active_filter = re.search(
 def active_ids(row: dict[str, Any]) -> str:
     return subprocess.check_output([
         "jq", "-r", "--arg", "workflow_name", "PR Preview Environment",
-        "--argjson", "workflow_id", "173511323", "--arg", "repository", "benhook1013/FireMUD",
+        "--argjson", "workflow_id", "173511323", "--argjson", "consumer_workflow_id", "357129350",
+        "--arg", "repository", "benhook1013/FireMUD",
         "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
         "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40,
         "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
