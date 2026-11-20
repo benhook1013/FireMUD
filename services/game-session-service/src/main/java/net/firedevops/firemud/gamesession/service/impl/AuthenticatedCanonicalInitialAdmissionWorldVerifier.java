@@ -178,14 +178,13 @@ public final class AuthenticatedCanonicalInitialAdmissionWorldVerifier
       throw new IllegalStateException(
           "Authenticated World hold-state response changed the exact immutable identity");
     }
-    if (!requestedLifecycle.equals(observed.lifecycleEvidence().request())) {
+    if (!requestedLifecycle.equals(observed.lifecycleRequest())) {
       throw new IllegalStateException(
           "Authenticated World hold-state response changed the fresh lifecycle read request");
     }
     if (observed.holdStatus() != HoldStatus.PENDING
-        || !"ACTIVE".equals(observed.lifecycleEvidence().lifecycleStatus())
-        || observed.lifecycleEvidence().lifecycleEpoch()
-            != requestedIdentity.request().activeLifecycleEpoch()) {
+        || !"ACTIVE".equals(observed.lifecycleStatus())
+        || observed.lifecycleEpoch() != requestedIdentity.request().activeLifecycleEpoch()) {
       throw new IllegalStateException(
           "Authenticated World hold is not pending at its exact ACTIVE lifecycle epoch");
     }
@@ -205,8 +204,8 @@ public final class AuthenticatedCanonicalInitialAdmissionWorldVerifier
         worldRequest.playableStateScope(),
         worldRequest.canonicalGameInstanceId(),
         worldRequest.canonicalVersionId(),
-        worldState.lifecycleEvidence().lifecycleStatus(),
-        worldState.lifecycleEvidence().lifecycleEpoch(),
+        worldState.lifecycleStatus(),
+        worldState.lifecycleEpoch(),
         CanonicalInitialAdmissionRequest.OriginKind.valueOf(
             worldRequest.initialAdmissionOrigin().name()),
         worldRequest.expectedCatalogRevision(),
