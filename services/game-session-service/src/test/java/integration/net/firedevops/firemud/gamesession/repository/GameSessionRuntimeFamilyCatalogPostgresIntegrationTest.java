@@ -97,7 +97,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(24);
+      assertThat(catalog.catalogEpoch()).isEqualTo(25);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -225,7 +225,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.2",
               "catalog-installation:1066",
               "catalog-installation:1066.1",
-              "catalog-installation:1070")
+              "catalog-installation:1070",
+              "catalog-installation:1071")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -251,7 +252,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065.2:")
                       || identity.contains(":1066:")
                       || identity.contains(":1066.1:")
-                      || identity.contains(":1070:"));
+                      || identity.contains(":1070:")
+                      || identity.contains(":1071:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -794,7 +796,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(24);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(25);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -953,7 +955,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.2",
             "1066",
             "1066.1",
-            "1070")) {
+            "1070",
+            "1071")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -1005,7 +1008,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.2",
             "1066",
             "1066.1",
-            "1070")) {
+            "1070",
+            "1071")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "

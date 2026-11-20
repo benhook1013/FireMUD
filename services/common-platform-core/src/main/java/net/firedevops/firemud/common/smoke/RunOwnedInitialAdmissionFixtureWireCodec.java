@@ -57,7 +57,7 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
   public static final String REALM_SLUG = "production";
   public static final String REALM_DISPLAY_NAME = "Live Realm";
   public static final String STATE_SCOPE = "SHARED";
-  public static final String CHARACTER_CREATION_POLICY = "ALLOW_NEW";
+  public static final String CHARACTER_CREATION_POLICY = "PRESEEDED_ONLY";
 
   public static final String FIXTURE_POLICY_SEAL_SCHEMA =
       "firemud.run-owned-fixture-policy-seal.v1";
