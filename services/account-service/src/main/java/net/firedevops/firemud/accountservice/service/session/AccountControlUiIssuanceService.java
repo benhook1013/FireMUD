@@ -12,6 +12,8 @@ import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccount
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseRefusal;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.EmailCanonicalization;
@@ -31,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 public final class AccountControlUiIssuanceService {
   private final AccountServiceImpl primaryAuthentication;
+  private final AccountCredentialAbuseService credentialAbuse;
   private final AccountControlUiIssuanceRepository operations;
   private final AccountControlUiAccountAuthority authority;
   private final DraftAuthorizationFenceRepository fences;
@@ -50,6 +53,7 @@ public final class AccountControlUiIssuanceService {
               + " collaborators.")
   public AccountControlUiIssuanceService(
       AccountServiceImpl primaryAuthentication,
+      AccountCredentialAbuseService credentialAbuse,
       AccountControlUiIssuanceRepository operations,
       AccountControlUiAccountAuthority authority,
       DraftAuthorizationFenceRepository fences,
@@ -62,6 +66,7 @@ public final class AccountControlUiIssuanceService {
       @Value("${firemud.auth.session-safety-margin-ms:300000}") long sessionSafetyMarginMillis,
       String independentlyProtectedCallerUri) {
     this.primaryAuthentication = Objects.requireNonNull(primaryAuthentication);
+    this.credentialAbuse = credentialAbuse;
     this.operations = Objects.requireNonNull(operations);
     this.authority = Objects.requireNonNull(authority);
     this.fences = Objects.requireNonNull(fences);
@@ -140,74 +145,99 @@ public final class AccountControlUiIssuanceService {
     requestFields.put("callerContextId", request.callerContextId.toString());
     byte[] exactRequest = AccountControlUiAuthority.canonical(requestFields);
     try {
+      // Retained exact replay is selected before consulting the availability of shared abuse state.
+      // Release all SQL locks before the remote shared admission. A concurrent winner is selected
+      // again under the same request lock before local password/OTP verification.
       InitialPreparation initial =
-          transaction.execute(
-              ignored -> {
-                var existing = operations.findRequest(request.requestId);
-                if (existing != null) {
-                  requireRequestBinding(existing, request, peer.uri());
-                  operations.lockReplayRequest(existing.requestId);
-                  if (operations.countReplayFailures(existing) >= 5) {
-                    return new InitialPreparation(null, new IdempotencyConflictException());
+          request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+              ? transaction.execute(ignored -> selectReplay(request, peer.uri(), exactRequest))
+              : null;
+      AccountCredentialAbuseService.Permit permit = null;
+      if (initial == null && request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+        permit = admitNewAccountAttempt(request, email);
+      }
+      final AccountCredentialAbuseService.Permit selectedPermit = permit;
+      if (initial == null)
+        initial =
+            transaction.execute(
+                ignored -> {
+                  var replay = selectReplay(request, peer.uri(), exactRequest);
+                  if (replay != null) return replay;
+                  if (request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+                      && !credentialAbuse.isUsable(selectedPermit))
+                    throw AccountCredentialAbuseRefusal.unavailable();
+                  // Preserve canonical tenant -> Account owner order before OTP/advisory
+                  // authentication.
+                  java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
+                      request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
+                          ? java.util.Optional.of(
+                              tenantAuthority()
+                                  .captureInitial(
+                                      request.tenantId.orElseThrow(), environment.orElseThrow()))
+                          : java.util.Optional.empty();
+                  tenantSource.ifPresent(
+                      value -> fences.lockProducerSourcesNowait(value.sources()));
+                  AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
+                  try {
+                    authenticated =
+                        request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+                            ? primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                                email,
+                                request.secret,
+                                () -> {
+                                  if (!credentialAbuse.isUsable(selectedPermit)) {
+                                    throw AccountCredentialAbuseRefusal.unavailable();
+                                  }
+                                })
+                            : primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                                email, request.secret);
+                  } catch (AuthenticationException denial) {
+                    // Only primary denial commits attempt accounting. No signer/issuance work
+                    // follows.
+                    return new InitialPreparation(null, denial);
                   }
-                  if (!matchesOriginalRequest(existing, exactRequest)) {
-                    operations.recordReplayFailure(existing);
-                    // A value, not a thrown exception, commits the independent failure history.
-                    return new InitialPreparation(null, new IdempotencyConflictException());
+                  var source =
+                      tenantSource.orElseGet(
+                          () -> authority.captureAccount(authenticated.accountId()));
+                  if (!source.actor().equals(authenticated.accountId())
+                      || source.scopeKind() != request.scopeKind) {
+                    throw denied();
                   }
-                  return new InitialPreparation(current(existing, environment), null);
-                }
-                // Preserve canonical tenant -> Account owner order before OTP/advisory
-                // authentication.
-                java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
-                    request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
-                        ? java.util.Optional.of(
-                            tenantAuthority()
-                                .captureInitial(
-                                    request.tenantId.orElseThrow(), environment.orElseThrow()))
-                        : java.util.Optional.empty();
-                tenantSource.ifPresent(value -> fences.lockProducerSourcesNowait(value.sources()));
-                AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
-                try {
-                  authenticated =
-                      primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                          email, request.secret);
-                } catch (AuthenticationException denial) {
-                  // Only primary denial commits attempt accounting. No signer/issuance work
-                  // follows.
-                  return new InitialPreparation(null, denial);
-                }
-                var source =
-                    tenantSource.orElseGet(
-                        () -> authority.captureAccount(authenticated.accountId()));
-                if (!source.actor().equals(authenticated.accountId())
-                    || source.scopeKind() != request.scopeKind) {
-                  throw denied();
-                }
-                if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
-                  fences.lockProducerSourcesNowait(source.sources());
-                }
-                var signer = signers.captureCurrent();
-                String macKey = cryptography.currentKeyId();
-                String requestDigest = cryptography.requestDigest(macKey, exactRequest);
-                var stored =
-                    operations.prepare(
-                        request.requestId,
-                        peer.uri(),
-                        request.callerContextId,
-                        macKey,
-                        requestDigest,
-                        authenticated,
-                        source,
-                        signer,
-                        Instant.ofEpochSecond(clock.instant().getEpochSecond()),
-                        sessionSafetyMarginMillis);
-                return new InitialPreparation(new Prepared(stored, source, signer), null);
-              });
+                  if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+                    fences.lockProducerSourcesNowait(source.sources());
+                  }
+                  var signer = signers.captureCurrent();
+                  String macKey = cryptography.currentKeyId();
+                  String requestDigest = cryptography.requestDigest(macKey, exactRequest);
+                  var stored =
+                      operations.prepare(
+                          request.requestId,
+                          peer.uri(),
+                          request.callerContextId,
+                          macKey,
+                          requestDigest,
+                          authenticated,
+                          source,
+                          signer,
+                          Instant.ofEpochSecond(clock.instant().getEpochSecond()),
+                          sessionSafetyMarginMillis);
+                  return new InitialPreparation(new Prepared(stored, source, signer), null);
+                });
       if (initial == null) {
         throw denied();
       }
       if (initial.denial != null) {
+        // This runs after SQL completion. Shared-accounting failure must not become a credential
+        // denial or roll back the original OTP failure history.
+        if (permit != null
+            && initial.denial instanceof AuthenticationException failure
+            && "AUTH_INVALID_CREDENTIALS".equals(failure.getCode())) {
+          if (TransactionSynchronizationManager.isActualTransactionActive()) throw denied();
+          var recorded = credentialAbuse.recordFailure(permit);
+          if (recorded == null
+              || recorded.outcome() != AccountCredentialAbuseService.Outcome.FAILURE_RECORDED)
+            throw AccountCredentialAbuseRefusal.from(recorded);
+        }
         throw initial.denial;
       }
       Prepared preparation = Objects.requireNonNull(initial.prepared);
@@ -437,6 +467,39 @@ public final class AccountControlUiIssuanceService {
         "signerReceiptDigest", AccountControlUiIssuanceRepository.hash(original.signerReceipt));
     binding.put("recoveryExpiresAt", original.recoveryExpiry.toString());
     return AccountControlUiAuthority.canonical(binding);
+  }
+
+  private InitialPreparation selectReplay(Invocation request, String peer, byte[] exactRequest) {
+    boolean account = request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT;
+    if (account) operations.lockReplayRequest(request.requestId);
+    var existing = operations.findRequest(request.requestId);
+    if (existing == null) return null;
+    requireRequestBinding(existing, request, peer);
+    if (!account) operations.lockReplayRequest(existing.requestId);
+    if (operations.countReplayFailures(existing) >= 5) {
+      return new InitialPreparation(null, new IdempotencyConflictException());
+    }
+    if (!matchesOriginalRequest(existing, exactRequest)) {
+      operations.recordReplayFailure(existing);
+      return new InitialPreparation(null, new IdempotencyConflictException());
+    }
+    return new InitialPreparation(current(existing, request.environment), null);
+  }
+
+  private AccountCredentialAbuseService.Permit admitNewAccountAttempt(
+      Invocation request, String email) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw denied();
+    if (credentialAbuse == null) throw AccountCredentialAbuseRefusal.unavailable();
+    var source = request.sourceContext.orElseThrow(AccountCredentialAbuseRefusal::unavailable);
+    var decision =
+        credentialAbuse.admit(
+            new AccountCredentialAbuseService.CredentialSourceContext(
+                source.canonicalClientAddress(), AccountCredentialAbuseService.Transport.HTTP),
+            email);
+    if (decision == null || decision.outcome() != AccountCredentialAbuseService.Outcome.ADMITTED) {
+      throw AccountCredentialAbuseRefusal.from(decision);
+    }
+    return decision.permit();
   }
 
   private record Invocation(

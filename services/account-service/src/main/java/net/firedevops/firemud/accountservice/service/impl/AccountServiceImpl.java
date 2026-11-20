@@ -1411,12 +1411,24 @@ public class AccountServiceImpl implements AccountService {
       noRollbackFor = AuthenticationException.class)
   public ControlUiPrimaryIdentity authenticateControlUiPrimaryIdentity(
       String email, String secret) {
+    return authenticateControlUiPrimaryIdentity(email, secret, () -> {});
+  }
+
+  /** Runs a local admission check after the Account and OTP locks. */
+  @Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY,
+      noRollbackFor = AuthenticationException.class)
+  public ControlUiPrimaryIdentity authenticateControlUiPrimaryIdentity(
+      String email, String secret, Runnable beforePrimaryCredentialVerification) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable Account issuance transaction required");
     }
+    Objects.requireNonNull(beforePrimaryCredentialVerification);
     Account account = lockSelectedAccountForPrimaryAuthentication(email);
-    PrimaryAuthentication result = authenticateAccountIdentity(account, secret, true);
+    PrimaryAuthentication result =
+        authenticateAccountIdentity(
+            account, secret, true, null, beforePrimaryCredentialVerification);
     result.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     UUID accountUuid = UUID.fromString(accountMapper.toDto(result.account()).id());
     return new ControlUiPrimaryIdentity(accountUuid);
@@ -1705,11 +1717,27 @@ public class AccountServiceImpl implements AccountService {
       String password,
       boolean allowEmailLoginOtp,
       GameplayCredentialVerificationWork work) {
-    Optional<AccountEmailLoginChallenge> emailLoginChallenge = Optional.empty();
-    if (allowEmailLoginOtp && allowsEmailLoginOtp(account)) {
+    return authenticateAccountIdentity(account, password, allowEmailLoginOtp, work, () -> {});
+  }
+
+  private PrimaryAuthentication authenticateAccountIdentity(
+      Account account,
+      String password,
+      boolean allowEmailLoginOtp,
+      GameplayCredentialVerificationWork work,
+      Runnable beforePrimaryCredentialVerification) {
+    boolean canCheckEmailLoginOtp = allowEmailLoginOtp && allowsEmailLoginOtp(account);
+    Optional<AccountEmailLoginChallenge> observedEmailLoginChallenge = Optional.empty();
+    if (canCheckEmailLoginOtp) {
       accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
-      emailLoginChallenge = activeEmailLoginChallenge(account);
+      observedEmailLoginChallenge =
+          accountEmailLoginChallengeRepository.findByAccountId(account.getId());
     }
+    beforePrimaryCredentialVerification.run();
+    Optional<AccountEmailLoginChallenge> emailLoginChallenge =
+        canCheckEmailLoginOtp
+            ? activeEmailLoginChallenge(account, observedEmailLoginChallenge)
+            : Optional.empty();
     if (emailLoginChallenge
         .filter(
             challenge ->
@@ -1745,9 +1773,8 @@ public class AccountServiceImpl implements AccountService {
     throw invalidCredentials();
   }
 
-  private Optional<AccountEmailLoginChallenge> activeEmailLoginChallenge(Account account) {
-    Optional<AccountEmailLoginChallenge> challenge =
-        accountEmailLoginChallengeRepository.findByAccountId(account.getId());
+  private Optional<AccountEmailLoginChallenge> activeEmailLoginChallenge(
+      Account account, Optional<AccountEmailLoginChallenge> challenge) {
     if (challenge.isEmpty()) {
       return Optional.empty();
     }

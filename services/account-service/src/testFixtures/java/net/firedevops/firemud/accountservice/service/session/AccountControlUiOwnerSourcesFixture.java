@@ -60,6 +60,7 @@ import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvid
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -187,6 +188,34 @@ final class AccountControlUiOwnerSourcesFixture {
       boolean ownedCompositionConnections,
       FreshTenantCreationEvidence creationEvidence)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        root,
+        installNegativeIssuer,
+        tenant,
+        migrationTarget,
+        ownedCompositionConnections,
+        creationEvidence,
+        null);
+  }
+
+  /**
+   * Supplies an explicit shared abuse policy only for a proof that must reach credential owners.
+   */
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence,
+      AccountCredentialAbuseService credentialAbuse)
+      throws Exception {
     this.creationEvidence = Objects.requireNonNull(creationEvidence, "creationEvidence");
     if (!creationEvidence.canonicalTenantId().equals(tenant)) {
       throw new IllegalArgumentException(
@@ -194,7 +223,9 @@ final class AccountControlUiOwnerSourcesFixture {
     }
     if (migrationTarget != null && !HISTORICAL_MIGRATION_TARGETS.contains(migrationTarget)) {
       throw new IllegalArgumentException(
-          "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, 1009 selected-owner predecessor, or 1010 selected-publication closure predecessor is supported");
+          "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read,"
+              + " 1009 selected-owner predecessor, or 1010 selected-publication closure predecessor"
+              + " is supported");
     }
     this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
@@ -473,6 +504,7 @@ final class AccountControlUiOwnerSourcesFixture {
       service =
           new AccountControlUiIssuanceService(
               primary,
+              credentialAbuse,
               operations,
               authority,
               fences,
@@ -614,10 +646,10 @@ final class AccountControlUiOwnerSourcesFixture {
             closure,
             "EXACT_FRESH_INSERT_ONLY");
     dsl.execute(
-        "INSERT INTO account_fresh_enrollment_policy_publications"
-            + " (publication_id, category, revision, policy_id, closure_id, policy_rule, closure_rule,"
-            + " source_identity, source_root, publication_digest, publication_bytes)"
-            + " VALUES (?, ?, 1, ?, ?, 'CERTIFY_NEW_ACTIVE_ACCOUNT', 'EXACT_FRESH_INSERT_ONLY', ?, ?, ?, ?)",
+        "INSERT INTO account_fresh_enrollment_policy_publications (publication_id, category,"
+            + " revision, policy_id, closure_id, policy_rule, closure_rule, source_identity,"
+            + " source_root, publication_digest, publication_bytes) VALUES (?, ?, 1, ?, ?,"
+            + " 'CERTIFY_NEW_ACTIVE_ACCOUNT', 'EXACT_FRESH_INSERT_ONLY', ?, ?, ?, ?)",
         publication,
         categoryValue,
         policy,
@@ -627,7 +659,8 @@ final class AccountControlUiOwnerSourcesFixture {
         "sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes),
         publicationBytes);
     dsl.execute(
-        "INSERT INTO account_fresh_enrollment_policy_current (category, publication_id, revision) VALUES (?, ?, 1)",
+        "INSERT INTO account_fresh_enrollment_policy_current (category, publication_id, revision)"
+            + " VALUES (?, ?, 1)",
         categoryValue,
         publication);
   }
@@ -736,10 +769,10 @@ final class AccountControlUiOwnerSourcesFixture {
   private static void insertTestParty(DSLContext dsl, IndividualCreatorPartySource party) {
     byte[] source = CreatorPartyEncoding.party(party);
     dsl.execute(
-        "INSERT INTO account_individual_creator_party_sources"
-            + " (creator_party_id, account_uuid, verification_status, identity_version, policy_reference, policy_version,"
-            + " verification_evidence_reference, verification_evidence_version, source_version, source_payload, source_digest)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO account_individual_creator_party_sources (creator_party_id, account_uuid,"
+            + " verification_status, identity_version, policy_reference, policy_version,"
+            + " verification_evidence_reference, verification_evidence_version, source_version,"
+            + " source_payload, source_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         party.creatorPartyId(),
         party.accountId(),
         party.verificationStatus().name(),

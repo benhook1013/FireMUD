@@ -22,6 +22,58 @@ class AccountControlUiAuthenticationGrpcCodecTest {
   private static final String TOKEN = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
 
   @Test
+  void refusalOutcomesHaveClosedBoundedRetryMetadataAndNoIdentity() {
+    var request = request();
+    for (var outcome : java.util.List.of(Outcome.RETRY_LATER, Outcome.ABUSE_UNAVAILABLE)) {
+      var wire = AccountControlUiAuthenticationGrpcCodec.toRefusalResponse(request, outcome, 1501L);
+      var parsed = AccountControlUiAuthenticationGrpcCodec.requireResponse(request, wire);
+      assertThat(parsed.outcome()).isEqualTo(outcome);
+      assertThat(parsed.retryAfterMillis()).isEqualTo(1501L);
+      assertThat(parsed.authenticated()).isNull();
+      assertThatThrownBy(
+              () ->
+                  AccountControlUiAuthenticationGrpcCodec.requireResponse(
+                      request, wire.toBuilder().addRetryAfterMillis(2).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () ->
+                  AccountControlUiAuthenticationGrpcCodec.requireResponse(
+                      request, wire.toBuilder().addAccountId(ACCOUNT_ID.toString()).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () ->
+                  AccountControlUiAuthenticationGrpcCodec.requireResponse(
+                      request, wire.toBuilder().addAuthToken(TOKEN).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+      for (long invalid : new long[] {-1, 0, 9_007_199_254_740_992L}) {
+        assertThatThrownBy(
+                () ->
+                    AccountControlUiAuthenticationGrpcCodec.requireResponse(
+                        request, wire.toBuilder().setRetryAfterMillis(0, invalid).build()))
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+    }
+    assertThatThrownBy(
+            () ->
+                AccountControlUiAuthenticationGrpcCodec.toRefusalResponse(
+                    request, Outcome.RETRY_LATER, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(
+            AccountControlUiAuthenticationGrpcCodec.requireResponse(
+                    request,
+                    AccountControlUiAuthenticationGrpcCodec.toRefusalResponse(
+                        request, Outcome.ABUSE_UNAVAILABLE, null))
+                .retryAfterMillis())
+        .isNull();
+    var denied = AccountControlUiAuthenticationGrpcCodec.toResponse(request, null);
+    assertThatThrownBy(
+            () ->
+                AccountControlUiAuthenticationGrpcCodec.requireResponse(
+                    request, denied.toBuilder().addRetryAfterMillis(1).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void mapsOneExactBoundedRequestWithoutExposingSecretInDiagnostics() {
     Request request = request();
 
