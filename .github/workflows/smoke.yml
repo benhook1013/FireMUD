@@ -621,7 +621,7 @@ jobs:
               "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
               "dev-tools/smoke/held-admission-qualification.sh": "b548a773f1786b72d40a3728052a336cb249257a3f40735f005b060812184ed3",
               "dev-tools/smoke/held_admission_qualification.py": "2d118d7ba6a19dac7d8c717dbbbe25df6f04a3c186a3185135d1bdc5fc75b557",
-              "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
+              "dev-tools/smoke/run-owned-compose.sh": "206d30adf005e988e6efe1d2f5714f56fd7d87ea7befdd625e7c781ede600b6b",
               "dev-tools/certs/ensure-dev-certs.sh": "f2a3278145e3f8a74a2e4beba34fee8ba65f5b78f99c5494f2ca9a63cee4ddc5",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
               "docker/docker-compose.yml": "0e8ea0fc42a6388a267d6f80baaf1259f38a73c460aa3db77a09be0fa9436a19",
