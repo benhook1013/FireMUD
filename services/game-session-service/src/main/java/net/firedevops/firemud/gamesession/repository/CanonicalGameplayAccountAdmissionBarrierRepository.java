@@ -10,6 +10,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -18,6 +19,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -26,6 +29,7 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -280,19 +284,224 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
                 + " WHERE o.operation_id = ?",
             operationId);
     if (row == null) return Optional.empty();
-    return Optional.of(
-        new HistoricalFinalObservation(
-            operationId,
-            row.get("transition_id", UUID.class),
-            row.get("admission_attempt_id", UUID.class),
-            row.get("execution_digest", String.class),
-            row.get("candidate_digest", String.class),
-            row.get("final_session_sha256", String.class),
-            row.get("admission_at_ms", Long.class),
-            row.get("continuity_expires_at_ms", Long.class),
-            readBigInteger(row, "inventory_snapshot_revision"),
-            row.get("cohort_digest", String.class),
-            row.get("barrier_target_digest", String.class)));
+    return Optional.of(historicalObservation(row));
+  }
+
+  /**
+   * Reads the unique immutable pre-intent FINAL observation for this exact retained reservation.
+   * This path reads only retained execution and fence-observation/intent rows; it does not consult
+   * current account control, admission, serving, or physical owner state.
+   */
+  Optional<HistoricalFinalReceipt> readHistoricalFinalReceipt(Request request, Result reservation) {
+    if (!validHistoricalSelector(request, reservation)) return Optional.empty();
+    requireNoAmbientTransaction();
+
+    var player = (TenantCapacityAdmission.PlayerContext) request.context();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+
+          List<Record> retainedRows =
+              transaction.fetch(
+                  "SELECT tenant_id, request_id, admission_id, admission_attempt_id,"
+                      + " capacity_rearm_fence, reservation_id, reservation_fence, mutation_digest,"
+                      + " transition_id, execution_digest, canonical_execution, selected_owner_id,"
+                      + " selected_owner_fence FROM game_session_original_new_capacity_execution"
+                      + " WHERE tenant_id = ? AND request_id = ? AND admission_id = ?"
+                      + " AND admission_attempt_id = ? AND capacity_rearm_fence = ?"
+                      + " AND reservation_id = ? AND reservation_fence = ? AND mutation_digest = ?",
+                  request.identity().tenantId(),
+                  request.identity().requestId(),
+                  request.identity().admissionId(),
+                  request.admissionAttemptId(),
+                  request.capacityRearmFence(),
+                  reservation.reservationId(),
+                  reservation.reservationFence(),
+                  request.mutationDigest());
+          if (retainedRows.size() != 1) return Optional.empty();
+
+          Record retained = retainedRows.get(0);
+          OriginalNewCapacityExecution execution;
+          try {
+            byte[] canonical = retained.get("canonical_execution", byte[].class);
+            execution = CanonicalGameplayRegionOwnerTransferRepository.decode(canonical);
+            OriginalNewCapacityExecution selected =
+                new OriginalNewCapacityExecution(
+                    request,
+                    reservation,
+                    execution.transitionId(),
+                    execution.candidateDigest(),
+                    execution.selectedOwnerId(),
+                    execution.selectedOwnerFence());
+            if (!(execution.request().context()
+                instanceof TenantCapacityAdmission.PlayerContext retainedPlayer)) {
+              return Optional.empty();
+            }
+            if (!Arrays.equals(canonical, execution.canonicalBytes())
+                || !Arrays.equals(canonical, selected.canonicalBytes())
+                || !execution.digest().equals(retained.get("execution_digest", String.class))
+                || !execution.transitionId().equals(retained.get("transition_id", UUID.class))
+                || !execution
+                    .request()
+                    .admissionAttemptId()
+                    .equals(retained.get("admission_attempt_id", UUID.class))
+                || !execution
+                    .selectedOwnerId()
+                    .equals(retained.get("selected_owner_id", String.class))
+                || execution.selectedOwnerFence()
+                    != retained.get("selected_owner_fence", Long.class)
+                || !player.accountId().equals(retainedPlayer.accountId())
+                || !player.tenantId().equals(retainedPlayer.tenantId())) {
+              return Optional.empty();
+            }
+          } catch (RuntimeException malformedRetainedExecution) {
+            return Optional.empty();
+          }
+
+          List<Record> observations =
+              transaction.fetch(
+                  "SELECT * FROM "
+                      + FINAL_OBSERVATION
+                      + " WHERE account_id = ? AND transition_id = ?"
+                      + " AND admission_attempt_id = ? AND execution_digest = ?"
+                      + " AND candidate_digest = ? LIMIT 2",
+                  player.accountId(),
+                  execution.transitionId(),
+                  request.admissionAttemptId(),
+                  execution.digest(),
+                  execution.candidateDigest());
+          if (observations.size() != 1) return Optional.empty();
+
+          Record observationRow = observations.get(0);
+          UUID operationId = observationRow.get("operation_id", UUID.class);
+          if (operationId == null) return Optional.empty();
+          UUID retainedAccountId = observationRow.get("account_id", UUID.class);
+          if (!player.accountId().equals(retainedAccountId)) return Optional.empty();
+          Record intentRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId);
+          if (intentRow == null) return Optional.empty();
+
+          CanonicalGameplayAccountAdmissionFenceIntent intent;
+          HistoricalFinalObservation observation;
+          try {
+            intent = loadImmutableIntent(transaction, intentRow);
+            observation = historicalObservation(observationRow);
+          } catch (RuntimeException malformedHistory) {
+            return Optional.empty();
+          }
+          try {
+            if (!exactHistoricalWitness(
+                intent,
+                observation,
+                execution,
+                player.accountId(),
+                player.tenantId(),
+                player.playableStateNamespaceId())) return Optional.empty();
+            return Optional.of(
+                new HistoricalFinalReceipt(
+                    retainedAccountId, player.tenantId(), execution, observation));
+          } catch (RuntimeException malformedWitness) {
+            return Optional.empty();
+          }
+        });
+  }
+
+  private static boolean validHistoricalSelector(Request request, Result reservation) {
+    try {
+      Objects.requireNonNull(request, "request").requireCommittable();
+      Objects.requireNonNull(reservation, "reservation").requireBinding(request);
+      if (reservation.state() != TenantCapacityAdmission.State.RESERVED
+          || !(request.context() instanceof TenantCapacityAdmission.PlayerContext player)
+          || player.owner() != TenantCapacityAdmission.Owner.GAME_SESSION
+          || !request.identity().tenantId().equals(player.tenantId())) return false;
+      // The execution constructor enforces the exact original-NEW shape and transition binding.
+      return true;
+    } catch (RuntimeException malformedSelector) {
+      return false;
+    }
+  }
+
+  private static HistoricalFinalObservation historicalObservation(Record row) {
+    return new HistoricalFinalObservation(
+        row.get("operation_id", UUID.class),
+        row.get("transition_id", UUID.class),
+        row.get("admission_attempt_id", UUID.class),
+        row.get("execution_digest", String.class),
+        row.get("candidate_digest", String.class),
+        row.get("final_session_sha256", String.class),
+        row.get("admission_at_ms", Long.class),
+        row.get("continuity_expires_at_ms", Long.class),
+        readBigInteger(row, "inventory_snapshot_revision"),
+        row.get("cohort_digest", String.class),
+        row.get("barrier_target_digest", String.class));
+  }
+
+  private static boolean exactHistoricalWitness(
+      CanonicalGameplayAccountAdmissionFenceIntent intent,
+      HistoricalFinalObservation observation,
+      OriginalNewCapacityExecution execution,
+      UUID accountId,
+      UUID tenantId,
+      UUID playableStateNamespaceId) {
+    if (!(execution.request().context() instanceof TenantCapacityAdmission.PlayerContext player)) {
+      return false;
+    }
+    if (!intent.accountId().equals(accountId)
+        || !intent.operationId().equals(observation.operationId())
+        || !accountId.equals(player.accountId())
+        || !tenantId.equals(execution.request().identity().tenantId())
+        || !tenantId.equals(player.tenantId())
+        || !observation.transitionId().equals(execution.transitionId())
+        || !observation.admissionAttemptId().equals(execution.request().admissionAttemptId())
+        || !observation.executionDigest().equals(execution.digest())
+        || !observation.candidateDigest().equals(execution.candidateDigest())
+        || !observation.inventorySnapshotRevision().equals(intent.inventorySnapshotRevision())
+        || !observation.cohortDigest().equals(intent.cohortDigest())
+        || !observation.barrierTargetDigest().equals(intent.barrierTargetDigest())
+        || observation.finalSessionSha256() == null
+        || !observation.finalSessionSha256().matches("[0-9a-f]{64}")
+        || observation.admissionAtMillis() <= 0
+        || observation.continuityExpiresAtMillis() <= observation.admissionAtMillis()) return false;
+
+    List<CanonicalGameplayAccountAdmissionFenceIntent.CohortRow> transitionRows =
+        intent.cohortRows().stream()
+            .filter(
+                row ->
+                    row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                        && row.sourceKey().equals(execution.transitionId().toString()))
+            .toList();
+    if (transitionRows.size() != 1) return false;
+    var transition = transitionRows.get(0);
+    if (!tenantId.equals(transition.tenantId())
+        || !playableStateNamespaceId.equals(transition.playableStateNamespaceId())
+        || !frozenCandidateMatches(transition, execution)) return false;
+
+    long targetMatches =
+        intent.barrierTargets().stream()
+            .filter(
+                target ->
+                    tenantId.equals(target.tenantId())
+                        && playableStateNamespaceId.equals(target.playableStateNamespaceId()))
+            .count();
+    return targetMatches == 1;
+  }
+
+  private static boolean frozenCandidateMatches(
+      CanonicalGameplayAccountAdmissionFenceIntent.CohortRow transition,
+      OriginalNewCapacityExecution execution) {
+    try {
+      JsonNode source = CLOSED_BARRIER_JSON.readTree(transition.sourceRecordJson());
+      return source != null
+          && "PROVISIONAL".equals(source.path("status").textValue())
+          && execution.transitionId().toString().equals(source.path("transition_id").textValue())
+          && execution
+              .candidateDigest()
+              .equals(source.path("original_new_candidate_digest").textValue());
+    } catch (RuntimeException malformedSnapshot) {
+      return false;
+    }
   }
 
   private record PreIntentFinalObservation(
@@ -313,6 +522,34 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
       BigInteger inventorySnapshotRevision,
       String cohortDigest,
       String barrierTargetDigest) {}
+
+  record HistoricalFinalReceipt(
+      UUID accountId,
+      UUID tenantId,
+      OriginalNewCapacityExecution execution,
+      HistoricalFinalObservation observation) {
+    HistoricalFinalReceipt {
+      Objects.requireNonNull(accountId, "accountId");
+      Objects.requireNonNull(tenantId, "tenantId");
+      Objects.requireNonNull(execution, "execution");
+      Objects.requireNonNull(observation, "observation");
+      if (!(execution.request().context() instanceof TenantCapacityAdmission.PlayerContext player)
+          || !accountId.equals(player.accountId())
+          || !tenantId.equals(player.tenantId())
+          || execution.reservation().state() != TenantCapacityAdmission.State.RESERVED
+          || !observation.transitionId().equals(execution.transitionId())
+          || !observation.admissionAttemptId().equals(execution.request().admissionAttemptId())
+          || !observation.executionDigest().equals(execution.digest())
+          || !observation.candidateDigest().equals(execution.candidateDigest())) {
+        throw new IllegalArgumentException(
+            "Historical FINAL receipt is not an exact retained witness");
+      }
+    }
+
+    UUID operationId() {
+      return observation.operationId();
+    }
+  }
 
   /** Reads and verifies the immutable persisted tuple, cohort rows, and target rows. */
   CanonicalGameplayAccountAdmissionFenceIntent readFenceIntent(UUID accountId, UUID requestId) {
@@ -924,6 +1161,44 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
                 + " source and leave the account unfenced");
       }
     }
+  }
+
+  /** Revalidates only immutable intent evidence; it deliberately does not read account control. */
+  private static CanonicalGameplayAccountAdmissionFenceIntent loadImmutableIntent(
+      DSLContext transaction, Record intent) {
+    UUID operationId =
+        Objects.requireNonNull(intent.get("operation_id", UUID.class), "operation id");
+    UUID accountId = Objects.requireNonNull(intent.get("account_id", UUID.class), "account id");
+    if (!"ACQUISITION_INTENT".equals(intent.get("intent_state", String.class))) {
+      throw conflict("Historical FINAL observation is not bound to an acquisition intent");
+    }
+    List<CanonicalGameplayAccountAdmissionFenceIntent.CohortRow> cohortRows =
+        readCohortRows(transaction, operationId);
+    List<CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget> barrierTargets =
+        readBarrierTargets(transaction, operationId);
+    String cohortDigest = digestCohortRows(cohortRows);
+    String targetDigest = digestBarrierTargets(barrierTargets);
+    if (cohortRows.size() != readLong(intent, "cohort_row_count")
+        || !cohortDigest.equals(intent.get("cohort_digest", String.class))
+        || barrierTargets.size() != readLong(intent, "barrier_target_count")
+        || !targetDigest.equals(intent.get("barrier_target_digest", String.class))) {
+      throw conflict("Immutable account-fence intent cohort or barrier target changed on readback");
+    }
+    requireResolvableCohortScopes(cohortRows);
+    requireBarrierTargetsCoverCohort(cohortRows, barrierTargets);
+    return new CanonicalGameplayAccountAdmissionFenceIntent(
+        operationId,
+        intent.get("request_id", UUID.class),
+        accountId,
+        readBigInteger(intent, "operation_fence"),
+        intent.get("planned_account_admission_fence", UUID.class),
+        readBigInteger(intent, "inventory_snapshot_revision"),
+        readPersistedLegacyDisposition(intent),
+        CanonicalGameplayAccountAdmissionFenceIntent.State.ACQUISITION_INTENT,
+        cohortRows,
+        barrierTargets,
+        cohortDigest,
+        targetDigest);
   }
 
   private static CanonicalGameplayAccountAdmissionFenceIntent loadAndRequireCurrent(

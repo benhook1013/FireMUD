@@ -1,0 +1,113 @@
+{
+  "scriptId": "game-session.original-new-admitted-logout.v1",
+  "resourcePath": "redis/lua/game-session-original-new-admitted-logout.lua",
+  "sha256": "a06ee8164ba15e239ddc1e0aea1e7c239da1de74ad857cb66f8cb2b8cf24b10c",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "session",
+      "ownedPrefix": "session:game:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "characterIndex",
+      "ownedPrefix": "session:game:index:character:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "accountTenantIndex",
+      "ownedPrefix": "session:game:index:account-tenant:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "tenantIndex",
+      "ownedPrefix": "session:game:index:tenant:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "capacityExecution",
+      "ownedPrefix": "session:game:capacity-execution:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "tenantId"
+    },
+    {
+      "name": "accountId"
+    },
+    {
+      "name": "playableStateNamespaceId"
+    },
+    {
+      "name": "characterId"
+    },
+    {
+      "name": "gameInstanceId"
+    },
+    {
+      "name": "sessionId"
+    },
+    {
+      "name": "bindingGeneration"
+    },
+    {
+      "name": "tenantGameplayTag"
+    },
+    {
+      "name": "capacityExecutionDigest"
+    },
+    {
+      "name": "logoutId"
+    },
+    {
+      "name": "absoluteDeadlineMillis"
+    },
+    {
+      "name": "capacityExecutionBytes"
+    },
+    {
+      "name": "originalSessionSha1"
+    },
+    {
+      "name": "action"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "ADMITTED_LOGOUT_FENCE_INSTALLED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "ADMITTED_LOGOUT_FENCE_OBSERVED",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CURRENT_PHYSICAL_STATE_REFUSED",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "The manually composed owner only invokes OBSERVE with EVALSHA_RO. A live serving value, missing or changed logout marker, or contradictory indexes cannot prove a logout fence. Exact observation is read-only and preserves a valid newer character pointer. The script also contains a held DISPATCH branch that replaces the exact original serving value and removes its local index entries. This descriptor supplies no dispatch or terminal settlement authority. Loss of the marker remains indeterminate and must not recreate it.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "none"
+    }
+  ],
+  "legacyPayloadShape": null
+}

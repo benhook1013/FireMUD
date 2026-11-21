@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -20,6 +21,38 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Shared vectors prove content encoding only, never a current Account or runtime grant. */
 class CapacityAdmissionDigestTest {
+  @Test
+  void decodesCommittablePreimagesForPlayerAndWorldOwners() {
+    for (Request request :
+        List.of(
+            CapacityAdmissionTestFixture.playerRequest(),
+            CapacityAdmissionTestFixture.worldRequest(17L))) {
+      assertThat(
+              CapacityAdmissionDigest.decodeCommittable(
+                  CapacityAdmissionDigest.preimage(request), request.mutationDigest()))
+          .isEqualTo(request);
+    }
+  }
+
+  @Test
+  void rejectsMalformedPreimagesAndInvalidOrIncorrectDigests() {
+    Request request = CapacityAdmissionTestFixture.playerRequest();
+    byte[] preimage = CapacityAdmissionDigest.preimage(request);
+    byte[] trailing = Arrays.copyOf(preimage, preimage.length + 1);
+    trailing[trailing.length - 1] = 'x';
+    String incorrectDigest =
+        (request.mutationDigest().charAt(0) == '0' ? "1" : "0")
+            + request.mutationDigest().substring(1);
+
+    assertThatThrownBy(
+            () -> CapacityAdmissionDigest.decodeCommittable(trailing, request.mutationDigest()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> CapacityAdmissionDigest.decodeCommittable(preimage, "bad-digest"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> CapacityAdmissionDigest.decodeCommittable(preimage, incorrectDigest))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   @Test
   void sharedCorpusFixesCompleteEvidenceAndAbsentZeroPositiveBoundaryPreimages() throws Exception {
     var resource = getClass().getResourceAsStream("/capacity/capacity-admission-v1-vectors.json");

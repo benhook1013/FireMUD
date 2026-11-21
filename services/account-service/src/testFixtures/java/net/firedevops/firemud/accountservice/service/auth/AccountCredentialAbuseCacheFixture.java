@@ -35,8 +35,7 @@ public final class AccountCredentialAbuseCacheFixture implements AutoCloseable {
         .withStartupTimeout(Duration.ofSeconds(30))
         .withCreateContainerCmdModifier(
             command ->
-                command
-                    .getHostConfig()
+                java.util.Objects.requireNonNull(command.getHostConfig())
                     .withMemory(PROCESS_BYTES)
                     .withMemorySwap(PROCESS_BYTES)
                     .withPidsLimit(128L))

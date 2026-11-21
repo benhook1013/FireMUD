@@ -5,11 +5,14 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
+import java.util.function.Function;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecutionReadGrpcCodec;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecutionReadGrpcCodec.Selector;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewCapacityExecutionOwner;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard;
 import net.firedevops.firemud.gamesession.v1.OriginalNewCapacityExecutionReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.ReadHistoricalOriginalNewCapacityFinalResponse;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalNewCapacityExecutionRequest;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalNewCapacityExecutionResponse;
 
@@ -40,13 +43,47 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionReadGrpcService
   public void readOriginalNewCapacityExecution(
       ReadOriginalNewCapacityExecutionRequest request,
       StreamObserver<ReadOriginalNewCapacityExecutionResponse> observer) {
+    respond(
+        request,
+        observer,
+        selector -> {
+          var actual = owner.readExact(selector.request(), selector.reservation());
+          var readback =
+              new OriginalNewCapacityExecutionReadGrpcCodec.Readback(
+                  actual.execution(),
+                  actual.disposition(),
+                  actual.physicalDigest(),
+                  actual.receiptDigest(),
+                  actual.canonicalReadback(),
+                  actual.currentOwnerId(),
+                  actual.currentOwnerFence());
+          return OriginalNewCapacityExecutionReadGrpcCodec.toResponse(selector, readback);
+        });
+  }
+
+  @Override
+  public void readHistoricalOriginalNewCapacityFinal(
+      ReadOriginalNewCapacityExecutionRequest request,
+      StreamObserver<ReadHistoricalOriginalNewCapacityFinalResponse> observer) {
+    respond(
+        request,
+        observer,
+        selector ->
+            OriginalNewCapacityExecutionReadGrpcCodec.toHistoricalResponse(
+                selector, owner.readHistoricalFinal(selector.request(), selector.reservation())));
+  }
+
+  private <Response> void respond(
+      ReadOriginalNewCapacityExecutionRequest request,
+      StreamObserver<Response> observer,
+      Function<Selector, Response> read) {
     try {
       guard.requireAccountCaller();
     } catch (StatusRuntimeException denied) {
       fail(observer, denied.getStatus());
       return;
     }
-    final OriginalNewCapacityExecutionReadGrpcCodec.Selector selector;
+    final Selector selector;
     try {
       selector = OriginalNewCapacityExecutionReadGrpcCodec.parseRequest(request);
       if (!namespace.equals(selector.request().targetNamespace()))
@@ -56,17 +93,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionReadGrpcService
       return;
     }
     try {
-      var actual = owner.readExact(selector.request(), selector.reservation());
-      var readback =
-          new OriginalNewCapacityExecutionReadGrpcCodec.Readback(
-              actual.execution(),
-              actual.disposition(),
-              actual.physicalDigest(),
-              actual.receiptDigest(),
-              actual.canonicalReadback(),
-              actual.currentOwnerId(),
-              actual.currentOwnerFence());
-      observer.onNext(OriginalNewCapacityExecutionReadGrpcCodec.toResponse(selector, readback));
+      observer.onNext(read.apply(selector));
       observer.onCompleted();
     } catch (RuntimeException unavailable) {
       fail(observer, Status.UNAVAILABLE);

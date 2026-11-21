@@ -51,9 +51,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuar
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     Objects.requireNonNull(call, "gRPC server call required");
+    String method = call.getMethodDescriptor().getFullMethodName();
     if (!OriginalNewCapacityExecutionReadServiceGrpc.getReadOriginalNewCapacityExecutionMethod()
-        .getFullMethodName()
-        .equals(call.getMethodDescriptor().getFullMethodName())) {
+            .getFullMethodName()
+            .equals(method)
+        && !OriginalNewCapacityExecutionReadServiceGrpc
+            .getReadHistoricalOriginalNewCapacityFinalMethod()
+            .getFullMethodName()
+            .equals(method)) {
       call.close(
           Status.PERMISSION_DENIED.withDescription("Exact Account final-result read required"),
           new Metadata());

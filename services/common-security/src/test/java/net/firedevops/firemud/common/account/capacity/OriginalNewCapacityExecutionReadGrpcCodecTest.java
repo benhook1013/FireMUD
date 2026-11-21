@@ -87,6 +87,51 @@ class OriginalNewCapacityExecutionReadGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void historicalFinalRetainsTheOriginalExecutionAndRejectsMalformedProof() {
+    var selector = selector();
+    var execution = execution(selector);
+    var operation = UUID.fromString("d4444444-4444-4444-8444-444444444444");
+    long admissionAt = CapacityAdmissionTestFixture.NOW.toEpochMilli();
+    var proof =
+        new OriginalNewCapacityExecutionReadGrpcCodec.HistoricalFinalReadback(
+            execution,
+            operation,
+            "b".repeat(64),
+            admissionAt,
+            admissionAt + 60_000,
+            "3",
+            "sha256:" + "c".repeat(64),
+            "sha256:" + "d".repeat(64));
+    var wire = OriginalNewCapacityExecutionReadGrpcCodec.toHistoricalResponse(selector, proof);
+    var decoded = OriginalNewCapacityExecutionReadGrpcCodec.fromHistoricalResponse(selector, wire);
+    assertThat(decoded.execution().canonicalBytes()).containsExactly(execution.canonicalBytes());
+    assertThat(OriginalNewCapacityExecutionReadGrpcCodec.toHistoricalResponse(selector, decoded))
+        .isEqualTo(wire);
+
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(999, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    var reservation = wire.getSelector(0).getReservation(0);
+    var changedCommitment = reservation.getCommitment(0).toBuilder().setReservationFence(0, 2);
+    var changedReservation = reservation.toBuilder().setCommitment(0, changedCommitment);
+    var changedSelector = wire.getSelector(0).toBuilder().setReservation(0, changedReservation);
+    for (var malformed :
+        List.of(
+            wire.toBuilder().setSelector(0, changedSelector).build(),
+            wire.toBuilder().addFenceOperationId(operation.toString()).build(),
+            wire.toBuilder().setCanonicalExecution(0, ByteString.copyFromUtf8("changed")).build(),
+            wire.toBuilder().setContinuityExpiresAtMs(0, admissionAt).build(),
+            wire.toBuilder().setUnknownFields(unknown).build())) {
+      assertThatThrownBy(
+              () ->
+                  OriginalNewCapacityExecutionReadGrpcCodec.fromHistoricalResponse(
+                      selector, malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   private static OriginalNewCapacityExecutionReadGrpcCodec.Selector selector() {
     var request = CapacityAdmissionTestFixture.playerRequest();
     var reservation =

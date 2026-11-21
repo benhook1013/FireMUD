@@ -5,6 +5,7 @@ import com.google.protobuf.Message;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.v1.ReadHistoricalOriginalNewCapacityFinalResponse;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalNewCapacityExecutionRequest;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalNewCapacityExecutionResponse;
 
@@ -51,6 +52,36 @@ public final class OriginalNewCapacityExecutionReadGrpcCodec {
     @Override
     public String toString() {
       return "OriginalNewCapacityReadback[redacted]";
+    }
+  }
+
+  public record HistoricalFinalReadback(
+      OriginalNewCapacityExecution execution,
+      UUID fenceOperationId,
+      String finalSessionSha256,
+      long admissionAtMillis,
+      long continuityExpiresAtMillis,
+      String inventorySnapshotRevision,
+      String cohortDigest,
+      String barrierTargetDigest) {
+    public HistoricalFinalReadback {
+      TenantCapacityAdmission.uuid(fenceOperationId);
+      if (execution.reservation().state() != TenantCapacityAdmission.State.RESERVED
+          || finalSessionSha256 == null
+          || !finalSessionSha256.matches("[0-9a-f]{64}")
+          || admissionAtMillis <= 0
+          || continuityExpiresAtMillis <= admissionAtMillis
+          || inventorySnapshotRevision == null
+          || !inventorySnapshotRevision.matches("[1-9][0-9]*")
+          || cohortDigest == null
+          || !cohortDigest.matches("sha256:[0-9a-f]{64}")
+          || barrierTargetDigest == null
+          || !barrierTargetDigest.matches("sha256:[0-9a-f]{64}")) throw invalid();
+    }
+
+    @Override
+    public String toString() {
+      return "OriginalNewHistoricalFinalReadback[redacted]";
     }
   }
 
@@ -126,6 +157,57 @@ public final class OriginalNewCapacityExecutionReadGrpcCodec {
         one(wire.getCanonicalReadbackList()).toByteArray(),
         one(wire.getCurrentOwnerIdList()),
         one(wire.getCurrentOwnerFenceList()));
+  }
+
+  public static ReadHistoricalOriginalNewCapacityFinalResponse toHistoricalResponse(
+      Selector selector, HistoricalFinalReadback receipt) {
+    var execution = receipt.execution();
+    if (!selector.request().equals(execution.request())
+        || !selector.reservation().equals(execution.reservation())) throw invalid();
+    var wire =
+        ReadHistoricalOriginalNewCapacityFinalResponse.newBuilder()
+            .addSelector(toRequest(selector))
+            .addFenceOperationId(receipt.fenceOperationId().toString())
+            .addTransitionId(execution.transitionId().toString())
+            .addCandidateDigest(execution.candidateDigest())
+            .addSelectedOwnerId(execution.selectedOwnerId())
+            .addSelectedOwnerFence(execution.selectedOwnerFence())
+            .addCanonicalExecution(ByteString.copyFrom(execution.canonicalBytes()))
+            .addFinalSessionSha256(receipt.finalSessionSha256())
+            .addAdmissionAtMs(receipt.admissionAtMillis())
+            .addContinuityExpiresAtMs(receipt.continuityExpiresAtMillis())
+            .addInventorySnapshotRevision(receipt.inventorySnapshotRevision())
+            .addCohortDigest(receipt.cohortDigest())
+            .addBarrierTargetDigest(receipt.barrierTargetDigest())
+            .build();
+    clean(wire, MAX_RESPONSE_BYTES);
+    return wire;
+  }
+
+  public static HistoricalFinalReadback fromHistoricalResponse(
+      Selector selector, ReadHistoricalOriginalNewCapacityFinalResponse wire) {
+    clean(wire, MAX_RESPONSE_BYTES);
+    if (!selector.equals(parseRequest(one(wire.getSelectorList())))) throw invalid();
+    var execution =
+        new OriginalNewCapacityExecution(
+            selector.request(),
+            selector.reservation(),
+            uuid(one(wire.getTransitionIdList())),
+            one(wire.getCandidateDigestList()),
+            one(wire.getSelectedOwnerIdList()),
+            one(wire.getSelectedOwnerFenceList()));
+    if (!Arrays.equals(
+        execution.canonicalBytes(), one(wire.getCanonicalExecutionList()).toByteArray()))
+      throw invalid();
+    return new HistoricalFinalReadback(
+        execution,
+        uuid(one(wire.getFenceOperationIdList())),
+        one(wire.getFinalSessionSha256List()),
+        one(wire.getAdmissionAtMsList()),
+        one(wire.getContinuityExpiresAtMsList()),
+        one(wire.getInventorySnapshotRevisionList()),
+        one(wire.getCohortDigestList()),
+        one(wire.getBarrierTargetDigestList()));
   }
 
   private static <T> T one(List<T> values) {
