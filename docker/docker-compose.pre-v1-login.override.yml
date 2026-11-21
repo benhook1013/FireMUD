@@ -9,6 +9,9 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+          # Dynamic addresses come only from the upper half, so the fixed validator IP below
+          # (172.30.0.20) stays free even though Game Session now starts last.
+          ip_range: 172.30.0.128/25
 
 volumes:
   pre-v1-jwt-secret:
