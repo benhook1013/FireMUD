@@ -374,6 +374,19 @@ def login_play_look_steps(
     ]
 
 
+def authenticated_telnet_login_steps(username, password, world, login_expect):
+    """Telnet steps the authenticated Gateway path supports before canonical admission.
+
+    Telnet WORLDS/REALMS/JOIN/PLAY/LOOK is deferred until the canonical admission chain
+    (realm catalog, initial admission, final binding) has a runtime owner; WebSocket keeps
+    the LOGIN -> PLAY -> LOOK proof. Until then Telnet PLAY must stay fail-closed.
+    """
+    return [
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        (f"PLAY {world}", ["ERROR ADMISSION_UNAVAILABLE"], "PLAY"),
+    ]
+
+
 def redact_login_credential(response, command):
     if not isinstance(response, str) or not isinstance(command, str):
         return response

@@ -356,7 +356,10 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
           if (cohortSize == 3
               || !List.of(
                       "Normal region handoff requires complete current transfer evidence",
-                      "Normal region owner transfer is held")
+                      "Normal region owner transfer is held",
+                      // A 5 s budget that ends inside the Redis fence surfaces untyped; FENCE is
+                      // idempotent, so the same transfer resumes on the next attempt.
+                      "Original NEW final admission Redis readback is unavailable")
                   .contains(held.getMessage())) throw held;
         }
         assertThat(proof.currentOwner()).isEqualTo(proof.prior);

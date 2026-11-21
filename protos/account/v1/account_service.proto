@@ -255,6 +255,7 @@ message GetRealmAccessGrantForRuntimeResponse {
 }
 
 message GetTenantEntitlementsForRuntimeRequest {
+  // Canonical tenant UUID.
   string tenant_id = 1;
   string request_id = 2;
 }

@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
+import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
@@ -17,7 +18,7 @@ class GameplayRouteReadinessHealthIndicatorTest {
   @Test
   void firstPartyReadinessRemainsDownUntilCanonicalAdmissionPrerequisitesAreQualified() {
     GameplayRouteReadinessHealthIndicator indicator =
-        new GameplayRouteReadinessHealthIndicator(tracker());
+        new GameplayRouteReadinessHealthIndicator(tracker(), PreV1GateWaivers.disabled());
 
     Health health = indicator.health();
     Object rawDependencies = Objects.requireNonNull(health.getDetails().get("dependencies"));
@@ -38,6 +39,15 @@ class GameplayRouteReadinessHealthIndicatorTest {
         "Canonical Account connect-context production, shared replay fencing, and dedicated "
             + "Gateway signing keys are not qualified",
         gameplayRoute.get("reason"));
+  }
+
+  @Test
+  void preV1WaiverReportsReady() {
+    Health health =
+        new GameplayRouteReadinessHealthIndicator(tracker(), PreV1GateWaivers.enabledForTest())
+            .health();
+
+    assertEquals(Status.UP, health.getStatus());
   }
 
   private static ReadinessTransitionTracker tracker() {

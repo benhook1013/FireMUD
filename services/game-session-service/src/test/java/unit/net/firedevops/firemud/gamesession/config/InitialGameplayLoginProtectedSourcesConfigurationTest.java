@@ -60,6 +60,42 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
   }
 
   @Test
+  void plaintextCoordinationIsAcceptedOnlyUnderPreV1Waiver() {
+    String plaintext = COORDINATION_URI.replaceFirst("^rediss:", "redis:");
+    assertThatThrownBy(
+            () ->
+                InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
+                    plaintext, 875))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    RedisURI waived =
+        InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
+            plaintext, 875, true);
+
+    assertThat(waived.isSsl()).isFalse();
+    assertThat(waived.getDatabase()).isZero();
+  }
+
+  @Test
+  void preV1QualificationLeaseExistsOnlyUnderWaiver() throws Exception {
+    var configuration = new InitialGameplayLoginProtectedSourcesConfiguration();
+    assertThatThrownBy(
+            () ->
+                configuration.preV1InitialGameplayLoginQualification(
+                    net.firedevops.firemud.common.prev1.PreV1GateWaivers.disabled()))
+        .isInstanceOf(IllegalStateException.class);
+
+    var qualification =
+        configuration.preV1InitialGameplayLoginQualification(
+            net.firedevops.firemud.common.prev1.PreV1GateWaivers.enabledForTest());
+    try (var first = qualification.acquire("scope", "binding").orElseThrow();
+        var second = qualification.acquire("scope", "binding").orElseThrow()) {
+      assertThat(first.protectedBindingId()).isEqualTo("binding");
+      assertThat(second.fence()).isGreaterThan(first.fence()).isPositive();
+    }
+  }
+
+  @Test
   void dedicatedUriRequiresExactTlsPrincipalDatabaseAndFiniteDeadline() {
     RedisURI uri =
         InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(

@@ -120,6 +120,12 @@ firemud:
         - account.v1.StartSessionOperatorAuthorizationService/RecoverOperatorAuthorizationReference
         - account.v1.StartSessionOperatorAuthorizationService/RedeemOperatorAuthorization
         - account.v1.StartSessionOperatorAuthorizationService/ReadRedeemedOperationProjection
+        - account.v1.AccountJwtSignerMaterializationService/EnrollBootstrap
+        - account.v1.AccountJwtSignerMaterializationService/GetCurrentGenerationRequest
+        - account.v1.AccountJwtSignerMaterializationService/RecordSecretObservation
+        - account.v1.AccountJwtSignerMaterializationService/RecordGenerationResult
+        - account.v1.AccountJwtSignerMaterializationService/GetCurrentPromotionRequest
+        - account.v1.AccountJwtSignerMaterializationService/RecordPrivatePromotionResult
 
 management:
   endpoints:

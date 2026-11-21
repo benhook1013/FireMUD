@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Cod
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,6 +56,17 @@ public class AccountTenantAuthorityEventRepository {
     this.billingOutbox = Objects.requireNonNull(billingOutbox);
     this.tenantIdentity = Objects.requireNonNull(tenantIdentity);
     this.generations = Objects.requireNonNull(generations);
+  }
+
+  /** Whether any current tenant source row exists; it grants no entitlement authority. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean hasCurrentSource(UUID tenantId) {
+    requireTransaction();
+    requireTenant(tenantId);
+    return dsl.fetchExists(
+        dsl.selectOne()
+            .from(DSL.table(DSL.name("account_tenant_authority_source_records")))
+            .where(DSL.field(DSL.name("tenant_uuid"), UUID.class).eq(tenantId)));
   }
 
   /** Data-only routing hint over the exact current source; it grants no entitlement authority. */

@@ -12,7 +12,6 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
-import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GameplayLoginTransportClass;
@@ -28,12 +27,12 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.jooq.exception.DataAccessException;
 
 /**
- * Unregistered canonical Authenticate adapter. Construction exposes no endpoint or Spring bean. The
+ * Unregistered canonical Authenticate adapter. It is not a {@code BindableService}: the one
+ * AccountService registration delegates to it, so the bean exposes no second endpoint. The
  * certificate-derived Game Session peer attests the source context; this adapter neither
  * authenticates the public ingress nor grants gameplay admission.
  */
-public final class AccountGameplayAuthenticateReceiver
-    extends AccountServiceGrpc.AccountServiceImplBase {
+public final class AccountGameplayAuthenticateReceiver {
   private final AccountGameplayCanonicalLoginOwner owner;
   private final AccountGameplayPrimaryCredentialVerifier verifier;
   private final String expectedWorkload;
@@ -60,7 +59,6 @@ public final class AccountGameplayAuthenticateReceiver
     expectedWorkload = "spiffe://firemud/ns/" + expectedNamespace + "/sa/game-session-service";
   }
 
-  @Override
   public void retireInitialGameplayLogin(
       net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.RetireInitialGameplayLoginResponse>
@@ -186,7 +184,6 @@ public final class AccountGameplayAuthenticateReceiver
     }
   }
 
-  @Override
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     // No request field (especially the credential) is inspected before authenticating the peer.

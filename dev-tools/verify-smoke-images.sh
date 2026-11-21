@@ -100,6 +100,7 @@ esac
 # The proof's mTLS profile must be last so it supersedes the ordinary local
 # plaintext override and all image/MinIO-specific overlays.
 COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.grpc-mtls.override.yml" )
+COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.pre-v1-login.override.yml" )
 
 if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" && "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" != "true" ]]; then
   for image_ref_and_id in "$SMOKE_MINIO_SERVER_IMAGE|$SMOKE_MINIO_SERVER_IMAGE_ID" \
@@ -246,9 +247,16 @@ FIREMUD_SMOKE_PROOF_CLAIMED=true
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify
+# shellcheck source=dev-tools/smoke/pre-v1-signer-fixtures.sh
+source "$ROOT_DIR/dev-tools/smoke/pre-v1-signer-fixtures.sh"
+prepare_pre_v1_signer_fixtures "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 
 if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" ]]; then
   COMPOSE_CONFIG_FILE="$(mktemp)"
+  FIREMUD_PRE_V1_SIGNER_FIXTURES=/tmp/firemud-pre-v1-config-only \
+  FIREMUD_PRE_V1_NAMESPACE_UID=config-only \
+  FIREMUD_PRE_V1_CLUSTER_UID=config-only \
+  FIREMUD_PRE_V1_CONFIG_MAP_UID=config-only \
   FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only \
     docker compose "${COMPOSE_FILES[@]}" config --format json >"$COMPOSE_CONFIG_FILE"
   python3 - "$COMPOSE_CONFIG_FILE" "$SMOKE_MINIO_SERVER_IMAGE" "$SMOKE_MINIO_CLIENT_IMAGE" <<'PY'
@@ -270,6 +278,10 @@ for service_name, image_ref in expected.items():
 print("Verified PR-local MinIO Compose image tags and pull policies.")
 PY
 else
+  FIREMUD_PRE_V1_SIGNER_FIXTURES=/tmp/firemud-pre-v1-config-only \
+  FIREMUD_PRE_V1_NAMESPACE_UID=config-only \
+  FIREMUD_PRE_V1_CLUSTER_UID=config-only \
+  FIREMUD_PRE_V1_CONFIG_MAP_UID=config-only \
   FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only \
     docker compose "${COMPOSE_FILES[@]}" config >/dev/null
 fi

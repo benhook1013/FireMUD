@@ -24,6 +24,23 @@ class AccountGameplayLoginProtectedSourcesConfigurationTest {
       new AccountGameplayLoginProtectedSourcesConfiguration();
 
   @Test
+  void plaintextCoordinationIsAcceptedOnlyUnderPreV1Waiver() {
+    String plaintext = "redis://account_coord_app:test-only-password@redis-coord:6379/0";
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
+                    plaintext, 875))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    RedisURI waived =
+        AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
+            plaintext, 875, true);
+
+    assertThat(waived.isSsl()).isFalse();
+    assertThat(waived.getHost()).isEqualTo("redis-coord");
+  }
+
+  @Test
   void dedicatedUriRetainsExplicitTlsAclDatabaseAndCommandDeadline() {
     RedisURI uri =
         AccountGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(

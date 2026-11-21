@@ -2016,6 +2016,13 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
+telnet_steps = smoke_common.authenticated_telnet_login_steps(
+    "demo@example.com", "swordfish", "demo", "OK LOGIN"
+)
+assert [step[2] for step in telnet_steps] == ["LOGIN", "PLAY"]
+assert telnet_steps[1][:2] == ("PLAY demo", ["ERROR ADMISSION_UNAVAILABLE"])
+
+
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
     "demo@example.com",
     "swordfish",
@@ -2067,8 +2074,16 @@ grep -Fq 'discovery_selector=world' \
 for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
-  grep -Fq 'discovery_selector=world' "$script" ||
-    { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
+  if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
+    # Authenticated Telnet WORLDS/PLAY/LOOK is deferred to the canonical admission chain.
+    grep -Fq 'discovery_selector = world' "$script" ||
+      { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
+    grep -Fq 'authenticated_telnet_login_steps(login_email, password, world, login_expect)' "$script" ||
+      { echo "$script baseline must use the authenticated Telnet LOGIN plan" >&2; exit 1; }
+  else
+    grep -Fq 'discovery_selector=world' "$script" ||
+      { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
+  fi
   assert_command_rejects \
     "SMOKE_MUTATION_EXTENSION must be boolean" \
     env SMOKE_MUTATION_EXTENSION=invalid bash "$script"
@@ -2099,7 +2114,7 @@ for script in \
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
   grep -q 'require_smoke_mutation_boundary' "$script"
   grep -q 'run-owned-compose' "$script"
-  grep -q 'login_play_look_steps' "$script"
+  [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]] || grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
   if [[ "$script" == *"game-session-service/websocket-login-look-smoke.sh" ]]; then
     grep -Fq -- 'venv_directory = repo_root / ".venv-smoke"' "$script" ||
@@ -2186,7 +2201,7 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
   grep -Fq 'bash "$WS_SMOKE_SCRIPT"' "$script"
   grep -Fq 'public successful admission remains unproved' "$script"
 done
-grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held' "$ROOT_DIR/.github/workflows/runtime-images.yml"
+grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: baseline' "$ROOT_DIR/.github/workflows/runtime-images.yml"
 grep -Fq 'does not prove host-published ingress' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'docker' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'Confirmed Telnet startup_unavailable denial and closed connection.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"

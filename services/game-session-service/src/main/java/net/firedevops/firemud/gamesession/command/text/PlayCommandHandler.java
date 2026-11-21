@@ -76,6 +76,7 @@ public class PlayCommandHandler {
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
+  private volatile net.firedevops.firemud.gamesession.client.GameDesignClient gameDesignClient;
 
   public PlayCommandHandler(
       SessionAuthenticationService sessionAuthenticationService,
@@ -627,6 +628,25 @@ public class PlayCommandHandler {
         null);
   }
 
+  /** Game Design owns tenant identity; PLAY reads Account entitlement by canonical tenant UUID. */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setGameDesignClient(
+      net.firedevops.firemud.gamesession.client.GameDesignClient gameDesignClient) {
+    this.gameDesignClient = gameDesignClient;
+  }
+
+  private Optional<UUID> resolveCanonicalTenantId(long tenantId) {
+    var client = gameDesignClient;
+    if (client == null) {
+      return Optional.empty();
+    }
+    try {
+      return client.resolveCanonicalTenantId(tenantId);
+    } catch (RuntimeException unavailable) {
+      return Optional.empty();
+    }
+  }
+
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(
       SessionContext context,
       GameplayWorldCatalog.WorldView selectedWorld,
@@ -634,9 +654,15 @@ public class PlayCommandHandler {
       String tenantTag,
       long requestedCharacterId) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
+    Optional<UUID> canonicalTenantId = resolveCanonicalTenantId(selectedRealm.tenantId());
+    if (canonicalTenantId.isEmpty()) {
+      return Optional.of(
+          entitlementUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+    }
     GetTenantEntitlementsForRuntimeResponse entitlementResponse =
         accountClient.getTenantEntitlementsForRuntime(
-            Long.toString(selectedRealm.tenantId()), requestId);
+            canonicalTenantId.orElseThrow().toString(), requestId);
     Optional<PlayCommandHandlingResult> entitlementFailure =
         validateEntitlementsResponse(
             entitlementResponse,
@@ -644,6 +670,7 @@ public class PlayCommandHandler {
             tenantTag,
             selectedWorld,
             selectedRealm,
+            canonicalTenantId.orElseThrow(),
             requestedCharacterId);
     if (entitlementFailure.isPresent()) {
       return entitlementFailure;
@@ -928,6 +955,7 @@ public class PlayCommandHandler {
       String tenantTag,
       GameplayWorldCatalog.WorldView selectedWorld,
       GameplayWorldCatalog.RealmView selectedRealm,
+      UUID canonicalTenantId,
       long requestedCharacterId) {
     if (response == null) {
       return Optional.of(
@@ -947,7 +975,7 @@ public class PlayCommandHandler {
               context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
     try {
-      if (!Long.toString(selectedRealm.tenantId()).equals(response.getTenantId())
+      if (!canonicalTenantId.toString().equals(response.getTenantId())
           || response.getEntitlementVersion() <= 0L
           || response.getTenantBillingSequence() <= 0L
           || !isWithinEntitlementReplyWindow(

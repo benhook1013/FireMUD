@@ -144,10 +144,15 @@ ensure_compose_mtls_certs() {
     for service in "${services[@]}"; do
       local service_dir="$COMPOSE_MTLS_STAGE_DIR/$service"
       mkdir -m 755 -- "$service_dir"
-      if [[ "$service" == account-service || "$service" == game-session-service || "$service" == entity-management-service || "$service" == world-management-service || "$service" == game-design-service ]]; then
+      if [[ "$service" == account-service || "$service" == game-session-service || "$service" == entity-management-service || "$service" == world-management-service || "$service" == game-design-service || "$service" == tcp-proxy-service ]]; then
         "$GENERATOR" --workload \
           "$authority_dir/ca.crt" "$authority_dir/ca.key" \
           "$service_dir/client.crt" "$service_dir/client.key" dev "$service"
+      elif [[ "$service" == gateway ]]; then
+        # The authenticated Game Session gameplay listener admits only the Gateway identity.
+        "$GENERATOR" --workload \
+          "$authority_dir/ca.crt" "$authority_dir/ca.key" \
+          "$service_dir/client.crt" "$service_dir/client.key" dev spring-cloud-gateway
       else
         cp -- "$authority_dir/client.crt" "$service_dir/client.crt"
         cp -- "$authority_dir/client.key" "$service_dir/client.key"
@@ -208,7 +213,11 @@ ensure_compose_mtls_certs() {
       echo "Compose mTLS workload fixture contains an unexpected service directory." >&2
       return 1
     fi
-    for service in account-service game-session-service entity-management-service world-management-service game-design-service; do
+    if [[ "$(openssl x509 -in "$workloads_dir/gateway/client.crt" -noout -ext subjectAltName)" != *"URI:spiffe://firemud/ns/dev/sa/spring-cloud-gateway"* ]]; then
+      echo "Compose mTLS workload has the wrong SPIFFE identity: gateway" >&2
+      return 1
+    fi
+    for service in account-service game-session-service entity-management-service world-management-service game-design-service tcp-proxy-service; do
       local san_output
       san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
       if [[ "$service" == game-design-service ]]; then
