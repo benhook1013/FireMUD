@@ -40,11 +40,26 @@ public class AccountTenantMembershipRepository {
       AccountRepository accountRepository,
       FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
       AccountMembershipPairAuthorityRepository pairAuthorityRepository) {
+    this(
+        dsl,
+        accountRepository,
+        freshTenantIdentityAssociationRepository,
+        pairAuthorityRepository,
+        new AccountAuthorityGenerationRepository(dsl));
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AccountTenantMembershipRepository(
+      DSLContext dsl,
+      AccountRepository accountRepository,
+      FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
+      AccountMembershipPairAuthorityRepository pairAuthorityRepository,
+      AccountAuthorityGenerationRepository authorityGenerationRepository) {
     this.dsl = dsl;
     this.accountRepository = accountRepository;
     this.freshTenantIdentityAssociationRepository = freshTenantIdentityAssociationRepository;
     this.pairAuthorityRepository = pairAuthorityRepository;
-    this.authorityGenerationRepository = new AccountAuthorityGenerationRepository(dsl);
+    this.authorityGenerationRepository = authorityGenerationRepository;
   }
 
   public Optional<AccountTenantMembership> findByAccountIdAndTenantId(

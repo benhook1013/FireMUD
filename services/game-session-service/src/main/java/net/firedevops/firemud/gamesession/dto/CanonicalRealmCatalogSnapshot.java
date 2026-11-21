@@ -27,7 +27,9 @@ public record CanonicalRealmCatalogSnapshot(
     String requestDigest,
     String receiptDigest,
     IntakeReceipt sourceIntakeReceipt,
-    FixturePolicy fixturePolicy) {
+    // Read-side only: the persisted catalog evidence form, its equality and stored launch/pointer
+    // snapshots stay the shared catalog row identity; the fixture policy is re-read from the row.
+    @com.fasterxml.jackson.annotation.JsonIgnore FixturePolicy fixturePolicy) {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   /**
@@ -120,6 +122,7 @@ public record CanonicalRealmCatalogSnapshot(
         null);
   }
 
+  @com.fasterxml.jackson.annotation.JsonIgnore
   public boolean isRunOwnedFixture() {
     return fixturePolicy != null;
   }
@@ -157,5 +160,50 @@ public record CanonicalRealmCatalogSnapshot(
     if (NIL_UUID.equals(value)) {
       throw new IllegalArgumentException(name + " must be a non-nil UUID");
     }
+  }
+
+  /** Catalog identity excludes the read-side fixture policy, which persisted snapshots omit. */
+  @Override
+  public boolean equals(Object other) {
+    return other instanceof CanonicalRealmCatalogSnapshot that
+        && java.util.Objects.equals(targetNamespace, that.targetNamespace)
+        && java.util.Objects.equals(tenantId, that.tenantId)
+        && java.util.Objects.equals(tenantSlug, that.tenantSlug)
+        && java.util.Objects.equals(worldSlug, that.worldSlug)
+        && java.util.Objects.equals(realmId, that.realmId)
+        && java.util.Objects.equals(realmSlug, that.realmSlug)
+        && java.util.Objects.equals(realmDisplayName, that.realmDisplayName)
+        && visible == that.visible
+        && publicProduction == that.publicProduction
+        && java.util.Objects.equals(stateScope, that.stateScope)
+        && java.util.Objects.equals(playableStateNamespaceId, that.playableStateNamespaceId)
+        && java.util.Objects.equals(characterCreationPolicy, that.characterCreationPolicy)
+        && catalogRevision == that.catalogRevision
+        && java.util.Objects.equals(creationRequestId, that.creationRequestId)
+        && java.util.Objects.equals(requestDigest, that.requestDigest)
+        && java.util.Objects.equals(receiptDigest, that.receiptDigest)
+        && java.util.Objects.equals(sourceIntakeReceipt, that.sourceIntakeReceipt);
+  }
+
+  @Override
+  public int hashCode() {
+    return java.util.Objects.hash(
+        targetNamespace,
+        tenantId,
+        tenantSlug,
+        worldSlug,
+        realmId,
+        realmSlug,
+        realmDisplayName,
+        visible,
+        publicProduction,
+        stateScope,
+        playableStateNamespaceId,
+        characterCreationPolicy,
+        catalogRevision,
+        creationRequestId,
+        requestDigest,
+        receiptDigest,
+        sourceIntakeReceipt);
   }
 }
