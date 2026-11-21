@@ -609,6 +609,8 @@ jobs:
 
             // Current producer definition; the contract test reports fingerprint upkeep.
             const canonicalRuntimeWorkflowSha256 = "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1";
+            // Before this change merges, successful refreshes still run the current default-branch definition.
+            const canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256 = "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b";
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
             // Retain the exact fail-red producer still executed by trusted base refreshes.
@@ -796,7 +798,9 @@ jobs:
               const bytes = Buffer.from(definition.content, "base64");
               if (definition.size !== bytes.length) return false;
               const definitionHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
-              if (isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event)) {
+              const preMergeTrustedRefresh = source.event === "repository_dispatch" &&
+                definitionHash === canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256;
+              if (isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event) || preMergeTrustedRefresh) {
                 if (markers.length !== 1 || markers[0].status !== "completed" ||
                     markers[0].conclusion !== "skipped") return false;
               } else if (definitionHash !== canonicalLegacyRuntimeWorkflowSha256) return false;
