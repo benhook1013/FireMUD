@@ -624,8 +624,8 @@ jobs:
               "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
               "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
-              "docker/docker-compose.yml": "a1f5681e786e39b9f2de9a2e3bc1ae5d78fb67066e7c42c5370e982c193ba12c",
-              "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
+              "docker/docker-compose.yml": "cd3957cace554958f0a1077754809cb75fc9c83bbf0beca99de4a8cf9bf86929",
+              "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
               "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
               "docker/docker-compose.grpc-mtls.override.yml": "dcee047f1492392035d57153ba8dfd6d38de33ca932d327f377440d5813577f0"
@@ -809,51 +809,6 @@ jobs:
             }
 
             // Canonical-transition diagnostic acceptance never becomes passing producer proof.
-            // Temporary, owner-labeled dependency trial. These exact alternate
-            // inputs are never accepted for other PRs, bases or dispatches.
-            function dependencyPlayClassifierOverrides(pr, identity, event) {
-              if (String(pr) !== "3469" || identity.baseRef !== "develop" ||
-                  identity.baseSha !== "3b81c438ddf473c94ad0424ad9a979d7070091e4" ||
-                  event !== "pull_request") return {};
-              return {
-                "docker/docker-compose.yml": "6d79647e49aea696598e8c1ba8c665967664986af66efd18e832949dd3b29ab6",
-                "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
-              };
-            }
-
-            // The label can persist across pushes. Bind alternate classifier
-            // authority to the independently reviewed exact head-tree payload.
-            // Exclude only this workflow, which contains its own digest.
-            async function verifyReviewedDependencyPlayTree(headSha) {
-              const expected = "6ae7b1a511c1cf1391dfd9ab785554e5bb211eced4109b79367e2f990a3c6b27";
-              const { data: commit } = await withTransientGitHubRetry(
-                "immutable dependency head lookup",
-                () => github.rest.git.getCommit({ owner, repo, commit_sha: headSha })
-              );
-              const sha = /^[0-9a-f]{40}$/;
-              if (commit.sha !== headSha || !sha.test(commit.tree?.sha ?? "")) return false;
-              let treeSha = commit.tree.sha;
-              const levels = [];
-              for (const [depth, excluded] of [".github", "workflows", "smoke.yml"].entries()) {
-                const { data: snapshot } = await withTransientGitHubRetry(
-                  "immutable dependency tree lookup",
-                  () => github.rest.git.getTree({ owner, repo, tree_sha: treeSha })
-                );
-                if (snapshot.sha !== treeSha || snapshot.truncated !== false || !Array.isArray(snapshot.tree)) return false;
-                const entries = snapshot.tree.map(({path, mode, type, sha: objectSha}) => [path, mode, type, objectSha]);
-                if (entries.some(([path, mode, type, objectSha]) => typeof path !== "string" ||
-                    typeof mode !== "string" || typeof type !== "string" || !sha.test(objectSha ?? "")) ||
-                    new Set(entries.map(entry => entry[0])).size !== entries.length) return false;
-                const self = entries.find(entry => entry[0] === excluded);
-                if (!self || (depth < 2 ? self[1] !== "040000" || self[2] !== "tree" :
-                    self[1] !== "100644" || self[2] !== "blob")) return false;
-                levels.push(entries.filter(entry => entry[0] !== excluded)
-                  .sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0]))));
-                treeSha = self[3];
-              }
-              return require("node:crypto").createHash("sha256").update(JSON.stringify(levels)).digest("hex") === expected;
-            }
-
             async function verifyKnownPlayFailure(run, candidate, identity) {
               if (repositoryName !== "benhook1013/FireMUD" ||
                   !["pull_request", "repository_dispatch"].includes(run.event)) return false;
@@ -925,8 +880,6 @@ jobs:
               // Typed refresh workflow authority is its native default-branch revision;
               // the executed classifier source still belongs to the verified PR merge.
               const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
-              const dependencyOverrides = dependencyPlayClassifierOverrides(prNumber, identity, source.event);
-              if (Object.keys(dependencyOverrides).length && !await verifyReviewedDependencyPlayTree(identity.headSha)) return false;
               for (const path of [workflowPath, ...Object.keys(canonicalPlayClassifierSha256)]) {
                 const { data: definition } = await withTransientGitHubRetry(
                   `immutable PLAY classifier definition lookup: ${path}`,
@@ -940,8 +893,7 @@ jobs:
                 if (definition.size !== bytes.length) return false;
                 const definitionHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
                 const expectedSha256 = path === workflowPath
-                  ? canonicalLegacyRuntimeWorkflowSha256
-                  : (dependencyOverrides[path] ?? canonicalPlayClassifierSha256[path]);
+                  ? canonicalLegacyRuntimeWorkflowSha256 : canonicalPlayClassifierSha256[path];
                 const matches = path === workflowPath && source.conclusion === "success"
                   ? isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event)
                   : definitionHash === expectedSha256;
