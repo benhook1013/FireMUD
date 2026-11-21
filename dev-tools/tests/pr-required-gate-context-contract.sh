@@ -3528,16 +3528,19 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
-const compatibleRefreshBytes = Array.from({length: 3}, (_, index) =>
-  Buffer.concat([bytes, Buffer.from(`\n# Retained trusted refresh definition ${index}\n`)]));
-const digest = source => require("node:crypto").createHash("sha256").update(source).digest("hex");
-const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set(compatibleRefreshBytes.map(digest));
-const checkedInCompatibility = script.match(/const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set\(\[([\s\S]*?)\]\);/)[1];
-assert.deepEqual([...checkedInCompatibility.matchAll(/"([0-9a-f]{64})"/g)].map(match => match[1]), [
+const expectedCompatibleRefreshDigests = [
+  "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1",
   "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
   "107a7bc895f890173161ea09f707ce93d8e170093aa8c8c528fc5f98430e1bac",
   "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112",
-]);
+];
+const checkedInCompatibility = script.match(/const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set\(\[([\s\S]*?)\]\);/)[1];
+const checkedInCompatibilityDigests = [...checkedInCompatibility.matchAll(/"([0-9a-f]{64})"/g)].map(match => match[1]);
+assert.deepEqual(checkedInCompatibilityDigests, expectedCompatibleRefreshDigests);
+const compatibleRefreshBytes = Array.from({length: checkedInCompatibilityDigests.length}, (_, index) =>
+  Buffer.concat([bytes, Buffer.from(`\n# Retained trusted refresh definition ${index}\n`)]));
+const digest = source => require("node:crypto").createHash("sha256").update(source).digest("hex");
+const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set(compatibleRefreshBytes.map(digest));
 // Separate test authority lets the same verifier exercise both immutable modes.
 const canonicalLegacyRuntimeWorkflowSha256 = "0".repeat(64);
 const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
