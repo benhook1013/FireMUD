@@ -857,10 +857,21 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       CountDownLatch ready,
       CountDownLatch start)
       throws InterruptedException {
+    return installAfterBarrier(repository, prior, correlation, ownerInstanceId, ready, start);
+  }
+
+  CanonicalGameplayRegionRuntimeStatus installAfterBarrier(
+      CanonicalGameplayRegionRuntimeStatusRepository workerRepository,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String correlation,
+      String ownerInstanceId,
+      CountDownLatch ready,
+      CountDownLatch start)
+      throws InterruptedException {
     ready.countDown();
     assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
     try {
-      return repository.installOwner(
+      return workerRepository.installOwner(
           source,
           1L,
           prior,
@@ -868,8 +879,12 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           "game-session-service",
           ownerInstanceId,
           Instant.parse("2026-10-26T00:00:02Z"));
-    } catch (IllegalStateException staleGrant) {
-      return null;
+    } catch (IllegalStateException failure) {
+      if (failure.getCause()
+          instanceof CanonicalGameplayRegionRuntimeStatusRepository.ExistingOwnerReplacementRefused) {
+        return null;
+      }
+      throw failure;
     }
   }
 

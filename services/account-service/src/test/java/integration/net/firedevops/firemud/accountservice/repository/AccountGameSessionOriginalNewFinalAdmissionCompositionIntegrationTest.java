@@ -809,6 +809,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
       session.startCapacityServer();
       var second = session.gs.prepareSecondAdmission();
+      assertThatThrownBy(session.gs::prepareSecondAdmission)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Second admission has already been prepared");
       var secondLease =
           session
               .client
@@ -1490,40 +1493,49 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
     @Override
     public void close() throws Exception {
-      try {
-        try {
-          if (capacityClient != null) capacityClient.close();
-        } finally {
-          try {
-            stopCapacityServer();
-          } finally {
+      closeFixtureResources(
+          () -> {
+            if (capacityClient != null) capacityClient.close();
+          },
+          this::stopCapacityServer,
+          () -> {
             if (client != null) client.close();
-          }
-        }
-      } finally {
-        try {
-          if (accountServer != null) {
-            accountServer.shutdownNow();
-            if (!accountServer.awaitTermination(5, TimeUnit.SECONDS))
-              throw new IllegalStateException("Account teardown timed out");
-          }
-        } finally {
-          try {
-            if (finalRead != null) finalRead.close();
-          } finally {
-            try {
-              if (reverse != null) reverse.close();
-            } finally {
-              try {
-                if (gs != null) gs.close();
-              } finally {
-                redis.close();
-              }
+          },
+          () -> {
+            if (accountServer != null) {
+              accountServer.shutdownNow();
+              if (!accountServer.awaitTermination(5, TimeUnit.SECONDS))
+                throw new IllegalStateException("Account teardown timed out");
             }
-          }
+          },
+          () -> {
+            if (finalRead != null) finalRead.close();
+          },
+          () -> {
+            if (reverse != null) reverse.close();
+          },
+          () -> {
+            if (gs != null) gs.close();
+          },
+          () -> redis.close());
+    }
+  }
+
+  private static void closeFixtureResources(AutoCloseable... resources) throws Exception {
+    Throwable firstFailure = null;
+    for (AutoCloseable resource : resources) {
+      try {
+        resource.close();
+      } catch (Exception | Error failure) {
+        if (firstFailure == null) {
+          firstFailure = failure;
+        } else if (failure != firstFailure) {
+          firstFailure.addSuppressed(failure);
         }
       }
     }
+    if (firstFailure instanceof Exception exception) throw exception;
+    if (firstFailure instanceof Error error) throw error;
   }
 
   private static void assertPhysicalSession(

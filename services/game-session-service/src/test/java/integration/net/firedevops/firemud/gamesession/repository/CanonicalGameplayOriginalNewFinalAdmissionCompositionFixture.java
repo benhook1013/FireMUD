@@ -83,6 +83,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
   private final AtomicInteger finalReadCalls = new AtomicInteger();
   private final Set<UUID> requestIds = ConcurrentHashMap.newKeySet();
+  private boolean secondAdmissionClaimed;
   private RedisClient administrator;
   private StatefulRedisConnection<byte[], byte[]> administration;
   private RedisClient coordination;
@@ -654,7 +655,11 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return installation;
   }
 
-  public SecondAdmission prepareSecondAdmission() {
+  public synchronized SecondAdmission prepareSecondAdmission() {
+    if (secondAdmissionClaimed) {
+      throw new IllegalStateException("Second admission has already been prepared");
+    }
+    secondAdmissionClaimed = true;
     var admission = new SecondAdmission();
     requestIds.add(admission.requestId());
     return admission;

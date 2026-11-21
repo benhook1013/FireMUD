@@ -10,6 +10,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.jooq.ExecuteContext;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -208,6 +213,49 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
     assertThat(first.tenantRegionTag()).isNotEqualTo(otherGame.tenantRegionTag());
     assertThat(repository.find(source)).contains(first);
     assertThat(repository.find(otherGameSource)).contains(otherGame);
+  }
+
+  @Test
+  void databaseFailureDoesNotCountAsAReplacementRefusal() {
+    var prior =
+        repository.installOwner(
+            source,
+            1L,
+            null,
+            FIRST_LEASE_CORRELATION,
+            "game-session-service",
+            "instance-prior",
+            Instant.parse("2026-10-26T00:00:01Z"));
+    long sequenceBefore = fenceSequenceValue();
+    var failOwnerRead =
+        new DefaultExecuteListener() {
+          @Override
+          public void executeStart(ExecuteContext context) {
+            String statement = context.sql();
+            if (statement != null
+                && statement.contains("game_session_region_runtime_status")
+                && statement.contains("FOR UPDATE")) {
+              throw new DataAccessException("Injected owner-row database failure");
+            }
+          }
+        };
+    var failingRepository =
+        new CanonicalGameplayRegionRuntimeStatusRepository(
+            DSL.using(dsl.configuration().derive(new DefaultExecuteListenerProvider(failOwnerRead))));
+    assertThatThrownBy(
+            () ->
+                installAfterBarrier(
+                    failingRepository,
+                    prior,
+                    SECOND_LEASE_CORRELATION,
+                    "instance-failure",
+                    new CountDownLatch(1),
+                    new CountDownLatch(0)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical Game Session region ownership is unavailable")
+        .hasRootCauseMessage("Injected owner-row database failure");
+    assertThat(repository.find(source)).contains(prior);
+    assertThat(fenceSequenceValue()).isEqualTo(sequenceBefore);
   }
 
   @Test

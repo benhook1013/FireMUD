@@ -933,7 +933,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             throw unavailable();
           }
           // This parent keeps replacement held under the existing owner and scope locks.
-          throw unavailable();
+          throw new ExistingOwnerReplacementRefused();
         } else if (prior != null || expectedRegionEpoch != 1L) {
           throw unavailable();
         }
@@ -1103,6 +1103,15 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static IllegalStateException unavailable(Throwable cause) {
     return new IllegalStateException(
         "Canonical Game Session region ownership is unavailable", cause);
+  }
+
+  /** Internal cause of the unchanged unavailable error for an existing-owner replacement. */
+  static final class ExistingOwnerReplacementRefused extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    private ExistingOwnerReplacementRefused() {
+      super("Canonical Game Session region ownership is unavailable");
+    }
   }
 
   /** Fresh authenticated World assignment supplied by the closed resolver, never caller fields. */
