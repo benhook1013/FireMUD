@@ -343,6 +343,19 @@ def run_transport_session(
             return result
 
 
+def websocket_fail_closed_play_steps(username, password, world, worlds_expect, login_expect):
+    """WebSocket steps until PLAY moves onto the canonical admission chain (#3481).
+
+    The run-owned fixture is canonical-only, so the retired numeric WebSocket PLAY must stay
+    fail-closed after a successful LOGIN; LOOK is proven once PLAY admits through the chain.
+    """
+    return [
+        ("WORLDS", [worlds_expect], "WORLDS"),
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        (f"PLAY {world}", ["ERROR ENTITLEMENT_UNAVAILABLE"], "PLAY"),
+    ]
+
+
 def login_play_look_steps(
     username,
     password,
