@@ -1,10 +1,14 @@
 package net.firedevops.firemud.gamesession.dto;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 
-/** Immutable catalog evidence for one public-production realm; it is not admission authority. */
+/**
+ * Immutable catalog evidence for one public-production realm; it is not admission authority. A
+ * run-owned fixture row carries its retained sealed fixture policy; Human rows carry none.
+ */
 public record CanonicalRealmCatalogSnapshot(
     String targetNamespace,
     UUID tenantId,
@@ -22,8 +26,103 @@ public record CanonicalRealmCatalogSnapshot(
     UUID creationRequestId,
     String requestDigest,
     String receiptDigest,
-    IntakeReceipt sourceIntakeReceipt) {
+    IntakeReceipt sourceIntakeReceipt,
+    FixturePolicy fixturePolicy) {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
+
+  /**
+   * Catalog-retained run-owned fixture policy request bytes and its owner seal. Structural copy
+   * only; the catalog repository independently verified it on readback.
+   */
+  public record FixturePolicy(
+      byte[] requestBytes,
+      UUID sealOperationId,
+      String sealRequestDigest,
+      String sealEvidenceDigest) {
+    public FixturePolicy {
+      Objects.requireNonNull(requestBytes, "requestBytes");
+      if (requestBytes.length == 0) {
+        throw new IllegalArgumentException("Fixture policy request bytes are required");
+      }
+      requestBytes = requestBytes.clone();
+      requireNonNil(sealOperationId, "sealOperationId");
+      Objects.requireNonNull(sealRequestDigest, "sealRequestDigest");
+      Objects.requireNonNull(sealEvidenceDigest, "sealEvidenceDigest");
+    }
+
+    @Override
+    public byte[] requestBytes() {
+      return requestBytes.clone();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof FixturePolicy that
+          && Arrays.equals(requestBytes, that.requestBytes)
+          && sealOperationId.equals(that.sealOperationId)
+          && sealRequestDigest.equals(that.sealRequestDigest)
+          && sealEvidenceDigest.equals(that.sealEvidenceDigest);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(
+          Arrays.hashCode(requestBytes), sealOperationId, sealRequestDigest, sealEvidenceDigest);
+    }
+
+    @Override
+    public String toString() {
+      return "FixturePolicy[sealOperationId="
+          + sealOperationId
+          + ", sealEvidenceDigest="
+          + sealEvidenceDigest
+          + "]";
+    }
+  }
+
+  /** Human catalog row without a run-owned fixture policy. */
+  public CanonicalRealmCatalogSnapshot(
+      String targetNamespace,
+      UUID tenantId,
+      String tenantSlug,
+      String worldSlug,
+      UUID realmId,
+      String realmSlug,
+      String realmDisplayName,
+      boolean visible,
+      boolean publicProduction,
+      String stateScope,
+      UUID playableStateNamespaceId,
+      String characterCreationPolicy,
+      long catalogRevision,
+      UUID creationRequestId,
+      String requestDigest,
+      String receiptDigest,
+      IntakeReceipt sourceIntakeReceipt) {
+    this(
+        targetNamespace,
+        tenantId,
+        tenantSlug,
+        worldSlug,
+        realmId,
+        realmSlug,
+        realmDisplayName,
+        visible,
+        publicProduction,
+        stateScope,
+        playableStateNamespaceId,
+        characterCreationPolicy,
+        catalogRevision,
+        creationRequestId,
+        requestDigest,
+        receiptDigest,
+        sourceIntakeReceipt,
+        null);
+  }
+
+  public boolean isRunOwnedFixture() {
+    return fixturePolicy != null;
+  }
 
   public CanonicalRealmCatalogSnapshot {
     Objects.requireNonNull(targetNamespace, "targetNamespace");
