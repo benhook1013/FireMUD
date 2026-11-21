@@ -102,6 +102,15 @@ runs:
         name: test-logs-${{ inputs.module }}-${{ inputs.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
         path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', inputs.module) }}
 
+    - name: 📤 Upload SpotBugs Reports if Failed
+      if: ${{ failure() || cancelled() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: spotbugs-${{ inputs.module }}-${{ inputs.partition }}-reports-${{ github.sha }}-attempt-${{ github.run_attempt }}
+        path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/reports/spotbugs/' || format('services/{0}/build/reports/spotbugs/', inputs.module) }}
+        if-no-files-found: warn
+        retention-days: 14
+
     - name: 📤 Upload JUnit Test Results
       if: ${{ always() && inputs.module != 'account-service' && inputs.module != 'game-session-service' && inputs.module != 'world-management-service' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

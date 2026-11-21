@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
@@ -16,6 +17,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
   static CanonicalGameplayRegionLeaseOwner compose(
       DSLContext dsl,
       RedisClient coordinationRedis,
+      RedisURI coordinationUri,
       RedisScriptCatalog scriptCatalog,
       CanonicalGameplayRegionIncarnationSource incarnationSource,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
@@ -29,11 +31,13 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
     return new CanonicalGameplayRegionLeaseOwner(
         new CanonicalGameplayBindingInventoryRepository(dsl),
         new CanonicalGameplayRegionRuntimeStatusRepository(dsl),
-        new CanonicalGameplayRegionLeaseRedisOwner(coordinationRedis, scriptCatalog),
+        new CanonicalGameplayRegionLeaseRedisOwner(
+            coordinationRedis, coordinationUri, scriptCatalog),
         incarnationSource,
         Objects.requireNonNull(worldRegionResolver, "worldRegionResolver"),
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity"),
         Objects.requireNonNull(leaseTtl, "leaseTtl"),
-        Objects.requireNonNull(clock, "clock"));
+        Objects.requireNonNull(clock, "clock"),
+        true);
   }
 }
