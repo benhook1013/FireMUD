@@ -129,8 +129,8 @@ with tempfile.TemporaryDirectory(prefix="firemud-trusted-database-images-") as f
     digest = "sha256:" + "a" * 64
     for suffix in ("", "@" + digest):
         expected = {
-            "postgres": "postgres:18" + suffix,
-            "seed": "postgres:18" + suffix,
+            "postgres": "postgres:19" + suffix,
+            "seed": "postgres:19" + suffix,
             "redis": "redis:8.10.2-alpine" + suffix,
         }
         values_path.write_text(yaml.safe_dump({
@@ -265,9 +265,9 @@ if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
 postgres_deployment = named("Deployment", "postgres")
 postgres, postgres_env = env_map(postgres_deployment)
-if postgres_env.get("PGDATA") != "/var/lib/postgresql/18/docker":
+if postgres_env.get("PGDATA") != "/var/lib/postgresql/19/docker":
     raise SystemExit(
-        "PostgreSQL PGDATA did not render as /var/lib/postgresql/18/docker"
+        "PostgreSQL PGDATA did not render as /var/lib/postgresql/19/docker"
     )
 postgres_pod_spec = postgres_deployment["spec"]["template"]["spec"]
 postgres_init_containers = postgres_pod_spec.get("initContainers") or []
@@ -304,16 +304,17 @@ if (
     or '"${data_directory}/global/pg_control"' not in guard_script
     or '"${data_directory}/global"' not in guard_script
 ):
-    raise SystemExit("PostgreSQL data-layout guard did not inspect retained and PostgreSQL 18 layout markers")
+    raise SystemExit("PostgreSQL data-layout guard did not inspect retained and PostgreSQL 19 layout markers")
 for layout, expected_returncode in (
     ("legacy-root", 1),
     ("legacy-preview", 1),
     ("fresh", 0),
-    ("postgres18", 0),
-    ("postgres18-global-symlink", 1),
+    ("postgres18", 1),
+    ("postgres19", 0),
+    ("postgres19-global-symlink", 1),
     ("unknown", 1),
     ("wrong-major", 1),
-    ("incomplete-postgres18", 1),
+    ("incomplete-postgres19", 1),
 ):
     with tempfile.TemporaryDirectory() as data_root:
         data_root_path = pathlib.Path(data_root)
@@ -323,21 +324,21 @@ for layout, expected_returncode in (
             nested_path = data_root_path / "pgdata"
             nested_path.mkdir()
             (nested_path / "PG_VERSION").write_text("16\n")
-        elif layout in {"postgres18", "wrong-major", "incomplete-postgres18"}:
-            current_path = data_root_path / "18" / "docker"
+        elif layout in {"postgres18", "postgres19", "wrong-major", "incomplete-postgres19"}:
+            current_path = data_root_path / ("18" if layout == "postgres18" else "19") / "docker"
             current_path.mkdir(parents=True)
             (current_path / "PG_VERSION").write_text(
-                "16\n" if layout == "wrong-major" else "18\n"
+                "18\n" if layout in {"postgres18", "wrong-major"} else "19\n"
             )
-            if layout != "incomplete-postgres18":
+            if layout != "incomplete-postgres19":
                 (current_path / "base").mkdir()
                 global_path = current_path / "global"
                 global_path.mkdir()
                 (global_path / "pg_control").write_text("control")
-        elif layout == "postgres18-global-symlink":
-            current_path = data_root_path / "18" / "docker"
+        elif layout == "postgres19-global-symlink":
+            current_path = data_root_path / "19" / "docker"
             current_path.mkdir(parents=True)
-            (current_path / "PG_VERSION").write_text("18\n")
+            (current_path / "PG_VERSION").write_text("19\n")
             (current_path / "base").mkdir()
             actual_global_path = current_path / "actual-global"
             actual_global_path.mkdir()

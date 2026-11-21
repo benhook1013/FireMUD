@@ -16,7 +16,7 @@ POSTGRES_DUMP_CLIENT_IMAGE="$(awk '$1 == "FROM" { print $2 }' "$POSTGRES_DUMP_DO
 
 [[ -x "$POSTGRES_LAYOUT_ENTRYPOINT" ]] || fail "PostgreSQL layout entrypoint must be executable"
 
-POSTGRES18_IMAGE="$(python3 - "$ROOT_DIR" "$POSTGRES_DUMP_CLIENT_IMAGE" <<'PY'
+POSTGRES19_IMAGE="$(python3 - "$ROOT_DIR" "$POSTGRES_DUMP_CLIENT_IMAGE" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -29,12 +29,12 @@ expected_dump_image = sys.argv[2]
 compose = yaml.safe_load((root / "docker/docker-compose.yml").read_text())
 postgres = compose["services"]["postgres"]
 expected_image = postgres.get("image")
-if not isinstance(expected_image, str) or not re.fullmatch(r"postgres:18@sha256:[0-9a-f]{64}", expected_image):
-    raise SystemExit("local Compose PostgreSQL image must be an exact digest-pinned PostgreSQL 18 reference")
+if not isinstance(expected_image, str) or not re.fullmatch(r"postgres:19@sha256:[0-9a-f]{64}", expected_image):
+    raise SystemExit("local Compose PostgreSQL image must be an exact digest-pinned PostgreSQL 19 reference")
 if postgres.get("entrypoint") != ["/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh"]:
     raise SystemExit("local Compose PostgreSQL must run its pre-entrypoint data-layout guard")
-if postgres.get("environment", {}).get("PGDATA") != "/var/lib/postgresql/18/docker":
-    raise SystemExit("local Compose PGDATA must use the PostgreSQL 18 image layout")
+if postgres.get("environment", {}).get("PGDATA") != "/var/lib/postgresql/19/docker":
+    raise SystemExit("local Compose PGDATA must use the PostgreSQL 19 image layout")
 if "postgres-data:/var/lib/postgresql" not in postgres.get("volumes", []):
     raise SystemExit("local Compose must preserve and remount its postgres-data volume at /var/lib/postgresql")
 if "./postgres-data-layout-entrypoint.sh:/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh:ro" not in postgres.get("volumes", []):
@@ -46,9 +46,9 @@ hosted_values = yaml.safe_load(
     (root / "k8s/helm/firemud/values-hosted-shared.example.yaml").read_text()
 )["previewStack"]
 if hosted_values["postgres"]["image"] != expected_image:
-    raise SystemExit("hosted preview PostgreSQL image does not use the pinned PostgreSQL 18 proposal")
+    raise SystemExit("hosted preview PostgreSQL image does not use the pinned PostgreSQL 19 proposal")
 if hosted_values["seed"]["image"] != expected_image:
-    raise SystemExit("hosted preview seed PostgreSQL image does not use the pinned PostgreSQL 18 proposal")
+    raise SystemExit("hosted preview seed PostgreSQL image does not use the pinned PostgreSQL 19 proposal")
 
 cronjob = next(
     document
@@ -58,7 +58,7 @@ cronjob = next(
 cronjob_container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
 cron_image = cronjob_container["image"]
 if cron_image != expected_image:
-    raise SystemExit("scheduled PostgreSQL dump client does not use the pinned PostgreSQL 18 proposal")
+    raise SystemExit("scheduled PostgreSQL dump client does not use the pinned PostgreSQL 19 proposal")
 if cronjob_container.get("command") != ["/bin/bash", "/scripts/pg-dump.sh"]:
     raise SystemExit("scheduled PostgreSQL dump client must invoke its mounted ConfigMap script with bash")
 dump_script = next(
@@ -79,8 +79,8 @@ if len(from_images) != 1:
     raise SystemExit("the Compose dump Dockerfile must have one unambiguous PostgreSQL base image")
 if from_images[0] != expected_dump_image:
     raise SystemExit("the Compose dump proof image must derive from the Dockerfile's exact FROM reference")
-if not re.fullmatch(r"postgres:18@sha256:[0-9a-f]{64}", expected_dump_image):
-    raise SystemExit("the Compose dump Dockerfile must pin its PostgreSQL 18 base image by digest")
+if not re.fullmatch(r"postgres:19@sha256:[0-9a-f]{64}", expected_dump_image):
+    raise SystemExit("the Compose dump Dockerfile must pin its PostgreSQL 19 base image by digest")
 
 for path in (
     "docker/docker-compose.yml",
@@ -114,22 +114,27 @@ assert_layout() {
       printf '16\n' >"$fixture_dir/pgdata/PG_VERSION"
       ;;
     unknown) mkdir -p "$fixture_dir/lost-data" ;;
-    wrong-major|incomplete-postgres18|postgres18|postgres18-with-sibling|postgres18-with-global-symlink)
-      mkdir -p "$fixture_dir/18/docker"
-      printf '%s\n' "$([[ "$fixture" == wrong-major ]] && printf '16' || printf '18')" \
-        >"$fixture_dir/18/docker/PG_VERSION"
-      if [[ "$fixture" != incomplete-postgres18 ]]; then
-        mkdir -p "$fixture_dir/18/docker/base" "$fixture_dir/18/docker/global"
-        printf 'control\n' >"$fixture_dir/18/docker/global/pg_control"
+    postgres18)
+      mkdir -p "$fixture_dir/18/docker/base" "$fixture_dir/18/docker/global"
+      printf '18\n' >"$fixture_dir/18/docker/PG_VERSION"
+      printf 'control\n' >"$fixture_dir/18/docker/global/pg_control"
+      ;;
+    wrong-major|incomplete-postgres19|postgres19|postgres19-with-sibling|postgres19-with-global-symlink)
+      mkdir -p "$fixture_dir/19/docker"
+      printf '%s\n' "$([[ "$fixture" == wrong-major ]] && printf '18' || printf '19')" \
+        >"$fixture_dir/19/docker/PG_VERSION"
+      if [[ "$fixture" != incomplete-postgres19 ]]; then
+        mkdir -p "$fixture_dir/19/docker/base" "$fixture_dir/19/docker/global"
+        printf 'control\n' >"$fixture_dir/19/docker/global/pg_control"
       fi
-      if [[ "$fixture" == postgres18-with-sibling ]]; then
+      if [[ "$fixture" == postgres19-with-sibling ]]; then
         touch "$fixture_dir/unexpected"
       fi
-      if [[ "$fixture" == postgres18-with-global-symlink ]]; then
-        mkdir -p "$fixture_dir/18/docker/other-global"
-        printf 'control\n' >"$fixture_dir/18/docker/other-global/pg_control"
-        rm -rf -- "$fixture_dir/18/docker/global"
-        ln -s other-global "$fixture_dir/18/docker/global"
+      if [[ "$fixture" == postgres19-with-global-symlink ]]; then
+        mkdir -p "$fixture_dir/19/docker/other-global"
+        printf 'control\n' >"$fixture_dir/19/docker/other-global/pg_control"
+        rm -rf -- "$fixture_dir/19/docker/global"
+        ln -s other-global "$fixture_dir/19/docker/global"
       fi
       ;;
     *) fail "unknown PostgreSQL data layout fixture: $fixture" ;;
@@ -155,11 +160,12 @@ assert_layout "empty fresh storage" 0 empty ""
 assert_layout "legacy Compose root cluster" 1 legacy-root "legacy root PG_VERSION"
 assert_layout "legacy preview pgdata cluster" 1 legacy-preview "legacy nested PG_VERSION"
 assert_layout "unknown nonempty layout" 1 unknown "unrecognized nonempty data layout"
-assert_layout "wrong-major versioned child" 1 wrong-major "expected PostgreSQL major 18"
-assert_layout "incomplete PostgreSQL 18 child" 1 incomplete-postgres18 "is incomplete"
-assert_layout "PostgreSQL 18 child with unknown sibling" 1 postgres18-with-sibling "unrecognized nonempty data layout"
-assert_layout "PostgreSQL 18 child with symlinked global directory" 1 postgres18-with-global-symlink "unsafe cluster markers"
-assert_layout "valid PostgreSQL 18 child" 0 postgres18 ""
+assert_layout "retained PostgreSQL 18 child" 1 postgres18 "unrecognized nonempty data layout"
+assert_layout "wrong-major versioned child" 1 wrong-major "expected PostgreSQL major 19"
+assert_layout "incomplete PostgreSQL 19 child" 1 incomplete-postgres19 "is incomplete"
+assert_layout "PostgreSQL 19 child with unknown sibling" 1 postgres19-with-sibling "unrecognized nonempty data layout"
+assert_layout "PostgreSQL 19 child with symlinked global directory" 1 postgres19-with-global-symlink "unsafe cluster markers"
+assert_layout "valid PostgreSQL 19 child" 0 postgres19 ""
 
 run_docker_proof() (
   run_token=
@@ -333,9 +339,9 @@ PY
     --volume "$source_volume:/var/lib/postgresql:ro" \
     --volume "$POSTGRES_LAYOUT_ENTRYPOINT:/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh:ro" \
     --entrypoint /usr/local/bin/firemud-postgres-data-layout-entrypoint.sh \
-    "$POSTGRES18_IMAGE" --check-layout /var/lib/postgresql \
-    >"$cleanup_dir/legacy-guard.log" 2>&1 && fail "the PostgreSQL 18 guard accepted a retained PostgreSQL 16 root cluster"
-  grep -Fq "legacy root PG_VERSION" "$cleanup_dir/legacy-guard.log" || fail "the PostgreSQL 18 guard did not identify the retained root cluster"
+    "$POSTGRES19_IMAGE" --check-layout /var/lib/postgresql \
+    >"$cleanup_dir/legacy-guard.log" 2>&1 && fail "the PostgreSQL 19 guard accepted a retained PostgreSQL 16 root cluster"
+  grep -Fq "legacy root PG_VERSION" "$cleanup_dir/legacy-guard.log" || fail "the PostgreSQL 19 guard did not identify the retained root cluster"
 
   # This executes the helper against the Dockerfile's exact PostgreSQL base image; it does not build or prove the cron image's packaging layers.
   # Both dump-only clients use the runner identity so run-owned artifacts remain host-readable and removable.
@@ -371,7 +377,7 @@ PY
     --env FIREMUD_POSTGRES_DB=firemud \
     --env "PGPASSWORD=$password" \
     --entrypoint /bin/bash \
-    "$POSTGRES18_IMAGE" /scripts/pg-dump.sh \
+    "$POSTGRES19_IMAGE" /scripts/pg-dump.sh \
     >"$cleanup_dir/k8s-cronjob-backup.log" 2>&1 || {
       report_client_failure "Kubernetes PostgreSQL dump" "$cleanup_dir/k8s-cronjob-backup.log"
       fail "the actual Kubernetes PostgreSQL dump ConfigMap script did not complete in its pinned image"
@@ -422,17 +428,17 @@ AWS
     --env POSTGRES_DB=firemud \
     --env POSTGRES_USER=firemud \
     --env "POSTGRES_PASSWORD=$password" \
-    "$POSTGRES18_IMAGE" postgres -c max_connections=200 >/dev/null
+    "$POSTGRES19_IMAGE" postgres -c max_connections=200 >/dev/null
   wait_for_postgres "$target_container" "$password"
   target_data_directory="$(docker exec "$target_container" psql -Atq -U firemud -d firemud -c 'SHOW data_directory')"
-  [[ "$target_data_directory" == "/var/lib/postgresql/18/docker" ]] || fail "the PostgreSQL 18 target did not use its versioned data directory"
+  [[ "$target_data_directory" == "/var/lib/postgresql/19/docker" ]] || fail "the PostgreSQL 19 target did not use its versioned data directory"
 
   docker run --rm \
     --volume "$target_volume:/var/lib/postgresql:ro" \
     --volume "$POSTGRES_LAYOUT_ENTRYPOINT:/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh:ro" \
     --entrypoint /usr/local/bin/firemud-postgres-data-layout-entrypoint.sh \
-    "$POSTGRES18_IMAGE" --check-layout /var/lib/postgresql \
-    >"$cleanup_dir/current-guard.log" 2>&1 || fail "the PostgreSQL 18 guard rejected a complete versioned target cluster"
+    "$POSTGRES19_IMAGE" --check-layout /var/lib/postgresql \
+    >"$cleanup_dir/current-guard.log" 2>&1 || fail "the PostgreSQL 19 guard rejected a complete versioned target cluster"
 
   bad_restore_log="$cleanup_dir/restore-${bad_key##*/}.log"
   if run_logical_restore "$network_name" "$bad_key" "$aws_stub" "$backup_dir" "$cleanup_dir" "$password"; then
@@ -454,14 +460,14 @@ AWS
   good_restore_log="$cleanup_dir/restore-${good_key##*/}.log"
   if ! run_logical_restore "$network_name" "$good_key" "$aws_stub" "$backup_dir" "$cleanup_dir" "$password"; then
     report_client_failure "canonical scheduled PostgreSQL logical restore" "$good_restore_log"
-    fail "the canonical scheduled logical restore did not import into the separate PostgreSQL 18 target"
+    fail "the canonical scheduled logical restore did not import into the separate PostgreSQL 19 target"
   fi
   actual_marker="$(docker exec "$target_container" psql -Atq -U firemud -d firemud -c 'SELECT marker FROM public.postgres18_upgrade_probe WHERE id = 1')"
-  [[ "$actual_marker" == "$marker" ]] || fail "the PostgreSQL 18 target did not retain the logical backup's seeded data"
+  [[ "$actual_marker" == "$marker" ]] || fail "the PostgreSQL 19 target did not retain the logical backup's seeded data"
   [[ "$(docker inspect --format '{{.State.Running}}' "$source_container")" == false ]] \
-    || fail "the PostgreSQL 16 source should remain stopped while the PostgreSQL 18 target is validated"
+    || fail "the PostgreSQL 16 source should remain stopped while the PostgreSQL 19 target is validated"
 
-  echo "PostgreSQL runtime proof passed: the Compose dump helper on its pinned PostgreSQL base image and the Kubernetes PostgreSQL 18 client produced seeded gzip/plain-SQL backups; the original PostgreSQL 16 source stayed intact while the separate PostgreSQL 18 target was restored."
+  echo "PostgreSQL runtime proof passed: the Compose dump helper on its pinned PostgreSQL base image and the Kubernetes PostgreSQL 19 client produced seeded gzip/plain-SQL backups; the original PostgreSQL 16 source stayed intact while the separate PostgreSQL 19 target was restored."
 )
 
 assert_proof_cleanup_lifecycle() (
