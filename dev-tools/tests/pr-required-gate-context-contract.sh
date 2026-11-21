@@ -3508,6 +3508,9 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const preMergeRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Current default trusted refresh definition\n")]);
+const canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
+  .update(preMergeRefreshBytes).digest("hex");
 const previousRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Previous trusted refresh definition\n")]);
 const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
   .update(previousRefreshBytes).digest("hex");
@@ -3564,10 +3567,11 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       }}}};
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    "canonicalRuntimeWorkflowSha256", "canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256",
+    "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
-      canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+      canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256, canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
@@ -3683,6 +3687,11 @@ function markerAccepted(overrides = {}) {
     }, event), true, "exact old fail-red default-branch producer remains a diagnostic exception only");
   }
   assert.equal(await verify(() => {}, "repository_dispatch"), true);
+  const usePreMergeRefresh = data => Object.assign(data.definitions[workflowPath], {
+    content: preMergeRefreshBytes.toString("base64"), size: preMergeRefreshBytes.length,
+  });
+  assert.equal(await verify(usePreMergeRefresh, "repository_dispatch", false), true,
+    "normal trusted refresh accepts the immutable pre-merge default producer");
   const usePreviousRefresh = data => Object.assign(data.definitions[workflowPath], {
     content: previousRefreshBytes.toString("base64"), size: previousRefreshBytes.length,
   });
