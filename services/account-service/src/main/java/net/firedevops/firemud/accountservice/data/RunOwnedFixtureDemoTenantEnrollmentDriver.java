@@ -13,6 +13,7 @@ import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitle
 import net.firedevops.firemud.accountservice.service.FreshTenantIdentityEnrollmentService;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,7 +25,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Enrolls the run-owned Compose fixture's fresh Game Design tenant into Account and provisions its
  * non-paid demo entitlement, so public REALMS and JOIN can admit players to it. The fixture receipt
  * only locates the creation; Account imports the authenticated Game Design readback. Retries until
- * Game Design has committed the fixture, and replays idempotently after a restart.
+ * Game Design has committed the fixture, and replays idempotently after a restart. Under the pre-v1
+ * gate waivers it also provisions the tenant's capacity-origin refusal budget for canonical PLAY.
  */
 public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
   private static final Logger LOG =
@@ -33,9 +35,12 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
   private static final int MAX_FILE_BYTES = 16 * 1024;
   private static final DemoTenantEntitlementRequest.Quotas FIXTURE_QUOTAS =
       new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L);
+  static final int PRE_V1_CAPACITY_ORIGIN_REFUSALS = 128;
 
   private final FreshTenantIdentityEnrollmentService enrollment;
   private final AccountDemoTenantEntitlementRepository demos;
+  private final DSLContext dsl;
+  private final boolean preV1RefusalBudget;
   private final TransactionTemplate transaction;
   private final Path capabilityPath;
   private final Path receiptPath;
@@ -46,6 +51,8 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
   public RunOwnedFixtureDemoTenantEnrollmentDriver(
       FreshTenantIdentityEnrollmentService enrollment,
       AccountDemoTenantEntitlementRepository demos,
+      DSLContext dsl,
+      boolean preV1RefusalBudget,
       PlatformTransactionManager transactions,
       Path capabilityPath,
       Path receiptPath,
@@ -53,6 +60,8 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
       String composeProjectName) {
     this.enrollment = Objects.requireNonNull(enrollment, "enrollment");
     this.demos = Objects.requireNonNull(demos, "demos");
+    this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.preV1RefusalBudget = preV1RefusalBudget;
     this.capabilityPath = Objects.requireNonNull(capabilityPath, "capabilityPath");
     this.receiptPath = Objects.requireNonNull(receiptPath, "receiptPath");
     this.runId = requireText(runId, "runId");
@@ -111,7 +120,18 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
             true,
             true,
             FIXTURE_QUOTAS);
-    transaction.executeWithoutResult(status -> demos.provision(request, creation));
+    transaction.executeWithoutResult(
+        status -> {
+          demos.provision(request, creation);
+          if (preV1RefusalBudget) {
+            // Pre-v1 gate waiver (ADR 0185): operational capacity refusal budgets are owed.
+            dsl.execute(
+                "INSERT INTO account_capacity_origin_refusal_budget"
+                    + " (tenant_uuid, maximum_refusals) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                creation.canonicalTenantId(),
+                PRE_V1_CAPACITY_ORIGIN_REFUSALS);
+          }
+        });
     return creation;
   }
 

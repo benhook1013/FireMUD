@@ -320,6 +320,49 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
   }
 
   /**
+   * Loads or allocates the canonical mapping for one tenant this workload has durably claimed,
+   * ahead of its first transition, so tenant-keyed budget rows can reference it. It uses the same
+   * lock order, claim check and tag derivation as the transition paths and returns no Assignment.
+   */
+  String tagForClaimedTenant(UUID tenantId) {
+    requireNonNil(tenantId, "tenantId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          requireTenantClaim(transaction, tenantId);
+          transaction.execute(
+              "INSERT INTO "
+                  + MAPPING
+                  + " (tenant_id, allocation_version, tenant_gameplay_tag) VALUES (?, ?, ?)"
+                  + " ON CONFLICT DO NOTHING",
+              tenantId,
+              allocationVersion,
+              tagFor(tenantId, allocationVersion));
+          Record mapping =
+              transaction.fetchOne(
+                  "SELECT allocation_version, tenant_gameplay_tag FROM "
+                      + MAPPING
+                      + " WHERE tenant_id = ? FOR UPDATE",
+                  tenantId);
+          if (mapping == null) {
+            throw conflict("A gameplay tag candidate is already owned by a different tenant");
+          }
+          Integer storedVersion = mapping.get("allocation_version", Integer.class);
+          String storedTag = mapping.get("tenant_gameplay_tag", String.class);
+          if (storedVersion == null || storedVersion <= 0) {
+            throw conflict("Persisted tenant gameplay tag allocation version is invalid");
+          }
+          requireCanonicalTag(storedTag);
+          if (!tagFor(tenantId, storedVersion).equals(storedTag)) {
+            throw conflict(
+                "Persisted tenant tag differs from its immutable tenant/version assignment");
+          }
+          return storedTag;
+        });
+  }
+
+  /**
    * Narrow package-private collision path for native database proof. The tenant still comes from
    * the exact persisted transition; only the candidate output is controlled to exercise the global
    * unique-tag conflict branch.
