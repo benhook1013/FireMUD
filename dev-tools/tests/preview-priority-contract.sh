@@ -2684,7 +2684,7 @@ test ! -e "$FAKE_DELETE_LOG"
 trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
-RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
+RECONCILER_RUN="$ROOT_DIR/dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 preview_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 preview_merge_sha=cccccccccccccccccccccccccccccccccccccccc
@@ -2694,10 +2694,6 @@ preview_merge_sha=cccccccccccccccccccccccccccccccccccccccc
 preview_image_tag="${preview_base_sha}"
 stacked_preview_image_tag="pr-merge-${preview_merge_sha}"
 export DEFAULT_BRANCH=develop
-extract_workflow_step_run \
-  "$reconciler_workflow" \
-  "Dispatch preview deploys for drifted PRs" \
-  "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
 grep -Fq 'repair_requested_tuple() {' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal shell and jq expressions in workflow source.
@@ -4322,6 +4318,7 @@ fi
 if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   "$trusted_workflow" \
   "$reconciler_workflow" \
+  "$RECONCILER_RUN" \
   "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
   echo "A live preview callsite duplicates the centralized label predicate" >&2
@@ -4357,6 +4354,15 @@ assert set(preview["jobs"]) == {
 }
 assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
+reconciler_steps = reconciler["jobs"]["reconcile-previews"]["steps"]
+checkout = reconciler_steps[0]
+assert checkout["uses"].startswith("actions/checkout@")
+assert checkout["with"] == {
+    "ref": "${{ github.workflow_sha }}",
+    "persist-credentials": False,
+}
+dispatch = next(step for step in reconciler_steps if step.get("name") == "Dispatch preview deploys for drifted PRs")
+assert dispatch["run"] == "bash ./dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 reconciler_manager_write = next(
     step
     for step in reconciler["jobs"]["reconcile-previews"]["steps"]
@@ -4383,34 +4389,34 @@ assert not any(
 )
 PY
 grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
-grep -q 'preview dispatch cycle already stopped after a request attempt' "$reconciler_workflow"
+grep -q 'Skipping ordinary PR #' "$RECONCILER_RUN"
+grep -q 'preview dispatch cycle already stopped after a request attempt' "$RECONCILER_RUN"
 # Proof repair is bounded by the exact deployed tuple and must not duplicate an
 # active source or trusted consumer run.
-grep -Fq 'firemud.dev/proof-retry-count' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-base-sha' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-head-sha' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-merge-sha' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-image-tag' "$reconciler_workflow"
-grep -Fq 'namespace proof-retry evidence is malformed' "$reconciler_workflow"
-grep -Fq 'proof retry budget exhausted' "$reconciler_workflow"
+grep -Fq 'firemud.dev/proof-retry-count' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-base-sha' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-head-sha' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-merge-sha' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-image-tag' "$RECONCILER_RUN"
+grep -Fq 'namespace proof-retry evidence is malformed' "$RECONCILER_RUN"
+grep -Fq 'proof retry budget exhausted' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal resource-version fencing.
-grep -Fq -- '--resource-version "${namespace_resource_version}"' "$reconciler_workflow"
+grep -Fq -- '--resource-version "${namespace_resource_version}"' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert canonical workflow lookup and native custody.
-grep -Fq -- 'actions/workflows/preview.yml" | jq' "$reconciler_workflow"
+grep -Fq -- 'actions/workflows/preview.yml" | jq' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the literal jq workflow and repository checks.
-grep -Fq -- '.workflow_id == $workflow_id' "$reconciler_workflow"
+grep -Fq -- '.workflow_id == $workflow_id' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the literal jq head repository check.
-grep -Fq -- '.head_repository.full_name == $repository' "$reconciler_workflow"
-grep -Fq 'Skipping proof retry for PR #' "$reconciler_workflow"
+grep -Fq -- '.head_repository.full_name == $repository' "$RECONCILER_RUN"
+grep -Fq 'Skipping proof retry for PR #' "$RECONCILER_RUN"
 grep -Fq "run-name: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title" "$trusted_workflow"
 # shellcheck disable=SC2016 # Assert one fail-closed JSON snapshot feeds each namespace decision.
 grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the initial, repair, pre-dispatch, and compensation snapshots.
-test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 5
+test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$RECONCILER_RUN")" -eq 5
 # shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
-grep -Fq 'requested preview tuple changed during annotation repair check' "$reconciler_workflow"
+grep -Fq 'requested preview tuple changed during annotation repair check' "$RECONCILER_RUN"
 # The janitor keeps explicit kubeconfig selection on the consuming kubectl steps;
 # no preceding restore step may imply a different runner-wide kubeconfig.
 if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then
@@ -4420,31 +4426,23 @@ fi
 # shellcheck disable=SC2016 # Assert explicit kubeconfig selection on janitor consumers.
 grep -Fq 'KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
-grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
+grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.
-grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
+grep -Fq -- '--labels-json "$labels_json"' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert capacity uses centralized validated priority.
 grep -Fq -- 'priority="$(sed -n '\''s/^priority=//p'\'' <<<"$eligibility_output")"' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 # Reject the redundant transported raw-priority field and read placeholder while
 # retaining the leading numeric key used only for stable priority ordering.
-if grep -Fq '_sort_priority' "$reconciler_workflow"; then
+if grep -Fq '_sort_priority' "$RECONCILER_RUN"; then
   echo "reconciler retained a redundant transported raw-priority field" >&2
   exit 1
 fi
-python3 - "$reconciler_workflow" <<'PY'
+python3 - "$RECONCILER_RUN" <<'PY'
 import sys
 from pathlib import Path
 
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-step = next(
-    step
-    for step in workflow["jobs"]["reconcile-previews"]["steps"]
-    if step.get("name") == "Dispatch preview deploys for drifted PRs"
-)
-run = step["run"]
+run = Path(sys.argv[1]).read_text(encoding="utf-8")
 assert run.count('any(. == "preview:priority")') == 1
 assert "then 0 else 1 end" in run
 assert "sort -t $'\\t' -k1,1n -k2,2n" in run
@@ -4471,11 +4469,11 @@ assert eligible_guard < dispatch_guard < namespace_snapshot < base_ref_resolutio
 PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal shell source in the workflow.
-grep -Fq -- '[[ -z "$labels_json" ]] ||' "$reconciler_workflow"
+grep -Fq -- '[[ -z "$labels_json" ]] ||' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal shell source in the workflow.
 grep -Fq -- '! jq -e '\''type == "array"'\'' <<<"$labels_json" >/dev/null' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 
 echo "preview priority contract checks passed"
