@@ -79,6 +79,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final UUID V1_EFFECT_ID = UUID.fromString("10000000-0000-0000-0000-000000000011");
   private static final UUID V1_PRIOR_ATTEMPT_ID =
       UUID.fromString("10000000-0000-0000-0000-000000000012");
+  // Fixed digests from the V1 writer at a066429d194f3ec6d54038f9581183c4943c82ed.
+  // Its canonical digest envelope predates the SQL V2 migration.
+  // Keep the inputs independent of the codec under test so the upgrade catches writer drift.
+  private static final String V1_SCOPE_DIGEST =
+      "ef9bbb81842b83253fcc6e6be7032ee744e563d109e4d0aab35146af85fe2c8f";
+  private static final String V1_EVIDENCE_DIGEST =
+      "3c811a041f71b88c21c1d023b3fa3f489054c14603e333f8ae9edc32f34ef79e";
+  private static final String V1_OPERATION_TUPLE_DIGEST =
+      "926bf0c737455039923849ac17a926440637204c2a4fa7a408f22dcac7c263cf";
+  private static final String V1_PREPARE_EFFECT_PAYLOAD_DIGEST =
+      "2df3d23d85b96b45a6740be38a5edd357bddf15fc5c346cdc921911ecc3b7b63";
   private static final String V1_SCOPE_PAYLOAD =
       """
       {
@@ -1502,18 +1513,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   private static void seedImmutableV1Journal(
       DSLContext seedDsl, boolean claimed, Instant timestamp) {
-    Scope v1Scope = tupleCodec.readScope(V1_SCOPE_PAYLOAD);
-    InitialGameplayReleaseEvidence v1Evidence = tupleCodec.readEvidence(V1_EVIDENCE_PAYLOAD);
-    String scopeDigest = tupleCodec.digest(v1Scope);
-    String evidenceDigest = tupleCodec.digest(v1Evidence);
-    String operationTupleDigest =
-        tupleCodec.operationTupleDigest(v1Scope, V1_LOCK_IDENTITY, v1Evidence);
     String effectPayload =
-        V1_PREPARE_EFFECT_PAYLOAD_TEMPLATE.formatted(V1_SCOPE_PAYLOAD, operationTupleDigest);
-    var effect =
-        tupleCodec.readEffect(
-            EffectKind.PREPARE_PLAYABLE_STATE_FENCED.databaseValue(), effectPayload);
-    String payloadDigest = tupleCodec.digest(effect);
+        V1_PREPARE_EFFECT_PAYLOAD_TEMPLATE.formatted(V1_SCOPE_PAYLOAD, V1_OPERATION_TUPLE_DIGEST);
 
     seedDsl.execute(
         """
@@ -1532,11 +1533,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         V1_PEER_STORAGE_BINDING_PAYLOAD,
         V1_SCOPE_PAYLOAD,
         "immutable-initial-layout-evidence",
-        scopeDigest,
+        V1_SCOPE_DIGEST,
         V1_LOCK_IDENTITY,
         V1_EVIDENCE_PAYLOAD,
         "evidence-owner-record-31",
-        evidenceDigest,
+        V1_EVIDENCE_DIGEST,
         timestamp.atOffset(ZoneOffset.UTC),
         timestamp.atOffset(ZoneOffset.UTC));
 
@@ -1552,8 +1553,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         V1_OUTBOX_ID,
         V1_OPERATION_ID,
         V1_EFFECT_ID,
-        operationTupleDigest,
-        payloadDigest,
+        V1_OPERATION_TUPLE_DIGEST,
+        V1_PREPARE_EFFECT_PAYLOAD_DIGEST,
         effectPayload,
         claimed ? "dispatched" : "pending",
         claimed ? 1 : 0,
