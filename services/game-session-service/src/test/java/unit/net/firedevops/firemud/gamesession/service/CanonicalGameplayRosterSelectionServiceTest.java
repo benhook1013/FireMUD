@@ -1439,6 +1439,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
     when(association.capturedStartingRowVersion()).thenReturn(1L);
     when(association.currentRowVersion()).thenReturn(2L);
     when(association.launchBindingEvidence()).thenReturn(binding);
+    when(association.descriptor()).thenReturn(descriptor);
     when(association.currentGameInstanceStatus())
         .thenReturn(CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.RUNNING);
     CanonicalInitialAdmissionLaunchTarget launch =

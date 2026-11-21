@@ -130,6 +130,32 @@ public class AccountAuthorityGenerationRepository {
     return readScopeState(scope, true);
   }
 
+  /**
+   * Enrolls one never-joined membership scope once, preserving any existing generation. The Account
+   * and tenant scopes must already exist; establishing the scope does not advance the Account
+   * issuance fence.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ScopeState initializeMembershipIfAbsent(UUID accountUuid, UUID tenantUuid) {
+    AuthorityScope scope = AuthorityScope.membership(accountUuid, tenantUuid);
+    validateScope(scope);
+    requireAccountState(accountUuid, true);
+    readScopeState(AuthorityScope.tenant(tenantUuid), true);
+    int inserted =
+        dsl.execute(
+            "INSERT INTO "
+                + GENERATION_TABLE
+                + " (scope_kind, issuer_id, account_uuid, tenant_uuid, generation, source_version) "
+                + "VALUES ('MEMBERSHIP', NULL, ?, ?, 1, 1) "
+                + "ON CONFLICT (account_uuid, tenant_uuid) WHERE scope_kind = 'MEMBERSHIP' DO NOTHING",
+            accountUuid,
+            tenantUuid);
+    if (inserted < 0 || inserted > 1) {
+      throw new IllegalStateException("Account membership authority enrollment was ambiguous");
+    }
+    return readScopeState(scope, true);
+  }
+
   /** Reads one initialized exact scope and fails closed for absent or malformed state. */
   @Transactional(propagation = Propagation.MANDATORY)
   public ScopeState read(AuthorityScope scope) {

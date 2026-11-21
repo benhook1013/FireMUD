@@ -183,8 +183,18 @@ class AccountTenantMembershipRepositoryTest {
     doReturn(73L).when(insertQuery).fetchOne(0, Long.class);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
+    AccountAuthorityGenerationRepository generations =
+        mock(AccountAuthorityGenerationRepository.class);
+    when(generations.initializeMembershipIfAbsent(ACCOUNT_UUID, TENANT_UUID))
+        .thenReturn(
+            new AccountAuthorityGenerationRepository.ScopeState(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    ACCOUNT_UUID, TENANT_UUID),
+                1L,
+                1L,
+                null));
     AccountTenantMembershipRepository repository =
-        new AccountTenantMembershipRepository(dsl, accounts, tenants, pairs);
+        new AccountTenantMembershipRepository(dsl, accounts, tenants, pairs, generations);
 
     AccountTenantMembership result =
         repository.createFreshMembershipForJoin(ACCOUNT_UUID, TENANT_UUID);
@@ -198,6 +208,7 @@ class AccountTenantMembershipRepositoryTest {
     assertThat(result.getAuthorityProvenance()).isEqualTo("EXPLICIT_JOIN");
     assertThat(result.isGameplayAdmissionAllowed()).isTrue();
     verify(pairs).enrollAbsence(ACCOUNT_UUID, TENANT_UUID, freshProvenance());
+    verify(generations).initializeMembershipIfAbsent(ACCOUNT_UUID, TENANT_UUID);
     verify(pairs, org.mockito.Mockito.never()).commitTransition(any(), any());
     var order = inOrder(accounts, dsl, tenants, pairs);
     order.verify(accounts).findByAccountUuid(ACCOUNT_UUID);

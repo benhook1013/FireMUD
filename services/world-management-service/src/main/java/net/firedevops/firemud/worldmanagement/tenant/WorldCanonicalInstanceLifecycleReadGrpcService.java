@@ -69,6 +69,15 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
     WorldCanonicalInstanceLifecycleEvidence evidence;
     try {
       evidence = repository.read(readRequest).orElse(null);
+      if (evidence == null) {
+        var fixture = repository.readRunOwnedFixture(readRequest).orElse(null);
+        if (fixture != null) {
+          responseObserver.onNext(
+              WorldCanonicalInstanceLifecycleGrpcCodec.toFixtureResponse(readRequest, fixture));
+          responseObserver.onCompleted();
+          return;
+        }
+      }
     } catch (
         WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException
             inconsistent) {

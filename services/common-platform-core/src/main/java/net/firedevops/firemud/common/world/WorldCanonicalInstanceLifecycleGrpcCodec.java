@@ -61,6 +61,39 @@ public final class WorldCanonicalInstanceLifecycleGrpcCodec {
     return evidence;
   }
 
+  /** Encodes the run-owned fixture variant for the exact caller request. */
+  public static ReadWorldCanonicalInstanceLifecycleResponse toFixtureResponse(
+      Request request, WorldRunOwnedFixtureLifecycleEvidence evidence) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(evidence, "evidence");
+    if (!request.equals(evidence.request())) {
+      throw new IllegalArgumentException(
+          "World fixture lifecycle evidence differs from exact read request");
+    }
+    return ReadWorldCanonicalInstanceLifecycleResponse.newBuilder()
+        .setCanonicalResponseBytes(ByteString.copyFrom(evidence.canonicalBytes()))
+        .build();
+  }
+
+  /** Validates the closed run-owned fixture response and its exact request echo. */
+  public static WorldRunOwnedFixtureLifecycleEvidence fromFixtureResponse(
+      Request request, ReadWorldCanonicalInstanceLifecycleResponse response) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(response, "response");
+    requireNoUnknownFields(response, "ReadWorldCanonicalInstanceLifecycleResponse");
+    if (response.getCanonicalResponseBytes().isEmpty()) {
+      throw new IllegalArgumentException("World fixture lifecycle response bytes are required");
+    }
+    WorldRunOwnedFixtureLifecycleEvidence evidence =
+        WorldRunOwnedFixtureLifecycleEvidence.fromStored(
+            response.getCanonicalResponseBytes().toByteArray());
+    if (!request.equals(evidence.request())) {
+      throw new IllegalArgumentException(
+          "World fixture lifecycle response changed exact read request");
+    }
+    return evidence;
+  }
+
   private static void requireNoUnknownFields(Message message, String label) {
     if (!message.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalArgumentException(label + " contains unsupported fields");

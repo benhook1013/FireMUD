@@ -89,6 +89,31 @@ public final class WorldCanonicalInstanceLifecycleClient
     }
   }
 
+  /** Reads the exact run-owned fixture lifecycle, whose request carries its provenance digest. */
+  public WorldRunOwnedFixtureLifecycleEvidence readRunOwnedFixture(
+      WorldCanonicalInstanceLifecycleEvidence.Request request, Deadline operationDeadline) {
+    Objects.requireNonNull(request, "request");
+    if (!workloadNamespace.equals(request.targetNamespace())) {
+      throw new IllegalArgumentException(
+          "World canonical lifecycle request must use the configured workload namespace");
+    }
+    var stub = requireStub();
+    var timedStub =
+        operationDeadline == null
+            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            : stub.withDeadline(
+                operationDeadline.minimum(Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
+    var response =
+        timedStub.readWorldCanonicalInstanceLifecycle(
+            WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request));
+    try {
+      return WorldCanonicalInstanceLifecycleGrpcCodec.fromFixtureResponse(request, response);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "World returned invalid run-owned fixture lifecycle evidence", invalid);
+    }
+  }
+
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
     return endpoints.getWorldManagementService();

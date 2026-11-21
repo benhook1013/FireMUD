@@ -59,7 +59,7 @@ public record CanonicalGameplayRosterOwnerReadEvidence(
         .orElseThrow(() -> new IllegalStateException("Exact published policy is unavailable"));
   }
 
-  private static void requireProofMatches(
+  static void requireProofMatches(
       Request request, GameSessionCanonicalInitialAdmissionOwnerProof proof) {
     var hold = proof.holdIdentity().request();
     if (proof.outcome() != GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED

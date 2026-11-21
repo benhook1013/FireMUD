@@ -572,6 +572,9 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       if (!resolved.strictSelector().equals(result.selector())
           || !resolved.currentTarget().equals(result.currentTarget())) throw targetPrecondition();
       requireSupportedTarget(result.currentTarget());
+      // The entitlement capture binds Human published and World lifecycle evidence; the run-owned
+      // fixture has neither, so its PLAY entitlement remains unsupported until its own schema.
+      if (result.isRunOwnedFixture()) throw targetPrecondition();
       return result;
     } catch (CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException failure) {
       throw unavailable();
