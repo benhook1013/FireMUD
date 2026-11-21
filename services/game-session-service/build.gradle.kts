@@ -190,6 +190,7 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalPublishedAdmissionActualOwnerCompositionFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledInitialObservationFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledRegionTransferObservationFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionTestFixture*.class")
         include("net/firedevops/firemud/gamesession/service/InitialGameplayLoginPhysicalCompositionFixture*.class")
     }
@@ -218,6 +219,8 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/game-session-original-new-candidate-close.json")
         include("redis/lua/game-session-original-new-final-admission.lua")
         include("redis/scripts/game-session-original-new-final-admission.json")
+        include("redis/lua/game-session-region-transfer-receipt.lua")
+        include("redis/scripts/game-session-region-transfer-receipt.json")
     }
     from("src/main/resources") {
         include("redis/lua/game-session-region-lease-acquire.lua")

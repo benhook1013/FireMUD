@@ -66,6 +66,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final long absoluteDeadlineMillis;
   private final AtomicBoolean cancelled = new AtomicBoolean();
   private final CompletableFuture<Object> result = new CompletableFuture<>();
+  private final CompletableFuture<Void> workerLifetime = new CompletableFuture<>();
   private final Object resources = new Object();
   private final Object lifecycle = new Object();
   private final Map<Connection, OwnedConnection> connections = new IdentityHashMap<>();
@@ -73,6 +74,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private Statement active;
   private OwnedConnection activeConnection;
   private int outstandingAsyncCloses;
+  private int outstandingRetainedWork;
   private boolean workerDone;
   private boolean cancellationStarted;
   private boolean cancellationDone;
@@ -177,10 +179,14 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                 if (failure == null) failure = cleanupFailure;
                 else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
               }
-              budget.caller.detach(previous);
-              synchronized (budget.lifecycle) {
-                budget.workerDone = true;
-                budget.releaseIfFinished();
+              try {
+                budget.caller.detach(previous);
+              } finally {
+                synchronized (budget.lifecycle) {
+                  budget.workerDone = true;
+                  budget.releaseIfFinished();
+                }
+                budget.workerLifetime.complete(null);
               }
             }
             if (failure != null) budget.result.completeExceptionally(failure);
@@ -276,6 +282,25 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     });
   }
 
+  /** Actual worker exit, including SQL resource cleanup; never the caller timeout. */
+  CompletableFuture<Void> workerLifetime() {
+    return workerLifetime;
+  }
+
+  /** Keeps this operation's permits until borrowed work has actually exited. */
+  void retainUntilCompletion(CompletableFuture<?> work) {
+    Objects.requireNonNull(work);
+    synchronized (lifecycle) {
+      outstandingRetainedWork++;
+    }
+    work.whenComplete((ignored, failure) -> {
+      synchronized (lifecycle) {
+        outstandingRetainedWork--;
+        releaseIfFinished();
+      }
+    });
+  }
+
   /** Waits for one Redis close attempt only through this operation's deadline. */
   void awaitAsyncClose(CompletableFuture<Void> closeAttempt) {
     retainUntilAsyncClose(closeAttempt);
@@ -347,11 +372,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         });
   }
 
-  private void cancel() {
+  void cancel() {
     if (!cancelled.compareAndSet(false, true)) return;
     result.completeExceptionally(unavailable());
     synchronized (lifecycle) {
-      if (workerDone) return;
+      if (workerDone && outstandingRetainedWork == 0) return;
       cancellationStarted = true;
     }
     // At most one cancellation worker per admitted operation. Its exit also owns the permit.
@@ -404,11 +429,17 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     if (failure != null) throw failure;
   }
 
+  /** Releases SQL connections opened by one retained companion operation. */
+  void releaseRetainedWorkConnections() {
+    releaseOutstandingConnections();
+  }
+
   private void releaseIfFinished() {
     if (!released
         && workerDone
         && outstandingConnections.get() == 0
         && outstandingAsyncCloses == 0
+        && outstandingRetainedWork == 0
         && (!cancellationStarted || cancellationDone)) {
       released = true;
       OPERATIONS.release();

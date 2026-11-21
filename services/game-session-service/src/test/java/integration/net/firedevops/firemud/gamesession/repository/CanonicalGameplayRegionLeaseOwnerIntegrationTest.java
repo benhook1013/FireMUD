@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -142,7 +143,50 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void composesInitialLeaseAndHoldsReplacementAcrossSourceChanges() throws Exception {
+  void transferInstallationIncarnationReadReturnsByFrozenDeadlineWhenSourceStalls()
+      throws Exception {
+    WorldFixture world = WorldFixture.open();
+    var blockedSource = new BlockingStableIncarnationSource();
+    var owner =
+        new CanonicalGameplayRegionLeaseOwner(
+            mock(CanonicalGameplayBindingInventoryRepository.class),
+            mock(CanonicalGameplayRegionRuntimeStatusRepository.class),
+            mock(CanonicalGameplayRegionLeaseRedisOwner.class),
+            blockedSource,
+            world.resolver(),
+            new RuntimeIdentity(
+                "game-session-service",
+                "stalled-incarnation",
+                "localhost",
+                Instant.now(),
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image"),
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    var source = source(world.originalEvidence());
+    long deadline = System.currentTimeMillis() + 300L;
+    var transferOwner = mock(CanonicalGameplayRegionOwnerTransferCoordinator.class);
+    long startedAt = System.nanoTime();
+    CompletableFuture<CanonicalGameplayRegionIncarnationSource.StableEvidence> read =
+        CompletableFuture.supplyAsync(
+            () -> owner.readInstallationIncarnation(transferOwner, deadline, source));
+
+    try {
+      assertThat(blockedSource.entered.await(2, TimeUnit.SECONDS)).isTrue();
+      Throwable failure = catchThrowable(() -> read.get(2, TimeUnit.SECONDS));
+      long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+      assertThat(failure).isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThat(failure.getCause())
+          .hasMessage("Original NEW capacity execution budget is unavailable");
+      assertThat(elapsedMillis).isLessThan(2_000L);
+    } finally {
+      blockedSource.release.countDown();
+    }
+  }
+
+  @Test
+  void composesLeaseInstallRevalidationHandoffAndFailClosedSourceChanges() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     ControlledConnectionFailureDataSource dataSource = dataSource();
     CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
@@ -157,15 +201,45 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     try (RedisFixture redis = RedisFixture.open()) {
       var redisOwner =
           org.mockito.Mockito.spy(
-              new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog()));
+              new CanonicalGameplayRegionLeaseRedisOwner(
+                  redis.ownerClient(),
+                  RedisFixture.clientUri(PRINCIPAL, PASSWORD),
+                  redis.catalog()));
       WorldFixture world = WorldFixture.open();
       ControlledStableIncarnationSource incarnationSource = new ControlledStableIncarnationSource();
       var bindingEvidence = provisionalEvidence(world.request());
       var bindingInventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(bindingInventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(bindingEvidence);
+      // Inventory is controlled in this component fixture. Actual transfer SQL still proves
+      // there are no pending executions; populated transfer coverage lives in the handoff suite.
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(2);
+                return read.apply(bindingInventory);
+              })
+          .when(bindingInventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(Clock.class),
+              org.mockito.ArgumentMatchers.anyLong(),
+              org.mockito.ArgumentMatchers.any());
+      when(bindingInventory.readRegionTransferOriginalCandidate(TRANSITION_ID, bindingEvidence))
+          .thenReturn(mock(CanonicalGameplayOriginalNewCandidate.class));
+      var transferClock = Clock.systemUTC();
+      var transferTags = new CanonicalGameplayTenantGameplayTagRepository(dsl, "test", 1);
+      var transfers =
+          new CanonicalGameplayRegionOwnerTransferRepository(dsl, transferClock, transferTags);
+      var transfer =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              dsl,
+              transferClock,
+              transfers,
+              new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                  dsl, redis.ownerClient(), redis.catalog(), transferClock, transferTags),
+              mock(CanonicalGameplayProtectedIncarnationReceiver.class));
 
       var firstOwner =
-          owner(
+          ownerWithLiveClock(
               bindingInventory,
               statusRepository,
               redisOwner,
@@ -204,7 +278,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       when(wrongTargetInventory.readProvisionalCasEvidence(TRANSITION_ID))
           .thenReturn(wrongTargetEvidence);
       var wrongTargetOwner =
-          owner(
+          ownerWithLiveClock(
               wrongTargetInventory,
               statusRepository,
               redisOwner,
@@ -223,7 +297,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       when(wrongEpochInventory.readProvisionalCasEvidence(TRANSITION_ID))
           .thenReturn(wrongEpochEvidence);
       var wrongEpochOwner =
-          owner(
+          ownerWithLiveClock(
               wrongEpochInventory,
               statusRepository,
               redisOwner,
@@ -236,7 +310,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
 
       var unavailableIncarnationOwner =
-          owner(
+          ownerWithLiveClock(
               bindingInventory,
               statusRepository,
               redisOwner,
@@ -404,63 +478,49 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
       assertThat(redis.admin().persist(ascii(initialMetaKey))).isTrue();
 
-      var reused =
-          firstOwner.installForTransition(firstInstallation, TRANSITION_ID, world.request());
-      assertThat(reused.status).isEqualTo(firstStatus);
-      assertThat(reused.grant).isSameAs(firstInstallation.grant);
-      assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
-
-      incarnationSource.changeStorageGeneration("storage-generation-2");
-      assertThatThrownBy(
-              () -> firstOwner.installForTransition(reused, TRANSITION_ID, world.request()))
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      assertThatThrownBy(() -> firstOwner.revalidateBeforeBridge(firstInstallation))
           .isInstanceOf(IllegalStateException.class);
-      incarnationSource.restoreStorageGeneration();
-
-      WorldCanonicalInstanceLifecycleEvidence changed = changedEvidence(world.originalEvidence());
-      for (int read : new int[] {2, 3}) {
-        world.replaceOnRead(read, changed);
-        assertThatThrownBy(
-                () -> firstOwner.installForTransition(reused, TRANSITION_ID, world.request()))
-            .isInstanceOf(IllegalStateException.class);
-        assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
-        assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
-        assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
-      }
-
-      world.setAfterRead(2, dataSource::failConnections);
-      Throwable sqlOutageFailure;
-      try {
-        sqlOutageFailure =
-            catchThrowable(
-                () -> firstOwner.installForTransition(reused, TRANSITION_ID, world.request()));
-      } finally {
-        dataSource.restoreConnections();
-        world.resetReads();
-      }
-      assertThat(sqlOutageFailure)
-          .isInstanceOf(RuntimeException.class)
-          .hasRootCauseInstanceOf(SQLException.class);
       assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
-      assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
-      assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
-      assertThat(redis.admin().pttl(redisKey)).isPositive();
 
-      var contender =
-          owner(
+      dsl.execute(
+          "UPDATE game_session_region_runtime_status"
+              + " SET last_committed_tick_batch_id = 'batch-0', last_committed_tick_id = 0"
+              + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
+          qualifiedSource.tenantId(),
+          qualifiedSource.gameInstanceId(),
+          qualifiedSource.regionId());
+      redis
+          .admin()
+          .hset(
+              ascii(
+                  CanonicalGameplayRegionRedisKeys.meta(
+                      qualifiedSource.tenantId(),
+                      qualifiedSource.gameInstanceId(),
+                      qualifiedSource.regionId())),
+              java.util.Map.of(
+                  ascii("current_tick_id"), ascii("0"),
+                  ascii("current_tick_state"), ascii("APPLIED"),
+                  ascii("current_tick_terminal_at_ms"), ascii("1792972800000")));
+      var secondOwner =
+          ownerWithLiveClock(
               bindingInventory,
               statusRepository,
               redisOwner,
               world,
               "instance-b",
               incarnationSource);
-      assertThatThrownBy(() -> contender.installForTransition(TRANSITION_ID, world.request()))
+      secondOwner.installForTransition(
+          null, TRANSITION_ID, world.request(), transfer, transferClock.millis() + 5_000L);
+      var secondStatus = statusRepository.find(qualifiedSource).orElseThrow();
+      assertThat(secondStatus.executorFence()).isGreaterThan(firstStatus.executorFence());
+      assertThat(secondStatus.regionEpoch()).isEqualTo(firstStatus.regionEpoch());
+      assertThat(secondStatus.lastCommittedTickId()).isZero();
+      assertThat(secondStatus.lastCommittedTickBatchId()).isEqualTo("batch-0");
+      assertThat(secondStatus.ownerInstanceId()).isEqualTo("instance-b");
+      assertThatThrownBy(() -> firstOwner.revalidateBeforeBridge(firstInstallation))
           .isInstanceOf(IllegalStateException.class);
-      assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
-      assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
-
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
-      assertThatThrownBy(() -> firstOwner.revalidateBeforeBridge(reused))
-          .isInstanceOf(IllegalStateException.class);
+      assertThat(statusRepository.find(qualifiedSource)).contains(secondStatus);
 
       dsl.execute(
           "UPDATE game_session_region_runtime_status"
@@ -472,24 +532,120 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       redis
           .admin()
           .hset(
-              ascii(initialMetaKey),
+              ascii(
+                  CanonicalGameplayRegionRedisKeys.meta(
+                      qualifiedSource.tenantId(),
+                      qualifiedSource.gameInstanceId(),
+                      qualifiedSource.regionId())),
               java.util.Map.of(
                   ascii("current_tick_id"), ascii("8"),
                   ascii("current_tick_state"), ascii("APPLIED"),
                   ascii("current_tick_terminal_at_ms"), ascii("1792972800000")));
       var progressed = statusRepository.find(qualifiedSource).orElseThrow();
-      var timelineBeforeReplacement = redis.admin().dump(ascii(initialMetaKey));
-      assertThat(progressed.executorFence()).isEqualTo(firstStatus.executorFence());
-      assertThat(progressed.lastCommittedTickId()).isEqualTo(8L);
-      assertThat(progressed.lastCommittedTickBatchId()).isEqualTo("batch-8");
-      assertThatThrownBy(() -> contender.installForTransition(TRANSITION_ID, world.request()))
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+
+      var thirdOwner =
+          ownerWithLiveClock(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-c",
+              incarnationSource);
+      var thirdInstallation =
+          thirdOwner.installForTransition(
+              null, TRANSITION_ID, world.request(), transfer, transferClock.millis() + 5_000L);
+      var thirdStatus = statusRepository.find(qualifiedSource).orElseThrow();
+      assertThat(thirdStatus.executorFence()).isGreaterThan(progressed.executorFence());
+      assertThat(thirdStatus.regionEpoch()).isEqualTo(1L);
+      assertThat(thirdStatus.lastCommittedTickId()).isEqualTo(8L);
+      assertThat(thirdStatus.lastCommittedTickBatchId()).isEqualTo("batch-8");
+      assertThat(thirdStatus.ownerInstanceId()).isEqualTo("instance-c");
+      assertThat(thirdInstallation).isNotNull();
+
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      assertThat(redis.admin().get(redisKey)).isNull();
+      Long fenceBeforeIncarnationChange = fenceSequenceValue(dsl);
+      incarnationSource.changeStorageGeneration("storage-generation-2");
+      var changedIncarnationOwner =
+          ownerWithLiveClock(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "changed-incarnation",
+              incarnationSource);
+      assertThatThrownBy(() ->
+              changedIncarnationOwner.installForTransition(
+                  null, TRANSITION_ID, world.request(), transfer, transferClock.millis() + 5_000L))
           .isInstanceOf(IllegalStateException.class);
-      assertThat(statusRepository.find(qualifiedSource)).contains(progressed);
-      assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
-      assertThat(redis.admin().type(redisKey)).isEqualTo("none");
-      assertThat(redis.admin().dump(ascii(initialMetaKey)))
-          .containsExactly(timelineBeforeReplacement);
-      assertThat(redis.admin().pttl(ascii(initialMetaKey))).isEqualTo(-1L);
+      assertThat(redis.admin().get(redisKey)).isNull();
+      assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
+      assertThat(fenceSequenceValue(dsl)).isEqualTo(fenceBeforeIncarnationChange);
+      incarnationSource.restoreStorageGeneration();
+
+      assertThat(redis.admin().get(redisKey)).isNull();
+      WorldCanonicalInstanceLifecycleEvidence changed = changedEvidence(world.originalEvidence());
+      world.replaceOnRead(2, changed);
+      var fourthOwner =
+          ownerWithLiveClock(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-d",
+              incarnationSource);
+      assertThatThrownBy(() ->
+              fourthOwner.installForTransition(
+                  null, TRANSITION_ID, world.request(), transfer, transferClock.millis() + 5_000L))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
+
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      world.resetReads();
+      // Explicit transfer adds a pre-freeze source read; inject after SQL installation.
+      world.replaceOnRead(4, changed);
+      var fifthOwner =
+          ownerWithLiveClock(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-e",
+              incarnationSource);
+      assertThatThrownBy(() ->
+              fifthOwner.installForTransition(
+                  null, TRANSITION_ID, world.request(), transfer, transferClock.millis() + 5_000L))
+          .isInstanceOf(IllegalStateException.class);
+      var installedBeforeChangedSourceGate = statusRepository.find(qualifiedSource).orElseThrow();
+      assertThat(installedBeforeChangedSourceGate.executorFence())
+          .isGreaterThan(thirdStatus.executorFence());
+      assertThat(installedBeforeChangedSourceGate.lastCommittedTickId()).isEqualTo(8L);
+      assertThat(installedBeforeChangedSourceGate.ownerInstanceId()).isEqualTo("instance-e");
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+
+      world.resetReads();
+      var ownerStatusBeforeSqlOutage = statusRepository.find(qualifiedSource).orElseThrow();
+      world.setAfterRead(2, dataSource::failConnections);
+      var sixthOwner =
+          ownerWithLiveClock(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-f",
+              incarnationSource);
+      Throwable sqlOutageFailure =
+          catchThrowable(() ->
+              sixthOwner.installForTransition(
+                  null, TRANSITION_ID, world.request(), transfer, transferClock.millis() + 5_000L));
+      dataSource.restoreConnections();
+      assertThat(sqlOutageFailure)
+          .isInstanceOf(RuntimeException.class)
+          .hasRootCauseInstanceOf(SQLException.class);
+      assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
+      assertThat(redis.admin().type(redisKey)).isEqualTo("string");
+      assertThat(redis.admin().pttl(redisKey)).isPositive();
     }
   }
 
@@ -537,6 +693,768 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void callerDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit() throws Exception {
+    assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(false);
+  }
+
+  @Test
+  void explicitInstallationDeadlineBoundsRetainedRecoveryWithoutAbandoningSql() throws Exception {
+    assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(true);
+  }
+
+  private void assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(
+      boolean viaInstallation) throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema();
+    boolean safeToDrop = true;
+    try (RedisFixture redis = RedisFixture.open()) {
+      var status = new CanonicalGameplayRegionRuntimeStatusRepository(schema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      var world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          status.prepareInitialTimeline(
+              evidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      var permit = status.beginInitialTimeline(preparation, NOW).orElseThrow();
+      var proof = CanonicalGameplayRegionLeaseRedisOwner.revokeUndispatchedInitialization(permit);
+      var entered = new java.util.concurrent.CountDownLatch(1);
+      var release = new java.util.concurrent.CountDownLatch(1);
+      var exited = new java.util.concurrent.CountDownLatch(1);
+      var controlled = mock(CanonicalGameplayRegionRuntimeStatusRepository.class);
+      when(controlled.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(controlled);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                entered.countDown();
+                try {
+                  long stop = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+                  boolean released = false;
+                  while (!released && System.nanoTime() < stop) {
+                    try {
+                      released = release.await(50, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    } catch (InterruptedException ignored) {
+                      /* model a SQL driver still executing */
+                    }
+                  }
+                  if (!released) throw new AssertionError("SQL release missing");
+                  status.releaseInitialTimelineNoWrite(preparation, proof, NOW);
+                  return null;
+                } finally {
+                  exited.countDown();
+                }
+              })
+          .when(controlled)
+          .releaseInitialTimelineNoWrite(
+              org.mockito.ArgumentMatchers.eq(preparation),
+              org.mockito.ArgumentMatchers.same(proof),
+              org.mockito.ArgumentMatchers.any());
+      var inventory =
+          viaInstallation
+              ? mock(CanonicalGameplayBindingInventoryRepository.class)
+              : new CanonicalGameplayBindingInventoryRepository(schema.dsl());
+      var owner =
+          ownerWithLiveClock(
+              inventory, controlled, redisOwner, world, "bounded-recovery", incarnationSource);
+      var retained = owner.reserveNoWriteRecovery(preparation.operationId());
+      owner.retainNoWriteProof(preparation, retained, proof);
+      owner.releaseNoWriteRecovery(preparation.operationId(), retained);
+      var scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+      Thread caller = null;
+      try (var context =
+          viaInstallation
+              ? io.grpc.Context.ROOT.withCancellation()
+              : io.grpc.Context.current()
+                  .withDeadlineAfter(500, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler)) {
+        var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
+        var installWatchdog = new java.util.concurrent.CompletableFuture<Long>();
+        var failureNanos = new java.util.concurrent.atomic.AtomicLong();
+        safeToDrop = false;
+        caller =
+            Thread.ofVirtual()
+                .start(() ->
+                    context.run(() -> {
+                      try {
+                        if (viaInstallation) {
+                          installWatchdog.complete(
+                              System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(4));
+                          owner.installForTransition(
+                              null,
+                              TRANSITION_ID,
+                              world.request(),
+                              null,
+                              System.currentTimeMillis() + 2_000L);
+                        } else {
+                          owner.recoverRetainedNoWriteForTransition(TRANSITION_ID);
+                        }
+                        outcome.complete(new AssertionError("caller ignored deadline"));
+                      } catch (Throwable failure) {
+                        failureNanos.set(System.nanoTime());
+                        outcome.complete(failure);
+                      }
+                    }));
+        assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        Throwable failure;
+        if (viaInstallation) {
+          long stop = installWatchdog.get(1, java.util.concurrent.TimeUnit.SECONDS);
+          failure =
+              outcome.get(
+                  Math.max(0L, stop - System.nanoTime()),
+                  java.util.concurrent.TimeUnit.NANOSECONDS);
+          assertThat(failureNanos.get() - stop)
+              .as("caller error before absolute watchdog")
+              .isNegative();
+        } else {
+          failure = outcome.get(2, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(failure).isInstanceOf(IllegalStateException.class);
+        caller.join(2000);
+        assertThat(caller.isAlive()).isFalse();
+        if (viaInstallation) org.mockito.Mockito.verifyNoInteractions(inventory);
+        assertThat(exited.getCount()).isEqualTo(1L);
+        assertThatThrownBy(() -> owner.reserveNoWriteRecovery(preparation.operationId()))
+            .isInstanceOf(IllegalStateException.class);
+        release.countDown();
+        assertThat(exited.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        org.awaitility.Awaitility.await()
+            .atMost(java.time.Duration.ofSeconds(5))
+            .untilAsserted(() -> {
+              var next = owner.reserveNoWriteRecovery(preparation.operationId());
+              owner.releaseNoWriteRecovery(preparation.operationId(), next);
+            });
+        assertThat(
+                schema
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT phase FROM game_session_region_timeline_preparation WHERE initialization_operation_id = ?",
+                        preparation.operationId())
+                    .get(0, String.class))
+            .isEqualTo("PREPARED");
+      } finally {
+        release.countDown();
+        scheduler.shutdownNow();
+        if (caller != null) {
+          caller.join(5_000);
+          assertThat(caller.isAlive()).as("caller must exit before fixture teardown").isFalse();
+        }
+        if (entered.getCount() == 0) {
+          assertThat(exited.await(10, java.util.concurrent.TimeUnit.SECONDS))
+              .as("SQL callback must exit before fixture teardown")
+              .isTrue();
+        }
+        org.awaitility.Awaitility.await()
+            .atMost(java.time.Duration.ofSeconds(5))
+            .untilAsserted(() -> {
+              var next = owner.reserveNoWriteRecovery(preparation.operationId());
+              owner.releaseNoWriteRecovery(preparation.operationId(), next);
+            });
+        safeToDrop = true;
+      }
+    } finally {
+      if (safeToDrop) dropSchema(schema.schema());
+    }
+  }
+
+  @Test
+  void cancelledCallerRecoversAlreadyCommittedUndeliveredInitializationPermit() throws Exception {
+    assertCancelledCompanionClaimRecovered(false, false);
+  }
+
+  @Test
+  void cancelledCallerRetainsReservationUntilLateAcknowledgedClaimFinishes() throws Exception {
+    assertCancelledCompanionClaimRecovered(true, false);
+  }
+
+  @Test
+  void deadlineExpiryRecoversCommittedUndeliveredInitializationPermit() throws Exception {
+    assertCancelledCompanionClaimRecovered(false, true);
+  }
+
+  private void assertCancelledCompanionClaimRecovered(
+      boolean claimAfterCancellation, boolean deadlineOnly) throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+        var redisOwner =
+            new CanonicalGameplayRegionLeaseRedisOwner(
+                redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+        WorldFixture world = WorldFixture.open();
+        var incarnationSource = new ControlledStableIncarnationSource();
+        var bindingEvidence = provisionalEvidence(world.request());
+        var source = source(world.originalEvidence());
+        var incarnation =
+            incarnationSource.readCurrent(
+                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+        var preparation =
+            statusRepository.prepareInitialTimeline(
+                bindingEvidence,
+                world.request(),
+                world.resolver().resolve(world.request()),
+                source,
+                incarnation,
+                redisOwner.requireTimelineAbsent(source, incarnation),
+                NOW);
+        long deadline = System.currentTimeMillis() + (deadlineOnly ? 2_000L : 10_000L);
+        var deadlineBoundRedisOwner = redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline);
+        RuntimeIdentity identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "overlapping-timeline-preparation",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+        var bindingInventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+
+        var owner =
+            ownerWithLiveClock(
+                bindingInventory,
+                statusRepository,
+                redisOwner,
+                world,
+                "cancelled-companion-claim",
+                incarnationSource);
+        var retained = owner.reserveNoWriteRecovery(preparation.operationId());
+        var lifetime = owner.retainNoWriteWorker(preparation.operationId(), retained);
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
+        try (var context = io.grpc.Context.current().withCancellation();
+            var session =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity)) {
+          Thread caller =
+              Thread.ofVirtual()
+                  .start(() ->
+                      context.run(() -> {
+                        try {
+                          session.runWithinRetainedPermit(
+                              budget -> {
+                                var permit =
+                                    claimAfterCancellation
+                                        ? java.util.Optional
+                                            .<CanonicalGameplayRegionRuntimeStatusRepository
+                                                    .InitialInitializationPermit>
+                                                empty()
+                                        : statusRepository.beginInitialTimeline(preparation, NOW);
+                                entered.countDown();
+                                // Deliberately model a provider callback that cannot be
+                                // interrupted. The
+                                // late path returns only a real acknowledged PostgreSQL
+                                // claim, never a guess.
+                                boolean released = false;
+                                long stop =
+                                    System.nanoTime()
+                                        + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+                                while (!released && System.nanoTime() < stop) {
+                                  try {
+                                    released =
+                                        release.await(
+                                            100, java.util.concurrent.TimeUnit.MILLISECONDS);
+                                  } catch (InterruptedException ignored) {
+                                    /* physical late-provider fixture */
+                                  }
+                                }
+                                if (!released)
+                                  throw new AssertionError("test release was not signalled");
+                                return claimAfterCancellation
+                                    ? statusRepository.beginInitialTimeline(preparation, NOW)
+                                    : permit;
+                              },
+                              abandoned ->
+                                  abandoned.ifPresent(permit -> {
+                                    owner.retainNoWriteProof(
+                                        preparation,
+                                        retained,
+                                        CanonicalGameplayRegionLeaseRedisOwner
+                                            .revokeUndispatchedInitialization(permit));
+                                    owner.recoverNoWrite(preparation, retained);
+                                  }),
+                              lifetime);
+                          outcome.complete(
+                              new AssertionError("cancelled caller received a permit"));
+                        } catch (Throwable failure) {
+                          outcome.complete(failure);
+                        } finally {
+                          owner.releaseNoWriteRecovery(preparation.operationId(), retained);
+                        }
+                      }));
+          assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+          if (!deadlineOnly) context.cancel(new IllegalStateException("test caller cancellation"));
+          assertThat(outcome.get(5, java.util.concurrent.TimeUnit.SECONDS))
+              .isInstanceOf(IllegalStateException.class);
+          caller.join(5000);
+          assertThat(caller.isAlive()).isFalse();
+          assertThat(lifetime.isDone()).isFalse();
+          assertThatThrownBy(() -> owner.reserveNoWriteRecovery(preparation.operationId()))
+              .isInstanceOf(IllegalStateException.class);
+          release.countDown();
+          lifetime.get(5, java.util.concurrent.TimeUnit.SECONDS);
+          assertThat(
+                  testSchema
+                      .dsl()
+                      .fetchValue(
+                          "SELECT phase FROM game_session_region_timeline_preparation WHERE initialization_operation_id = ?",
+                          preparation.operationId()))
+              .isEqualTo("PREPARED");
+          org.awaitility.Awaitility.await()
+              .atMost(java.time.Duration.ofSeconds(5))
+              .untilAsserted(() -> {
+                CanonicalGameplayRegionLeaseOwner.RetainedNoWriteRecovery next;
+                try {
+                  next = owner.reserveNoWriteRecovery(preparation.operationId());
+                } catch (IllegalStateException busy) {
+                  if (!"Canonical Game Session region owner requires current exact assignment and lease evidence"
+                      .equals(busy.getMessage())) {
+                    throw busy;
+                  }
+                  throw new AssertionError("Reservation cleanup callback is still pending", busy);
+                }
+                owner.releaseNoWriteRecovery(preparation.operationId(), next);
+              });
+        } finally {
+          release.countDown();
+        }
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void successfulDeliveryCanInitializeWhileCompletionCallbackIsDelayed() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+        var redisOwner =
+            new CanonicalGameplayRegionLeaseRedisOwner(
+                redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+        WorldFixture world = WorldFixture.open();
+        var incarnationSource = new ControlledStableIncarnationSource();
+        var bindingEvidence = provisionalEvidence(world.request());
+        var source = source(world.originalEvidence());
+        var incarnation =
+            incarnationSource.readCurrent(
+                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+        var preparation =
+            statusRepository.prepareInitialTimeline(
+                bindingEvidence,
+                world.request(),
+                world.resolver().resolve(world.request()),
+                source,
+                incarnation,
+                redisOwner.requireTimelineAbsent(source, incarnation),
+                NOW);
+        long deadline = System.currentTimeMillis() + 10_000L;
+        var deadlineBoundRedisOwner = redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline);
+        RuntimeIdentity identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "overlapping-timeline-preparation",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+
+        var callbackEntered = new java.util.concurrent.CountDownLatch(1);
+        var callbackRelease = new java.util.concurrent.CountDownLatch(1);
+        var lifetime = new java.util.concurrent.CompletableFuture<Void>();
+        var callback =
+            lifetime.whenComplete((ignored, failure) -> {
+              callbackEntered.countDown();
+              try {
+                if (!callbackRelease.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                  throw new AssertionError("completion callback was not released");
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+              }
+            });
+        try (var session =
+            deadlineBoundRedisOwner.prepareTimelineInitialization(
+                preparation, Duration.ofSeconds(30), identity)) {
+          var claim =
+              session.runWithinRetainedPermit(
+                  budget ->
+                      statusRepository.forBudget(budget).beginInitialTimeline(preparation, NOW),
+                  ignored -> {
+                    throw new AssertionError("successfully delivered claim was abandoned");
+                  },
+                  lifetime);
+          assertThat(callbackEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+          assertThat(session.initialize(claim.orElseThrow())).isNotNull();
+          assertThat(callback.isDone()).isFalse();
+        } finally {
+          callbackRelease.countDown();
+        }
+        callback.get(5, java.util.concurrent.TimeUnit.SECONDS);
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void ordinaryCompanionInventoryConnectionOutlivesCancelledOuterWorker() throws Exception {
+    assertOrdinaryCompanionOwnsConnections(true);
+  }
+
+  @Test
+  void ordinaryCompanionStatusConnectionOutlivesCancelledOuterWorker() throws Exception {
+    assertOrdinaryCompanionOwnsConnections(false);
+  }
+
+  private void assertOrdinaryCompanionOwnsConnections(boolean inventoryRead) throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+        var redisOwner =
+            new CanonicalGameplayRegionLeaseRedisOwner(
+                redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+        WorldFixture world = WorldFixture.open();
+        var incarnationSource = new ControlledStableIncarnationSource();
+        var bindingEvidence = provisionalEvidence(world.request());
+        var source = source(world.originalEvidence());
+        var incarnation =
+            incarnationSource.readCurrent(
+                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+        var preparation =
+            statusRepository.prepareInitialTimeline(
+                bindingEvidence,
+                world.request(),
+                world.resolver().resolve(world.request()),
+                source,
+                incarnation,
+                redisOwner.requireTimelineAbsent(source, incarnation),
+                NOW);
+        long deadline = System.currentTimeMillis() + 10_000L;
+        var deadlineBoundRedisOwner = redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline);
+        RuntimeIdentity identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "overlapping-timeline-preparation",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var releasedConnection = new java.util.concurrent.CountDownLatch(1);
+        var block = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var originalProvider = testSchema.dsl().configuration().connectionProvider();
+        var originals =
+            java.util.Collections.synchronizedMap(
+                new java.util.IdentityHashMap<Connection, Connection>());
+        var instrumentedProvider =
+            new org.jooq.ConnectionProvider() {
+              @Override
+              public Connection acquire() {
+                Connection raw = originalProvider.acquire();
+                Connection proxy =
+                    (Connection)
+                        java.lang.reflect.Proxy.newProxyInstance(
+                            Connection.class.getClassLoader(),
+                            new Class<?>[] {Connection.class},
+                            (ignored, method, arguments) -> {
+                              try {
+                                Object value = method.invoke(raw, arguments);
+                                if (value instanceof java.sql.PreparedStatement statement) {
+                                  return java.lang.reflect.Proxy.newProxyInstance(
+                                      java.sql.PreparedStatement.class.getClassLoader(),
+                                      new Class<?>[] {java.sql.PreparedStatement.class},
+                                      (unused, statementMethod, statementArguments) -> {
+                                        if (statementMethod.getName().startsWith("execute")
+                                            && block.compareAndSet(true, false)) {
+                                          entered.countDown();
+                                          boolean done = false;
+                                          long stop =
+                                              System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                                          while (!done && System.nanoTime() < stop) {
+                                            try {
+                                              done = release.await(100, TimeUnit.MILLISECONDS);
+                                            } catch (InterruptedException ignoredInterrupt) {
+                                              /* blocked provider fixture */
+                                            }
+                                          }
+                                          if (!done)
+                                            throw new AssertionError(
+                                                "SQL fixture release not signalled");
+                                        }
+                                        try {
+                                          return statementMethod.invoke(
+                                              statement, statementArguments);
+                                        } catch (
+                                            java.lang.reflect.InvocationTargetException error) {
+                                          throw error.getCause();
+                                        }
+                                      });
+                                }
+                                return value;
+                              } catch (java.lang.reflect.InvocationTargetException error) {
+                                throw error.getCause();
+                              }
+                            });
+                originals.put(proxy, raw);
+                return proxy;
+              }
+
+              @Override
+              public void release(Connection connection) {
+                releasedConnection.countDown();
+                originalProvider.release(originals.remove(connection));
+              }
+            };
+        var instrumentedDsl =
+            DSL.using(testSchema.dsl().configuration().derive(instrumentedProvider));
+        var inventory = new CanonicalGameplayBindingInventoryRepository(instrumentedDsl);
+        var status = new CanonicalGameplayRegionRuntimeStatusRepository(instrumentedDsl);
+        var owner =
+            ownerWithLiveClock(
+                inventory,
+                status,
+                redisOwner,
+                world,
+                "ordinary-companion-connection",
+                incarnationSource);
+        var method =
+            CanonicalGameplayRegionLeaseOwner.class.getDeclaredMethod(
+                inventoryRead ? "readInstallationInventory" : "withTransferStatusRepository",
+                inventoryRead
+                    ? CanonicalGameplayBindingInventoryRepository.class
+                    : CanonicalGameplayRegionRuntimeStatusRepository.class,
+                CanonicalGameplayRegionOwnerTransferCoordinator.class,
+                long.class,
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                java.util.function.Function.class);
+        method.setAccessible(true);
+        var lifetime = new java.util.concurrent.CompletableFuture<Void>();
+        var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
+        try (var context = io.grpc.Context.current().withCancellation();
+            var session =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity)) {
+          Thread caller =
+              Thread.ofVirtual()
+                  .start(() ->
+                      context.run(() -> {
+                        try {
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                              Clock.systemUTC(),
+                              deadline,
+                              outer ->
+                                  session.runWithinRetainedPermit(
+                                      retainedBudget -> {
+                                        java.util.function.Function<?, ?> read =
+                                            inventoryRead
+                                                ? (java.util.function.Function<
+                                                        CanonicalGameplayBindingInventoryRepository,
+                                                        Object>)
+                                                    repository -> repository.readSnapshot()
+                                                : (java.util.function.Function<
+                                                        CanonicalGameplayRegionRuntimeStatusRepository,
+                                                        Object>)
+                                                    repository -> repository.find(source);
+                                        try {
+                                          return method.invoke(
+                                              owner,
+                                              inventoryRead
+                                                  ? inventory.forBudget(outer)
+                                                  : status.forBudget(outer),
+                                              null,
+                                              deadline,
+                                              retainedBudget,
+                                              read);
+                                        } catch (ReflectiveOperationException failure) {
+                                          throw new IllegalStateException(failure);
+                                        }
+                                      },
+                                      ignored -> {},
+                                      lifetime));
+                          outcome.complete(new AssertionError("cancelled outer worker completed"));
+                        } catch (Throwable failure) {
+                          outcome.complete(failure);
+                        }
+                      }));
+          assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+          context.cancel(new IllegalStateException("cancel outer installation"));
+          assertThat(outcome.get(5, TimeUnit.SECONDS)).isInstanceOf(IllegalStateException.class);
+          caller.join(5000);
+          assertThat(caller.isAlive()).isFalse();
+          assertThat(lifetime.isDone()).isFalse();
+          assertThat(releasedConnection.await(300, TimeUnit.MILLISECONDS)).isFalse();
+          release.countDown();
+          lifetime.get(5, TimeUnit.SECONDS);
+          assertThat(releasedConnection.await(5, TimeUnit.SECONDS)).isTrue();
+        } finally {
+          release.countDown();
+        }
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void preparedTimelineIncarnationReadReusesPermitWhenBothBackgroundSlotsAreHeld()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+        var redisOwner =
+            new CanonicalGameplayRegionLeaseRedisOwner(
+                redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+        WorldFixture world = WorldFixture.open();
+        var incarnationSource = new ControlledStableIncarnationSource();
+        var bindingEvidence = provisionalEvidence(world.request());
+        var source = source(world.originalEvidence());
+        var incarnation =
+            incarnationSource.readCurrent(
+                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+        var preparation =
+            statusRepository.prepareInitialTimeline(
+                bindingEvidence,
+                world.request(),
+                world.resolver().resolve(world.request()),
+                source,
+                incarnation,
+                redisOwner.requireTimelineAbsent(source, incarnation),
+                NOW);
+        long deadline = System.currentTimeMillis() + 10_000L;
+        var deadlineBoundRedisOwner = redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline);
+        RuntimeIdentity identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "overlapping-timeline-preparation",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+        var bindingInventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+
+        try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization first =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity);
+            CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization second =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity)) {
+          var claim =
+              first.runWithinRetainedPermit(retainedBudget -> {
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                            Clock.systemUTC(), deadline, ignored -> true))
+                    .isInstanceOf(IllegalStateException.class);
+                assertThatThrownBy(() -> first.runWithinRetainedPermit(ignored -> null))
+                    .isInstanceOf(IllegalStateException.class);
+                assertThat(
+                        bindingInventory.withinTransferRead(
+                            retainedBudget,
+                            CanonicalGameplayBindingInventoryRepository::readSnapshot))
+                    .isNotNull();
+                assertThat(
+                        ownerWithLiveClock(
+                                bindingInventory,
+                                statusRepository,
+                                redisOwner,
+                                world,
+                                "retained-permit-incarnation",
+                                incarnationSource)
+                            .readInstallationIncarnation(retainedBudget, source))
+                    .isEqualTo(incarnation);
+                return new CanonicalGameplayRegionRuntimeStatusRepository(
+                        retainedBudget.sql(testSchema.dsl()))
+                    .beginInitialTimeline(preparation, NOW);
+              });
+          assertThat(claim)
+              .hasValueSatisfying(
+                  permit -> assertThat(permit.operationId()).isEqualTo(preparation.operationId()));
+        }
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void leaseLostDuringFinalStatusReadCannotReturnInstallation() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var status =
+          org.mockito.Mockito.spy(new CanonicalGameplayRegionRuntimeStatusRepository(schema.dsl()));
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnation = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
+      var source = source(world.originalEvidence());
+      var installed = new java.util.concurrent.atomic.AtomicBoolean();
+      var expired = new java.util.concurrent.atomic.AtomicBoolean();
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                Object result = invocation.callRealMethod();
+                installed.set(true);
+                return result;
+              })
+          .when(status)
+          .markTimelineInstalled(
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any());
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                Object result = invocation.callRealMethod();
+                if (installed.get() && expired.compareAndSet(false, true)) {
+                  // Deterministically model lease expiry while the final blocking SQL read is in
+                  // flight.
+                  String key =
+                      CanonicalGameplayRegionRedisKeys.lease(
+                          source.tenantId(), source.gameInstanceId(), source.regionId());
+                  assertThat(redis.admin().pexpire(ascii(key), 0L)).isTrue();
+                }
+                return result;
+              })
+          .when(status)
+          .find(source);
+      var owner = owner(inventory, status, redisOwner, world, "lease-lost-final-read", incarnation);
+      assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(expired.get()).isTrue();
+      assertThat(status.findTimelinePreparation(source).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED);
+    } finally {
+      dropSchema(schema.schema());
+    }
+  }
+
+  @Test
   void installationDeadlineDuringSourceRecheckLeavesPreparedPermission() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
@@ -551,6 +1469,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
       when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(1);
+                return read.apply(inventory);
+              })
+          .when(inventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class),
+              org.mockito.ArgumentMatchers.any());
       var source = source(world.originalEvidence());
       var incarnation =
           incarnationSource.readCurrent(
@@ -628,6 +1557,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
       when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(1);
+                return read.apply(inventory);
+              })
+          .when(inventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class),
+              org.mockito.ArgumentMatchers.any());
       var source = source(world.originalEvidence());
       var incarnation =
           incarnationSource.readCurrent(
@@ -1212,6 +2152,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                             String sql = context.sql();
                                             if (sql != null
                                                 && sql.contains("SET phase = 'PREPARED'")) {
+                                              assertThat(retained.consumeFor(preparation))
+                                                  .isFalse();
                                               concurrentRelease.set(
                                                   CompletableFuture.runAsync(() ->
                                                       assertThatThrownBy(() ->
@@ -1574,6 +2516,48 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void acknowledgedRegionBridgeRefusesCompatibilityTakeoverWithoutMutation() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        redis.admin().flushdb();
+      }
+      // This local candidate-launch source is created through the real Game Session owners;
+      // its upstream publication inputs remain controlled test evidence.
+      var runtimeTarget =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              testSchema.dataSource(), UUID.randomUUID(), "firemud");
+      WorldFixture world = WorldFixture.open(runtimeTarget);
+      try (var entitySource = EntityReferenceFixture.open()) {
+        CanonicalGameplayRegionOwnerCompositionFixture.CompatibilityTakeoverProof proof =
+            CanonicalGameplayRegionOwnerCompositionFixture
+                .installAndBridgeThenCompatibilityTakeoverRefuses(
+                    testSchema.dsl(),
+                    REDIS.getHost(),
+                    REDIS.getMappedPort(REDIS_PORT),
+                    world.request(),
+                    runtimeTarget.playableTarget(),
+                    world.resolver(),
+                    entitySource.client());
+
+        assertThat(proof.acknowledgedBridge().exactLostReplyRetry()).isTrue();
+        assertThat(proof.replacementGrantInstalled()).isFalse();
+        assertThat(proof.replacementExecutorFence())
+            .isEqualTo(proof.acknowledgedBridge().executorFence());
+        assertThat(proof.takeoverRefused()).isTrue();
+        assertThat(proof.refusalMessage())
+            .isEqualTo("Canonical Game Session region lease is unavailable");
+        assertThat(proof.acknowledgementRowPreserved()).isTrue();
+        assertThat(proof.inventoryStatePreserved()).isTrue();
+        assertThat(proof.physicalBridgeStatePreserved()).isTrue();
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void retainedParentRegionBridgeUpgradePreservesRowsHistoryAndMigrationRetry() throws Exception {
     assertRetainedParentRegionBridgeUpgrade(false);
   }
@@ -1920,7 +2904,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void laterPlacementReusesCurrentGrantWithoutChangingInitialTimeline() throws Exception {
+  void laterPlacementWithoutPrivateGrantRefusesCompatibilityTakeover() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema schema = newTestSchema();
     try {
@@ -1967,30 +2951,31 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .thenAnswer(ignored -> first.original.preparationInputDigest());
       when(secondEvidence.operationalRegionAssignments())
           .thenAnswer(ignored -> first.original.operationalRegionAssignments());
+      // One retained owner uses one resolver, with both exact World placements routed through it.
       var secondResponse = regionResponse(secondRequest, secondEvidence);
       when(first.initialClient.readInitialPlayerLocationRegion(secondRequest))
           .thenReturn(secondResponse);
       when(first.lifecycleClient.read(secondLifecycle)).thenReturn(secondEvidence);
       assertThat(secondLifecycle.readRequestId()).isNotEqualTo(original.readRequestId());
       try (var entity = EntityReferenceFixture.open(secondRequest.getCharacterUuid())) {
-        var result =
-            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeTwoCandidates(
-                schema.dsl(),
-                REDIS.getHost(),
-                REDIS.getMappedPort(REDIS_PORT),
-                first.request(),
-                target.playableTarget(),
-                first.resolver(),
-                entity.client(),
-                new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
-                    secondRequest, target.playableTarget(), first.resolver(), entity.client()));
-        assertThat(result.firstTimelineUnchanged()).isTrue();
-        assertThat(result.initialMetaUnchanged()).isTrue();
-        assertThat(result.first().exactLostReplyRetry()).isTrue();
-        assertThat(result.second().exactLostReplyRetry()).isTrue();
-        assertThat(result.second().executorFence()).isEqualTo(result.first().executorFence());
-        assertThat(result.foreignOwnerCapabilityRejectedWithoutStateChange()).isTrue();
-        assertThat(result.expiredGrantRejectedWithoutStateChange()).isTrue();
+        assertThatThrownBy(() ->
+                CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeTwoCandidates(
+                    schema.dsl(),
+                    REDIS.getHost(),
+                    REDIS.getMappedPort(REDIS_PORT),
+                    first.request(),
+                    target.playableTarget(),
+                    first.resolver(),
+                    entity.client(),
+                    new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
+                        secondRequest,
+                        target.playableTarget(),
+                        first.resolver(),
+                        entity.client(),
+                        true)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage(
+                "Canonical Game Session region owner requires current exact assignment and lease evidence");
       }
     } finally {
       dropSchema(schema.schema());
@@ -2213,6 +3198,25 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     }
   }
 
+  private static final class BlockingStableIncarnationSource
+      implements CanonicalGameplayRegionIncarnationSource {
+    private final CountDownLatch entered = new CountDownLatch(1);
+    private final CountDownLatch release = new CountDownLatch(1);
+
+    @Override
+    public CanonicalGameplayRegionIncarnationSource.StableEvidence readCurrent(
+        CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
+      entered.countDown();
+      try {
+        release.await();
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Controlled incarnation read was interrupted", interrupted);
+      }
+      return stableIncarnation(scope, "storage-generation-1");
+    }
+  }
+
   private static CanonicalGameplayRegionLeaseOwner owner(
       CanonicalGameplayBindingInventoryRepository bindingInventory,
       CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
@@ -2220,6 +3224,41 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       WorldFixture world,
       String instanceId,
       CanonicalGameplayRegionIncarnationSource incarnationSource) {
+    return owner(
+        bindingInventory,
+        statusRepository,
+        redisOwner,
+        world,
+        instanceId,
+        incarnationSource,
+        Clock.fixed(NOW, ZoneOffset.UTC));
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner ownerWithLiveClock(
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      WorldFixture world,
+      String instanceId,
+      CanonicalGameplayRegionIncarnationSource incarnationSource) {
+    return owner(
+        bindingInventory,
+        statusRepository,
+        redisOwner,
+        world,
+        instanceId,
+        incarnationSource,
+        Clock.systemUTC());
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner owner(
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      WorldFixture world,
+      String instanceId,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      Clock ownerClock) {
     return new CanonicalGameplayRegionLeaseOwner(
         bindingInventory,
         statusRepository,
@@ -2235,7 +3274,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             "controlled-sha",
             "controlled-image"),
         Duration.ofSeconds(30),
-        Clock.fixed(NOW, ZoneOffset.UTC));
+        ownerClock);
   }
 
   private static void initializeTimelineWithoutCreationPermission(
