@@ -268,7 +268,7 @@ jobs:
               return;
             }
             await github.rest.repos.createDispatchEvent({
-              ...context.repo, event_type: 'pr-runtime-base-refresh',
+              ...context.repo, event_type: 'pr-runtime-base-refresh-request',
               client_payload: {
                 pr_number: String(pr.number), base_ref: pr.base.ref,
                 base_sha: base.object.sha, head_sha: pr.head.sha,

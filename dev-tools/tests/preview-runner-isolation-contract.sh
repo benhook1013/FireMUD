@@ -32,6 +32,7 @@ workflow_dir = root / ".github" / "workflows"
 preview_path = workflow_dir / "preview.yml"
 trusted_path = workflow_dir / "hosted-identity-request.yml"
 reconciler_path = workflow_dir / "preview-reconciler.yml"
+reconciler_script_path = root / "dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 janitor_path = workflow_dir / "preview-janitor.yml"
 dev_demo_path = workflow_dir / "dev-demo.yml"
 dev_demo_reconciler_path = workflow_dir / "dev-demo-reconciler.yml"
@@ -99,7 +100,7 @@ else:
 
 
 # Exercise the reconciler's actual active-run filter, not a duplicate predicate.
-reconciler_source = reconciler_path.read_text()
+reconciler_source = reconciler_script_path.read_text(encoding="utf-8")
 active_filter = re.search(
     r'--arg run_name [^\n]+ \'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
     reconciler_source, re.S,
@@ -316,7 +317,6 @@ if "workflow_dispatch" in preview_source or "pull_request_target:" in preview_so
     raise AssertionError("preview.yml retains a branch-selectable source trigger")
 if '"$EVENT_NAME" == repository_dispatch && "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH"' not in preview_source:
     raise AssertionError("preview.yml dispatch lacks a default-branch ref guard")
-reconciler_source = reconciler_path.read_text(encoding="utf-8")
 if (
     '"repos/${GITHUB_REPOSITORY}/dispatches"' not in reconciler_source
     or "event_type=preview-deploy" not in reconciler_source
@@ -703,11 +703,10 @@ if "CLEANUP_STATE=open" not in trusted_text or "RETIRE_IDENTITY=true" not in tru
 
 if "preview-allocation-lifecycle" not in trusted_text:
     raise AssertionError("trusted deploy/cleanup lifecycle lost its allocation lock")
-reconciler_text = reconciler_path.read_text(encoding="utf-8")
 allocator_text = (root / "dev-tools/hosted/preview/allocate-preview-capacity.sh").read_text(
     encoding="utf-8"
 )
-if "preview:priority" not in reconciler_text or "preview:priority" not in allocator_text:
+if "preview:priority" not in reconciler_source or "preview:priority" not in allocator_text:
     raise AssertionError("preview priority allocation gates are missing")
 if "preview-allocation-lifecycle" not in janitor_path.read_text(encoding="utf-8"):
     raise AssertionError("preview janitor lost the shared allocation lifecycle lock")

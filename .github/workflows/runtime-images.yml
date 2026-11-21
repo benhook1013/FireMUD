@@ -1002,7 +1002,7 @@ jobs:
                   core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
                   await github.rest.repos.createDispatchEvent({
                     ...context.repo,
-                    event_type: "pr-runtime-base-refresh",
+                    event_type: "pr-runtime-base-refresh-request",
                     client_payload: {
                       pr_number: tuple.prNumber,
                       base_ref: tuple.baseRef,

@@ -4358,7 +4358,7 @@ reconciler_steps = reconciler["jobs"]["reconcile-previews"]["steps"]
 checkout = reconciler_steps[0]
 assert checkout["uses"].startswith("actions/checkout@")
 assert checkout["with"] == {
-    "ref": "${{ github.workflow_sha }}",
+    "ref": "${{ github.event.repository.default_branch }}",
     "persist-credentials": False,
 }
 dispatch = next(step for step in reconciler_steps if step.get("name") == "Dispatch preview deploys for drifted PRs")

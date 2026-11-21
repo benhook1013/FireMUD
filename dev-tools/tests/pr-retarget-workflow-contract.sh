@@ -322,7 +322,7 @@ smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
 trusted_preview_path="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
-preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
+preview_reconciler_script="$ROOT_DIR/dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 preview_comment_publisher_path="$ROOT_DIR/dev-tools/hosted/preview/publish-preview-comment.js"
 preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.test.cjs"
 
@@ -1101,7 +1101,7 @@ async function runDispatcher({
 
 (async () => {
   const tuple = tupleFor(101, "a", "c");
-  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh");
+  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request");
   const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
   const source = { ...tuple, headRef: "feature/parent" };
   const child = { ...tupleFor(102, "d", "e", source.headSha), baseRef: source.headRef };
@@ -1266,7 +1266,7 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { [event]: [producer(tuple, event, status)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
       `${event} ${status} exact producer must suppress duplicate runtime dispatch`);
     assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
       "runtime deduplication must retain preview reconciliation");
@@ -1285,7 +1285,7 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { [event]: [producer(tuple, event, "completed", "success")] },
     });
-    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
   }
 
@@ -1301,7 +1301,7 @@ async function runDispatcher({
         path: `.github/workflows/runtime-images.yml@${validRef}`,
       })] },
     });
-    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
       `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
   }
   for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature[/test"]) {
@@ -1311,7 +1311,7 @@ async function runDispatcher({
         path: `.github/workflows/runtime-images.yml@${invalidRef}`,
       })] },
     });
-    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `an invalid Git ref ${invalidRef} must not suppress the required dispatch`);
   }
   const wrongWorkflowPath = await runDispatcher({
@@ -1320,7 +1320,7 @@ async function runDispatcher({
       path: ".github/workflows/other.yml@refs/heads/develop",
     })] },
   });
-  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "an unrelated workflow path must not suppress the required dispatch");
   assert(wrongWorkflowPath.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
     "an exact-tuple producer with an unrelated workflow path must emit a fallback warning");
@@ -1333,7 +1333,7 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `${conclusion} producer must allow an exact-tuple retry`);
   }
 
@@ -1354,7 +1354,7 @@ async function runDispatcher({
     const newestFailure = await orderedProducerInventory(
       ["completed", "success"], ["completed", conclusion], conclusion
     );
-    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `newer ${conclusion} producer must allow refresh despite an older success`);
   }
   for (const [olderStatus, olderConclusion, newestStatus, newestConclusion, suppress] of [
@@ -1365,7 +1365,7 @@ async function runDispatcher({
     const newestUsable = await orderedProducerInventory(
       [olderStatus, olderConclusion], [newestStatus, newestConclusion], newestConclusion
     );
-    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length,
+    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length,
       suppress ? 0 : 1,
       `newer ${newestStatus}/${newestConclusion} producer must determine whether runtime recovery dispatches`);
   }
@@ -1376,7 +1376,7 @@ async function runDispatcher({
       producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
     ] },
   });
-  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "ambiguous equal-time exact producers must fall back to the required refresh dispatch");
   assert(ambiguousNewest.warnings.some((message) => message.includes("ambiguous created_at timestamp")),
     "ambiguous producer ordering must emit an explicit fallback diagnostic");
@@ -1386,7 +1386,7 @@ async function runDispatcher({
     tuples: [tuple],
     inventories: { repository_dispatch: [producer(staleTuple, "repository_dispatch", "completed", "success")] },
   });
-  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "stale base tuple must not suppress a current runtime refresh");
 
   const changedBaseTuple = tupleFor(101, "a", "c", sha("e"));
@@ -1394,7 +1394,7 @@ async function runDispatcher({
     tuples: [changedBaseTuple],
     inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success")] },
   });
-  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "a changed base requires a fresh exact tuple producer");
 
   const sibling = tupleFor(102, "f", "d");
@@ -1407,7 +1407,7 @@ async function runDispatcher({
     },
   });
   const independentRefreshNumbers = independent.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
+    .filter((item) => item.event_type === "pr-runtime-base-refresh-request")
     .map((item) => item.client_payload.pr_number)
     .sort();
   assert.deepEqual(independentRefreshNumbers, ["102"],
@@ -1437,7 +1437,7 @@ async function runDispatcher({
     },
   });
   const truncatedRefreshNumbers = truncatedPositive.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
+    .filter((item) => item.event_type === "pr-runtime-base-refresh-request")
     .map((item) => item.client_payload.pr_number)
     .sort();
   assert.deepEqual(truncatedRefreshNumbers, ["103"],
@@ -1470,7 +1470,7 @@ async function runDispatcher({
       repository_dispatch: [],
     },
   });
-  assert.equal(refinedSiblingReuse.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+  assert.equal(refinedSiblingReuse.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
     "the shared refined inventory must cover each initially observed in-flight sibling");
   assert.equal(refinedSiblingReuse.inventoryCalls.length, 4,
     "all sibling decisions must reuse one refinement pair rather than scan per PR");
@@ -1495,7 +1495,7 @@ async function runDispatcher({
       repository_dispatch: [],
     },
   });
-  assert.equal(truncatedRefinement.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(truncatedRefinement.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "a still-truncated refinement must use baseline dispatch");
   assert(truncatedRefinement.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
     "a truncated refinement must report its required-dispatch fallback");
@@ -1514,7 +1514,7 @@ async function runDispatcher({
       repository_dispatch: [],
     },
   });
-  assert.equal(completedTruncated.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(completedTruncated.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "completed source results must preserve required recovery dispatch");
   assert.equal(completedTruncated.inventoryCalls.length, 2,
     "completed-only truncated inventories need no refinement because they never suppress dispatch");
@@ -1537,7 +1537,7 @@ async function runDispatcher({
       },
     },
   });
-  assert.equal(crossEventHiddenNewer.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(crossEventHiddenNewer.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "refinement must reveal the newer cross-event terminal producer and preserve required dispatch");
   assert.equal(crossEventHiddenNewer.inventoryCalls.length, 4,
     "one refinement pair must cover both event types when another event could contain a newer terminal run");
@@ -1557,7 +1557,7 @@ async function runDispatcher({
       },
     },
   });
-  assert.equal(safelyOlderOmitted.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+  assert.equal(safelyOlderOmitted.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
     "complete refinement from the candidate creation time proves apparently older omissions cannot mask it");
   assert.equal(safelyOlderOmitted.inventoryCalls.length, 4,
     "complete refinement must stay within the one additional shared pair");
@@ -1574,7 +1574,7 @@ async function runDispatcher({
     },
   });
   const relevantMalformedRefreshNumbers = relevantMalformed.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
+    .filter((item) => item.event_type === "pr-runtime-base-refresh-request")
     .map((item) => item.client_payload.pr_number)
     .sort();
   assert.deepEqual(relevantMalformedRefreshNumbers, ["101"],
@@ -1598,7 +1598,7 @@ async function runDispatcher({
       })] },
     }),
   ]) {
-    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       "incomplete, unavailable, or relevant malformed evidence must fall back to required dispatch");
     assert.equal(uncertain.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
       "inventory uncertainty must not block independent preview reconciliation");
@@ -1654,7 +1654,7 @@ assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRe
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
 assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes '.base.sha'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh-request"'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'pr_number: tuple.prNumber'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'base_sha: tuple.baseSha'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'head_sha: tuple.headSha'
@@ -1878,28 +1878,28 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
   assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
   assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
 done
-require_contains "$preview_reconciler_path" 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
-require_contains "$preview_reconciler_path" 'gh api --paginate --slurp'
-require_contains "$preview_reconciler_path" '.display_title == $run_name'
-require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
-require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatches"'
-require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'
-require_contains "$preview_reconciler_path" 'client_payload[head_sha]=${head_sha}'
-require_contains "$preview_reconciler_path" 'client_payload[base_ref]=${pr_base_ref}'
-require_contains "$preview_reconciler_path" 'client_payload[base_sha]=${base_sha}'
-require_contains "$preview_reconciler_path" 'client_payload[merge_sha]=${merge_sha}'
-require_contains "$preview_reconciler_path" 'client_payload[image_tag]=${image_tag}'
-require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
-require_contains "$preview_reconciler_path" 'dispatch_candidates() {'
-require_contains "$preview_reconciler_path" 'candidate_rows="$('
-require_contains "$preview_reconciler_path" 'dispatch_candidates <<<"$candidate_rows"'
-if python3 - "$preview_reconciler_path" <<'PY'
+require_contains "$preview_reconciler_script" 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
+require_contains "$preview_reconciler_script" 'gh api --paginate --slurp'
+require_contains "$preview_reconciler_script" '.display_title == $run_name'
+require_contains "$preview_reconciler_script" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
+require_contains "$preview_reconciler_script" '"repos/${GITHUB_REPOSITORY}/dispatches"'
+require_contains "$preview_reconciler_script" '-f event_type=preview-deploy'
+require_contains "$preview_reconciler_script" 'client_payload[head_sha]=${head_sha}'
+require_contains "$preview_reconciler_script" 'client_payload[base_ref]=${pr_base_ref}'
+require_contains "$preview_reconciler_script" 'client_payload[base_sha]=${base_sha}'
+require_contains "$preview_reconciler_script" 'client_payload[merge_sha]=${merge_sha}'
+require_contains "$preview_reconciler_script" 'client_payload[image_tag]=${image_tag}'
+require_contains "$preview_reconciler_script" 'client_payload[action]=deploy'
+require_contains "$preview_reconciler_script" 'dispatch_candidates() {'
+require_contains "$preview_reconciler_script" 'candidate_rows="$('
+require_contains "$preview_reconciler_script" 'dispatch_candidates <<<"$candidate_rows"'
+if python3 - "$preview_reconciler_script" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
-if any(re.search(r"\|\s*(?:IFS=[^;]+\s+)?while\b", line) for line in workflow.splitlines()):
+script = Path(sys.argv[1]).read_text(encoding="utf-8")
+if any(re.search(r"\|\s*(?:IFS=[^;]+\s+)?while\b", line) for line in script.splitlines()):
     raise SystemExit("preview reconciler must not pipe candidate rows directly into while")
 PY
 then
@@ -1909,11 +1909,11 @@ else
   exit 1
 fi
 
-if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
+if grep -Fq 'desired_image_tag=' "$preview_reconciler_script"; then
   echo "Preview reconciler must not retain an unused desired image tag" >&2
   exit 1
 fi
-require_contains "$preview_reconciler_path" 'resolve-preview-image-tag.sh'
+require_contains "$preview_reconciler_script" 'resolve-preview-image-tag.sh'
 for annotation in \
   'firemud.dev/last-preview-base-sha' \
   'firemud.dev/last-preview-head-sha' \
@@ -1923,12 +1923,12 @@ for annotation in \
   'firemud.dev/requested-preview-head-sha' \
   'firemud.dev/requested-preview-merge-sha' \
   'firemud.dev/requested-preview-image-tag'; do
-  require_contains "$preview_reconciler_path" "$annotation"
+  require_contains "$preview_reconciler_script" "$annotation"
 done
-require_contains "$preview_reconciler_path" 'mergeable_state'
+require_contains "$preview_reconciler_script" 'mergeable_state'
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" '.mergeable == true'
-if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_path" ||
-  grep -Fq 'inputs[ref]=' "$preview_reconciler_path"; then
+if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_script" ||
+  grep -Fq 'inputs[ref]=' "$preview_reconciler_script"; then
   echo "Preview reconciler must use typed repository_dispatch from the default branch" >&2
   exit 1
 fi

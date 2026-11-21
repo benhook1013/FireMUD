@@ -3,6 +3,7 @@ const {execFileSync} = require('node:child_process');
 const {test} = require('node:test');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
+const admitRuntimeRefresh = require('../../.github/scripts/admit-pr-runtime-refresh.cjs');
 const workflow = JSON.parse(execFileSync('python3', ['-c',
   'import yaml,json,sys; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))',
   path.join(root, '.github/workflows/preview-runtime-refresh.yml')], {encoding: 'utf8'}));
@@ -10,6 +11,140 @@ const script = workflow.jobs.refresh.steps[1].with.script;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const E = 'e'.repeat(40);
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), D = 'd'.repeat(40);
+
+function admissionFixture() {
+  const input = {pr_number: '7', base_ref: 'develop', base_sha: B, head_sha: C, merge_sha: A};
+  const repository = 'example/FireMUD';
+  const runtimePath = '.github/workflows/runtime-images.yml';
+  const makeRun = (overrides = {}) => ({
+    id: 300, run_attempt: 1, workflow_id: 42, event: 'repository_dispatch', status: 'queued',
+    conclusion: null, path: runtimePath, head_branch: 'develop', repository: {full_name: repository},
+    head_repository: {full_name: repository}, created_at: new Date().toISOString(),
+    display_title: `Build Runtime Images secure-pr-artifact pr-7 base-${B} head-${C} merge-${A} mode-required`,
+    ...overrides,
+  });
+  const sent = [];
+  const warnings = [];
+  const runs = [];
+  const state = {base: B, mergeParents: [B, C], keepHidden: false, afterInventory: null, nextId: 301};
+  const github = {rest: {
+    pulls: {get: async ({pull_number}) => {
+      assert.equal(pull_number, 7);
+      return {data: {number: 7, state: 'open', head: {sha: C, repo: {full_name: repository}},
+        base: {ref: 'develop', repo: {full_name: repository}}, mergeable: true,
+        mergeable_state: 'clean', merge_commit_sha: A}};
+    }},
+    git: {
+      getRef: async ({ref}) => {
+        assert.equal(ref, 'heads/develop');
+        return {data: {ref: 'refs/heads/develop', object: {sha: state.base}}};
+      },
+    },
+    actions: {
+      getWorkflow: async ({workflow_id}) => {
+        assert.equal(workflow_id, 'runtime-images.yml');
+        return {data: {id: 42, path: runtimePath}};
+      },
+      listWorkflowRuns: async ({workflow_id, status, event, page}) => {
+        assert.equal(workflow_id, 42);
+        assert.ok(page <= 3);
+        state.afterInventory?.();
+        const workflow_runs = runs.filter(run => (!status || run.status === status) && (!event || run.event === event));
+        return {data: {workflow_runs, total_count: workflow_runs.length}};
+      },
+    },
+    repos: {
+      getCommit: async ({ref}) => {
+        assert.equal(ref, A);
+        return {data: {sha: A, parents: state.mergeParents.map(sha => ({sha}))}};
+      },
+      createDispatchEvent: async payload => {
+        sent.push(payload);
+        state.newRun = makeRun({id: state.nextId++});
+      },
+    },
+  }};
+  const admission = {github, input, context: {repo: {owner: 'example', repo: 'FireMUD'},
+    payload: {repository: {full_name: repository, default_branch: 'develop'}}},
+  core: {warning: value => warnings.push(value), info() {}}, sleep: async () => {
+    if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
+  }};
+  return {admission, makeRun, runs, sent, state, warnings};
+}
+
+test('serialized admission waits for the first exact receiver before releasing the permit', async () => {
+  const f = admissionFixture();
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.deepEqual(f.sent, [{owner: 'example', repo: 'FireMUD', event_type: 'pr-runtime-base-refresh',
+    client_payload: {...f.admission.input, image_tag: `pr-merge-${A}`}}]);
+});
+
+test('completed producers still permit an exact repair', async () => {
+  for (const conclusion of ['success', 'failure']) {
+    const f = admissionFixture();
+    f.runs.push(f.makeRun({status: 'completed', conclusion}));
+    assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+    assert.equal(f.sent.length, 1);
+  }
+});
+
+test('a newer failed exact producer keeps the tuple eligible despite an older active run', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makeRun({id: 299, event: 'pull_request', head_sha: C,
+    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
+    created_at: new Date(Date.now() - 120000).toISOString()}));
+  f.runs.push(f.makeRun({id: 300, status: 'completed', conclusion: 'failure',
+    created_at: new Date(Date.now() - 60000).toISOString()}));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
+});
+
+test('admission refuses a base that moves after the inventory read', async () => {
+  const f = admissionFixture();
+  f.state.afterInventory = () => { f.state.base = D; };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.sent, []);
+});
+
+test('admission refuses the exact merge SHA when its ordered parents disagree', async () => {
+  const f = admissionFixture();
+  f.state.mergeParents = [C, B];
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.sent, []);
+});
+
+test('an active run from a different repository cannot suppress the repair', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makeRun({head_repository: {full_name: 'example/Other'}}));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
+});
+
+test('indeterminate dispatch visibility does not silently consume a repair or cause an immediate duplicate', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  assert.equal(f.sent.length, 1);
+  assert.ok(f.warnings.length > 0);
+});
+
+test('both wake inputs are serialized by one exact tuple group on the default branch', () => {
+  const admissionWorkflow = JSON.parse(execFileSync('python3', ['-c',
+    'import yaml,json,sys; print(json.dumps(yaml.load(open(sys.argv[1]), Loader=yaml.BaseLoader)))',
+    path.join(root, '.github/workflows/admit-pr-runtime-refresh.yml')], {encoding: 'utf8'}));
+  assert.deepEqual(admissionWorkflow.on, {repository_dispatch: {types: ['pr-runtime-base-refresh-request']}});
+  const job = admissionWorkflow.jobs.dispatch;
+  assert.equal(job.if, "${{ github.event.action == 'pr-runtime-base-refresh-request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}");
+  assert.deepEqual(job.concurrency, {
+    group: 'admit-pr-runtime-refresh-${{ github.event.client_payload.pr_number }}-${{ github.event.client_payload.base_sha }}-${{ github.event.client_payload.head_sha }}-${{ github.event.client_payload.merge_sha }}',
+    'cancel-in-progress': 'false',
+  });
+  assert.deepEqual(job.permissions, {actions: 'read', contents: 'write', 'pull-requests': 'read'});
+  assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
+    {ref: '${{ github.workflow_sha }}', 'persist-credentials': 'false'});
+});
+
 const tupleStep = (kind, base, merge) => ({
   name: `Preview ${kind} tuple pr-7 base-${base} head-${C} merge-${merge}`,
   status: 'completed', conclusion: 'success',
@@ -89,7 +224,7 @@ async function execute(f, sent = []) {
 test('exact stale-base current tuple produces only the typed refresh', async () => {
   const f = fixture();
   assert.deepEqual(await execute(f), [{owner: 'example', repo: 'FireMUD',
-    event_type: 'pr-runtime-base-refresh', client_payload: {pr_number: '7', base_ref: 'develop',
+    event_type: 'pr-runtime-base-refresh-request', client_payload: {pr_number: '7', base_ref: 'develop',
       base_sha: B, head_sha: C, merge_sha: A, image_tag: `pr-merge-${A}`}}]);
   assert.deepEqual(f.mergeReads, [E, A]);
 });
