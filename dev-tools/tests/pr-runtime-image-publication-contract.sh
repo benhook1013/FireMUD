@@ -6,6 +6,191 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 RUNTIME_WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
 
+# The contract intentionally uses Python assertions; never report success when disabled.
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Runtime image publication contract requires Python assertions; unset PYTHONOPTIMIZE.")'
+
+# Evaluate the workflow's actual string/boolean concurrency expression against fixed event fixtures.
+# This bounded expression uses only property reads, equality, boolean operators and format.
+python3 - "$RUNTIME_WORKFLOW" <<'PY_CONCURRENCY'
+import copy
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text()
+group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
+cancel = re.search(r"^  cancel-in-progress: (.*)$", source, re.MULTILINE).group(1)
+promotion = re.search(r"^  publish-runtime-images:\n((?:^    .*\n|^\n)+)", source, re.MULTILINE).group(1)
+assert re.search(
+    r"^    concurrency:\n"
+    r"      group: runtime-image-promotion-\$\{\{ needs\.image-meta\.outputs\.head_branch \}\}\n"
+    r"      cancel-in-progress: false\n"
+    r"      queue: max$", promotion, re.MULTILINE
+)
+assert re.search(r'assert_current_branch_head\n\s+promote_alias "\$candidate" "\$branch_tag"', promotion)
+
+# Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
+meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
+                 source, re.MULTILINE | re.DOTALL).group(1)
+meta = re.sub(r"(?m)^          ", "", meta)
+branch_head = "a" * 40
+with tempfile.TemporaryDirectory() as temporary:
+    output = Path(temporary) / "output"
+    stub = Path(temporary) / "gh"
+    stub.write_text('#!/usr/bin/env bash\n'
+                    '[[ "$*" == "api repos/owner/repo/git/ref/heads/develop --jq .object.sha" ]] || exit 2\n'
+                    'printf "%s\\n" "$FIXTURE_LIVE_HEAD"\n')
+    stub.chmod(0o755)
+    for event in ("workflow_run", "workflow_dispatch"):
+        event_sha = "c" * 40 if event == "workflow_run" else branch_head
+        script = meta
+        for expression, value in {
+            "github.event_name": event, "github.event.workflow_run.event": "push",
+            "github.event.workflow_run.conclusion": "success", "github.event.workflow_run.head_sha": branch_head,
+        }.items():
+            script = script.replace("${{ " + expression + " }}", value)
+        for live_head, admitted, status in [(branch_head, True, 0), ("b" * 40, False, 0), ("unknown", False, 1)]:
+            output.write_text("")
+            environment = {
+                **os.environ, "PATH": temporary + ":" + os.environ["PATH"],
+                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": event_sha,
+                "GITHUB_REF_NAME": "develop", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_OUTPUT": str(output), "FIXTURE_LIVE_HEAD": live_head,
+                "EVENT_HEAD_BRANCH": "develop", "EVENT_HEAD_SHA": "",
+            }
+            result = subprocess.run(["bash", "-c", script], env=environment, capture_output=True, text=True)
+            assert result.returncode == status, result.stderr
+            if admitted:
+                assert f"head_sha={branch_head}\n" in output.read_text()
+                assert "head_branch=develop\n" in output.read_text()
+            else:
+                assert not output.read_text(), output.read_text()
+assert "github.event_name == 'workflow_dispatch' && steps.meta.outputs.head_sha != ''" in source
+
+class Context:
+    def __init__(self, value=None):
+        self.value = value
+    def __getattr__(self, key):
+        value = self.value.get(key) if isinstance(self.value, dict) else None
+        return Context(value)
+    def __bool__(self):
+        return bool(self.value)
+    def __eq__(self, other):
+        other = other.value if isinstance(other, Context) else other
+        left = self.value
+        if type(left) is type(other):
+            return left.lower() == other.lower() if isinstance(left, str) else left == other
+        def number(value):
+            if value is None or value == "": return 0
+            if isinstance(value, bool): return int(value)
+            try: return float(value)
+            except (ValueError, TypeError): return float("nan")
+        return number(left) == number(other)
+    def __str__(self):
+        return "" if self.value is None else str(self.value).lower() if isinstance(self.value, bool) else str(self.value)
+    def __format__(self, spec):
+        return format(str(self), spec)
+
+base = {
+    "event_name": "pull_request", "workflow": "Build Runtime Images",
+    "repository": "owner/repo", "run_id": 100, "sha": "merge1", "ref": "refs/pull/7/merge",
+    "event": {"action": "synchronize", "pull_request": {
+        "number": 7, "base": {"sha": "base1"},
+        "head": {"sha": "head1", "repo": {"full_name": "owner/repo"}}}},
+}
+
+def evaluate(event, expression_source=group):
+    def expression(match):
+        code = match.group(1).replace("&&", " and ").replace("||", " or ")
+        code = re.sub(r"\bnull\b", "None", code)
+        # Only the checked-in expression is code; event values remain data.
+        return str(eval(code, {"__builtins__": {}}, {
+            "github": Context(event), "format": lambda template, *args: template.format(*args)}))
+    return re.sub(r"\$\{\{(.*?)\}\}", expression, expression_source)
+
+def check(event, suffix):
+    expected = "runtime-images-Build Runtime Images-" + suffix
+    assert evaluate(event) == expected, (evaluate(event), expected)
+
+check(base, "pr-7-base-base1-head-head1-merge-merge1-required")
+new = copy.deepcopy(base)
+new["event"]["pull_request"]["head"]["sha"] = "head2"
+new["event"]["pull_request"]["base"]["sha"] = "base2"
+new["sha"] = "merge2"
+check(new, "pr-7-base-base2-head-head2-merge-merge2-required")
+new["event"]["pull_request"]["number"] = 8
+check(new, "pr-8-base-base2-head-head2-merge-merge2-required")
+for action in ["opened", "reopened", "ready_for_review", "synchronize"]:
+    event = copy.deepcopy(base)
+    event["event"]["action"] = action
+    check(event, "pr-7-base-base1-head-head1-merge-merge1-required")
+metadata = copy.deepcopy(base)
+metadata["event"]["action"] = "edited"
+check(metadata, "pr-7-base-base1-head-head1-merge-merge1-metadata")
+metadata["event"]["changes"] = {"base": {"ref": {"from": "old-base"}}}
+check(metadata, "pr-7-base-base1-head-head1-merge-merge1-required")
+for repository in ["fork/repo", None]:
+    fork = copy.deepcopy(base)
+    fork["event"]["pull_request"]["head"]["repo"] = {"full_name": repository}
+    check(fork, "pr-7-base-base1-head-head1-merge-merge1-required")
+    fork["event"]["pull_request"]["head"]["sha"] = "head2"
+    check(fork, "pr-7-base-base1-head-head2-merge-merge1-required")
+dispatch = {**base, "event_name": "repository_dispatch", "event": {
+    "action": "pr-runtime-base-refresh", "client_payload": {
+        "pr_number": 7, "base_sha": "base1", "head_sha": "head1", "merge_sha": "merge1"}}}
+check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
+for event in [base, dispatch, {"event_name": "workflow_dispatch"},
+              {"event_name": "workflow_run", "event": {"workflow_run": {"event": "pull_request", "head_branch": "develop"}}}]:
+    assert evaluate(event, cancel) == "False", event
+def push_callback(branch, conclusion, run_id, attempt, head_sha="older"):
+    return {**base, "event_name": "workflow_run", "event": {"workflow_run": {
+        "event": "push", "head_branch": branch, "head_sha": head_sha, "conclusion": conclusion,
+        "id": run_id, "run_attempt": attempt}}}
+
+for branch in ("main", "develop"):
+    event = push_callback(branch, "success", 91, 2)
+    assert evaluate(event, cancel) == "True", event
+    check(event, f"branch-{branch}-sha-older-ci-91-attempt-2-required")
+    check(push_callback(branch, "success", 97, 1, "newer"),
+          f"branch-{branch}-sha-newer-ci-97-attempt-1-required")
+    for conclusion, run_id, attempt in (("failure", 92, 1), ("cancelled", 93, 2),
+                                       ("timed_out", 94, 3), (None, 95, 1)):
+        event = push_callback(branch, conclusion, run_id, attempt)
+        assert evaluate(event, cancel) == "False", event
+        check(event, f"ci-push-run-{run_id}-attempt-{attempt}-required")
+
+nonprotected = push_callback("feature/x", "success", 96, 2)
+assert evaluate(nonprotected, cancel) == "False", nonprotected
+check(nonprotected, "ci-push-run-96-attempt-2-required")
+assert evaluate(push_callback("Develop", "success", 98, 1)).lower() != \
+       evaluate(push_callback("develop", "success", 97, 1)).lower()
+assert evaluate(push_callback("develop", "success", 91, 2)).lower() != \
+       evaluate(push_callback("main", "success", 91, 2)).lower()
+
+for value in [0, False, "", None]:
+    invalid = copy.deepcopy(dispatch)
+    invalid["event"]["client_payload"]["pr_number"] = value
+    check(invalid, "repository-dispatch-run-100-required")
+assert Context(1) != ""
+assert Context(0) == ""
+assert Context(False) == ""
+for missing in ["pr_number", "base_sha", "head_sha", "merge_sha"]:
+    invalid = copy.deepcopy(dispatch)
+    del invalid["event"]["client_payload"][missing]
+    check(invalid, "repository-dispatch-run-100-required")
+dispatch["event"]["client_payload"]["head_sha"] = "head2"
+check(dispatch, "pr-7-base-base1-head-head2-merge-merge1-required")
+callback = {**base, "event_name": "workflow_run", "event": {
+    "workflow_run": {"event": "pull_request", "id": 90, "run_attempt": 2}}}
+check(callback, "ci-pr-run-90-attempt-2-required")
+check({**base, "event_name": "push", "event": {}, "ref": "refs/heads/develop"},
+      "refs/heads/develop-required")
+print("Runtime concurrency: nonpreemptive exact PR/dispatch tuple and branch isolation passed")
+PY_CONCURRENCY
+
 require_contains() {
   local expected="$1"
   grep -Fq -- "$expected" "$WORKFLOW" || {
@@ -14,7 +199,9 @@ require_contains() {
   }
 }
 
-require_contains 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title ||'
+require_contains "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.event == 'repository_dispatch' && format('{0} source-run-{1}',"
+require_contains 'github.event.workflow_run.display_title || format'
+require_contains 'github.event.client_payload.source_run_id'
 require_contains 'pr-merge-'
 require_contains 'pr-runtime-provenance.json'
 require_contains 'source run title does not contain exact PR/base/head/merge/mode metadata'

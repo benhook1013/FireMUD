@@ -1,0 +1,65 @@
+spring:
+  autoconfigure:
+    exclude:
+      - net.firedevops.firemud.common.config.DatabaseAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+  application:
+    name: recovery-controller-service
+  datasource:
+    # This endpoint must identify the isolated recovery-control PostgreSQL instance and volume.
+    # Do not point it at the shared business PostgreSQL instance: business restores must not rewind
+    # the recovery journal. There is deliberately no shared-database fallback.
+    url: jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}/firemud_recovery_control
+    username: ${FIREMUD_RECOVERY_CONTROL_DB_USER}
+    password: ${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}
+  flyway:
+    enabled: true
+    schemas: recovery_control
+    defaultSchema: recovery_control
+    table: flyway_schema_history_recovery_control
+    locations: classpath:db/recovery-control-migration
+    placeholders:
+      serviceSchema: recovery_control
+  ssl:
+    bundle:
+      pem:
+        firemud-grpc:
+          keystore:
+            certificate: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+            private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+          truststore:
+            certificate: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
+  grpc:
+    server:
+      port: 6565
+      shutdown-grace-period: 30s
+      ssl:
+        enabled: true
+        bundle: firemud-grpc
+        client-auth: REQUIRE
+
+management:
+  endpoints:
+    access:
+      default: read-only
+    web:
+      exposure:
+        include:
+          - health
+          - prometheus
+          - info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+
+firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}

@@ -1154,6 +1154,75 @@ chmod +x "$CASE_DIR/bin/tee"
 run_case common-web-support 125
 assert_no_retry
 
+prepare_jacoco_case() {
+  new_case "$1"
+  mkdir -p "$CASE_DIR/dev-tools/tests"
+  cp "$ROOT_DIR/dev-tools/tests/jacoco-combined-report-contract.sh" "$CASE_DIR/dev-tools/tests/"
+}
+
+# shellcheck disable=SC2030,SC2031
+run_jacoco_case() (
+  cd "$CASE_DIR"
+  export CASE_DIR
+  export FAKE_CALL_LOG="$CASE_DIR/calls"
+  export FAKE_DIAGNOSTIC_CALL_LOG="$CASE_DIR/diagnostic-calls"
+  export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
+  export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
+  export PATH="$CASE_DIR/bin:$PATH"
+  bash ./dev-tools/tests/jacoco-combined-report-contract.sh > "$CASE_DIR/output" 2>&1
+)
+
+# An eligible first graph gets one refresh. The real script then checks
+# all six graphs, including failures in the graph content itself.
+for report_result in valid invalid; do
+  prepare_jacoco_case "jacoco-task-graph-recovered-$report_result"
+  write_buildsrc_429_cause
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  cat "$CASE_DIR/buildsrc-cause.log"
+  exit 1
+fi
+if [[ "${1:-}" == --refresh-dependencies ]]; then shift; fi
+case "$1" in
+  :common-saga:test) echo ":common-saga:test SKIPPED" ;;
+  :common-saga:check|:common-saga:jacocoTestReport)
+    printf "%s\n" ":common-saga:integrationTest SKIPPED" ":common-saga:jacocoTestReport SKIPPED" ;;
+  :account-service:jacocoTestReport|:game-session-service:jacocoTestReport)
+    echo "$1 SKIPPED" ;;
+  :world-management-service:jacocoTestReport)
+    if [[ "${FAKE_JACOCO_REPORT_RESULT:?}" == invalid ]]; then
+      echo ":world-management-service:classes SKIPPED"
+    fi
+    echo "$1 SKIPPED" ;;
+  *) exit 99 ;;
+esac'
+  status=0
+  FAKE_JACOCO_REPORT_RESULT="$report_result" run_jacoco_case || status=$?
+  if [[ "$report_result" == valid ]]; then
+    [[ "$status" -eq 0 ]] || fail "JaCoCo graph did not recover from eligible bootstrapping failure"
+    assert_output_contains "JaCoCo combined and slow-service partition report task graph contracts passed"
+  else
+    [[ "$status" -eq 1 ]] || fail "JaCoCo accepted a malformed graph after recovery"
+    assert_output_contains "World coverage aggregation recompiled classes instead of using measured partition classes."
+  fi
+  assert_call_count 7
+  assert_call 1 ":common-saga:test -PfullCheck --dry-run --no-configuration-cache"
+  assert_call 2 "--refresh-dependencies :common-saga:test -PfullCheck --dry-run --no-configuration-cache"
+  [[ "$(grep -c '^--refresh-dependencies ' "$CASE_DIR/calls")" -eq 1 ]] || fail "JaCoCo repeated dependency refresh"
+  [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "JaCoCo did not use exactly one bounded recovery delay"
+  cmp "$CASE_DIR/calls" "$CASE_DIR/locked-calls" || fail "JaCoCo bypassed the existing locked runner"
+done
+
+# Preserve unrelated Gradle configuration failures without another attempt.
+prepare_jacoco_case jacoco-task-graph-semantic-failure
+write_wrapper 'printf "%s\n" "FAILURE: Build failed with an exception." "* What went wrong:" "Could not create task :common-saga:test." "* Try:" "BUILD FAILED"; exit 1'
+status=0
+run_jacoco_case || status=$?
+[[ "$status" -eq 1 ]] || fail "JaCoCo task-graph semantic failure did not retain exit code 1"
+assert_no_retry
+assert_output_contains "Could not create task :common-saga:test."
+cmp "$CASE_DIR/calls" "$CASE_DIR/locked-calls" || fail "JaCoCo bypassed the existing locked runner"
+
 echo "Gradle dependency-recovery contract passed."
 
 

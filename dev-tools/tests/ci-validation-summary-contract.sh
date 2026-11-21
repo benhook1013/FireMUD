@@ -6,6 +6,7 @@ SUMMARY_PAYLOAD="$(python3 - "$ROOT_DIR" <<'PY'
 from pathlib import Path
 import base64
 import json
+import re
 import sys
 import yaml
 
@@ -54,7 +55,28 @@ split_markers = [step for step in ci['jobs']['validation-gate']['steps']
                  if step.get('name') == 'Declare dev tool contract split']
 if split_markers != [{'name': 'Declare dev tool contract split', 'run': ':'}]:
     raise SystemExit('Split contract inventory must retain its unconditional native source marker')
-names = [job['name'] for job in ci['jobs'].values()]
+def substantive_name(name):
+    # Metadata wrappers must normalize to an explicitly covered substantive name.
+    match = re.fullmatch(r"\$\{\{\s+.*\s+&&\s+'PR Metadata Edit \((.+)\)'\s+\|\|\s+'\1'\s+\}\}", name)
+    if match:
+        return match[1]
+    if "PR Metadata Edit" in name:
+        raise ValueError(f"Unrecognized metadata job wrapper: {name}")
+    return name
+
+assert substantive_name("${{ condition && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'   }}") == "Validation Gate"
+for malformed in [
+    "${{ condition && 'PR Metadata Edit (Validation Gate)' || 'Wrong Gate' }}",
+    "${{ condition && 'PR Metadata Edit (Validation Gate)' }}",
+]:
+    try:
+        substantive_name(malformed)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Unrecognized metadata wrapper escaped normalization")
+
+names = [substantive_name(job['name']) for job in ci['jobs'].values()]
 for name in names:
     if '${{' not in name and json.dumps(name, ensure_ascii=False) not in script:
         raise SystemExit(f'Detached summary is missing the CI job name {name}')
@@ -177,6 +199,21 @@ async function noWrites(config, reject = false) {
         (name === 'Dev Tool Contract Checks' ? 'Dev tool contract checks' : 'Dev tool validation contracts')
         + ': `' + conclusion + '`'));
     }
+  }
+  const moduleJobs = [
+    row('Build and Test (recovery-controller-service / full)', 995),
+    row('Build and Test (common-redis-contracts / full)', 996),
+  ];
+  const newModules = harness({jobs: [...clone(jobs), ...moduleJobs]});
+  await newModules.run();
+  assert.match(newModules.calls.creates[0].body, /All validation checks passed/);
+  for (const failedModule of moduleJobs) {
+    const moduleFailure = harness({jobs: [...clone(jobs), ...moduleJobs.map(job =>
+      job.id === failedModule.id ? {...job, conclusion: 'failure'} : job)]});
+    await moduleFailure.run();
+    assert.match(moduleFailure.calls.creates[0].body, /One or more validation checks failed/);
+    assert.match(moduleFailure.calls.creates[0].body, /Service build\/test matrix: `failure`/);
+    assert.doesNotMatch(moduleFailure.calls.creates[0].body, /All validation checks passed/);
   }
   const metadataSplit = clone(jobs);
   for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }

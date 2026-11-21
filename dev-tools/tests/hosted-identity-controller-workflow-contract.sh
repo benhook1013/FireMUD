@@ -1034,8 +1034,7 @@ assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "
     "github.event.workflow_run.conclusion == 'success' && "
     "github.event.workflow_run.head_repository.full_name == github.repository && "
-    "github.event.workflow_run.name == 'PR Preview Environment' && "
-    "(github.event.workflow_run.event == 'pull_request_target' || "
+    "(github.event.workflow_run.event == 'pull_request' || "
     "github.event.workflow_run.event == 'repository_dispatch')) || "
     "(github.event_name == 'pull_request_target' && "
     "github.event.action == 'closed' && "
@@ -2776,6 +2775,7 @@ assert set(preview_workflow["jobs"]) == {
 }
 refresh_job = preview_workflow["jobs"]["preview-runtime-base-refresh"]
 assert refresh_job["needs"] == "preview-plan"
+assert "github.event_name == 'repository_dispatch'" in refresh_job["if"]
 assert "base_refresh_required == 'true'" in refresh_job["if"]
 assert "image_tag != needs.preview-plan.outputs.base_sha" in refresh_job["if"]
 assert refresh_job["permissions"] == {"contents": "write", "pull-requests": "read"}
@@ -4063,8 +4063,8 @@ run_preview_derive_target() {
   local error_path="$4"
   env \
     PATH="$preview_derive_stub_dir:$PATH" \
-    EVENT_NAME=pull_request_target \
-    GITHUB_REF=refs/heads/develop \
+    EVENT_NAME=pull_request \
+    GITHUB_REF=refs/pull/901/merge \
     DEFAULT_BRANCH=develop \
     EVENT_ACTION=synchronize \
     EVENT_PR_NUMBER=901 \
@@ -4076,7 +4076,7 @@ run_preview_derive_target() {
     CLIENT_ACTION='' \
     GITHUB_REPOSITORY=example/FireMUD \
     GH_TOKEN=fake \
-    GITHUB_SHA="$preview_derive_head_lower" \
+    GITHUB_SHA="$preview_derive_merge_lower" \
     PREVIEW_DERIVE_PR_JSON="$preview_derive_pr_json" \
     PREVIEW_DERIVE_PR_JSON_1='' \
     PREVIEW_DERIVE_PR_JSON_2='' \
@@ -4097,7 +4097,7 @@ if run_preview_derive_target \
   "$preview_derive_base_lower" \
   "$preview_derive_stale_head_output" \
   "$TEMP_DIR/preview-derive-stale-head.error"; then
-  echo "preview plan accepted a stale pull_request_target head SHA" >&2
+  echo "preview plan accepted a stale pull_request head SHA" >&2
   exit 1
 fi
 grep -Fxq \
@@ -6566,7 +6566,7 @@ if [[ "$1" == run && "$2" == download ]]; then
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == valid || "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
     manifest_sha="$(sha256sum "${VALID_RENDER_MANIFEST:?}" | awk '{print $1}')"
     jq -nc \
-      --arg event "${FAKE_METADATA_EVENT:-pull_request_target}" \
+      --arg event "${FAKE_METADATA_EVENT:-pull_request}" \
       --arg action "${FAKE_METADATA_ACTION:-}" \
       --argjson pr_number "${FAKE_METADATA_PR_NUMBER:-900}" \
       --arg base_sha "${FAKE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
@@ -6590,7 +6590,7 @@ case "$resource" in
       if [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
         printf '%s' "$FAKE_WORKFLOW_RUN_JSON"
       else
-        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
       fi
     elif [[ "$jq_expression" == .path ]]; then
       printf '%s' '.github/workflows/preview.yml'
@@ -6623,11 +6623,13 @@ case "$resource" in
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
+      --arg base_sha "${TEST_PR_BASE_SHA:-dddddddddddddddddddddddddddddddddddddddd}" \
+      --arg merge "${TEST_PR_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
       --argjson changed_files "$changed_file_count" \
-      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
     printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
@@ -6638,6 +6640,10 @@ case "$resource" in
     else
       printf '%s' '{"sha":"cccccccccccccccccccccccccccccccccccccccc","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
     fi
+    ;;
+  repos/example/FireMUD/commits/dddddddddddddddddddddddddddddddddddddddd)
+    [[ "${TEST_PR_MERGE_SHA:-}" == dddddddddddddddddddddddddddddddddddddddd ]]
+    printf '%s' '{"sha":"dddddddddddddddddddddddddddddddddddddddd","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
     if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
@@ -6688,6 +6694,7 @@ target_gh_log="$TEMP_DIR/target-gh.log"
     INPUT_PR_NUMBER='' \
     INPUT_HEAD_SHA='' \
     INPUT_ACTION='' \
+    FAKE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[]}' \
     SOURCE_GH_LOG="$target_gh_log" \
     GITHUB_OUTPUT="$TEMP_DIR/output" \
     bash "$TEMP_DIR/target.sh"
@@ -6720,9 +6727,9 @@ chmod +x "$target_fixture_bin/python3"
 target_real_python3="$(command -v python3)"
 
 canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
-valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
-distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
 valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
@@ -6789,6 +6796,18 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+qualified_source_run_json="$(jq -c '.path += "@refs/pull/900/merge"' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$qualified_source_run_json" \
+  run_deploy_target_fixture qualified-source-deploy 0 'action=deploy'
+grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+cross_pr_qualified_source_run_json="$(jq -c '
+  .path += "@refs/pull/901/merge" | .pull_requests += [{number:901,head:{sha:.head_sha}}]
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$cross_pr_qualified_source_run_json" \
+  run_deploy_target_fixture qualified-source-cross-pr 0 'Ignoring artifact not bound to the qualified source path pull request.'
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-qualified-source-cross-pr.output"
+
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"}]]' \
   run_deploy_target_fixture v2-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/R__refresh_runtime_views.sql"}]]' \
@@ -6830,12 +6849,55 @@ FAKE_FIXTURE_EXPOSURE_MODE=public \
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
   run_deploy_target_fixture standalone-public 0 'action=deploy'
 
-# workflow_run.head_sha identifies the source/default-branch workflow run here,
-# while the PR head remains bound by the current PR and artifact metadata.
+# A real natural preview uses H in the REST run, its workflow_run callback and PR
+# association; the sanitized artifact also records the different execution merge M.
+native_merge_sha=dddddddddddddddddddddddddddddddddddddddd
+native_source_run_json="$(jq -c '.pull_requests[0].base.sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$valid_workflow_run_json")"
+TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+TEST_PR_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$native_source_run_json" \
+  run_deploy_target_fixture native-distinct-merge 0 'action=deploy'
+grep -Fxq 'head_sha=cccccccccccccccccccccccccccccccccccccccc' "$TEMP_DIR/deploy-target-native-distinct-merge.output"
+grep -Fxq "merge_sha=$native_merge_sha" "$TEMP_DIR/deploy-target-native-distinct-merge.output"
+TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+TEST_PR_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$native_source_run_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
+  run_deploy_target_fixture native-distinct-merge-callback 1 'Unexpected source run head'
+test ! -s "$TEMP_DIR/deploy-target-native-distinct-merge-callback.output"
+
+# A PR source run must bind both its run head and uniquely selected PR association to the artifact head.
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
-  run_deploy_target_fixture distinct-source-head 0 'action=deploy'
-grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-distinct-source-head.output"
+  run_deploy_target_fixture distinct-source-head 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-distinct-source-head.output"
+# Independently prove neither the API run head nor association can substitute for the other.
+run_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.head_sha=$sha' <<<"$valid_workflow_run_json")"
+association_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.pull_requests[0].head.sha=$sha' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$run_head_only_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture run-head-only 0 'Ignoring source run without a bound pull request association.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-run-head-only.output"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$association_head_only_json" \
+  run_deploy_target_fixture association-head-only 0 'Ignoring source run without a bound pull request association.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-association-head-only.output"
+
+
+# Unrelated native associations do not erase the uniquely selected artifact target.
+for association_order in before after; do
+  multiple_association_json="$(jq -c --arg order "$association_order" '
+    .pull_requests = (if $order == "before" then [{number:901,head:{sha:.head_sha}}] + .pull_requests
+      else .pull_requests + [{number:901,head:{sha:.head_sha}}] end)' <<<"$valid_workflow_run_json")"
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$multiple_association_json" \
+    run_deploy_target_fixture "multiple-associations-${association_order}" 0 'action=deploy'
+  grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-multiple-associations-${association_order}.output"
+done
+duplicate_target_json="$(jq -c '.pull_requests += .pull_requests' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$duplicate_target_json" \
+  run_deploy_target_fixture duplicate-target-association 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-duplicate-target-association.output"
 
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \
@@ -6957,19 +7019,23 @@ run_invalid_source_field() {
 
 run_invalid_source_field \
   conclusion \
-  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run conclusion::Expected success; actual failure.'
 run_invalid_source_field \
   head \
-  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run head::Expected cccccccccccccccccccccccccccccccccccccccc; actual dddddddddddddddddddddddddddddddddddddddd.'
 run_invalid_source_field \
   path \
-  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/other.yml.'
 run_invalid_source_field \
+  dispatch-qualified-path \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml@refs/pull/7/merge","event":"repository_dispatch","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/preview.yml@refs/pull/7/merge.'
+run_invalid_source_field \
   repository \
-  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"fork/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"fork/FireMUD"}}' \
   '::error title=Unexpected source run repository::Expected example/FireMUD; actual fork/FireMUD.'
 
 target_python_log="$TEMP_DIR/closed-target-python.log"

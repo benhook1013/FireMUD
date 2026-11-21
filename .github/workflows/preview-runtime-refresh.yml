@@ -1,0 +1,277 @@
+name: Refresh Preview Runtime Base
+
+# Privileged metadata-only observer. Never check out PR code, download artifacts,
+# or interpret a PR-authored run title/output as authority.
+on:
+  workflow_run:
+    workflows: [PR Preview Environment]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  refresh:
+    if: ${{ github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure') && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    concurrency:
+      group: preview-base-refresh-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted default branch image policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Validate GitHub provenance and dispatch current runtime tuple
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const {data: run} = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: context.payload.workflow_run.id,
+            });
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const sha = /^[0-9a-f]{40}$/;
+            const previewPath = '.github/workflows/preview.yml';
+            const pathMatches = run.path === previewPath ||
+              (typeof run.path === 'string' && run.path.startsWith(previewPath + '@') &&
+               run.path.length > previewPath.length + 1);
+            if (!pathMatches ||
+                run.event !== 'pull_request' || run.status !== 'completed' ||
+                !['success', 'failure'].includes(run.conclusion) ||
+                run.repository?.full_name !== repository ||
+                run.head_repository?.full_name !== repository ||
+                run.id !== context.payload.workflow_run.id || !sha.test(run.head_sha)) {
+              core.info('No trusted current PR source association; no dispatch.');
+              return;
+            }
+            const attempt = context.payload.workflow_run.run_attempt;
+            if (!Number.isSafeInteger(attempt) || attempt <= 0 || run.run_attempt !== attempt) {
+              core.info('Source attempt changed or is unavailable; no dispatch.');
+              return;
+            }
+            const jobs = [];
+            let total;
+            for (let page = 1; page <= 3; page++) {
+              const {data} = await github.request(
+                'GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs',
+                {...context.repo, run_id: run.id, attempt_number: attempt, per_page: 100, page});
+              if (!Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
+                  data.total_count > 300 || !Array.isArray(data.jobs) || data.jobs.length > 100 ||
+                  (total !== undefined && total !== data.total_count)) {
+                throw new Error('Invalid or truncated source-attempt jobs inventory');
+              }
+              total = data.total_count;
+              jobs.push(...data.jobs);
+              if (jobs.length === total) break;
+              if (jobs.length > total || data.jobs.length < 100 || page === 3) {
+                throw new Error('Incomplete source-attempt jobs inventory');
+              }
+            }
+            const plans = jobs.filter(job => job.name === 'Preview Plan');
+            if (plans.length !== 1) {
+              core.info(plans.length === 0 && attempt > 1
+                ? 'Preview Plan is absent from this rerun attempt. Use Re-run all jobs so a fresh plan proves this render.'
+                : 'Missing or ambiguous Preview Plan metadata; await a fresh preview render.');
+              return;
+            }
+            const plan = plans[0];
+            if (plan.run_id !== run.id || (plan.run_attempt !== undefined && plan.run_attempt !== attempt) ||
+                plan.head_sha !== run.head_sha ||
+                plan.status !== 'completed' || plan.conclusion !== 'success' || !Array.isArray(plan.steps)) {
+              core.info('No successful Preview Plan for the exact source attempt; no dispatch.');
+              return;
+            }
+            const recordedTuple = kind => {
+              const prefix = `Preview ${kind} tuple `;
+              const steps = plan.steps.filter(step => typeof step?.name === 'string' && step.name.startsWith(prefix));
+              const step = steps.length === 1 ? steps[0] : null;
+              return step?.status === 'completed' && step.conclusion === 'success'
+                ? step.name.slice(prefix.length).match(/^pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40})$/)
+                : null;
+            };
+            const recorded = recordedTuple('event');
+            const resolved = recordedTuple('resolved');
+            const sourceNumber = Number(recorded?.[1]);
+            // The event tuple supplies initial comparison identity. The successful
+            // resolved marker proves the plan selected an eligible deployment.
+            if (!recorded || !resolved || !Number.isSafeInteger(sourceNumber) ||
+                (run.path !== previewPath && run.path !== `${previewPath}@refs/pull/${sourceNumber}/merge`) ||
+                recorded[3] !== run.head_sha || resolved[3] !== run.head_sha ||
+                resolved[1] !== recorded[1] || !Array.isArray(run.pull_requests)) {
+              core.info('Missing or invalid immutable eligible preview tuple metadata; await a fresh preview plan.');
+              return;
+            }
+            const associations = run.pull_requests.filter(item => item?.number === sourceNumber);
+            if (associations.length !== 1) {
+              core.info('Preview tuple has no unique matching PR association; no dispatch.');
+              return;
+            }
+            const source = associations[0];
+            const {data: recordedMerge} = await github.rest.repos.getCommit({
+              ...context.repo, ref: recorded[4],
+            });
+            if (recordedMerge.sha !== recorded[4] || recordedMerge.parents?.length !== 2 ||
+                !sha.test(recordedMerge.parents[0].sha) ||
+                recordedMerge.parents[1].sha !== recorded[3]) {
+              core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
+              return;
+            }
+            const {data: pr} = await github.rest.pulls.get({
+              ...context.repo, pull_number: source.number,
+            });
+            // Execute only the checked-out default-branch eligibility policy.
+            const isEligible = (pull) => {
+              try {
+                require('node:child_process').execFileSync('python3', [
+                  './dev-tools/hosted/preview/preview-eligibility.py', '--revalidate-deploy',
+                  '--expected-repository', repository, '--expected-head-sha', run.head_sha,
+                ], {encoding: 'utf8', input: JSON.stringify(pull)});
+                return true;
+              } catch (error) {
+                if (error.status !== 1) throw error;
+                core.info('Canonical preview eligibility refused the current PR; no dispatch.');
+                return false;
+              }
+            };
+            if (!isEligible(pr)) return;
+            const isIntegrationBase = ['main', 'develop'].includes(pr.base?.ref);
+            if (pr.state !== 'open' || pr.head?.repo?.full_name !== repository ||
+                pr.base?.repo?.full_name !== repository ||
+                pr.head.sha !== run.head_sha || source.head?.sha !== run.head_sha ||
+                !/^[A-Za-z0-9._/-]+$/.test(pr.base.ref) ||
+                !sha.test(pr.merge_commit_sha)) {
+              core.info('Source is stale or ineligible; no dispatch.');
+              return;
+            }
+            const {data: base} = await github.rest.git.getRef({
+              ...context.repo, ref: `heads/${pr.base.ref}`,
+            });
+            const eventBaseMatchesMerge = recorded[2] === recordedMerge.parents[0].sha;
+            if (!sha.test(base.object?.sha) ||
+                (isIntegrationBase && eventBaseMatchesMerge && recorded[2] === base.object.sha)) {
+              core.info('No stale source base to repair; no dispatch.');
+              return;
+            }
+            const {data: merge} = await github.rest.repos.getCommit({
+              ...context.repo, ref: pr.merge_commit_sha,
+            });
+            if (merge.sha !== pr.merge_commit_sha || merge.parents?.length !== 2 ||
+                merge.parents[0].sha !== base.object.sha ||
+                merge.parents[1].sha !== pr.head.sha) {
+              core.info('Current merge is not the exact current base/head tuple; no dispatch.');
+              return;
+            }
+            // The event and the plan can observe different base advances. The
+            // resolved plan must independently prove its ordered parents.
+            let resolvedMerge = resolved[4] === recordedMerge.sha ? recordedMerge : merge;
+            if (resolved[4] !== resolvedMerge.sha) {
+              ({data: resolvedMerge} = await github.rest.repos.getCommit({...context.repo, ref: resolved[4]}));
+            }
+            if (resolvedMerge?.sha !== resolved[4] || resolvedMerge.parents?.length !== 2 ||
+                resolvedMerge.parents[0].sha !== resolved[2] || resolvedMerge.parents[1].sha !== resolved[3]) {
+              core.info('Resolved preview tuple does not match its verified merge parents; no dispatch.');
+              return;
+            }
+            // Reuse the canonical default-branch path classifier rather than
+            // trusting source outputs or maintaining a second image policy.
+            const imageTag = require('node:child_process').execFileSync('bash', [
+              './dev-tools/hosted/preview/resolve-preview-image-tag.sh',
+              merge.sha, String(pr.number), base.object.sha,
+            ], {encoding: 'utf8', env: process.env}).trim();
+            if (imageTag !== `pr-merge-${merge.sha}`) {
+              if (imageTag !== base.object.sha) throw new Error('Unexpected image identity');
+              core.info('Canonical image policy selects base images; no refresh.');
+              return;
+            }
+            // Event-driven duplicate suppression, not proof of image publication.
+            // Bound each active-status inventory; never treat a truncated inventory
+            // as proof that no producer exists. Completed runs do not suppress repair.
+            const runtimePath = '.github/workflows/runtime-images.yml';
+            const {data: runtimeWorkflow} = await github.rest.actions.getWorkflow({
+              ...context.repo, workflow_id: 'runtime-images.yml',
+            });
+            if (runtimeWorkflow.path !== runtimePath ||
+                !Number.isSafeInteger(runtimeWorkflow.id) || runtimeWorkflow.id <= 0) {
+              throw new Error('Runtime workflow identity is unproven');
+            }
+            const expectedTitle = 'Build Runtime Images secure-pr-artifact ' +
+              `pr-${pr.number} base-${base.object.sha} head-${pr.head.sha} merge-${merge.sha} mode-required`;
+            const activeStatuses = ['queued', 'waiting', 'requested', 'pending', 'in_progress'];
+            for (const status of activeStatuses) {
+              for (let page = 1; page <= 3; page++) {
+                const {data: inventory} = await github.rest.actions.listWorkflowRuns({
+                  ...context.repo, workflow_id: runtimeWorkflow.id, status, per_page: 100, page,
+                });
+                if (!Array.isArray(inventory.workflow_runs)) throw new Error('Invalid runtime run inventory');
+                for (const candidate of inventory.workflow_runs) {
+                  const trustedPath = candidate.path === runtimePath ||
+                    candidate.path === `${runtimePath}@refs/heads/${context.payload.repository.default_branch}` ||
+                    (candidate.event === 'pull_request' &&
+                     candidate.path === `${runtimePath}@refs/pull/${pr.number}/merge`);
+                  if (candidate.workflow_id !== runtimeWorkflow.id || !trustedPath ||
+                      candidate.repository?.full_name !== repository ||
+                      candidate.head_repository?.full_name !== repository ||
+                      !activeStatuses.includes(candidate.status) || candidate.conclusion != null ||
+                      candidate.display_title !== expectedTitle) continue;
+                  // Dispatch runs execute default-branch workflow code. PR runs
+                  // additionally need native GitHub head/base association, not title alone.
+                  const dispatchRun = candidate.event === 'repository_dispatch' &&
+                    candidate.head_branch === context.payload.repository.default_branch;
+                  const prRun = candidate.event === 'pull_request' &&
+                    candidate.head_sha === pr.head.sha && candidate.pull_requests?.length === 1 &&
+                    candidate.pull_requests[0].number === pr.number &&
+                    candidate.pull_requests[0].head?.sha === pr.head.sha &&
+                    candidate.pull_requests[0].base?.sha === base.object.sha;
+                  if (dispatchRun || prRun) {
+                    core.info('Exact current runtime tuple already has an active producer; no dispatch.');
+                    return;
+                  }
+                }
+                if (inventory.workflow_runs.length < 100) break;
+                if (page === 3) throw new Error('Active runtime inventory exceeds bounded lookup');
+              }
+            }
+            const {data: latestRun} = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: run.id,
+            });
+            if (latestRun?.id !== run.id || latestRun.run_attempt !== attempt ||
+                latestRun.head_sha !== run.head_sha || latestRun.event !== run.event ||
+                latestRun.path !== run.path || latestRun.status !== 'completed' ||
+                latestRun.conclusion !== run.conclusion) {
+              core.info('Source attempt changed during runtime lookup; no dispatch.');
+              return;
+            }
+            const {data: latestPr} = await github.rest.pulls.get({
+              ...context.repo, pull_number: source.number,
+            });
+            if (!isEligible(latestPr) || latestPr.number !== pr.number ||
+                latestPr.state !== 'open' || latestPr.head?.repo?.full_name !== repository ||
+                latestPr.base?.repo?.full_name !== repository ||
+                latestPr.head?.sha !== pr.head.sha || latestPr.base?.ref !== pr.base.ref ||
+                latestPr.merge_commit_sha !== merge.sha) {
+              core.info('Preview eligibility or exact tuple changed during runtime lookup; no dispatch.');
+              return;
+            }
+            const {data: latestBase} = await github.rest.git.getRef({
+              ...context.repo, ref: `heads/${pr.base.ref}`,
+            });
+            if (latestBase.object?.sha !== base.object.sha) {
+              core.info('Preview base changed during runtime lookup; no dispatch.');
+              return;
+            }
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo, event_type: 'pr-runtime-base-refresh',
+              client_payload: {
+                pr_number: String(pr.number), base_ref: pr.base.ref,
+                base_sha: base.object.sha, head_sha: pr.head.sha,
+                merge_sha: merge.sha, image_tag: `pr-merge-${merge.sha}`,
+              },
+            });

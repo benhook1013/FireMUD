@@ -375,7 +375,7 @@ run_workflow_eligibility() {
 event_metadata_output="$TEMP_DIR/event-metadata.out"
 (
   cd "$ROOT_DIR"
-  EVENT_NAME=pull_request_target \
+  EVENT_NAME=pull_request \
     EVENT_ACTION=synchronize \
     PR_USER_LOGIN=human \
     PR_BASE_REF=develop \
@@ -396,7 +396,7 @@ grep -qx 'priority=true' "$event_eligibility_output"
 malformed_event_metadata_output="$TEMP_DIR/malformed-event-metadata.out"
 (
   cd "$ROOT_DIR"
-  EVENT_NAME=pull_request_target \
+  EVENT_NAME=pull_request \
     EVENT_ACTION=synchronize \
     PR_USER_LOGIN=human \
     PR_BASE_REF=develop \

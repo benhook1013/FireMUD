@@ -11,6 +11,86 @@ MODULE_CHECK_WRAPPER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
 
 node --test "$ROOT_DIR/.github/scripts/classify-change-scope.test.cjs"
 
+node - "$CI_WORKFLOW" "$CLASSIFIER" <<'JS_SCOPE'
+const assert = require("node:assert/strict");
+const {execFileSync} = require("node:child_process");
+const workflow = JSON.parse(execFileSync("python3", ["-c",
+  "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))",
+  process.argv[2]], {encoding: "utf8"}));
+const compute = workflow.jobs.changes.steps.find(step => step.id === "compute").with.script;
+const {ALL_MODULES, BOOTABLE_MODULES, classifyChangeScope} = require(process.argv[3]);
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const execute = new AsyncFunction("require", "github", "context", "core", compute);
+(async () => {
+  for (const [available, modules, compatible] of [
+    [false, undefined, false],
+    [true, undefined, false],
+    [true, ALL_MODULES.filter(module => module !== "recovery-controller-service"), false],
+    [true, ALL_MODULES.filter(module => module !== "common-redis-contracts"), false],
+    [true, ALL_MODULES, true],
+  ]) {
+    const outputs = {};
+    await execute(name => name === "node:fs" ? {existsSync: () => available} : {
+      ALL_MODULES: modules,
+      classifyGithubChangeScope: async () => ({
+        runAll: false, affectedModules: ["account-service"], bootableModules: ["account-service"],
+        affectedServices: ["account-service"], lightweightOnly: true,
+      }),
+    }, {}, {}, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.equal(outputs.run_all, String(!compatible));
+    assert.equal(outputs.lightweight_only, String(compatible));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), compatible ? ["account-service"] : ALL_MODULES);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules),
+      compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
+  }
+  for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false] of [
+    [[{filename: "design/README.md"}], 1, true, undefined, false, true],
+    [[{filename: "README.md"}], 1, true],
+    [[{filename: "README.md", status: "renamed", previous_filename: "design/guide.md"}], 1, true, undefined, false, true],
+    [[{filename: "dev-tools/validation/check-flyway-versions.py"}], 1, true, undefined, true],
+    [[{filename: "dev-tools/validation/gradle-run-supervisor.py"}], 1, false],
+    [[{filename: "services/recovery-controller-service/src/main/java/Example.java"}], 1, false],
+    [[{filename: "README.md", status: "renamed", previous_filename: "services/new-service/Main.java"}], 1, false],
+    [[{filename: "design/README.md"}], 1, false, "head-before"],
+    [[{filename: "design/README.md"}], 1, false, "head-after"],
+    [[{filename: "design/README.md"}], 1, false, "base-after"],
+    [[{filename: "design/README.md"}], 2, false],
+    [[{filename: "design/README.md", status: "renamed"}], 1, false],
+    [[{filename: "services/new-service/README.md"}], 1, false],
+    [[{filename: "design/README.md", previous_filename: "services/new-service/Main.java"}], 1, false],
+    [[{filename: "design/../services/Main.md"}], 1, false],
+    [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true, undefined, false, true],
+  ]) {
+    const outputs = {};
+    await execute(name => name === "node:fs" ? {existsSync: () => true} : {
+      ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
+      classifyGithubChangeScope: async () => ({runAll: false, affectedModules: [],
+        bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false}),
+    }, {rest: {pulls: {listFiles() {}, get: (() => {
+      let calls = 0;
+      return async () => { const call = calls++; return ({data: {number: 42, changed_files: count,
+        head: {sha: (drift === "head-before" || (drift === "head-after" && call > 0)) ? "c".repeat(40) : "a".repeat(40)},
+        base: {sha: drift === "base-after" && call > 0 ? "c".repeat(40) : "b".repeat(40)},
+      }}); };
+    })()}}, paginate: async () => entries.map(entry => ({status: "modified", ...entry}))},
+    {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
+      payload: {pull_request: {number: 42, changed_files: count,
+        head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}},
+    {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.equal(outputs.lightweight_only, String(expected));
+    assert.equal(outputs.validation_python_changed, String(expectsPython));
+    assert.equal(outputs.python_changed, String(expectsPython));
+    assert.equal(outputs.design_docs_changed, String(expectsDesignDocs));
+    assert.equal(outputs.run_all, String(!expected));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), expected ? [] : ALL_MODULES);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules), expected ? [] : [...BOOTABLE_MODULES]);
+  }
+  const shared = classifyChangeScope(["services/common-redis-contracts/src/main/java/Example.java"]);
+  assert.deepEqual(shared.affectedModules, ALL_MODULES);
+  assert.ok(!shared.bootableModules.includes("common-redis-contracts"));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+JS_SCOPE
+
 require_contains() {
   local path="$1"
   local expected="$2"
@@ -381,6 +461,7 @@ DEV_TOOLS_TEST_DISCOVERY_COMMAND = "python3 -m unittest discover -s dev-tools/te
 REMAINING_FULL_RUN_COMMANDS = (
     'bash ./dev-tools/tests/cloc-report-contract.sh',
     'bash ./dev-tools/tests/ci-lightweight-scope-contract.sh',
+    'bash ./dev-tools/tests/protected-pod-admission-workflow-contract.sh',
     'bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh',
     'bash ./dev-tools/tests/workflow-version-authority-contract.sh',
     'bash ./dev-tools/tests/workflow-tool-updater-contract.sh',
@@ -1469,24 +1550,6 @@ require_equal(
     "ci workflow",
 )
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "const { classifyGithubChangeScope } = require(classifierPath)",
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "await classifyGithubChangeScope(github, context)",
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "Base revision predates the change classifier; using complete validation scope.",
-    "ci workflow",
-)
 classifier_inventories = load_classifier_module_inventories(sys.argv[5])
 for output_key, constant_name, inventory_key in (
     ("affected_modules", "completeModules", "allModules"),
@@ -2101,7 +2164,7 @@ for path_item in (
 ):
     require_list_item(
         preview,
-        ("on", "pull_request_target", "paths-ignore"),
+        ("on", "pull_request", "paths-ignore"),
         path_item,
         "preview workflow",
     )

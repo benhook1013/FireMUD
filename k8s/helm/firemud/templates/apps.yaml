@@ -105,6 +105,9 @@
 {{- end }}
 {{- end }}
 {{- range $key, $_ := $service.extraEnv }}
+{{- if has $key (list "JAVA_TOOL_OPTIONS" "MALLOC_ARENA_MAX") }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed previewStack.jvm environment" $service.name $key) }}
+{{- end }}
 {{- if and $mountTelnetTls (has $key $managedTelnetEnv) }}
 {{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Telnet TLS environment" $service.name $key) }}
 {{- end }}
@@ -192,6 +195,16 @@ spec:
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
+            {{- with $.Values.previewStack.jvm }}
+            {{- if .javaToolOptions }}
+            - name: JAVA_TOOL_OPTIONS
+              value: {{ .javaToolOptions | quote }}
+            {{- end }}
+            {{- if .mallocArenaMax }}
+            - name: MALLOC_ARENA_MAX
+              value: {{ .mallocArenaMax | quote }}
+            {{- end }}
+            {{- end }}
             {{- if $service.mountGrpcTls }}
             {{- if or $usesGrpcWorkloadIdentity (eq $service.name "logging-admin-service") $mountGameplayClientTls }}
             - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE

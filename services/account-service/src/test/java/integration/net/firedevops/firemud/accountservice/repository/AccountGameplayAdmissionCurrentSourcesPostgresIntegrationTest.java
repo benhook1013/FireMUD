@@ -2653,6 +2653,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
   /** Run-owned local primary/replica used only for the authenticated Account-owner case. */
   static final class PhysicalRedisFixture implements AutoCloseable {
+    static final int STARTUP_ATTEMPTS = 2;
     private static final int REDIS_PORT = 6379;
     private static final String ACCOUNT_PASSWORD = UUID.randomUUID().toString().replace("-", "");
     private static final String PRIMARY_ALIAS = "account-gameplay-admission-primary";
@@ -2662,20 +2663,29 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> primary =
-        new GenericContainer<>(TestContainerImages.redis())
+        configurePrimaryStartup(new GenericContainer<>(TestContainerImages.redis()))
             .withNetwork(network)
-            .withNetworkAliases(PRIMARY_ALIAS)
-            .withExposedPorts(REDIS_PORT)
-            .withCommand(
-                "redis-server",
-                "--bind",
-                "0.0.0.0",
-                "--protected-mode",
-                "no",
-                "--appendonly",
-                "yes",
-                "--appendfsync",
-                "always");
+            .withNetworkAliases(PRIMARY_ALIAS);
+
+    static GenericContainer<?> configurePrimaryStartup(GenericContainer<?> container) {
+      // The physical fixture and failure-injection proof share this entire startup policy.
+      return container
+          .withStartupAttempts(STARTUP_ATTEMPTS)
+          .withExposedPorts(REDIS_PORT)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--repl-diskless-sync-delay",
+              "0");
+    }
+
     private final GenericContainer<?> replica =
         new GenericContainer<>(TestContainerImages.redis())
             .withNetwork(network)

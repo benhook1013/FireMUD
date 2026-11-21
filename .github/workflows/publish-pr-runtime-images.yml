@@ -7,7 +7,8 @@ on:
   repository_dispatch:
     types: [pr-runtime-image-publication]
 
-run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}
+# Typed refresh callbacks include the exact source run ID because their tuple can be reused.
+run-name: Publish PR Runtime Images ${{ github.event.workflow_run.event == 'repository_dispatch' && format('{0} source-run-{1}', github.event.workflow_run.display_title, github.event.workflow_run.id) || github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}
 
 permissions: {}
 

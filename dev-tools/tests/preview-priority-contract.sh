@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+report_contract_failure() {
+  printf 'Preview priority contract failed at line %s (exit %s)\n' "$2" "$1" >&2
+}
+trap 'report_contract_failure "$?" "$LINENO"' ERR
+
+# Python assertions are part of the contract, including the native tuple markers.
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Preview priority contract requires Python assertions; unset PYTHONOPTIMIZE.")'
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
@@ -40,6 +47,26 @@ Path(sys.argv[3]).write_text(body, encoding="utf-8")
 PY
 }
 
+python3 - "$ROOT_DIR/.github/workflows/preview.yml" <<'PY'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["preview-plan"]["steps"]
+resolved = [(i, s) for i, s in enumerate(steps) if s.get("name", "").startswith("Preview resolved tuple ")]
+assert len(resolved) == 1
+index, marker = resolved[0]
+assert marker["run"] == ":"
+assert marker["if"] == "${{ github.event_name == 'pull_request' && steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}"
+assert marker["name"] == "Preview resolved tuple pr-${{ steps.derive.outputs.pr_number }} base-${{ steps.derive.outputs.base_sha }} head-${{ steps.derive.outputs.head_sha }} merge-${{ steps.derive.outputs.merge_sha }}"
+assert index > next(i for i,s in enumerate(steps) if s.get("id") == "derive")
+assert index > next(i for i,s in enumerate(steps) if s.get("id") == "eligibility")
+event_markers = [(i, s) for i, s in enumerate(steps) if s.get("name", "").startswith("Preview event tuple ")]
+assert len(event_markers) == 1
+event_index, event_marker = event_markers[0]
+assert event_marker["run"] == ":"
+assert event_marker["if"] == "${{ github.event_name == 'pull_request' }}"
+assert event_marker["name"] == "Preview event tuple pr-${{ github.event.pull_request.number }} base-${{ github.event.pull_request.base.sha }} head-${{ github.event.pull_request.head.sha }} merge-${{ github.sha }}"
+assert event_index < next(i for i,s in enumerate(steps) if s.get("id") == "derive")
+PY
+
 cardinality_workflow="$TEMP_DIR/step-cardinality.yml"
 cat >"$cardinality_workflow" <<'YAML'
 jobs:
@@ -77,6 +104,23 @@ if [[ "$*" == *"get namespaces"* ]]; then
   if [[ "${FAKE_NAMESPACE_LIST_ERROR:-false}" == true ]]; then
     exit 1
   fi
+  if [[ "$*" == *"-o name"* && -n "${FAKE_NAMESPACE_COUNT_SEQUENCE:-}" ]]; then
+    call_count=0
+    if [[ -f "$FAKE_NAMESPACE_LIST_CALLS" ]]; then
+      call_count="$(<"$FAKE_NAMESPACE_LIST_CALLS")"
+    fi
+    call_count=$((call_count + 1))
+    printf '%s' "$call_count" > "$FAKE_NAMESPACE_LIST_CALLS"
+    IFS=',' read -r -a namespace_counts <<<"$FAKE_NAMESPACE_COUNT_SEQUENCE"
+    sequence_index=$((call_count - 1))
+    if (( sequence_index >= ${#namespace_counts[@]} )); then
+      sequence_index=$((${#namespace_counts[@]} - 1))
+    fi
+    for ((namespace_index = 1; namespace_index <= namespace_counts[sequence_index]; namespace_index++)); do
+      printf 'namespace/fake-%s\n' "$namespace_index"
+    done
+    exit 0
+  fi
   printf '%b' "${FAKE_NAMESPACE_ROWS:-}"
   exit 0
 fi
@@ -94,6 +138,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     exit 1
   fi
   if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]] ||
+    [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL:-false}" == true && "$count" -eq 1 ]] ||
     [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK:-false}" == true && "$count" -gt 1 ]]; then
     exit 0
   fi
@@ -103,13 +148,13 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     exit 0
   fi
   if [[ -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}" ]]; then
-    rm -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
     if [[ "${FAKE_ANNOTATE_CONFIRMATION_ERROR:-false}" == true ]]; then
       exit 1
     fi
     if [[ "${FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE:-false}" == true ]]; then
       exit 0
     fi
+    rm -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
   fi
   canonical_head() {
     case "${1:-}" in
@@ -117,7 +162,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
       *) printf '%s' "${1:-}" ;;
     esac
   }
-  snapshot_head="$(canonical_head "${FAKE_PR_901_HEAD:-}")"
+  snapshot_head="$(canonical_head "${FAKE_PR_901_SNAPSHOT_HEAD:-${FAKE_PR_901_HEAD:-}}")"
   snapshot_requested_head="$(canonical_head "${FAKE_PR_901_REQUESTED_HEAD:-}")"
   if [[ "$count" -gt 1 ]]; then
     if [[ -v FAKE_PR_901_RECHECK_HEAD ]]; then
@@ -140,12 +185,35 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     snapshot_requested_image=""
   fi
   snapshot_uid="${FAKE_PR_901_NAMESPACE_UID:-uid-pr-901}"
+  if [[ "$count" -gt 1 && -v FAKE_PR_901_RECHECK_NAMESPACE_UID ]]; then
+    snapshot_uid="$FAKE_PR_901_RECHECK_NAMESPACE_UID"
+  fi
   snapshot_retry_count="${FAKE_PR_901_PROOF_RETRY_COUNT:-}"
   snapshot_retry_base="${FAKE_PR_901_PROOF_RETRY_BASE_SHA:-}"
   snapshot_retry_head="${FAKE_PR_901_PROOF_RETRY_HEAD_SHA:-}"
   snapshot_retry_merge="${FAKE_PR_901_PROOF_RETRY_MERGE_SHA:-}"
   snapshot_retry_image="${FAKE_PR_901_PROOF_RETRY_IMAGE_TAG:-}"
-  if [[ "${FAKE_PR_901_PROOF_COMPLETE:-true}" == true ]]; then
+  snapshot_resource_version=rv-901
+  if [[ ! -f "${FAKE_PROOF_RETRY_STATE_MARKER:?}" ]]; then
+    jq -cn \
+      --arg count "$snapshot_retry_count" --arg base "$snapshot_retry_base" \
+      --arg head "$snapshot_retry_head" --arg merge "$snapshot_retry_merge" \
+      --arg image "$snapshot_retry_image" \
+      '{count:$count,base:$base,head:$head,merge:$merge,image:$image,resourceVersion:"rv-901"}' \
+      > "$FAKE_PROOF_RETRY_STATE_MARKER"
+  fi
+  snapshot_retry_count="$(jq -r '.count' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+  snapshot_retry_base="$(jq -r '.base' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+  snapshot_retry_head="$(jq -r '.head' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+  snapshot_retry_merge="$(jq -r '.merge' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+  snapshot_retry_image="$(jq -r '.image' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+  snapshot_resource_version="$(jq -r '.resourceVersion' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+  proof_complete="${FAKE_PR_901_PROOF_COMPLETE:-true}"
+  if [[ "${FAKE_PR_901_PROOF_COMPLETE_AFTER_CONSUMER_COMPLETION:-false}" == true &&
+    -f "${FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER:-}" ]]; then
+    proof_complete=true
+  fi
+  if [[ "$proof_complete" == true ]]; then
     snapshot_proof_base="$snapshot_base"
     snapshot_proof_head="$snapshot_head"
     snapshot_proof_merge="$snapshot_merge"
@@ -178,7 +246,8 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     --arg retry_merge "$snapshot_retry_merge" \
     --arg retry_image "$snapshot_retry_image" \
     --arg uid "$snapshot_uid" \
-    '{metadata:{name:"pr-901",uid:$uid,resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image,"firemud.dev/proof-preview-base-sha":$proof_base,"firemud.dev/proof-preview-head-sha":$proof_head,"firemud.dev/proof-preview-merge-sha":$proof_merge,"firemud.dev/proof-preview-image-tag":$proof_image,"firemud.dev/proof-preview-namespace-uid":$proof_uid,"firemud.dev/proof-retry-count":$retry_count,"firemud.dev/proof-retry-base-sha":$retry_base,"firemud.dev/proof-retry-head-sha":$retry_head,"firemud.dev/proof-retry-merge-sha":$retry_merge,"firemud.dev/proof-retry-image-tag":$retry_image}}}'
+    --arg resource_version "$snapshot_resource_version" \
+    '{metadata:{name:"pr-901",uid:$uid,resourceVersion:$resource_version,annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image,"firemud.dev/proof-preview-base-sha":$proof_base,"firemud.dev/proof-preview-head-sha":$proof_head,"firemud.dev/proof-preview-merge-sha":$proof_merge,"firemud.dev/proof-preview-image-tag":$proof_image,"firemud.dev/proof-preview-namespace-uid":$proof_uid,"firemud.dev/proof-retry-count":$retry_count,"firemud.dev/proof-retry-base-sha":$retry_base,"firemud.dev/proof-retry-head-sha":$retry_head,"firemud.dev/proof-retry-merge-sha":$retry_merge,"firemud.dev/proof-retry-image-tag":$retry_image}}}'
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace &&
@@ -288,6 +357,63 @@ if [[ "$1" == annotate && "$2" == namespace ]]; then
     : > "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
     exit 1
   fi
+  if [[ "${3:-}" == pr-901 && ( "$*" == *"firemud.dev/proof-retry-count="* || "$*" == *"--resource-version rv-902"* ) ]]; then
+    if [[ ! -f "${FAKE_PROOF_RETRY_STATE_MARKER:?}" ]]; then
+      jq -cn \
+        --arg count "${FAKE_PR_901_PROOF_RETRY_COUNT:-}" \
+        --arg base "${FAKE_PR_901_PROOF_RETRY_BASE_SHA:-}" \
+        --arg head "${FAKE_PR_901_PROOF_RETRY_HEAD_SHA:-}" \
+        --arg merge "${FAKE_PR_901_PROOF_RETRY_MERGE_SHA:-}" \
+        --arg image "${FAKE_PR_901_PROOF_RETRY_IMAGE_TAG:-}" \
+        '{count:$count,base:$base,head:$head,merge:$merge,image:$image,resourceVersion:"rv-901"}' \
+        > "$FAKE_PROOF_RETRY_STATE_MARKER"
+    fi
+    state_version="$(jq -r '.resourceVersion' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+    expected_version=rv-901
+    if [[ "$*" == *"--resource-version rv-902"* ]]; then
+      expected_version=rv-902
+    fi
+    if [[ "$state_version" != "$expected_version" ]]; then
+      exit 1
+    fi
+    local_count="$(jq -r '.count' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+    local_base="$(jq -r '.base' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+    local_head="$(jq -r '.head' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+    local_merge="$(jq -r '.merge' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+    local_image="$(jq -r '.image' "$FAKE_PROOF_RETRY_STATE_MARKER")"
+    for annotation in "$@"; do
+      case "$annotation" in
+        firemud.dev/proof-retry-count=*) local_count="${annotation#*=}" ;;
+        firemud.dev/proof-retry-count-) local_count="" ;;
+        firemud.dev/proof-retry-base-sha=*) local_base="${annotation#*=}" ;;
+        firemud.dev/proof-retry-base-sha-) local_base="" ;;
+        firemud.dev/proof-retry-head-sha=*) local_head="${annotation#*=}" ;;
+        firemud.dev/proof-retry-head-sha-) local_head="" ;;
+        firemud.dev/proof-retry-merge-sha=*) local_merge="${annotation#*=}" ;;
+        firemud.dev/proof-retry-merge-sha-) local_merge="" ;;
+        firemud.dev/proof-retry-image-tag=*) local_image="${annotation#*=}" ;;
+        firemud.dev/proof-retry-image-tag-) local_image="" ;;
+      esac
+    done
+    state_resource_version=rv-902
+    if [[ "$expected_version" == rv-902 ]]; then
+      state_resource_version=rv-903
+      : > "${FAKE_PROOF_RETRY_COMPENSATED_MARKER:?}"
+    fi
+    jq -cn --arg count "$local_count" --arg base "$local_base" --arg head "$local_head" \
+      --arg merge "$local_merge" --arg image "$local_image" --arg rv "$state_resource_version" \
+      '{count:$count,base:$base,head:$head,merge:$merge,image:$image,resourceVersion:$rv}' \
+      > "$FAKE_PROOF_RETRY_STATE_MARKER"
+    if [[ "$expected_version" == rv-901 ]]; then
+      jq -cn --arg count "$local_count" --arg base "$local_base" --arg head "$local_head" \
+        --arg merge "$local_merge" --arg image "$local_image" \
+        '{count:$count,base:$base,head:$head,merge:$merge,image:$image}' \
+        > "${FAKE_PROOF_RETRY_RESERVATION_MARKER:?}"
+      if [[ "$*" == *"-o json"* ]]; then
+        printf '%s' '{"metadata":{"uid":"uid-pr-901","resourceVersion":"rv-902"}}'
+      fi
+    fi
+  fi
   exit 0
 fi
 if [[ "$*" == "-n firemud-system get hostedenvironmentidentities.platform.firemud.dev -o json" ]]; then
@@ -389,6 +515,12 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_HELM_LOG"
 EOF
 
+cat > "$TEMP_DIR/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_SLEEP_LOG"
+EOF
+
 cat > "$TEMP_DIR/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -401,6 +533,7 @@ for arg in "$@"; do
     has_jq=true
   fi
 done
+
 fake_labels_json() {
   local priority="$1"
   local labels_valid="$2"
@@ -412,11 +545,62 @@ fake_labels_json() {
   fi
   printf '%s' "$labels_json"
 }
-if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/preview.yml' ]]; then
+  printf '%s\n' '{"id":173511323,"name":"PR Preview Environment","path":".github/workflows/preview.yml"}'
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/hosted-identity-request.yml' ]]; then
+  printf '%s\n' '{"id":357129350,"name":"Trusted Hosted Identity Request","path":".github/workflows/hosted-identity-request.yml"}'
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173511323/runs' ]]; then
+  if [[ "$*" != *"--method GET"* || "$*" != *"status=completed"* ||
+    "$*" != *"per_page=100"* || "$*" != *"--paginate --slurp"* ||
+    "$*" == *"created="* || "$*" == *"head="* ]]; then
+    echo "recent source inventory must paginate without a creation-time cutoff: $*" >&2
+    exit 1
+  fi
+  if [[ "$*" == *"event=pull_request"* ]]; then
+    if [[ "$*" != *"head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]; then
+      echo "recent pull_request inventory omitted its exact head SHA filter: $*" >&2
+      exit 1
+    fi
+    payload="${FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON:-}"
+  elif [[ "$*" == *"event=repository_dispatch"* ]]; then
+    if [[ "$*" != *"branch=develop"* || "$*" == *"head_sha="* ]]; then
+      echo "recent repository_dispatch inventory did not use the trusted default-branch filter: $*" >&2
+      exit 1
+    fi
+    payload="${FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON:-}"
+  else
+    echo "recent source inventory used an unexpected event filter: $*" >&2
+    exit 1
+  fi
+  [[ -n "$payload" ]] || payload='{"total_count":0,"workflow_runs":[]}'
+  jq -c 'if type == "array" then . else [.] end' <<<"$payload"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357129350/runs' ]]; then
+  if [[ "$*" != *"--method GET"* || "$*" != *"event=workflow_run"* ||
+    "$*" != *"branch=develop"* || "$*" == *"head="* ]]; then
+    echo "fresh consumer inventory did not use bounded GET/branch query parameters: $*" >&2
+    exit 1
+  fi
+  printf '%s\n' "$*" >> "$FAKE_RECENT_HANDOFF_LOOKUP_LOG"
+  if [[ -v FAKE_RECENT_TRUSTED_CONSUMER_RUNS_JSON ]]; then
+    printf '%s' "$FAKE_RECENT_TRUSTED_CONSUMER_RUNS_JSON"
+  else
+    printf '%s' '{"total_count":0,"workflow_runs":[]}'
+  fi
+  exit 0
+fi
+if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request\&status=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
   active_query_status="${resource##*&status=}"
   active_query_status="${active_query_status%%&*}"
   if [[ "$resource" == */actions/runs\?branch=* ]]; then
     active_query_scope=branch
+  elif [[ "$resource" == */actions/runs\?event=pull_request\&status=* ]]; then
+    active_query_scope=pull_request
   elif [[ "$resource" == */actions/runs\?event=pull_request_target\&status=* ]]; then
     active_query_scope=pull_request_target
   else
@@ -431,19 +615,93 @@ if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == 
     jq -c \
       --arg requested_status "$active_query_status" \
       --arg requested_scope "$active_query_scope" \
-      '[.[] | .workflow_runs = [.workflow_runs[] | select(.status == $requested_status) | select((.event // $requested_scope) == $requested_scope)]]' \
+      '[.[] | .workflow_runs = [.workflow_runs[] | select(.status == $requested_status) | select((.event // $requested_scope) == $requested_scope or ($requested_scope == "branch" and .event == "repository_dispatch"))]]' \
       <<<"$FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON"
   else
     jq -cn \
       --argjson runs "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}" \
       --arg requested_status "$active_query_status" \
-      '[{workflow_runs:[$runs[] | select(.status == $requested_status) | {id:.databaseId,name:"PR Preview Environment",head_branch:"develop",display_title:.displayTitle,status:.status}]}]'
+      --arg requested_scope "$active_query_scope" \
+      '[{workflow_runs:[$runs[] | select(.status == $requested_status and $requested_scope == "branch") | {
+        id:.databaseId,run_attempt:1,workflow_id:173511323,event:"repository_dispatch",
+        path:".github/workflows/preview.yml",name:.displayTitle,head_branch:"develop",
+        head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+        display_title:.displayTitle,status:.status}]}]'
   fi
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254/attempts/2/jobs?per_page=100' ]]; then
+  [[ "${FAKE_PREVIEW_PLAN_JOBS_FAIL:-false}" != true ]] || exit 1
+  printf '%s' "${FAKE_PREVIEW_PLAN_JOBS_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254' ]]; then
+  [[ "${FAKE_PREVIEW_SOURCE_LATEST_FAIL:-false}" != true ]] || exit 1
+  printf '%s' "${FAKE_PREVIEW_SOURCE_LATEST_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5255/attempts/1/jobs?per_page=100' ]]; then
+  printf '%s' "${FAKE_PREVIEW_DISPATCH_JOBS_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5255' ]]; then
+  printf '%s' "${FAKE_PREVIEW_DISPATCH_LATEST_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" =~ ^repos/example/FireMUD/actions/runs/(525[6-9])/attempts/1/jobs\?per_page=100$ ]]; then
+  [[ "${FAKE_TRUSTED_CONSUMER_JOBS_FAIL:-false}" != true ]] || exit 1
+  run_id="${BASH_REMATCH[1]}"
+  if [[ "$run_id" == 5256 ]]; then
+    printf '%s' "${FAKE_TRUSTED_CONSUMER_JOBS_JSON:-null}"
+  else
+    jq -c --argjson id "$run_id" '.jobs[] |= (.run_id = $id | .steps[].name |= sub("merge-[0-9a-f]{40}$"; "merge-dddddddddddddddddddddddddddddddddddddddd"))' \
+      <<<"${FAKE_TRUSTED_CONSUMER_JOBS_JSON:-null}"
+  fi
+  exit 0
+fi
+if [[ "$1" == api && "$resource" =~ ^repos/example/FireMUD/actions/runs/(525[6-9])$ ]]; then
+  run_id="${BASH_REMATCH[1]}"
+  latest_json="$(jq -c --argjson id "$run_id" '.id = $id' <<<"${FAKE_TRUSTED_CONSUMER_LATEST_JSON:-null}")"
+  if [[ "$run_id" == 5256 ]] && jq -e '.status == "completed"' <<<"$latest_json" >/dev/null; then
+    : > "${FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER:?}"
+  fi
+  printf '%s' "$latest_json"
   exit 0
 fi
 if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_DISPATCH_LOG"
-  exit 0
+  if [[ "${FAKE_DISPATCH_MISSING_STATUS:-false}" == true ]]; then
+    exit "${FAKE_DISPATCH_GH_EXIT_CODE:-1}"
+  fi
+  dispatch_status="${FAKE_DISPATCH_HTTP_STATUS:-204}"
+  case "$dispatch_status" in
+    204) dispatch_reason='No Content' ;;
+    422) dispatch_reason='Unprocessable Content' ;;
+    500) dispatch_reason='Internal Server Error' ;;
+    403) dispatch_reason='Forbidden' ;;
+    429) dispatch_reason='Too Many Requests' ;;
+    404) dispatch_reason='Not Found' ;;
+    *) dispatch_reason='Test Status' ;;
+  esac
+  printf 'HTTP/2.0 %s %s\n' "$dispatch_status" "$dispatch_reason"
+  if [[ -n "${FAKE_DISPATCH_RETRY_AFTER:-}" ]]; then
+    printf 'Retry-After: %s\n' "$FAKE_DISPATCH_RETRY_AFTER"
+  fi
+  if [[ -n "${FAKE_DISPATCH_RATE_REMAINING:-}" ]]; then
+    printf 'X-RateLimit-Remaining: %s\n' "$FAKE_DISPATCH_RATE_REMAINING"
+  fi
+  if [[ -n "${FAKE_DISPATCH_RATE_RESET:-}" ]]; then
+    printf 'X-RateLimit-Reset: %s\n' "$FAKE_DISPATCH_RATE_RESET"
+  fi
+  printf '\n'
+  if [[ "$dispatch_status" != 204 ]]; then
+    jq -cn --arg message "${FAKE_DISPATCH_ERROR_MESSAGE:-Forbidden}" '{message:$message}'
+  fi
+  if [[ "$dispatch_status" == 204 ]]; then
+    exit 0
+  fi
+  exit "${FAKE_DISPATCH_GH_EXIT_CODE:-1}"
 fi
 case "$resource" in
   */git/ref/heads/*)
@@ -471,6 +729,9 @@ case "$resource" in
     fi
     printf '%s' '[[{"filename":"README.md"}]]'
     ;;
+  */pulls/902/files\?per_page=100)
+    printf '%s' '[[{"filename":"README.md"}]]'
+    ;;
   */pulls/101/files\?per_page=100|*/pulls/102/files\?per_page=100)
     printf '%s' '[[{"filename":"README.md"}]]'
     ;;
@@ -488,7 +749,7 @@ case "$resource" in
     ;;
   */actions/runs/42)
     if [[ "$has_jq" != true ]]; then
-      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]}'
     elif [[ "$*" == *".path"* ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
@@ -597,11 +858,23 @@ case "$resource" in
       --arg head "$live_head" \
       --arg base_ref "${FAKE_PR_901_BASE_REF:-develop}" \
       --arg head_repository "${FAKE_PR_901_HEAD_REPOSITORY:-example/FireMUD}" \
+      --arg head_ref "${FAKE_PR_901_HEAD_REF:-feature-preview}" \
       --arg base_repository "${FAKE_PR_901_BASE_REPOSITORY:-example/FireMUD}" \
       --arg mergeable "${FAKE_PR_901_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
       --arg priority "${FAKE_PR_901_PRIORITY:-true}" \
-      '{state:$state,head:{sha:$head,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
+      '{state:$state,head:{sha:$head,ref:$head_ref,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
+    ;;
+  */pulls/902)
+    if [[ "$has_jq" == true ]]; then
+      printf 'open\t%s\t%s\n' "${FAKE_PR_902_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+        "$(fake_labels_json false valid | base64 | tr -d '\n')"
+      exit 0
+    fi
+    jq -cn \
+      --arg head "${FAKE_PR_902_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+      --arg head_ref "${FAKE_PR_902_HEAD_REF:-feature-preview}" \
+      '{state:"open",head:{sha:$head,ref:$head_ref,repo:{full_name:"example/FireMUD"}},base:{ref:"develop",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:true,mergeable_state:"clean",user:{login:"human"},labels:[]}'
     ;;
   */pulls/101)
     if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
@@ -865,6 +1138,7 @@ chmod +x \
   "$TEMP_DIR/bin/kubectl" \
   "$TEMP_DIR/bin/gh" \
   "$TEMP_DIR/bin/helm" \
+  "$TEMP_DIR/bin/sleep" \
   "$TEMP_DIR/delete" \
   "$TEMP_DIR/identity-request" \
   "$TEMP_DIR/identity-wait" \
@@ -887,6 +1161,13 @@ export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
 export FAKE_ANNOTATE_LOG="$TEMP_DIR/annotate.log"
 export FAKE_ANNOTATE_FAILURE_MARKER="$TEMP_DIR/annotate-failure.marker"
 export FAKE_DISPATCH_LOG="$TEMP_DIR/dispatch.log"
+export FAKE_PROOF_RETRY_RESERVATION_MARKER="$TEMP_DIR/proof-retry-reservation.json"
+export FAKE_PROOF_RETRY_COMPENSATED_MARKER="$TEMP_DIR/proof-retry-compensated.marker"
+export FAKE_PROOF_RETRY_STATE_MARKER="$TEMP_DIR/proof-retry-state.json"
+export FAKE_SLEEP_LOG="$TEMP_DIR/sleep.log"
+export FAKE_NAMESPACE_LIST_CALLS="$TEMP_DIR/namespace-list-calls"
+export FAKE_RECENT_HANDOFF_LOOKUP_LOG="$TEMP_DIR/recent-handoff-lookup.log"
+export FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER="$TEMP_DIR/trusted-consumer-completed.marker"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
@@ -918,12 +1199,13 @@ export FAKE_TARGET_MERGE_SHA="cccccccccccccccccccccccccccccccccccccccc"
 priority_candidate_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|head-101|cccccccccccccccccccccccccccccccccccccccc|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|base-102|head-102|merge-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
+ordinary_labels_base64="$(printf '%s' '[]' | base64 | tr -d '\n')"
 adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
 adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_METADATA_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RESOLUTION_LOG" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_PROOF_RETRY_RESERVATION_MARKER" "$FAKE_PROOF_RETRY_COMPENSATED_MARKER" "$FAKE_PROOF_RETRY_STATE_MARKER" "$FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER" "$FAKE_SLEEP_LOG" "$FAKE_NAMESPACE_LIST_CALLS" "$FAKE_RECENT_HANDOFF_LOOKUP_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_METADATA_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RESOLUTION_LOG" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -952,6 +1234,12 @@ reset_case() {
   export FAKE_PRIORITY_CANDIDATE_NAMESPACE_LOOKUP_ERROR=false
   export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=false
   export FAKE_ACTIVE_PREVIEW_RUNS_JSON='[]'
+  unset FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON
+  export FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON='{"total_count":0,"workflow_runs":[]}'
+  export FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON='{"total_count":0,"workflow_runs":[]}'
+  export FAKE_RECENT_TRUSTED_CONSUMER_RUNS_JSON='{"total_count":0,"workflow_runs":[]}'
+  export FAKE_PREVIEW_DISPATCH_JOBS_JSON=null
+  export FAKE_PREVIEW_DISPATCH_LATEST_JSON=null
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD="$priority_candidate_head"
   export FAKE_PR_901_BASE_REF=develop
@@ -962,6 +1250,7 @@ reset_case() {
   export FAKE_PR_901_NAMESPACE_ABSENT=false
   export FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=false
   unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD \
+    FAKE_PR_901_RECHECK_NAMESPACE_UID \
     FAKE_PR_901_BASE_SHA FAKE_PR_901_MERGE_SHA FAKE_PR_901_IMAGE_TAG \
     FAKE_PR_901_REQUESTED_BASE_SHA FAKE_PR_901_REQUESTED_MERGE_SHA \
     FAKE_PR_901_REQUESTED_IMAGE_TAG
@@ -999,6 +1288,7 @@ reset_case() {
   export FAKE_IDENTITY_LIST_FAIL=false
   export FAKE_IDENTITY_LIST_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentityList","items":[]}'
   export FAKE_NAMESPACE_LIST_ERROR=false
+  export FAKE_NAMESPACE_COUNT_SEQUENCE=''
   export FAKE_RUNTIME_LOOKUP_ERROR=false
   export FAKE_RUNTIME_LOOKUP_IDENTITY=''
   export FAKE_RUNTIME_NAMESPACE_PRESENT=true
@@ -2394,7 +2684,7 @@ test ! -e "$FAKE_DELETE_LOG"
 trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
-RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
+RECONCILER_RUN="$ROOT_DIR/dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 preview_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 preview_merge_sha=cccccccccccccccccccccccccccccccccccccccc
@@ -2404,10 +2694,6 @@ preview_merge_sha=cccccccccccccccccccccccccccccccccccccccc
 preview_image_tag="${preview_base_sha}"
 stacked_preview_image_tag="pr-merge-${preview_merge_sha}"
 export DEFAULT_BRANCH=develop
-extract_workflow_step_run \
-  "$reconciler_workflow" \
-  "Dispatch preview deploys for drifted PRs" \
-  "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
 grep -Fq 'repair_requested_tuple() {' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal shell and jq expressions in workflow source.
@@ -2424,8 +2710,10 @@ grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
 grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal workflow source expressions.
 grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
-# shellcheck disable=SC2016 # Assert the additional pull_request_target lookup without a branch filter.
-grep -Fq -- 'actions/runs?event=pull_request_target&status=${active_status}&per_page=100' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Event scopes include automatic renders and direct closed cleanup.
+grep -Fq -- 'for active_run_scope in branch pull_request pull_request_target workflow_run' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal workflow query variables.
+grep -Fq -- 'actions/runs?event=${active_run_scope}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert workflow_run consumers are included without a branch filter.
 grep -Fq -- 'actions/runs?event=workflow_run&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert each supported active status is queried independently.
@@ -2491,7 +2779,26 @@ grep -Fqx \
 grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
 
 reset_case
-reconciler_trusted_consumer_output="$TEMP_DIR/reconciler-trusted-consumer.out"
+reconciler_recreated_namespace_output="$TEMP_DIR/reconciler-recreated-namespace.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_NAMESPACE_UID=uid-observed \
+    FAKE_PR_901_RECHECK_NAMESPACE_UID=uid-recreated \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_recreated_namespace_output" 2>&1
+grep -Fq \
+  'namespace pr-901 was recreated before proof retry dispatch; refusing to charge its retry budget.' \
+  "$reconciler_recreated_namespace_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_unrelated_consumer_output="$TEMP_DIR/reconciler-trusted-consumer.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
@@ -2500,87 +2807,407 @@ reconciler_trusted_consumer_output="$TEMP_DIR/reconciler-trusted-consumer.out"
     FAKE_PR_901_PROOF_COMPLETE=false \
     FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
       --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
-      '[{workflow_runs:[{id:5252,name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
+      '[{workflow_runs:[{id:5252,path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_trusted_consumer_output"
+) > "$reconciler_unrelated_consumer_output"
 grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5252 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
-  "$reconciler_trusted_consumer_output"
-test ! -e "$FAKE_ANNOTATE_LOG"
-test ! -e "$FAKE_DISPATCH_LOG"
+  "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
+  "$reconciler_unrelated_consumer_output"
+test -s "$FAKE_DISPATCH_LOG"
 
 reset_case
-reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-source-title-consumer.out"
+reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-unqualified-consumer.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5253,"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5253,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_source_title_consumer_output"
 grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5253 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_source_title_consumer_output"
-test ! -e "$FAKE_ANNOTATE_LOG"
-test ! -e "$FAKE_DISPATCH_LOG"
+test -s "$FAKE_DISPATCH_LOG"
+
+# An automatic run must prove exactly this tuple in its current native attempt.
+for tuple_case in current qualified target old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path wrong_list_id wrong_latest_repo jobs_unavailable latest_unavailable old_event_current_plan event_only latest_missing_head latest_missing_path jobs_incomplete jobs_malformed stale_attempt_old_tuple job_attempt_missing job_attempt_mismatch job_attempt_null completed_failed_plan completed_success completed_success_old_tuple completed_noop completed_old_noop active_noop; do
+  reset_case
+  reconciler_pull_request_output="$TEMP_DIR/reconciler-pull-request-$tuple_case.out"
+  tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
+  old_tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-dddddddddddddddddddddddddddddddddddddddd"
+  plan_jobs="$(jq -cn --arg tuple "$tuple_name" --arg old "$old_tuple_name" \
+    --arg head "$preview_head_sha" --arg variant "$tuple_case" '
+      def step($name): {name:$name,status:"completed",conclusion:"success"};
+      [{name:"Preview Plan",run_id:5254,
+        run_attempt:(if $variant == "job_attempt_mismatch" then 1 elif $variant == "job_attempt_null" then null else 2 end),
+        head_sha:$head,status:"completed",
+        conclusion:(if $variant == "completed_failed_plan" then "failure" else "success" end),
+        steps:(if $variant == "old_merge" or $variant == "stale_attempt_old_tuple" then [step($old)]
+               elif $variant == "completed_success_old_tuple" then [step($old)]
+               elif $variant == "ambiguous" then [step($tuple),step($old)]
+               elif $variant == "event_only" then [step($tuple | sub("resolved"; "event"))]
+               elif $variant == "completed_noop" or $variant == "active_noop" then [step($tuple | sub("resolved"; "event")),step("Explain preview skip")]
+               elif $variant == "completed_old_noop" then [step($old | sub("resolved"; "event")),step("Explain preview skip")]
+               elif $variant == "old_event_current_plan" then [step($old | sub("resolved"; "event")),step($tuple)]
+               else [step($tuple),step($tuple | sub("resolved"; "event"))] end)}] |
+      if $variant == "job_attempt_missing" then map(del(.run_attempt)) else . end |
+      if $variant == "missing" then {jobs:[],total_count:0}
+      elif $variant == "jobs_incomplete" then {jobs:.,total_count:2}
+      elif $variant == "jobs_malformed" then {jobs:null,total_count:1}
+      else {jobs:.,total_count:length} end')"
+  latest_source="$(jq -cn --arg head "$preview_head_sha" --arg variant "$tuple_case" '
+    {id:5254,run_attempt:(if $variant == "stale_attempt" or $variant == "stale_attempt_old_tuple" then 3 else 2 end),
+     head_sha:$head,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:173511323,display_title:"PR preview 901",repository:{full_name:(if $variant == "wrong_latest_repo" then "example/Other" else "example/FireMUD" end)},head_repository:{full_name:"example/FireMUD"},pull_requests:[{number:901}],path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
+     | if $variant == "latest_missing_head" then del(.head_sha)
+       elif $variant == "latest_missing_path" then del(.path)
+       elif $variant == "completed_failed_plan" then .status = "completed" | .conclusion = "failure"
+       elif $variant == "completed_success" or $variant == "completed_success_old_tuple" or $variant == "completed_noop" or $variant == "completed_old_noop" then .status = "completed" | .conclusion = "success"
+       else . end')"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_REQUESTED_HEAD=head-901 \
+      FAKE_PR_901_PROOF_COMPLETE=false \
+      FAKE_PREVIEW_PLAN_JOBS_FAIL="$([[ "$tuple_case" == jobs_unavailable ]] && echo true || echo false)" \
+      FAKE_PREVIEW_SOURCE_LATEST_FAIL="$([[ "$tuple_case" == latest_unavailable ]] && echo true || echo false)" \
+      FAKE_PREVIEW_PLAN_JOBS_JSON="$plan_jobs" \
+      FAKE_PREVIEW_SOURCE_LATEST_JSON="$latest_source" \
+      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" '[{workflow_runs:[{id:5254,run_attempt:2,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:(if $variant == "wrong_list_id" then 1 else 173511323 end),repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",pull_requests:[{number:901}],name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$reconciler_pull_request_output"
+  if [[ "$tuple_case" == current || "$tuple_case" == qualified || "$tuple_case" == old_event_current_plan || "$tuple_case" == job_attempt_missing ]]; then
+    grep -Fqx \
+      "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+      "$reconciler_pull_request_output"
+    test ! -e "$FAKE_ANNOTATE_LOG"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  elif [[ "$tuple_case" == target || "$tuple_case" == missing || "$tuple_case" == ambiguous || "$tuple_case" == jobs_unavailable || "$tuple_case" == latest_unavailable || "$tuple_case" == event_only || "$tuple_case" == stale_attempt || "$tuple_case" == latest_missing_head || "$tuple_case" == latest_missing_path || "$tuple_case" == jobs_incomplete || "$tuple_case" == jobs_malformed || "$tuple_case" == stale_attempt_old_tuple || "$tuple_case" == job_attempt_mismatch || "$tuple_case" == job_attempt_null || "$tuple_case" == active_noop ]]; then
+    grep -Fqx \
+      "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
+      "$reconciler_pull_request_output"
+    test ! -e "$FAKE_ANNOTATE_LOG"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  elif [[ "$tuple_case" == completed_success ]]; then
+    grep -Fqx \
+      "Deferring proof retry for PR #901: successful exact preview source run 5254 may still be handing off to the trusted consumer." \
+      "$reconciler_pull_request_output"
+    test ! -e "$FAKE_ANNOTATE_LOG"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  else
+    grep -Fqx \
+      "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
+      "$reconciler_pull_request_output"
+    test -s "$FAKE_DISPATCH_LOG"
+  fi
+done
+
+make_recent_source_evidence() {
+  local updated_at="$1"
+  local tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
+  FAKE_PREVIEW_PLAN_JOBS_JSON="$(jq -cn --arg tuple "$tuple_name" --arg head "$preview_head_sha" '
+    {total_count:1,jobs:[{name:"Preview Plan",run_id:5254,run_attempt:2,head_sha:$head,
+      status:"completed",conclusion:"success",steps:[{name:$tuple,status:"completed",conclusion:"success"}]}]}')"
+  export FAKE_PREVIEW_PLAN_JOBS_JSON
+  FAKE_PREVIEW_SOURCE_LATEST_JSON="$(jq -cn --arg head "$preview_head_sha" --arg updated_at "$updated_at" '
+    {id:5254,run_attempt:2,head_sha:$head,event:"pull_request",workflow_id:173511323,
+      repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+      pull_requests:[{number:901}],path:".github/workflows/preview.yml",status:"completed",
+      display_title:"PR preview 901",conclusion:"success",updated_at:$updated_at}')"
+  export FAKE_PREVIEW_SOURCE_LATEST_JSON
+  FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON="$(jq -cn --arg head "$preview_head_sha" \
+    --arg updated_at "$updated_at" '
+    {total_count:1,workflow_runs:[{id:5254,run_attempt:2,workflow_id:173511323,event:"pull_request",
+      status:"completed",conclusion:"success",name:"PR preview 901",display_title:"PR preview 901",
+      head_branch:"feature-preview",head_sha:$head,path:".github/workflows/preview.yml",
+      repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+      pull_requests:[{number:901}],created_at:"2026-01-01T00:00:00Z",updated_at:$updated_at}]}')"
+  export FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON
+}
+
+make_recent_dispatch_source_evidence() {
+  local updated_at="$1" outcome="${2:-render}"
+  local dispatch_title="Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}"
+  FAKE_PREVIEW_DISPATCH_JOBS_JSON="$(jq -cn --arg head "$preview_base_sha" --arg outcome "$outcome" '
+    def step($name): {name:$name,status:"completed",conclusion:"success"};
+    [{name:"Preview Plan",run_id:5255,run_attempt:1,head_sha:$head,status:"completed",conclusion:"success",
+      steps:(if $outcome == "skip" then [step("Explain preview skip")] else [] end)}]
+    + (if $outcome == "render" then [{name:"Render Sanitized Preview Artifact",run_id:5255,
+        run_attempt:1,head_sha:$head,status:"completed",conclusion:"success",
+        steps:[step("Upload sanitized render artifact")]}] else [] end)
+    | {jobs:.,total_count:length}')"
+  export FAKE_PREVIEW_DISPATCH_JOBS_JSON
+  FAKE_PREVIEW_DISPATCH_LATEST_JSON="$(jq -cn --arg head "$preview_base_sha" \
+    --arg title "$dispatch_title" --arg updated_at "$updated_at" '
+    {id:5255,run_attempt:1,head_sha:$head,event:"repository_dispatch",workflow_id:173511323,
+      name:"PR Preview Environment",display_title:$title,head_branch:"develop",
+      repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+      pull_requests:[],path:".github/workflows/preview.yml",status:"completed",conclusion:"success",
+      updated_at:$updated_at}')"
+  export FAKE_PREVIEW_DISPATCH_LATEST_JSON
+  FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$(jq -cn --arg head "$preview_base_sha" \
+    --arg title "$dispatch_title" --arg updated_at "$updated_at" '
+    {total_count:1,workflow_runs:[{id:5255,run_attempt:1,workflow_id:173511323,event:"repository_dispatch",
+      status:"completed",conclusion:"success",name:"PR Preview Environment",display_title:$title,
+      head_branch:"develop",head_sha:$head,path:".github/workflows/preview.yml",
+      repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+      pull_requests:[],updated_at:$updated_at}]}')"
+  export FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON
+}
 
 reset_case
-reconciler_pull_request_target_output="$TEMP_DIR/reconciler-pull-request-target.out"
+recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+make_recent_source_evidence "$recent_source_updated_at"
+reconciler_recent_source_handoff_output="$TEMP_DIR/reconciler-recent-source-handoff.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5254,"name":"PR Preview Environment","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
-PREVIEW_MAX_ACTIVE=2 \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+    PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_pull_request_target_output"
+) > "$reconciler_recent_source_handoff_output"
 grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
-  "$reconciler_pull_request_target_output"
+  "Deferring proof retry for PR #901: exact successful preview source run 5254 is within the 600-second trusted-consumer handoff window." \
+  "$reconciler_recent_source_handoff_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
+test -s "$FAKE_RECENT_HANDOFF_LOOKUP_LOG"
 
 reset_case
-reconciler_workflow_run_output="$TEMP_DIR/reconciler-workflow-run.out"
+recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+make_recent_dispatch_source_evidence "$recent_source_updated_at" render
+reconciler_recent_dispatch_handoff_output="$TEMP_DIR/reconciler-recent-dispatch-handoff.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5255,"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
-PREVIEW_MAX_ACTIVE=2 \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+    PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_workflow_run_output"
+) > "$reconciler_recent_dispatch_handoff_output"
 grep -Fqx \
+  'Deferring proof retry for PR #901: exact successful preview source run 5255 is within the 600-second trusted-consumer handoff window.' \
+  "$reconciler_recent_dispatch_handoff_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+make_recent_dispatch_source_evidence "$recent_source_updated_at" skip
+reconciler_completed_dispatch_skip_output="$TEMP_DIR/reconciler-completed-dispatch-skip.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_completed_dispatch_skip_output"
+grep -Fqx \
+  "Recorded proof retry 1/3 for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag})." \
+  "$reconciler_completed_dispatch_skip_output"
+test -s "$FAKE_ANNOTATE_LOG"
+test -s "$FAKE_DISPATCH_LOG"
+
+reset_case
+recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+make_recent_dispatch_source_evidence "$recent_source_updated_at" unproven
+reconciler_unproven_dispatch_output="$TEMP_DIR/reconciler-unproven-dispatch.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_unproven_dispatch_output" 2>&1
+grep -Fq \
+  'Skipping proof retry for PR #901: recent preview handoff lookup unavailable; retry budget unchanged.' \
+  "$reconciler_unproven_dispatch_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+make_recent_dispatch_source_evidence "$(date -u +%Y-%m-%dT%H:%M:%SZ)" unproven
+dispatch_title="Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}"
+FAKE_PREVIEW_DISPATCH_LATEST_JSON="$(jq -c 'del(.conclusion,.updated_at) | .status = "in_progress"' \
+  <<<"$FAKE_PREVIEW_DISPATCH_LATEST_JSON")"
+export FAKE_PREVIEW_DISPATCH_LATEST_JSON
+FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg title "$dispatch_title" --arg head "$preview_base_sha" '
+  [{workflow_runs:[{id:5255,run_attempt:1,workflow_id:173511323,event:"repository_dispatch",
+    repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+    path:".github/workflows/preview.yml",head_branch:"develop",head_sha:$head,
+    name:"PR Preview Environment",display_title:$title,status:"in_progress"}]}]')"
+export FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON
+reconciler_active_unproven_dispatch_output="$TEMP_DIR/reconciler-active-unproven-dispatch.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_active_unproven_dispatch_output" 2>&1
+grep -Fq \
   "Skipping proof retry for PR #901: preview source or trusted consumer run 5255 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
-  "$reconciler_workflow_run_output"
+  "$reconciler_active_unproven_dispatch_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
-reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance.out"
+recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+make_recent_source_evidence "$recent_source_updated_at"
+recent_consumer_tuple="Trusted preview deploy tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
+FAKE_TRUSTED_CONSUMER_JOBS_JSON="$(jq -cn --arg tuple "$recent_consumer_tuple" '
+  {total_count:1,jobs:[{name:"Validate Trusted Preview Target",run_id:5256,run_attempt:1,
+    head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",status:"completed",conclusion:"success",
+    steps:[{name:$tuple,status:"completed",conclusion:"success"}]}]}')"
+export FAKE_TRUSTED_CONSUMER_JOBS_JSON
+export FAKE_TRUSTED_CONSUMER_LATEST_JSON='{"id":5256,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","name":"Trusted Hosted Identity Request","head_branch":"develop","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display_title":"PR preview 901","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}'
+export FAKE_RECENT_TRUSTED_CONSUMER_RUNS_JSON='{"total_count":1,"workflow_runs":[{"id":5256,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","name":"Trusted Hosted Identity Request","head_branch":"develop","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display_title":"PR preview 901","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}]}'
+reconciler_handoff_race_output="$TEMP_DIR/reconciler-handoff-race.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5256,"event":"branch","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"},{"id":5256,"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"in_progress"}]}]' \
-PREVIEW_MAX_ACTIVE=2 \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+    PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_active_status_advance_output"
-grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
-  "$reconciler_active_status_advance_output"
+) > "$reconciler_handoff_race_output"
+grep -Fq 'trusted consumer run 5256' "$reconciler_handoff_race_output"
+test -s "$FAKE_RECENT_HANDOFF_LOOKUP_LOG"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+recent_source_updated_at="$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+make_recent_source_evidence "$recent_source_updated_at"
+# Keep the exact qualifying run 5254 in the inventory and change only its age;
+# older matching runs must not overflow the handoff candidate bound.
+FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON="$(jq -cn --arg head "$preview_head_sha" \
+  --arg updated_at "$recent_source_updated_at" '[range(5154;5255) as $id | {
+    id:$id,run_attempt:(if $id == 5254 then 2 else 1 end),workflow_id:173511323,event:"pull_request",status:"completed",
+    conclusion:"success",name:"PR preview 901",display_title:"PR preview 901",
+    head_branch:"feature-preview",head_sha:$head,path:".github/workflows/preview.yml",
+    repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+    pull_requests:[{number:901}],updated_at:$updated_at}] as $runs
+    | [{total_count:($runs | length),workflow_runs:$runs[:100]},
+       {total_count:($runs | length),workflow_runs:$runs[100:]}]')"
+export FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON
+reconciler_expired_source_output="$TEMP_DIR/reconciler-expired-source.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_expired_source_output"
+grep -Fq 'Dispatching preview render for PR #901' "$reconciler_expired_source_output"
+test -s "$FAKE_DISPATCH_LOG"
+
+for observation_case in duplicate-rows lookup-overflow workflow-run-only consumer-title-only consumer-stale-attempt consumer-finished consumer-finished-without-proof consumer-active-jobs-unavailable consumer-job-attempt-missing consumer-job-attempt-mismatch consumer-job-attempt-null; do
+reset_case
+reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance-${observation_case}.out"
+consumer_run="$(jq -cn '{id:5256,run_attempt:1,event:"workflow_run",workflow_id:357129350,
+  path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",
+  head_branch:"develop",head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",display_title:"PR preview 901",
+  repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},status:"in_progress"}')"
+namespace_absent_on_initial=false
+proof_complete=false
+proof_after_consumer_completion=false
+if [[ "$observation_case" == consumer-finished || "$observation_case" == consumer-finished-without-proof ]]; then
+  namespace_absent_on_initial=true
+fi
+if [[ "$observation_case" == consumer-finished ]]; then
+  proof_after_consumer_completion=true
+fi
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL="$namespace_absent_on_initial" \
+    FAKE_PR_901_PROOF_COMPLETE="$proof_complete" \
+    FAKE_PR_901_PROOF_COMPLETE_AFTER_CONSUMER_COMPLETION="$proof_after_consumer_completion" \
+    FAKE_TRUSTED_CONSUMER_JOBS_FAIL="$([[ "$observation_case" == consumer-finished-without-proof || "$observation_case" == consumer-active-jobs-unavailable ]] && echo true || echo false)" \
+    FAKE_TRUSTED_CONSUMER_JOBS_JSON="$(jq -cn \
+      --arg observation "$observation_case" \
+      --arg tuple "Trusted preview deploy tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}" '
+      {total_count:1,jobs:[{name:"Validate Trusted Preview Target",run_id:5256,
+        run_attempt:(if $observation == "consumer-job-attempt-mismatch" then 2 elif $observation == "consumer-job-attempt-null" then null else 1 end),
+        head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",status:"completed",conclusion:"success",
+        steps:[{name:(if $observation == "consumer-title-only" then "Verify workflow source and immutable PR metadata" else $tuple end),
+          status:"completed",conclusion:"success"}]}]} | if $observation == "consumer-job-attempt-missing" then .jobs[0] |= del(.run_attempt) else . end')" \
+    FAKE_TRUSTED_CONSUMER_LATEST_JSON="$(jq -c --arg observation "$observation_case" \
+      'if $observation == "consumer-stale-attempt" then .run_attempt = 2
+       elif $observation | startswith("consumer-finished") then .status = "completed"
+       else . end' <<<"$consumer_run")" \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
+      --arg observation "$observation_case" \
+      --argjson consumer "$consumer_run" '
+        [{workflow_runs:(
+          if $observation == "duplicate-rows" then
+            [$consumer, (5257, 5258 | $consumer + {id:., status:("queued", "in_progress")})]
+          elif $observation == "lookup-overflow" then
+            [range(5256; 5260) | $consumer + {id:.}]
+          else
+            [$consumer]
+          end)}]')" \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_active_status_advance_output" 2>&1
+if [[ "$observation_case" == duplicate-rows || "$observation_case" == workflow-run-only || "$observation_case" == consumer-job-attempt-missing ]]; then
+  grep -Fqx \
+    "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+    "$reconciler_active_status_advance_output"
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+elif [[ "$observation_case" == consumer-stale-attempt || "$observation_case" == lookup-overflow || "$observation_case" == consumer-active-jobs-unavailable || "$observation_case" == consumer-job-attempt-mismatch || "$observation_case" == consumer-job-attempt-null ]]; then
+  grep -Fqx \
+    "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
+    "$reconciler_active_status_advance_output"
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+elif [[ "$observation_case" == consumer-finished ]]; then
+  grep -Fqx 'Skipping PR #901: proof completed before retry dispatch.' "$reconciler_active_status_advance_output"
+  test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+  test -e "$FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER"
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+elif [[ "$observation_case" == consumer-finished-without-proof ]]; then
+  grep -Fqx \
+    "Recorded proof retry 1/3 for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag})." \
+    "$reconciler_active_status_advance_output"
+  test -s "$FAKE_ANNOTATE_LOG"
+  test -s "$FAKE_DISPATCH_LOG"
+else
+  grep -Fqx \
+    "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
+    "$reconciler_active_status_advance_output"
+  test -s "$FAKE_DISPATCH_LOG"
+fi
+
+done
 
 reset_case
 reconciler_first_proof_retry_output="$TEMP_DIR/reconciler-first-proof-retry.out"
@@ -2600,6 +3227,57 @@ grep -Fq -- 'firemud.dev/proof-retry-count=1' "$FAKE_ANNOTATE_LOG"
 grep -Fq -- '--resource-version rv-901' "$FAKE_ANNOTATE_LOG"
 grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
 
+for namespace_count_sequence in 2,1 2,2; do
+  reset_case
+  reconciler_capacity_refresh_output="$TEMP_DIR/reconciler-capacity-refresh-${namespace_count_sequence//,/-}.out"
+  export FAKE_NAMESPACE_COUNT_SEQUENCE="$namespace_count_sequence"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${ordinary_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_PRIORITY=false \
+      FAKE_PR_901_NAMESPACE_ABSENT=true \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$reconciler_capacity_refresh_output"
+  test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
+  if [[ "$namespace_count_sequence" == 2,1 ]]; then
+    grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
+    test -s "$FAKE_DISPATCH_LOG"
+  else
+    grep -Fq 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
+      "$reconciler_capacity_refresh_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  fi
+done
+
+for namespace_count_sequence in 2,1 2,2; do
+  reset_case
+  reconciler_capacity_refresh_output="$TEMP_DIR/reconciler-final-capacity-refresh-${namespace_count_sequence//,/-}.out"
+  export FAKE_NAMESPACE_COUNT_SEQUENCE="$namespace_count_sequence"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${ordinary_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_PRIORITY=false \
+      FAKE_PR_901_SNAPSHOT_HEAD=dddddddddddddddddddddddddddddddddddddddd \
+      FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=true \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$reconciler_capacity_refresh_output"
+  test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+  test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  if [[ "$namespace_count_sequence" == 2,1 ]]; then
+    grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
+    test -s "$FAKE_DISPATCH_LOG"
+  else
+    grep -Fq 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
+      "$reconciler_capacity_refresh_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  fi
+done
+
 reset_case
 reconciler_preserved_proof_retry_output="$TEMP_DIR/reconciler-preserved-proof-retry.out"
 (
@@ -2613,6 +3291,7 @@ reconciler_preserved_proof_retry_output="$TEMP_DIR/reconciler-preserved-proof-re
     FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
     FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
     FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+    FAKE_DISPATCH_HTTP_STATUS=204 \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_preserved_proof_retry_output"
@@ -2621,6 +3300,144 @@ grep -Fqx \
   "$reconciler_preserved_proof_retry_output"
 grep -Fq -- 'firemud.dev/proof-retry-count=3' "$FAKE_ANNOTATE_LOG"
 grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
+test "$(jq -r '.count' "$FAKE_PROOF_RETRY_RESERVATION_MARKER")" = 3
+
+reset_case
+reconciler_rejected_proof_retry_output="$TEMP_DIR/reconciler-rejected-proof-retry.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=2 \
+    FAKE_PR_901_PROOF_RETRY_BASE_SHA="$preview_base_sha" \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
+    FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+    FAKE_DISPATCH_HTTP_STATUS=422 \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_rejected_proof_retry_output" 2>&1; then
+  echo "confirmed dispatch rejection left the reconcile job successful" >&2
+  exit 1
+fi
+grep -Fq 'GitHub confirmed preview dispatch rejection for PR #901 (HTTP 422).' \
+  "$reconciler_rejected_proof_retry_output"
+grep -Fq 'Released proof-retry reservation for PR #901 after GitHub confirmed dispatch rejection.' \
+  "$reconciler_rejected_proof_retry_output"
+grep -Fq -- 'firemud.dev/proof-retry-count=3' "$FAKE_ANNOTATE_LOG"
+grep -Fq -- 'firemud.dev/proof-retry-count=2' "$FAKE_ANNOTATE_LOG"
+grep -Fq -- '--resource-version rv-902' "$FAKE_ANNOTATE_LOG"
+test -e "$FAKE_PROOF_RETRY_COMPENSATED_MARKER"
+jq -e --arg base "$preview_base_sha" --arg head "$preview_head_sha" \
+  --arg merge "$preview_merge_sha" --arg image "$preview_image_tag" \
+  '.count == "2" and .base == $base and .head == $head and .merge == $merge
+    and .image == $image and .resourceVersion == "rv-903"' \
+  "$FAKE_PROOF_RETRY_STATE_MARKER" >/dev/null
+
+reset_case
+reconciler_ambiguous_proof_retry_output="$TEMP_DIR/reconciler-ambiguous-proof-retry.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n1\t902\thead-902\thuman\tdevelop\topen\t${ordinary_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=2 \
+    FAKE_PR_901_PROOF_RETRY_BASE_SHA="$preview_base_sha" \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
+    FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+    FAKE_DISPATCH_HTTP_STATUS=500 \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_ambiguous_proof_retry_output" 2>&1; then
+  echo "ambiguous dispatch outcome left the reconcile job successful" >&2
+  exit 1
+fi
+grep -Fq 'outcome for PR #901 is ambiguous (gh=1, HTTP=500); proof-retry budget remains charged.' \
+  "$reconciler_ambiguous_proof_retry_output"
+test "$(jq -r '.count' "$FAKE_PROOF_RETRY_RESERVATION_MARKER")" = 3
+test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+jq -e --arg base "$preview_base_sha" --arg head "$preview_head_sha" \
+  --arg merge "$preview_merge_sha" --arg image "$preview_image_tag" \
+  '.count == "3" and .base == $base and .head == $head and .merge == $merge
+    and .image == $image and .resourceVersion == "rv-902"' \
+  "$FAKE_PROOF_RETRY_STATE_MARKER" >/dev/null
+test ! -e "$FAKE_PROOF_RETRY_COMPENSATED_MARKER"
+if grep -Fq -- '--resource-version rv-902' "$FAKE_ANNOTATE_LOG"; then
+  echo "ambiguous dispatch outcome released a proof-retry reservation" >&2
+  exit 1
+fi
+
+for rate_case in http-429 http-403-evidence; do
+  reset_case
+  rate_limit_output="$TEMP_DIR/reconciler-rate-limit-${rate_case}.out"
+  rate_status=429
+  rate_after=90
+  if [[ "$rate_case" == http-403-evidence ]]; then
+    rate_status=403
+    rate_after=30
+  fi
+  if (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n1\t902\thead-902\thuman\tdevelop\topen\t${ordinary_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_REQUESTED_HEAD=head-901 \
+      FAKE_PR_901_PROOF_COMPLETE=false \
+      FAKE_PR_901_PROOF_RETRY_COUNT=2 \
+      FAKE_PR_901_PROOF_RETRY_BASE_SHA="$preview_base_sha" \
+      FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
+      FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
+      FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+      FAKE_DISPATCH_HTTP_STATUS="$rate_status" \
+      FAKE_DISPATCH_RETRY_AFTER="$rate_after" \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$rate_limit_output" 2>&1; then
+    echo "rate-limited dispatch left the reconcile job successful" >&2
+    exit 1
+  fi
+  grep -Fq "GitHub rate-limited preview dispatch; stopping this cycle and waiting" "$rate_limit_output"
+  grep -Fq 'the preview dispatch cycle already stopped after a request attempt' "$rate_limit_output"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  test "$(<"$FAKE_SLEEP_LOG")" = "$rate_after"
+  test -e "$FAKE_PROOF_RETRY_COMPENSATED_MARKER"
+  jq -e --arg base "$preview_base_sha" --arg head "$preview_head_sha" \
+    --arg merge "$preview_merge_sha" --arg image "$preview_image_tag" \
+    '.count == "2" and .base == $base and .head == $head and .merge == $merge
+      and .image == $image and .resourceVersion == "rv-903"' \
+    "$FAKE_PROOF_RETRY_STATE_MARKER" >/dev/null
+done
+
+reset_case
+reconciler_candidate_rejection_output="$TEMP_DIR/reconciler-candidate-rejection.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n1\t902\thead-902\thuman\tdevelop\topen\t${ordinary_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=2 \
+    FAKE_PR_901_PROOF_RETRY_BASE_SHA="$preview_base_sha" \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
+    FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+    FAKE_DISPATCH_HTTP_STATUS=403 \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_candidate_rejection_output" 2>&1; then
+  echo "definitive dispatch rejections left the reconcile job successful" >&2
+  exit 1
+fi
+grep -Fq 'GitHub confirmed preview dispatch rejection for PR #901 (HTTP 403).' "$reconciler_candidate_rejection_output"
+if ! grep -Fq 'Dispatching preview render for PR #902' "$reconciler_candidate_rejection_output"; then
+  cat "$reconciler_candidate_rejection_output" >&2
+  exit 1
+fi
+test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 2
+test ! -e "$FAKE_SLEEP_LOG"
 
 reset_case
 reconciler_exhausted_proof_retry_output="$TEMP_DIR/reconciler-exhausted-proof-retry.out"
@@ -2708,7 +3525,7 @@ reconciler_paginated_active_output="$TEMP_DIR/reconciler-paginated-active.out"
       --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
       '[
         {workflow_runs: []},
-        {workflow_runs: [{id: 4242, name: "PR Preview Environment", head_branch: "develop", display_title: $title, status: "queued"}]}
+        {workflow_runs: [{id: 4242, run_attempt: 1, workflow_id: 173511323, event: "repository_dispatch", path: ".github/workflows/preview.yml", name: $title, head_branch: "develop", head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", repository: {full_name: "example/FireMUD"}, head_repository: {full_name: "example/FireMUD"}, display_title: $title, status: "queued"}]}
       ]')" \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
@@ -2781,7 +3598,7 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_empty_deployed_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 
 reset_case
 reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
@@ -2796,7 +3613,7 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_absent_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 grep -Fqx 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
 
 reset_case
@@ -2809,7 +3626,7 @@ reconciler_unvalidated_priority_output="$TEMP_DIR/reconciler-unvalidated-priorit
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_unvalidated_priority_output"
-grep -qx 'Skipping ordinary PR #901: preview capacity is full.' \
+grep -qx 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
   "$reconciler_unvalidated_priority_output"
 test ! -e "$FAKE_DISPATCH_LOG"
 test ! -e "$FAKE_RECONCILER_RESOLUTION_LOG"
@@ -2874,8 +3691,8 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_absent_on_recheck_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
-test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 3
 
 reset_case
 reconciler_namespace_error_output="$TEMP_DIR/reconciler-namespace-error.out"
@@ -2986,7 +3803,7 @@ grep -qx 'Namespace pr-901 was deleted during requested-head repair; dispatching
 grep -Fqx \
   "annotate namespace pr-901 firemud.dev/requested-preview-base-sha=${preview_base_sha} firemud.dev/requested-preview-head-sha=${preview_head_sha} firemud.dev/requested-preview-merge-sha=${preview_merge_sha} firemud.dev/requested-preview-image-tag=${preview_image_tag} --overwrite --resource-version rv-901" \
   "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 4
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
@@ -3501,6 +4318,7 @@ fi
 if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   "$trusted_workflow" \
   "$reconciler_workflow" \
+  "$RECONCILER_RUN" \
   "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
   echo "A live preview callsite duplicates the centralized label predicate" >&2
@@ -3536,6 +4354,15 @@ assert set(preview["jobs"]) == {
 }
 assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
+reconciler_steps = reconciler["jobs"]["reconcile-previews"]["steps"]
+checkout = reconciler_steps[0]
+assert checkout["uses"].startswith("actions/checkout@")
+assert checkout["with"] == {
+    "ref": "${{ github.workflow_sha }}",
+    "persist-credentials": False,
+}
+dispatch = next(step for step in reconciler_steps if step.get("name") == "Dispatch preview deploys for drifted PRs")
+assert dispatch["run"] == "bash ./dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 reconciler_manager_write = next(
     step
     for step in reconciler["jobs"]["reconcile-previews"]["steps"]
@@ -3562,29 +4389,34 @@ assert not any(
 )
 PY
 grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
-grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
+grep -q 'Skipping ordinary PR #' "$RECONCILER_RUN"
+grep -q 'preview dispatch cycle already stopped after a request attempt' "$RECONCILER_RUN"
 # Proof repair is bounded by the exact deployed tuple and must not duplicate an
 # active source or trusted consumer run.
-grep -Fq 'firemud.dev/proof-retry-count' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-base-sha' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-head-sha' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-merge-sha' "$reconciler_workflow"
-grep -Fq 'firemud.dev/proof-retry-image-tag' "$reconciler_workflow"
-grep -Fq 'namespace proof-retry evidence is malformed' "$reconciler_workflow"
-grep -Fq 'proof retry budget exhausted' "$reconciler_workflow"
+grep -Fq 'firemud.dev/proof-retry-count' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-base-sha' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-head-sha' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-merge-sha' "$RECONCILER_RUN"
+grep -Fq 'firemud.dev/proof-retry-image-tag' "$RECONCILER_RUN"
+grep -Fq 'namespace proof-retry evidence is malformed' "$RECONCILER_RUN"
+grep -Fq 'proof retry budget exhausted' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal resource-version fencing.
-grep -Fq -- '--resource-version "${namespace_resource_version}"' "$reconciler_workflow"
-grep -Fq -- '--arg trusted_workflow_name "Trusted Hosted Identity Request"' "$reconciler_workflow"
-grep -Fq 'Skipping proof retry for PR #' "$reconciler_workflow"
+grep -Fq -- '--resource-version "${namespace_resource_version}"' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert canonical workflow lookup and native custody.
+grep -Fq -- 'actions/workflows/preview.yml" | jq' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the literal jq workflow and repository checks.
+grep -Fq -- '.workflow_id == $workflow_id' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the literal jq head repository check.
+grep -Fq -- '.head_repository.full_name == $repository' "$RECONCILER_RUN"
+grep -Fq 'Skipping proof retry for PR #' "$RECONCILER_RUN"
 grep -Fq "run-name: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title" "$trusted_workflow"
 # shellcheck disable=SC2016 # Assert one fail-closed JSON snapshot feeds each namespace decision.
 grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
-  "$reconciler_workflow"
-# shellcheck disable=SC2016 # Assert the initial, repair, and proof-retry namespace snapshots.
-test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 4
+  "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the initial, repair, pre-dispatch, and compensation snapshots.
+test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$RECONCILER_RUN")" -eq 5
 # shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
-grep -Fq 'requested preview tuple changed during annotation repair check' "$reconciler_workflow"
+grep -Fq 'requested preview tuple changed during annotation repair check' "$RECONCILER_RUN"
 # The janitor keeps explicit kubeconfig selection on the consuming kubectl steps;
 # no preceding restore step may imply a different runner-wide kubeconfig.
 if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then
@@ -3594,31 +4426,23 @@ fi
 # shellcheck disable=SC2016 # Assert explicit kubeconfig selection on janitor consumers.
 grep -Fq 'KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
-grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
+grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.
-grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
+grep -Fq -- '--labels-json "$labels_json"' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert capacity uses centralized validated priority.
 grep -Fq -- 'priority="$(sed -n '\''s/^priority=//p'\'' <<<"$eligibility_output")"' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 # Reject the redundant transported raw-priority field and read placeholder while
 # retaining the leading numeric key used only for stable priority ordering.
-if grep -Fq '_sort_priority' "$reconciler_workflow"; then
+if grep -Fq '_sort_priority' "$RECONCILER_RUN"; then
   echo "reconciler retained a redundant transported raw-priority field" >&2
   exit 1
 fi
-python3 - "$reconciler_workflow" <<'PY'
+python3 - "$RECONCILER_RUN" <<'PY'
 import sys
 from pathlib import Path
 
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-step = next(
-    step
-    for step in workflow["jobs"]["reconcile-previews"]["steps"]
-    if step.get("name") == "Dispatch preview deploys for drifted PRs"
-)
-run = step["run"]
+run = Path(sys.argv[1]).read_text(encoding="utf-8")
 assert run.count('any(. == "preview:priority")') == 1
 assert "then 0 else 1 end" in run
 assert "sort -t $'\\t' -k1,1n -k2,2n" in run
@@ -3645,11 +4469,11 @@ assert eligible_guard < dispatch_guard < namespace_snapshot < base_ref_resolutio
 PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal shell source in the workflow.
-grep -Fq -- '[[ -z "$labels_json" ]] ||' "$reconciler_workflow"
+grep -Fq -- '[[ -z "$labels_json" ]] ||' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal shell source in the workflow.
 grep -Fq -- '! jq -e '\''type == "array"'\'' <<<"$labels_json" >/dev/null' \
-  "$reconciler_workflow"
+  "$RECONCILER_RUN"
 
 echo "preview priority contract checks passed"

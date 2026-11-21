@@ -457,16 +457,15 @@ jobs:
   smoke-gate:
     outputs:
       known_play_exception: ${{ steps.track-runtime-smoke.outputs.known_play_exception }}
-    name: Smoke Gate
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}
     runs-on: ubuntu-latest
     permissions:
-      checks: read # Preserve a prior successful required context on metadata-only edits.
-      contents: read # Check out the shared required-gate composite action.
+      contents: read # Read the immutable runtime workflow definition and current base ref.
       actions: read # Inspect matching runtime-image workflow and job results.
-      statuses: write # Publish acknowledged supplementary metadata gate barriers.
       pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    # Metadata-only edits skip under a non-required name; the earlier result stands.
+    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     timeout-minutes: 95
     steps:
       - name: Harden runner
@@ -477,62 +476,16 @@ jobs:
       - name: Classify smoke gate execution
         id: smoke_gate_context
         env:
-          SMOKE_GATE_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
           CHANGES_RESULT: ${{ needs.changes.result }}
         run: |
-          echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"
-          if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then
+          if [ "$CHANGES_RESULT" = "success" ]; then
             echo "execute=true" >> "$GITHUB_OUTPUT"
           else
             echo "execute=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check out required-gate action
-        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-
-      - name: Preserve successful required gate on metadata-only edit
-        id: preserved_gate
-        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
-        uses: ./.github/actions/preserve-required-gate
-        with:
-          gate-name: Smoke Gate
-          workflow-name: PR Smoke Gate
-          workflow-file: smoke.yml
-          workflow-path: .github/workflows/smoke.yml
-
-      - name: Publish pending required gate status
-        id: publish-pending-status
-        if: ${{ steps.smoke_gate_context.outputs.required != 'true' }}
-        uses: ./.github/actions/publish-required-gate-status
-        with:
-          assessment: ${{ steps.preserved_gate.outputs.assessment }}
-          gate-name: Smoke Gate
-          workflow-name: PR Smoke Gate
-          workflow-file: smoke.yml
-          workflow-path: .github/workflows/smoke.yml
-
-      - name: Report dependency-deferred required gate
-        if: ${{ !cancelled() && steps.smoke_gate_context.outputs.required != 'true' }}
-        env:
-          PUBLISHER_OUTCOME: ${{ steps.publish-pending-status.outcome }}
-          ASSESSMENT: ${{ steps.preserved_gate.outputs.assessment }}
-          PUBLICATION: ${{ steps.publish-pending-status.outputs.publication }}
-        run: |
-          case "$PUBLISHER_OUTCOME/$ASSESSMENT/$PUBLICATION" in
-            success/dependency-deferred/pending-acknowledged|success/success/unchanged|success/success/success-acknowledged|success/success/pending-acknowledged)
-              ;;
-            *)
-              echo "Required-gate assessment or status acknowledgment is unavailable; dependency-deferred failure." >&2
-              exit 1
-              ;;
-          esac
-
       - name: Fail when smoke dependencies did not succeed
-        if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}
+        if: ${{ steps.smoke_gate_context.outputs.execute != 'true' }}
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
         run: |
@@ -568,9 +521,20 @@ jobs:
             const pullRequestCheckInterval = 2;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
+            let retryPrimary = null;
             let identityDiagnostic = "current PR identity has not been resolved";
 
             class TerminalGitHubRequestError extends Error {}
+
+            function isTransientOptionalGitHubError(error) {
+              const status = error?.status ?? error?.response?.status;
+              const code = error?.code ?? error?.cause?.code;
+              return !(error instanceof TerminalGitHubRequestError) && (retryableStatuses.has(status) ||
+                (status == null && [
+                  "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH",
+                  "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
+                ].includes(code)));
+            }
 
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
@@ -608,9 +572,12 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1";
-            // Before this change merges, successful refreshes still run the current default-branch definition.
-            const canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256 = "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b";
+            const canonicalRuntimeWorkflowSha256 = "c1ef3c564568f2b7f96f6fa88a90581a87990db29ebd0459fdc869743bcc1eba";
+            const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
+              "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
+              "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+              "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1",
+            ]);
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
             // Retain the exact fail-red producer still executed by trusted base refreshes.
@@ -731,7 +698,8 @@ jobs:
             function isSuccessfulRuntimeWorkflowDefinition(definitionHash, sourceEvent) {
               return definitionHash === canonicalRuntimeWorkflowSha256 ||
                 (sourceEvent === "repository_dispatch" &&
-                  definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256);
+                  (definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 ||
+                   outgoingTrustedRefreshRuntimeWorkflowSha256.has(definitionHash)));
             }
 
             async function verifyCanonicalSmokeProducer(run, candidate, identity) {
@@ -798,9 +766,7 @@ jobs:
               const bytes = Buffer.from(definition.content, "base64");
               if (definition.size !== bytes.length) return false;
               const definitionHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
-              const preMergeTrustedRefresh = source.event === "repository_dispatch" &&
-                definitionHash === canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256;
-              if (isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event) || preMergeTrustedRefresh) {
+              if (isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event)) {
                 if (markers.length !== 1 || markers[0].status !== "completed" ||
                     markers[0].conclusion !== "skipped") return false;
               } else if (definitionHash !== canonicalLegacyRuntimeWorkflowSha256) return false;
@@ -965,7 +931,29 @@ jobs:
               return `${identity.sourceEvent}:${identity.baseRef}@${identity.baseSha}...${identity.headSha}#${identity.mergeSha}`;
             }
 
-            async function findMatchingRuntimeImagesRun(sourceEvent, expectedDisplayTitle, identity) {
+            async function verifyCompletedCanonicalRuntime(run, identity) {
+              if (run?.status !== "completed" || run.conclusion !== "success" ||
+                  !positiveInteger(run.run_attempt)) return false;
+              const jobs = await withTransientGitHubRetry("canonical runtime attempt jobs lookup", () =>
+                github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
+                  owner, repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100,
+                })
+              );
+              const producers = jobs.filter((job) => job.name === canonicalSmokeJobName);
+              const smoke = (producers[0]?.steps ?? []).filter((step) =>
+                step.name === "Run credential-free full-stack smoke");
+              return producers.length === 1 && smoke.length <= 1 &&
+                (smoke.length === 0 || smoke[0].status !== "completed" || smoke[0].conclusion === "success") &&
+                await verifyCanonicalSmokeProducer(run, producers[0], identity);
+            }
+
+            function isRetryPrimary(selection, run) {
+              return selection.retryPrimary?.id === run?.id &&
+                selection.retryPrimary?.run_attempt === run?.run_attempt &&
+                selection.retryPrimary != null;
+            }
+
+            async function findMatchingRuntimeImagesRun(sourceEvent, expectedDisplayTitle, identity, selection = {}) {
               const workflowRunQuery = {
                 owner,
                 repo,
@@ -1032,6 +1020,22 @@ jobs:
                     await isPreExecutionCancelledAttempt(run, expectedDisplayTitle, identity)) {
                   newestPreExecutionCancellation ??= run;
                   continue;
+                }
+                if (run.status !== "completed" && !isRetryPrimary(selection, run)) {
+                  const completed = matchingRuns.filter(({run: older}) =>
+                    older.id !== run.id && older.status === "completed" && older.conclusion === "success");
+                  for (const {run: older} of completed.slice(0, 3)) {
+                    try {
+                      if (await verifyCompletedCanonicalRuntime(older, identity)) {
+                        core.info("A verified completed exact runtime producer precedes the pending duplicate.");
+                        selection.pendingPrimary = run;
+                        return older;
+                      }
+                    } catch (error) {
+                      if (error instanceof TerminalGitHubRequestError) throw error;
+                      core.info("Older runtime producer proof is unavailable; retain the existing wait.");
+                    }
+                  }
                 }
                 return run;
               }
@@ -1174,10 +1178,27 @@ jobs:
                 `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${currentIdentity.baseSha} head-${currentIdentity.headSha} ` +
                 `merge-${currentIdentity.mergeSha} mode-required`;
+              const selection = {
+                retryPrimary: retryPrimary?.identity === identityKey(currentIdentity) ? retryPrimary : null,
+              };
+              retryPrimary = null;
+              async function retryExactSelection(message, { requirePendingPrimary = true } = {}) {
+                const remainingMs = timeoutMs - (Date.now() - started);
+                if (remainingMs <= 0 || (requirePendingPrimary && !selection.pendingPrimary)) return false;
+                core.warning(message);
+                retryPrimary = selection.pendingPrimary ? {
+                  id: selection.pendingPrimary.id,
+                  run_attempt: selection.pendingPrimary.run_attempt,
+                  identity: identityKey(currentIdentity),
+                } : null;
+                await new Promise((resolve) => setTimeout(resolve, Math.min(sleepMs, remainingMs)));
+                return true;
+              }
               let matching = await findMatchingRuntimeImagesRun(
                 currentIdentity.sourceEvent,
                 expectedDisplayTitle,
-                currentIdentity
+                currentIdentity,
+                selection
               );
               if (
                 currentIdentity.sourceEvent === "pull_request" &&
@@ -1201,7 +1222,8 @@ jobs:
                 const replacement = await findMatchingRuntimeImagesRun(
                   "repository_dispatch",
                   expectedDisplayTitle,
-                  currentIdentity
+                  currentIdentity,
+                  selection
                 );
                 if (!replacement) {
                   if (Date.now() - cancelledRunObservedAt >= cancelledReplacementTimeoutMs) {
@@ -1224,6 +1246,30 @@ jobs:
                   `Exact pull_request runtime-images run ${matching.id} was cancelled; checking exact repository_dispatch replacement ${replacement.id}.`
                 );
                 matching = replacement;
+              }
+              // A queued native run can share a tuple with a completed trusted refresh.
+              // It must not hide already verified smoke proof or cause a second dispatch.
+              if (!isRetryPrimary(selection, matching) && currentIdentity.sourceEvent === "pull_request" &&
+                  matching?.event === "pull_request" && matching.status !== "completed") {
+                let replacement;
+                try {
+                  replacement = await findMatchingRuntimeImagesRun(
+                    "repository_dispatch", expectedDisplayTitle, currentIdentity
+                  );
+                } catch (error) {
+                  if (!isTransientOptionalGitHubError(error)) throw error;
+                  core.warning("Trusted refresh inventory is unavailable; retain the native wait.");
+                }
+                try {
+                  if (replacement && await verifyCompletedCanonicalRuntime(replacement, currentIdentity)) {
+                    core.info("A completed verified exact trusted refresh supersedes the pending native wait.");
+                    selection.pendingPrimary = matching;
+                    matching = replacement;
+                  }
+                } catch (error) {
+                  if (error instanceof TerminalGitHubRequestError) throw error;
+                  core.info("Trusted refresh proof is unavailable; retain the native wait.");
+                }
               }
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
@@ -1311,18 +1357,29 @@ jobs:
                     await failNonTerminalSnapshot("before the workflow deadline");
                     return;
                   }
-                  const jobs = await withTransientGitHubRetry(
-                    "runtime-images job lookup",
-                    () => github.paginate(
-                      github.rest.actions.listJobsForWorkflowRun,
-                      {
-                        owner,
-                        repo,
-                        run_id: matching.id,
-                        per_page: 100,
-                      }
-                    )
-                  );
+                  let jobs;
+                  try {
+                    jobs = await withTransientGitHubRetry(
+                      "runtime-images job lookup",
+                      () => github.paginate(
+                        "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                        {
+                          owner,
+                          repo,
+                          run_id: matching.id,
+                          attempt_number: matching.run_attempt,
+                          per_page: 100,
+                        }
+                      )
+                    );
+                  } catch (error) {
+                    // Re-read the pending comparison on the next bounded poll. No
+                    // partial evidence from this alternative carries into that poll.
+                    if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                      `Runtime alternative ${matching.id} jobs are temporarily unavailable; retry exact primary selection.`
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
                   if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
                     return;
                   }
@@ -1372,6 +1429,21 @@ jobs:
                       Math.min(snapshotSleepMs, remainingBeforeSnapshotSleepMs)
                     ));
                     continue;
+                  }
+                  if (await retryExactSelection(
+                    `Runtime alternative ${matching.id} never exposed a complete smoke snapshot; retry exact primary selection.`
+                  )) continue smokeGatePolling;
+                  // With no pending primary, only the same run's provably newer attempt warrants reselection.
+                  const { data: latestSnapshotAttempt } = await withTransientGitHubRetry(
+                    "runtime attempt lookup after incomplete smoke snapshot",
+                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                  );
+                  if (positiveInteger(matching.run_attempt) && latestSnapshotAttempt.id === matching.id &&
+                      positiveInteger(latestSnapshotAttempt.run_attempt) &&
+                      latestSnapshotAttempt.run_attempt > matching.run_attempt) {
+                    core.info("Runtime attempt superseded the incomplete smoke snapshot; resume exact selection.");
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
                   }
                   const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0
                     ? "before the remaining workflow deadline allowed a retry"
@@ -1451,6 +1523,60 @@ jobs:
                     `Runtime images run ${matching.id} was not accepted because the current PR identity changed after its smoke snapshot; waiting for a fresh exact run.`
                   );
                   continue smokeGatePolling;
+                }
+                // Job proof belongs to the selected immutable attempt, never the latest
+                // attempt's jobs. Recheck after mutable PR identity before accepting it.
+                let currentAttempt;
+                try {
+                  ({ data: currentAttempt } = await withTransientGitHubRetry(
+                    "final successful runtime attempt lookup",
+                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                  ));
+                } catch (error) {
+                  if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                    `Runtime run ${matching.id} final attempt is temporarily unavailable; retry exact selection.`,
+                    { requirePendingPrimary: false }
+                  )) continue smokeGatePolling;
+                  throw error;
+                }
+                if (!positiveInteger(matching.run_attempt) || currentAttempt.id !== matching.id ||
+                    currentAttempt.run_attempt !== matching.run_attempt ||
+                    currentAttempt.status !== "completed" || currentAttempt.conclusion !== "success") {
+                  core.info("Runtime attempt changed before smoke proof acceptance; resume exact selection.");
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
+                if (currentIdentity.sourceEvent === "repository_dispatch") {
+                  // A trusted refresh follows the live base, unlike immutable event proof.
+                  const acceptanceIdentity = await resolveCurrentIdentity(
+                    "Stopping stale current-base smoke gate after the final run lookup"
+                  );
+                  if (acceptanceIdentity?.obsolete) return;
+                  if (!acceptanceIdentity || identityKey(acceptanceIdentity) !== identityKey(currentIdentity)) {
+                    currentIdentity = acceptanceIdentity;
+                    core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
+                    continue smokeGatePolling;
+                  }
+                  let acceptanceAttempt;
+                  try {
+                    ({ data: acceptanceAttempt } = await withTransientGitHubRetry(
+                      "current-base runtime attempt lookup after live identity validation",
+                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                    ));
+                  } catch (error) {
+                    if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                      `Runtime run ${matching.id} final current-base attempt is temporarily unavailable; retry exact selection.`,
+                      { requirePendingPrimary: false }
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
+                  if (acceptanceAttempt.id !== matching.id ||
+                      acceptanceAttempt.run_attempt !== matching.run_attempt ||
+                      acceptanceAttempt.status !== "completed" || acceptanceAttempt.conclusion !== "success") {
+                    core.info("Runtime attempt changed after current-base identity validation; resume exact selection.");
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
                 }
                 return;
               }

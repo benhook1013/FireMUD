@@ -882,6 +882,11 @@ def _expected_gateway_container_env(expected_namespace: str) -> list[dict]:
         {"name": "SPRING_FLYWAY_TABLE", "value": "flyway_schema_history_gateway"},
         {"name": "SERVICE_SCHEMA", "value": "gateway"},
         {
+            "name": "JAVA_TOOL_OPTIONS",
+            "value": "-XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=64m -Xss512k",
+        },
+        {"name": "MALLOC_ARENA_MAX", "value": "2"},
+        {
             "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
             "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
         },
@@ -926,7 +931,13 @@ EXPECTED_GATEWAY_ENV_FROM = [
 
 
 def _validate_gateway_container_environment(container: dict, expected_namespace: str) -> None:
-    if container.get("env") != _expected_gateway_container_env(expected_namespace):
+    expected = _expected_gateway_container_env(expected_namespace)
+    # The default-branch validator can receive a supported merge base whose
+    # Gateway chart predates the two JVM footprint settings.
+    without_footprint_tuning = [
+        entry for entry in expected if entry["name"] not in {"JAVA_TOOL_OPTIONS", "MALLOC_ARENA_MAX"}
+    ]
+    if container.get("env") not in (expected, without_footprint_tuning):
         fail("Deployment/spring-cloud-gateway has an unsafe container env")
     if container.get("envFrom") != EXPECTED_GATEWAY_ENV_FROM:
         fail("Deployment/spring-cloud-gateway has an unsafe envFrom contract")
@@ -2028,8 +2039,8 @@ def validate_metadata(
         fail("PR number must be a positive canonical decimal string")
     normalized_pr_number = int(pr_number)
     event = metadata.get("event")
-    if event not in {"pull_request_target", "repository_dispatch"}:
-        fail("metadata event must be pull_request_target or repository_dispatch")
+    if event not in {"pull_request", "repository_dispatch"}:
+        fail("metadata event must be pull_request or repository_dispatch")
     if event == "repository_dispatch" and metadata.get("action") != "deploy":
         fail("repository_dispatch render metadata action must be deploy")
     expected = {

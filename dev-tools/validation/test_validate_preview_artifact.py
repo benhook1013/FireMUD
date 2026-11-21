@@ -1172,7 +1172,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
     def _metadata_fixture(manifest_path):
         return {
             "schemaVersion": 1,
-            "event": "pull_request_target",
+            "event": "pull_request",
             "repository": "example/FireMUD",
             "sourceWorkflow": ".github/workflows/preview.yml",
             "sourceRunId": 42,
@@ -2661,6 +2661,19 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
                 [self._gateway_document()], "pr-42"
             )
 
+    def test_gateway_accepts_exact_environment_from_before_footprint_tuning(self):
+        document = self._gateway_document()
+        container = document["spec"]["template"]["spec"]["containers"][0]
+        expected = container["env"]
+        tuning = {"JAVA_TOOL_OPTIONS", "MALLOC_ARENA_MAX"}
+        with patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}):
+            container["env"] = [entry for entry in expected if entry["name"] not in tuning]
+            self.validator.validate_service_consumers([document], "pr-42")
+            for missing in ("JAVA_TOOL_OPTIONS", "MALLOC_ARENA_MAX", "SPRING_FLYWAY_TABLE"):
+                with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "unsafe container env"):
+                    container["env"] = [entry for entry in expected if entry["name"] != missing]
+                    self.validator.validate_service_consumers([document], "pr-42")
+
     def test_gateway_rejects_unsafe_gameplay_mount(self):
         for option, value in (("readOnly", False), ("subPath", "tls.key")):
             with self.subTest(option=option):
@@ -2688,6 +2701,29 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
             self.assertRaisesRegex(ValueError, "unsafe grpc-tls projection"),
         ):
             self.validator.validate_service_consumers([document], "pr-42")
+
+    def test_gateway_jvm_profile_matches_chart_and_rejects_value_changes(self):
+        defaults = yaml.safe_load((ROOT / "k8s/helm/firemud/values.yaml").read_text())
+        expected = {
+            "JAVA_TOOL_OPTIONS": defaults["previewStack"]["jvm"]["javaToolOptions"],
+            "MALLOC_ARENA_MAX": defaults["previewStack"]["jvm"]["mallocArenaMax"],
+        }
+        env = self.validator._expected_gateway_container_env("pr-42")
+        self.assertEqual(
+            {row["name"]: row["value"] for row in env if row["name"] in expected},
+            expected,
+        )
+        for name in expected:
+            with self.subTest(name=name):
+                document = self._gateway_document()
+                for row in document["spec"]["template"]["spec"]["containers"][0]["env"]:
+                    if row["name"] == name:
+                        row["value"] = "unapproved"
+                with (
+                    patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}),
+                    self.assertRaisesRegex(ValueError, "unsafe container env"),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
 
     def test_gateway_rejects_redirect_and_jvm_environment_injection(self):
         for injected in (

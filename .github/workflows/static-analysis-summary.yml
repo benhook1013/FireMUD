@@ -13,17 +13,55 @@ permissions:
   actions: read
   pull-requests: write
 
-concurrency:
-  group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
-  # Serialize the CodeQL and license completion events so a pending summary
-  # cannot race a terminal summary into creating two comments. A superseded head
-  # cannot replace the pending callback for the current head.
-  cancel-in-progress: false
-
 jobs:
+  resolve-summary-target:
+    name: Resolve Summary Target
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      pull-number: ${{ steps.target.outputs.pull-number }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Resolve validated summary target
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const source = context.payload.workflow_run;
+            if (source?.event !== "pull_request") return;
+            const workflowName = ({
+              ".github/workflows/codeql.yml": "CodeQL Analysis",
+              ".github/workflows/license-scan.yml": "License Gate",
+            })[source.path];
+            const title = String(source.display_title || "").match(
+              /^(CodeQL Analysis|License Gate) pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/
+            );
+            if (!title || title[1] !== workflowName || title[4] !== source.head_sha ||
+                ![workflowName, source.display_title].includes(source.name) ||
+                !Number.isSafeInteger(source.head_repository?.id) || source.head_repository.id <= 0 ||
+                typeof source.head_branch !== "string" || !source.head_branch.trim()) return;
+            const number = Number(title[2]);
+            if (!Number.isSafeInteger(number) || !Array.isArray(source.pull_requests) ||
+                source.pull_requests.filter(pr => pr?.number === number).length !== 1) return;
+            core.setOutput("pull-number", String(number));
+
   publish-summary:
     name: Static Analysis Summary
-    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    needs: [resolve-summary-target]
+    if: ${{ needs.resolve-summary-target.outputs.pull-number != '' }}
+    # Only validated PR callbacks enter this queue. Old heads refresh the same
+    # live PR. Retain up to 100 pending callbacks, so a failing late callback
+    # cannot replace the pending terminal update; other PRs have separate queues.
+    concurrency:
+      group: static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -36,23 +74,31 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const pullRequests = context.payload.workflow_run.pull_requests || [];
-            if (pullRequests.length === 0) {
-              core.info("No pull request is attached to this workflow run.");
+            const sourceRun = context.payload.workflow_run;
+            const sourceRepositoryId = sourceRun.head_repository?.id;
+            const sourceBranch = sourceRun.head_branch;
+            if (!Number.isSafeInteger(sourceRepositoryId) || sourceRepositoryId <= 0 ||
+                typeof sourceBranch !== "string" || !sourceBranch.trim()) return;
+            const sourceTitle = String(sourceRun.display_title || "").match(
+              /^(CodeQL Analysis|License Gate) pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/
+            );
+            if (!sourceTitle) return;
+            const issueNumber = Number(sourceTitle[2]);
+            if (!Number.isSafeInteger(issueNumber)) return;
+            const pullRequests = sourceRun.pull_requests;
+            if (!Array.isArray(pullRequests) ||
+                pullRequests.filter((pr) => pr?.number === issueNumber).length !== 1) {
+              core.info("Exactly one association must match the canonical title's pull request.");
               return;
             }
-
-            const pullRequest = pullRequests[0];
-            const issueNumber = pullRequest.number;
-            const headSha = context.payload.workflow_run.head_sha;
+            const sourceHeadSha = sourceRun.head_sha;
+            if (!/^[0-9a-f]{40}$/.test(sourceHeadSha || "")) return;
             const { data: currentPullRequest } = await github.rest.pulls.get({
               ...context.repo,
               pull_number: issueNumber,
             });
-            if (currentPullRequest.head?.sha !== headSha) {
-              core.info("The source run belongs to a superseded pull-request head.");
-              return;
-            }
+            const headSha = currentPullRequest.head?.sha;
+            if (!/^[0-9a-f]{40}$/.test(headSha || "")) return;
             const baseSha = currentPullRequest.base?.sha;
             if (!baseSha) {
               throw new Error("The current pull-request base SHA is unavailable.");
@@ -63,20 +109,22 @@ jobs:
               ".github/workflows/license-scan.yml": "License Gate",
             })[sourceWorkflowPath];
             // The completion is a wake signal, never proof for the current base.
-            // An older-base callback can replace a pending callback in this head's
-            // concurrency group, so validate its original title and snapshot the live tuple.
+            // An older-head or older-base callback may run after newer work for this PR.
+            // Validate its original identity, then derive proof only from the live tuple.
             const sourceBaseSha = String(context.payload.workflow_run.display_title || "")
               .match(/ base-([0-9a-f]{40}) head-/)?.[1];
-            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${sourceBaseSha} head-${headSha}`;
+            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${sourceBaseSha} head-${sourceHeadSha}`;
             if (
               currentPullRequest.state !== "open" ||
+              currentPullRequest.head?.repo?.id !== sourceRepositoryId ||
+              currentPullRequest.head?.ref !== sourceBranch ||
               !sourceWorkflowName ||
               !sourceBaseSha ||
               (context.payload.workflow_run.name !== sourceWorkflowName &&
                 context.payload.workflow_run.name !== expectedSourceTitle) ||
               context.payload.workflow_run.display_title !== expectedSourceTitle
             ) {
-              core.info("The source run is not bound to the current open pull request and head.");
+              core.info("The source run is not attributable to this open pull request.");
               return;
             }
             const detailChecks = [
@@ -87,11 +135,14 @@ jobs:
               ["CodeQL gate", "CodeQL Gate", "codeql"],
               ["License gate", "License Gate", "license"],
             ];
+            const terminalFailure = new Set([
+              "failure", "cancelled", "timed_out", "action_required", "startup_failure",
+            ]);
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "pending" || value === "in_progress" || value === "queued") return "⏳";
+              if (terminalFailure.has(value)) return "❌";
+              if (value === "pending" || value === "in_progress" || value === "queued" || value === "unavailable") return "⏳";
               return "⏭️";
             };
 
@@ -113,20 +164,11 @@ jobs:
               return numericIdentity(left?.id) - numericIdentity(right?.id);
             };
 
-            const selectLatestWorkflowRun = (workflowRuns) => {
-              const candidates = (Array.isArray(workflowRuns) ? workflowRuns : []).filter(
-                (workflowRun) =>
-                  workflowRun?.event === "pull_request" &&
-                  workflowRun?.head_sha === headSha
-              );
-              return candidates.reduce(
-                (latest, candidate) =>
-                  !latest || compareWorkflowRuns(candidate, latest) > 0 ? candidate : latest,
-                null
-              );
-            };
-
-            const workflowRunFor = async (workflowId) => {
+            // Metadata-only edits skip their gate under a non-required name; the
+            // earlier substantive run for the same title remains the result.
+            // GitHub leaves a skipped job's name expression unevaluated, so match
+            // the metadata label inside it.
+            const workflowRunFor = async (workflowId, gateName) => {
               const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Gate";
               const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
               const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
@@ -136,44 +178,61 @@ jobs:
                 head_sha: headSha,
                 per_page: 100,
               });
-              return selectLatestWorkflowRun(
-                workflowRuns.filter((workflowRun) => workflowRun?.display_title === expectedTitle)
-              );
-            };
-
-            const checkRunWorkflowId = (checkRun) => {
-              const match = String(checkRun?.details_url || "").match(/\/actions\/runs\/(\d+)(?:\/|$)/);
-              return match?.[1] || null;
-            };
-
-            const compareCheckRuns = (left, right) => {
-              const leftTimestamp = Math.max(
-                parseTimestamp(left?.completed_at),
-                parseTimestamp(left?.started_at),
-                parseTimestamp(left?.created_at)
-              );
-              const rightTimestamp = Math.max(
-                parseTimestamp(right?.completed_at),
-                parseTimestamp(right?.started_at),
-                parseTimestamp(right?.created_at)
-              );
-              if (leftTimestamp !== rightTimestamp) return leftTimestamp - rightTimestamp;
-              return numericIdentity(left?.id) - numericIdentity(right?.id);
-            };
-
-            const selectLatestCheckRun = (checkRuns, checkName, workflowRun) => {
-              if (!workflowRun?.id) return null;
-              const workflowRunId = String(workflowRun.id);
-              const candidates = (Array.isArray(checkRuns) ? checkRuns : []).filter(
-                (checkRun) =>
-                  checkRun?.name === checkName &&
-                  checkRunWorkflowId(checkRun) === workflowRunId
-              );
-              return candidates.reduce(
-                (latest, candidate) =>
-                  !latest || compareCheckRuns(candidate, latest) > 0 ? candidate : latest,
-                null
-              );
+              const candidates = workflowRuns.filter((run) =>
+                run?.display_title === expectedTitle && run.event === "pull_request" &&
+                run.head_sha === headSha).sort((a, b) => compareWorkflowRuns(b, a));
+              for (const candidate of candidates) {
+                if (!Number.isSafeInteger(candidate.id) || candidate.id <= 0 ||
+                    !Number.isSafeInteger(candidate.run_attempt) || candidate.run_attempt <= 0) {
+                  throw new Error("Static summary candidate identity is unavailable.");
+                }
+                const { data } = await github.request(
+                  "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                  { ...context.repo, run_id: candidate.id, attempt_number: candidate.run_attempt, per_page: 100 }
+                );
+                if (!Array.isArray(data.jobs) || !Number.isSafeInteger(data.total_count) ||
+                    data.total_count !== data.jobs.length || data.total_count >= 100) {
+                  throw new Error("Static summary candidate jobs are incomplete.");
+                }
+                const mismatched = data.jobs.some(job => !Number.isSafeInteger(job?.id) || job.id <= 0 ||
+                  job.run_id !== candidate.id ||
+                  (job.run_attempt !== undefined && job.run_attempt !== candidate.run_attempt) ||
+                  job.head_sha !== headSha);
+                const evidenceNames = [gateName, ...(workflowId === "codeql.yml" ? [
+                  ...detailChecks.map(([, name]) => name), "CodeQL Analysis ($" + "{{ matrix.language }})",
+                ] : [])];
+                const duplicate = !mismatched &&
+                  evidenceNames.some(name => data.jobs.filter(job => job.name === name).length > 1);
+                if (mismatched || duplicate) {
+                  // Do not replace a summary from a newer attempt with an older ambiguous snapshot.
+                  const {data: currentRun} = await github.rest.actions.getWorkflowRun({
+                    ...context.repo, run_id: candidate.id,
+                  });
+                  if (currentRun?.id !== candidate.id || currentRun.run_attempt !== candidate.run_attempt ||
+                      currentRun.event !== "pull_request" || currentRun.head_sha !== headSha ||
+                      currentRun.display_title !== expectedTitle) {
+                    throw new Error("Static summary cannot confirm the current workflow attempt.");
+                  }
+                  return { ...candidate, status: "unavailable", conclusion: null, jobs: [] };
+                }
+                const metadataName = `PR Metadata Edit (${gateName})`;
+                const metadata = data.jobs.some(job => job.status === "completed" &&
+                  job.conclusion === "skipped" &&
+                  (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
+                const substantive = data.jobs.some(job => job.name === gateName);
+                if (metadata && !substantive && candidate.conclusion === "skipped") continue;
+                if (!substantive) {
+                  if (candidate.status === "completed" && terminalFailure.has(candidate.conclusion)) {
+                    return { ...candidate, jobs: data.jobs };
+                  }
+                  const status = ["queued", "in_progress", "pending", "requested", "waiting"].includes(candidate.status)
+                    ? "in_progress"
+                    : "unavailable";
+                  return { ...candidate, status, conclusion: null, jobs: data.jobs };
+                }
+                return { ...candidate, jobs: data.jobs };
+              }
+              return null;
             };
 
             const normalizeStatus = (checkRun, checkName, workflowRun) => {
@@ -182,6 +241,8 @@ jobs:
                   checkName.startsWith("CodeQL Analysis (") &&
                   workflowRun?.status === "completed"
                 ) {
+                  // A failed run or partial rerun without a language job did not prove a skip.
+                  if (terminalFailure.has(workflowRun.conclusion) || workflowRun.run_attempt > 1) return "unavailable";
                   return "skipped";
                 }
                 if (workflowRun?.status === "completed") {
@@ -194,51 +255,46 @@ jobs:
               return checkRun.conclusion ?? "pending";
             };
 
-            const loadChecks = async () => {
-              return github.paginate(github.rest.checks.listForRef, {
-                ...context.repo,
-                ref: headSha,
-                per_page: 100,
-              });
-            };
-
-            const resolveStatuses = (checkRuns, workflowRuns) =>
+            const resolveStatuses = (workflowRuns) =>
               [...gateChecks, ...detailChecks].map(([label, checkName, workflowKey]) => {
                 const isCodeQlAnalysis = checkName.startsWith("CodeQL Analysis (");
                 const emptyMatrixCodeQlCheck =
                   "CodeQL Analysis ($" + "{{ matrix.language }})";
                 const workflowRun = workflowRuns?.[workflowKey] || null;
-                const selectedCheckRun = selectLatestCheckRun(
-                  checkRuns,
-                  checkName,
-                  workflowRun
-                ) || (isCodeQlAnalysis
-                  ? selectLatestCheckRun(checkRuns, emptyMatrixCodeQlCheck, workflowRun)
-                  : null);
-                return [label, normalizeStatus(selectedCheckRun, checkName, workflowRun)];
+                const jobs = workflowRun?.jobs ?? [];
+                let candidates = jobs.filter(job => job.name === checkName);
+                if (!candidates.length && isCodeQlAnalysis) {
+                  candidates = jobs.filter(job => job.name === emptyMatrixCodeQlCheck);
+                }
+                return [label, normalizeStatus(candidates[0], checkName, workflowRun)];
               });
 
-            const workflowRuns = {
-              codeql: await workflowRunFor("codeql.yml"),
-              license: await workflowRunFor("license-scan.yml"),
-            };
+            const selectWorkflowRuns = async () => ({
+              codeql: await workflowRunFor("codeql.yml", "CodeQL Gate"),
+              license: await workflowRunFor("license-scan.yml", "License Gate"),
+            });
+            const workflowRuns = await selectWorkflowRuns();
             // Each serialized producer completion publishes one bounded snapshot.
             // A running counterpart stays pending until its completion callback refreshes this comment.
-            const checks = resolveStatuses(await loadChecks(), workflowRuns);
+            const checks = resolveStatuses(workflowRuns);
 
             const gateResults = checks.slice(0, gateChecks.length);
             const detailResults = checks.slice(gateChecks.length);
 
             const failedChecks = gateResults.filter(([, result]) =>
-              ["failure", "cancelled", "timed_out", "action_required"].includes(result)
+              terminalFailure.has(result)
             );
             const pendingChecks = gateResults.filter(([, result]) =>
               ["pending", "in_progress", "queued"].includes(result)
             );
 
+            const unavailableChecks = gateResults.filter(([, result]) => result === "unavailable");
+
             let headline = "✅ Static analysis checks passed";
             if (failedChecks.length > 0) {
               headline = "❌ Static analysis checks failed";
+            } else if (unavailableChecks.length > 0) {
+              headline = "⏳ Static analysis evidence is unavailable";
             } else if (pendingChecks.length > 0) {
               headline = "⏳ Static analysis checks are still running";
             }
@@ -251,21 +307,10 @@ jobs:
               "",
               "CodeQL breakdown",
               "",
+              `Source: base ${baseSha}, head ${headSha}`,
+              "",
               ...detailResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");
-
-            const { data: finalPullRequest } = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: issueNumber,
-            });
-            if (
-              finalPullRequest.state !== "open" ||
-              finalPullRequest.head?.sha !== headSha ||
-              finalPullRequest.base?.sha !== baseSha
-            ) {
-              core.info("The pull-request base or head changed while static analysis was being summarized.");
-              return;
-            }
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
@@ -291,6 +336,45 @@ jobs:
               return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
+            // Reruns can advance a producer without changing the PR tuple.
+            for (const run of Object.values(workflowRuns)) {
+              if (!run) continue;
+              const { data: current } = await github.rest.actions.getWorkflowRun({
+                ...context.repo,
+                run_id: run.id,
+              });
+              if (current?.id !== run.id || current.run_attempt !== run.run_attempt ||
+                  current.event !== "pull_request" || current.head_sha !== headSha ||
+                  current.display_title !== run.display_title) {
+                core.info("A selected producer attempt changed while static analysis was being summarized.");
+                return;
+              }
+            }
+
+            if (!failedChecks.length && !unavailableChecks.length && !pendingChecks.length) {
+              const latest = await selectWorkflowRuns();
+              if (Object.entries(workflowRuns).some(([name, selected]) =>
+                ["id", "run_attempt", "status", "conclusion"].some(field =>
+                  selected?.[field] !== latest[name]?.[field]))) {
+                core.info("A producer selection changed before the passing summary could be published.");
+                return;
+              }
+            }
+
+            const comparisonIsCurrent = async () => {
+              const { data: current } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: issueNumber,
+              });
+              const matches = current.state === "open" &&
+                current.head?.repo?.id === sourceRepositoryId && current.head?.ref === sourceBranch &&
+                current.head?.sha === headSha && current.base?.sha === baseSha &&
+                current.base?.ref === currentPullRequest.base?.ref;
+              if (!matches) core.info("The pull-request base or head changed while static analysis was being summarized.");
+              return matches;
+            };
+            if (!(await comparisonIsCurrent())) return;
+
             if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({
                 ...context.repo,
@@ -307,6 +391,7 @@ jobs:
 
             for (const comment of summaryComments) {
               if (comment.id === existing?.id) continue;
+              if (!(await comparisonIsCurrent())) return;
               try {
                 await github.rest.issues.deleteComment({
                   ...context.repo,

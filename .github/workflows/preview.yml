@@ -3,7 +3,7 @@ name: PR Preview Environment
 run-name: ${{ github.event_name == 'repository_dispatch' && format('Preview dispatch pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha || 'unknown', github.event.client_payload.head_sha, github.event.client_payload.merge_sha || 'unknown') || format('PR preview {0}', github.event.pull_request.number) }}
 
 on:
-  pull_request_target:
+  pull_request:
     paths-ignore:
       - '**/*.md'
       - 'mkdocs.yml'
@@ -28,9 +28,9 @@ jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request_target' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && (github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'preview:priority') && (github.event.action != 'edited' || github.event.changes.base != null)) }}
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && (github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'preview:priority') && (github.event.action != 'edited' || github.event.changes.base != null)) }}
     concurrency:
-      group: preview-plan-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
+      group: preview-readonly-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
       cancel-in-progress: true
     outputs:
       action: ${{ steps.derive.outputs.action }}
@@ -47,6 +47,10 @@ jobs:
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
     steps:
+      - name: Preview event tuple pr-${{ github.event.pull_request.number }} base-${{ github.event.pull_request.base.sha }} head-${{ github.event.pull_request.head.sha }} merge-${{ github.sha }}
+        if: ${{ github.event_name == 'pull_request' }}
+        run: ':'
+
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
@@ -92,7 +96,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "$EVENT_NAME" == pull_request_target ]]; then
+          if [[ "$EVENT_NAME" == pull_request ]]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             HEAD_SHA="$EVENT_HEAD_SHA"
             BASE_SHA=""
@@ -206,13 +210,13 @@ jobs:
               echo "::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head." >&2
               exit 1
             fi
-            if [[ "$ACTION" == deploy && "$EVENT_NAME" == pull_request_target && "${EVENT_BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
+            if [[ "$ACTION" == deploy && "$EVENT_NAME" == pull_request && "${EVENT_BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
               BASE_REFRESH_REQUIRED=true
             fi
             HEAD_SHA="$CURRENT_HEAD_SHA"
             BASE_SHA="$CURRENT_BASE_SHA"
 
-            if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
+            if [[ "$EVENT_NAME" == pull_request && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
               [[ "$EVENT_NAME" == repository_dispatch && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
               [[ "$EVENT_NAME" == repository_dispatch && -n "$PLANNED_BASE_SHA" && -n "$PLANNED_IMAGE_TAG" ]]; then
               BASE_REFRESH_REQUIRED=true
@@ -336,7 +340,7 @@ jobs:
           DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == pull_request_target ]]; then
+          if [[ "$EVENT_NAME" == pull_request ]]; then
             PR_AUTHOR="$PR_USER_LOGIN"
             BASE_REF="$PR_BASE_REF"
             LABELS_JSON="$(jq -c 'if type == "array" then [.[] | {name: .name}] else . end' <<<"$PR_LABELS_JSON")"
@@ -370,6 +374,10 @@ jobs:
             --base-ref "$TARGET_BASE_REF" \
             --author "$TARGET_AUTHOR" \
             --labels-json "$TARGET_LABELS_JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Preview resolved tuple pr-${{ steps.derive.outputs.pr_number }} base-${{ steps.derive.outputs.base_sha }} head-${{ steps.derive.outputs.head_sha }} merge-${{ steps.derive.outputs.merge_sha }}
+        if: ${{ github.event_name == 'pull_request' && steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}
+        run: ':'
 
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
@@ -415,7 +423,7 @@ jobs:
   preview-runtime-base-refresh:
     name: Refresh PR Runtime Images For Current Base
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.base_refresh_required == 'true' && needs.preview-plan.outputs.image_tag != needs.preview-plan.outputs.base_sha }}
+    if: ${{ github.event_name == 'repository_dispatch' && needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.base_refresh_required == 'true' && needs.preview-plan.outputs.image_tag != needs.preview-plan.outputs.base_sha }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -514,7 +522,7 @@ jobs:
     permissions:
       contents: read
     concurrency:
-      group: preview-render-${{ needs.preview-plan.outputs.pr_number }}
+      group: preview-readonly-render-${{ needs.preview-plan.outputs.pr_number }}
       cancel-in-progress: true
     steps:
       - name: Harden runner
@@ -522,10 +530,19 @@ jobs:
         with:
           egress-policy: audit
 
+      # A manual dispatch is a trusted event: never execute candidate scripts or
+      # local actions in that context. Candidate Helm templates are data only.
+      - name: Check out trusted default branch render tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Check out exact PR merge ref for untrusted render
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge
+          path: candidate
           fetch-depth: 2
           persist-credentials: false
 
@@ -551,11 +568,11 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          if ! MERGE_SHA="$(git rev-parse --verify 'HEAD^{commit}')"; then
+          if ! MERGE_SHA="$(git -C candidate rev-parse --verify 'HEAD^{commit}')"; then
             echo "::error title=Invalid preview merge ref::The checked-out pull request merge ref is not a commit." >&2
             exit 1
           fi
-          if ! merge_parents="$(git rev-list --parents -n 1 "$MERGE_SHA")"; then
+          if ! merge_parents="$(git -C candidate rev-list --parents -n 1 "$MERGE_SHA")"; then
             echo "::error title=Invalid preview merge ref::Unable to read the checked-out merge commit parents." >&2
             exit 1
           fi
@@ -571,9 +588,9 @@ jobs:
           sanitized="$RUNNER_TEMP/preview-rendered-sanitized.yaml"
           metadata="$RUNNER_TEMP/preview-metadata.json"
           python3 ./dev-tools/hosted/preview/render-preview-values.py \
-            k8s/helm/firemud/values-hosted-shared.example.yaml \
+            candidate/k8s/helm/firemud/values-hosted-shared.example.yaml \
             "$values" "$PR_NUMBER" "$NAMESPACE" "$RELEASE_NAME" "$HOSTNAME" "$IMAGE_TAG" 32000
-          helm template "$RELEASE_NAME" k8s/helm/firemud \
+          helm template "$RELEASE_NAME" candidate/k8s/helm/firemud \
             -f "$values" --namespace "$NAMESPACE" > "$rendered"
 
           # Only these chart-owned objects are intentionally absent from the
