@@ -162,7 +162,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
       *) printf '%s' "${1:-}" ;;
     esac
   }
-  snapshot_head="$(canonical_head "${FAKE_PR_901_HEAD:-}")"
+  snapshot_head="$(canonical_head "${FAKE_PR_901_SNAPSHOT_HEAD:-${FAKE_PR_901_HEAD:-}}")"
   snapshot_requested_head="$(canonical_head "${FAKE_PR_901_REQUESTED_HEAD:-}")"
   if [[ "$count" -gt 1 ]]; then
     if [[ -v FAKE_PR_901_RECHECK_HEAD ]]; then
@@ -3082,6 +3082,33 @@ for namespace_count_sequence in 2,1 2,2; do
       bash "$RECONCILER_RUN"
   ) > "$reconciler_capacity_refresh_output"
   test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
+  if [[ "$namespace_count_sequence" == 2,1 ]]; then
+    grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
+    test -s "$FAKE_DISPATCH_LOG"
+  else
+    grep -Fq 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
+      "$reconciler_capacity_refresh_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  fi
+done
+
+for namespace_count_sequence in 2,1 2,2; do
+  reset_case
+  reconciler_capacity_refresh_output="$TEMP_DIR/reconciler-final-capacity-refresh-${namespace_count_sequence//,/-}.out"
+  export FAKE_NAMESPACE_COUNT_SEQUENCE="$namespace_count_sequence"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${ordinary_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_PRIORITY=false \
+      FAKE_PR_901_SNAPSHOT_HEAD=dddddddddddddddddddddddddddddddddddddddd \
+      FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=true \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$reconciler_capacity_refresh_output"
+  test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+  test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
+  test ! -e "$FAKE_ANNOTATE_LOG"
   if [[ "$namespace_count_sequence" == 2,1 ]]; then
     grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
     test -s "$FAKE_DISPATCH_LOG"

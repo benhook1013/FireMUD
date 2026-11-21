@@ -305,8 +305,15 @@ jobs:
                 return 1
               fi
               if [[ "$priority" != true && "$available_slots" -le 0 ]]; then
-                echo "Skipping ordinary PR #${pr_number}: preview capacity is full."
-                return 1
+                if ! refresh_available_slots; then
+                  echo "Unable to refresh preview capacity for ordinary PR #${pr_number}; refusing dispatch." >&2
+                  dispatch_outcome_failed=true
+                  return 1
+                fi
+                if [[ "$available_slots" -le 0 ]]; then
+                  echo "Skipping ordinary PR #${pr_number}: preview capacity is still full after refresh."
+                  return 1
+                fi
               fi
               return 0
             fi
