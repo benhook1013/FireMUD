@@ -74,3 +74,7 @@ if (includeLoadTesting) {
     include("load-testing")
     project(":load-testing").projectDir = File("dev-tools/load-testing")
 }
+
+// Source-only one-shot custodian; no runtime or deployment enrollment.
+include("account-jwt-materializer")
+project(":account-jwt-materializer").projectDir = file("k8s/account-jwt-materializer")

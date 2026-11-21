@@ -165,7 +165,7 @@ public final class AccountGameplayDelegationRedisClient {
 
   public static final String SCRIPT_ID = "account.game-session-delegation-pending-register.v1";
   public static final String ISSUER_PROJECTION_SCRIPT_ID =
-      "account.game-session-delegation-authority-project-issuer.v1";
+      "account.game-session-delegation-authority-project-issuer.v2";
   public static final String ACCOUNT_PROJECTION_SCRIPT_ID =
       AccountGenerationProjectionRedisContract.SCRIPT_ID;
   public static final String TENANT_PROJECTION_SCRIPT_ID =
@@ -175,7 +175,7 @@ public final class AccountGameplayDelegationRedisClient {
   public static final String ACTIVE_TRANSITION_SCRIPT_ID =
       "account.game-session-delegation-activate-committed.v1";
   private static final String AUTHORITY_PROJECTION_SCRIPT_RESOURCE =
-      "redis/lua/account-game-session-delegation-authority-project.lua";
+      "redis/lua/account-game-session-delegation-authority-project-v2.lua";
   private static final String ACTIVE_TRANSITION_SCRIPT_RESOURCE =
       "redis/lua/account-game-session-delegation-activate-committed.lua";
   public static final String TOKEN_KEY_PREFIX = "session:auth:token:";
@@ -751,20 +751,8 @@ public final class AccountGameplayDelegationRedisClient {
     try {
       RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
       requireAccountAclIdentity(commands);
-      String loadedSha = commands.scriptLoad(scriptSource);
-      if (loadedSha == null
-          || !SHA1.matcher(loadedSha).matches()
-          || !sha1(scriptSource).equals(loadedSha)) {
-        throw unavailable();
-      }
-      byte[][] issuerProjectionArguments = {issuerProjectionBytes};
       Long issuerResult =
-          commands.evalsha(
-              loadedSha,
-              ScriptOutputType.INTEGER,
-              new byte[][] {issuerKey},
-              issuerProjectionArguments);
-      requireProjectionResult(issuerResult);
+          applyIssuerProjection(commands, issuerKey, issuerProjectionBytes, scriptSource);
       String accountSha = commands.scriptLoad(accountScriptSource);
       if (accountSha == null || !sha1(accountScriptSource).equals(accountSha)) throw unavailable();
       byte[] priorAccountBytes = commands.get(accountKey);
@@ -1454,6 +1442,74 @@ public final class AccountGameplayDelegationRedisClient {
     }
   }
 
+  /** Package-local issuer-only path; supplied value is typed, never an arbitrary key/script. */
+  ProjectionPublicationOutcome publishIssuerAuthorityProjection(
+      net.firedevops.firemud.accountservice.service.IssuerGenerationProjection projection) {
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || org.springframework.transaction.support.TransactionSynchronizationManager
+            .isSynchronizationActive()) {
+      throw unavailable();
+    }
+    byte[] bytes = projection.toJson().getBytes(StandardCharsets.UTF_8);
+    AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+        bytes, "issuer", GameSessionAccountDelegationProfile.ISSUER);
+    byte[] key = ascii(projection.key());
+    var descriptor = requireIssuerProjectionDescriptor();
+    byte[] script = readScriptSource(descriptor);
+    if (!descriptor.sha256().equals(sha256(script))) throw unavailable();
+    try (var connection = connectionProvider.openPinnedConnection()) {
+      if (connection == null) throw unavailable();
+      var commands = requirePinnedCommands(connection);
+      requireAccountAclIdentity(commands);
+      Long outcome = applyIssuerProjection(commands, key, bytes, script);
+      requireDurabilityAcknowledgement(commands);
+      if (!Arrays.equals(bytes, commands.get(key))
+          || !Long.valueOf(-1L).equals(commands.pttl(key))) {
+        throw unavailable();
+      }
+      return outcome == 0L
+          ? ProjectionPublicationOutcome.EXACT_RETRY
+          : ProjectionPublicationOutcome.PUBLISHED;
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    }
+  }
+
+  private static Long applyIssuerProjection(
+      RedisCommands<byte[], byte[]> commands,
+      byte[] issuerKey,
+      byte[] issuerProjectionBytes,
+      byte[] scriptSource) {
+    // Validate the complete canonical retained issuer event before considering replacement.
+    // The v2 script compares these exact bytes atomically; a changed read cannot authorize CAS.
+    byte[] priorIssuerBytes = commands.get(issuerKey);
+    if (priorIssuerBytes != null) {
+      AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+          priorIssuerBytes, "issuer", GameSessionAccountDelegationProfile.ISSUER);
+    }
+    boolean exactIssuer = Arrays.equals(priorIssuerBytes, issuerProjectionBytes);
+    String loadedSha = commands.scriptLoad(scriptSource);
+    if (loadedSha == null
+        || !SHA1.matcher(loadedSha).matches()
+        || !sha1(scriptSource).equals(loadedSha)) {
+      throw unavailable();
+    }
+    byte[][] issuerProjectionArguments = {
+      ascii(priorIssuerBytes == null ? "ABSENT" : exactIssuer ? "VERIFY" : "PRESENT"),
+      priorIssuerBytes == null ? new byte[0] : priorIssuerBytes,
+      exactIssuer ? new byte[0] : issuerProjectionBytes
+    };
+    Long issuerResult =
+        commands.evalsha(
+            loadedSha,
+            ScriptOutputType.INTEGER,
+            new byte[][] {issuerKey},
+            issuerProjectionArguments);
+    requireProjectionResult(issuerResult);
+    return issuerResult;
+  }
+
   private RedisScriptDescriptor requireIssuerProjectionDescriptor() {
     RedisScriptDescriptor descriptor = scriptCatalog.require(ISSUER_PROJECTION_SCRIPT_ID);
     if (!ISSUER_PROJECTION_SCRIPT_ID.equals(descriptor.scriptId())
@@ -1461,14 +1517,15 @@ public final class AccountGameplayDelegationRedisClient {
         || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
         || descriptor.category() != ScriptCategory.SESSION_CAS
         || !REQUIRED_ACL_IDENTITY.equals(descriptor.principal())
-        || !canonicalSharedDescriptorMetadata(descriptor)
+        || !canonicalSharedDescriptorMetadata(descriptor, "v2")
         || !AUTHORITY_PROJECTION_SCRIPT_RESOURCE.equals(descriptor.resourcePath())
         || descriptor.keys().size() != 1
         || !"authorityProjection".equals(descriptor.keys().getFirst().name())
         || !AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX.equals(
             descriptor.keys().getFirst().ownedPrefix())
         || descriptor.keys().getFirst().hashTagDeclaration() != HashTagDeclaration.NOT_REQUIRED
-        || !argumentNames(descriptor).equals(List.of("canonicalProjectionUtf8"))) {
+        || !argumentNames(descriptor)
+            .equals(List.of("expectedMode", "expectedBytes", "candidateBytes"))) {
       throw unavailable();
     }
     return descriptor;
@@ -1569,13 +1626,18 @@ public final class AccountGameplayDelegationRedisClient {
   }
 
   private static boolean canonicalSharedDescriptorMetadata(RedisScriptDescriptor descriptor) {
+    return canonicalSharedDescriptorMetadata(descriptor, "v1");
+  }
+
+  private static boolean canonicalSharedDescriptorMetadata(
+      RedisScriptDescriptor descriptor, String callerVersion) {
     return descriptor.resetSensitivity() == RedisScriptDescriptor.ResetSensitivity.CLUSTER
         && descriptor.lossClass() == RedisScriptDescriptor.LossClass.SESSION_LEASE_CACHE_OR_WAKE_UP
         && descriptor.compatibilityLevel()
             == RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET
         && descriptor
             .supportedCoexistence()
-            .equals(List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v1")))
+            .equals(List.of(new RedisScriptDescriptor.SupportedCoexistence(callerVersion, "v1")))
         && descriptor.legacyPayloadShape() == null;
   }
 

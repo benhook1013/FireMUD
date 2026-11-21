@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib.util
 import json
 import re
 import shutil
@@ -14,6 +15,12 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+_ACCOUNT_SPEC = importlib.util.spec_from_file_location(
+    "account_donor_required_cases", Path(__file__).with_name("account_donor_required_cases.py")
+)
+ACCOUNT_PROOF = importlib.util.module_from_spec(_ACCOUNT_SPEC)
+_ACCOUNT_SPEC.loader.exec_module(ACCOUNT_PROOF)
 
 PLAN_PATH = Path(__file__).with_name("slow_service_ci_test_partition_plan.json")
 SERVICES = ("account-service", "game-session-service", "world-management-service")
@@ -844,6 +851,16 @@ def verify_aggregate(
         execution_data.extend(verify_artifact_reports(artifact_dir, manifests[partition]))
     if not execution_data:
         raise ValueError("aggregate has no JaCoCo execution data from any partition")
+    if module == "account-service":
+        verified_account_suites = []
+        for partition in partitions_for(module):
+            integration = manifests[partition]["tasks"].get("integrationTest", {})
+            verified_account_suites.append(ACCOUNT_PROOF.verify_partition(
+                artifact_directories[partition] / "test-results" / "integrationTest",
+                set(integration.get("selected_classes", [])),
+            ))
+        ACCOUNT_PROOF.verify_complete_union(verified_account_suites)
+
     copy_verified_main_classes(
         artifact_directories[1] / "classes" / "java" / "main",
         measured_classes,

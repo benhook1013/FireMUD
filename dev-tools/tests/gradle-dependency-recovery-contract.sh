@@ -763,18 +763,54 @@ write_buildsrc_wrapper() {
   exit 1
 fi
 echo buildsrc-refresh-result
+if [[ "${BUILDSRC_REFRESH_EXIT:-0}" -eq 0 && -f "$CASE_DIR/emit-required-logging-proof.py" ]]; then
+  python3 "$CASE_DIR/emit-required-logging-proof.py"
+fi
 exit "${BUILDSRC_REFRESH_EXIT:-0}"'
 }
 
 new_case captured-buildsrc-429
+# Successful recovery still owes the real module runner's required current proof.
+# Emit XML only inside the inert successful Gradle invocation, after stale XML invalidation.
+cp "$ROOT_DIR/dev-tools/validation/inspect-test-results.sh" \
+  "$CASE_DIR/dev-tools/validation/inspect-test-results.sh"
+cat > "$CASE_DIR/emit-required-logging-proof.py" <<'PROOF'
+import os
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+suites = {
+    "net.firedevops.firemud.loggingadmin.ModerationAccountUuidMigrationPostgresIntegrationTest": [
+        "emptySchemaMigratesAndKeepsExactUuidWithoutChangingPolicyFields()",
+        "populatedLegacyRowsBlockMigrationWithoutChangingRowsOrMigrationHistory()",
+        "concurrentModerationWriterBlocksMigrationThenItsCommittedRowForcesRefusal()",
+    ],
+    "net.firedevops.firemud.loggingadmin.ReportAccountUuidMigrationPostgresIntegrationTest": [
+        "freshSchemaMigratesWithCanonicalAccountUuidsAndNumericLocalIdentifiers()",
+        "emptyAffectedTablesUpgradeFromV1007AndGenericLogAccountIdRemainsNumeric()",
+        "existingCanonicalModerationRowsAreUntouchedByReportOnlyMigration()",
+        "retainedPlayerReportRefusesWithoutChangingRowsOrMigrationHistory()",
+        "migrationWaitsForConcurrentWriterAndRefusesAfterItsRowCommits()",
+    ],
+}
+reports = Path(os.environ["CASE_DIR"]) / "services/logging-admin-service/build/test-results/integrationTest"
+reports.mkdir(parents=True, exist_ok=True)
+for index, (suite, cases) in enumerate(suites.items()):
+    root = ET.Element("testsuite", name=suite, tests=str(len(cases)),
+                      failures="0", errors="0", skipped="0")
+    for case in cases:
+        ET.SubElement(root, "testcase", classname=suite, name=case)
+    ET.ElementTree(root).write(reports / f"TEST-{index}.xml")
+PROOF
 write_buildsrc_429_cause
 write_buildsrc_wrapper
 run_case logging-admin-service 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --no-build-cache --no-configuration-cache :logging-admin-service:integrationTest --rerun --profile --info --console=plain"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --no-build-cache --no-configuration-cache :logging-admin-service:integrationTest --rerun --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "buildSrc HTTP 429 did not use one short delay"
 assert_output_contains "buildsrc-refresh-result"
+assert_output_contains "Strict JUnit proof: passed"
 
 # Auth, policy and conflict responses remain final, including mixed failures
 # where the other dependency really did encounter a retryable HTTP 429.

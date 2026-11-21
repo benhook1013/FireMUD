@@ -235,6 +235,32 @@ class AccountCanonicalConnectScopeReaderTest {
   }
 
   @Test
+  void missingCompanionEvidenceAfterSelectorReadCannotAuthorizeScope() {
+    Fixture f = new Fixture();
+    when(f.scopes.findCanonicalEvidenceByTokenHash(
+            AccountJoinDigest.tokenHash(f.scope.connectScopeId())))
+        .thenReturn(Optional.empty());
+    assertCode("CONNECT_SCOPE_INVALID", () -> f.reader.read(ACCOUNT, f.scope.connectScopeId()));
+    verify(f.scopes).findCanonical(f.scope.connectScopeId());
+    verify(f.scopes)
+        .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(f.scope.connectScopeId()));
+    assertThat(f.transactions.commits).isZero();
+    assertThat(f.transactions.rollbacks).isEqualTo(1);
+  }
+
+  @Test
+  void expiryAfterRetainedReadCannotReturnPreviouslyCurrentScope() {
+    Fixture f = new Fixture();
+    Clock advancing = Mockito.mock(Clock.class);
+    when(advancing.instant())
+        .thenReturn(f.clock.instant(), Instant.parse(f.scope.connectScopeExpiresAt()));
+    var reader = new AccountCanonicalConnectScopeReader(f.jwt, f.scopes, f.transactions, advancing);
+    assertCode("CONNECT_SCOPE_INVALID", () -> reader.read(ACCOUNT, f.scope.connectScopeId()));
+    assertThat(f.transactions.commits).isEqualTo(1);
+    verify(f.scopes).findCanonical(f.scope.connectScopeId());
+  }
+
+  @Test
   void mapsDatabaseFailureAndCommitFailureToSafeAuthorityUnavailable() {
     Fixture readFailure = new Fixture();
     when(readFailure.scopes.findCanonical(readFailure.scope.connectScopeId()))

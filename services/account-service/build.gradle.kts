@@ -108,6 +108,7 @@ dependencies {
     integrationTestImplementation(libs.spring.boot.starter.webflux)
     integrationTestImplementation(libs.spring.boot.starter.data.redis.reactive)
     integrationTestImplementation(testFixtures(project(":account-service")))
+    integrationTestImplementation(project(":account-jwt-materializer"))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }
 
@@ -228,11 +229,13 @@ val accountOriginalOrderProofJar by tasks.registering(Jar::class) {
         include("redis/lua/account-game-session-delegation-pending-register.lua")
         include("redis/lua/account-game-session-delegation-activate-committed.lua")
         include("redis/lua/account-game-session-delegation-authority-project.lua")
+        include("redis/lua/account-game-session-delegation-authority-project-v2.lua")
         include("redis/lua/account-initial-gameplay-login-dispose.lua")
         include("redis/account_generation_projection_cas.lua")
         include("redis/scripts/account-game-session-delegation-pending-register.json")
         include("redis/scripts/account-game-session-delegation-activate-committed.json")
         include("redis/scripts/account-game-session-delegation-authority-project-issuer.json")
+        include("redis/scripts/account-game-session-delegation-authority-project-issuer-v2.json")
         include("redis/scripts/account-initial-gameplay-login-dispose.json")
         include("redis/scripts/account-generation-projection-cas.json")
         include("redis/scripts/account-selected-tenant-generation-projection.json")

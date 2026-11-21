@@ -58,6 +58,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -71,6 +72,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** PostgreSQL proof for the immutable descriptor/release pair read from one owner snapshot. */
 @Testcontainers(disabledWithoutDocker = true)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,
     properties = {

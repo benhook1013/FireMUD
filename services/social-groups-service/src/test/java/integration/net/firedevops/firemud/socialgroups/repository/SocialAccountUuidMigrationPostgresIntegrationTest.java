@@ -60,16 +60,36 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
 
   @Test
   void emptyLegacyFrontierConvergesAndTypedRepositoriesRoundTripCanonicalAccountUuids() {
+    String freshSchema = schema();
+    migrate(freshSchema, "1003");
+    List<String> freshConstraints;
+    try (var dsl = database(freshSchema)) {
+      assertCanonicalIdentityTypes(dsl);
+      freshConstraints = constraints(dsl);
+      assertThat(freshConstraints).isNotEmpty();
+      assertThat(
+              dsl.fetchCount(
+                  DSL.table("flyway_schema_history"),
+                  DSL.field("version").eq("1003").and(DSL.field("success").eq(true))))
+          .isOne();
+    }
+
     String schema = schema();
     migrate(schema, "1002");
     List<String> parentHistory;
+    List<String> parentConstraints;
     try (var dsl = database(schema)) {
       assertParentFrontier(dsl);
       parentHistory = migrationHistory(dsl);
+      parentConstraints = constraints(dsl);
+      assertThat(parentConstraints).isNotEmpty();
     }
     migrate(schema, "1003");
     try (var dsl = database(schema)) {
       List<String> currentHistory = migrationHistory(dsl);
+      assertThat(constraints(dsl))
+          .containsAll(parentConstraints)
+          .containsExactlyElementsOf(freshConstraints);
       assertThat(currentHistory).hasSize(parentHistory.size() + 1);
       assertThat(currentHistory.subList(0, parentHistory.size())).isEqualTo(parentHistory);
       assertThat(
@@ -337,6 +357,38 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
           .as("bounded migration task must finish before fixture reuse")
           .isTrue();
     }
+  }
+
+  private static void assertCanonicalIdentityTypes(DSLContext dsl) {
+    assertThat(
+            dsl.fetch(
+                    "SELECT data_type FROM information_schema.columns WHERE table_schema = ? "
+                        + "AND column_name IN ('account_id', 'friend_account_id', 'owner_account_id', 'sender_account_id', 'recipient_account_id')",
+                    java.util.Objects.requireNonNull(dsl.fetchOne("SELECT current_schema()"))
+                        .get(0, String.class))
+                .getValues(0, String.class))
+        .hasSize(10)
+        .containsOnly("uuid");
+    assertThat(
+            dsl.fetch(
+                    "SELECT data_type FROM information_schema.columns WHERE table_schema = ? "
+                        + "AND column_name IN ('id', 'tenant_id', 'guild_id', 'city_id')",
+                    java.util.Objects.requireNonNull(dsl.fetchOne("SELECT current_schema()"))
+                        .get(0, String.class))
+                .getValues(0, String.class))
+        .isNotEmpty()
+        .containsOnly("bigint");
+  }
+
+  private static List<String> constraints(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT c.relname || ':' || k.conname || ':' || pg_get_constraintdef(k.oid) "
+                + "FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid "
+                + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                + "WHERE n.nspname = current_schema() AND c.relname IN "
+                + "('guilds', 'guild_members', 'chat_messages', 'friend_links', 'mail_messages', 'account_friend_links') "
+                + "ORDER BY c.relname, k.conname")
+        .getValues(0, String.class);
   }
 
   private static void assertParentFrontier(DSLContext dsl) {

@@ -239,8 +239,9 @@ class AccountCheckoutReceivingConfigurationTest {
   private static MockServerHttpRequest withNativeSocketPeer(MockServerHttpRequest request) {
     HttpServerRequest nativeRequest =
         mock(HttpServerRequest.class, withSettings().extraInterfaces(Connection.class));
+    Connection nativeConnection = (Connection) nativeRequest;
     Channel channel = mock(Channel.class);
-    when(((Connection) nativeRequest).channel()).thenReturn(channel);
+    when(nativeConnection.channel()).thenReturn(channel);
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("192.0.2.10", 443));
     MockServerHttpRequest requestWithNativePeer = spy(request);
     doReturn(nativeRequest).when(requestWithNativePeer).getNativeRequest();

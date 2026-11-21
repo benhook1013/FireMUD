@@ -255,6 +255,34 @@ class AccountPlayerBootstrapCallerVerifierTest {
             DataAccessResourceFailureException.class, () -> verifier.requireCaller(TOKEN)));
   }
 
+  @Test
+  void renewedSameAccountSessionKeepsFingerprintButStillRequiresCurrentAuthentication() {
+    stubIdentityClaims(ACCOUNT_UUID.toString(), ACCOUNT_UUID.toString());
+    when(accountRepository.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(account()));
+    when(sessionService.isAccountSessionActive(ACCOUNT_ID, TOKEN)).thenReturn(true);
+    String refreshed = "different-current-bootstrap-token";
+    when(jwtUtil.parseToken(refreshed)).thenReturn(signedToken);
+    when(sessionService.isAccountSessionActive(ACCOUNT_ID, refreshed)).thenReturn(true);
+    // Scope authority is separately tested by AccountCanonicalConnectScopeReaderTest.
+    var first =
+        net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint.lookup(
+            verifier.requireCaller(TOKEN).accountUuid(),
+            OTHER_UUID,
+            "same-exact-scope",
+            "same-request");
+    var retry =
+        net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint.lookup(
+            verifier.requireCaller(refreshed).accountUuid(),
+            OTHER_UUID,
+            "same-exact-scope",
+            "same-request");
+    assertEquals(first, retry);
+    verify(sessionService).isAccountSessionActive(ACCOUNT_ID, TOKEN);
+    verify(sessionService).isAccountSessionActive(ACCOUNT_ID, refreshed);
+    when(sessionService.isAccountSessionActive(ACCOUNT_ID, refreshed)).thenReturn(false);
+    assertThrows(AuthenticationException.class, () -> verifier.requireCaller(refreshed));
+  }
+
   private AuthenticationException requireInvalidCaller() {
     AuthenticationException failure =
         assertThrows(AuthenticationException.class, () -> verifier.requireCaller(TOKEN));

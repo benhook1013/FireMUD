@@ -558,7 +558,9 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     assertThat(scopeRowCount(setupDsl, v2Scope.connectScopeId())).isEqualTo(1);
   }
 
-  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.ParameterizedTest(
+      name =
+          "definitiveFailureRetainsOriginalIntentAndOptionalPolicyAndExactlyReplaysWithoutRewrite[{index}] bound={0}")
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void definitiveFailureRetainsOriginalIntentAndOptionalPolicyAndExactlyReplaysWithoutRewrite(
       boolean bound) {
@@ -879,7 +881,8 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     f.assertNoSuccessEffects();
   }
 
-  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.ParameterizedTest(
+      name = "journalDiagnosticsAndDefinitiveFailureRollBackAsOneTransaction[{index}] bound={0}")
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void journalDiagnosticsAndDefinitiveFailureRollBackAsOneTransaction(boolean bound) {
     JournalFixture f = journalFixture();

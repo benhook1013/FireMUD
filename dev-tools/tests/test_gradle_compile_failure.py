@@ -12,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1132,6 +1133,187 @@ class RuntimeBootJarTests(unittest.TestCase):
         self.assertFalse((self.root / 'step-output').exists())
         self.assertEqual(1, len(self.calls()))
 
+
+
+class RequiredDatabaseProofTests(unittest.TestCase):
+    """Execute the current runner and real inspector; Gradle itself is inert."""
+
+    LOGGING_MODERATION = 'net.firedevops.firemud.loggingadmin.ModerationAccountUuidMigrationPostgresIntegrationTest'
+    LOGGING_REPORT = 'net.firedevops.firemud.loggingadmin.ReportAccountUuidMigrationPostgresIntegrationTest'
+    SOCIAL = 'integration.net.firedevops.firemud.socialgroups.repository.SocialAccountUuidMigrationPostgresIntegrationTest'
+    REQUIRED: ClassVar[dict[str, dict[str, list[str]]]] = {
+        'logging-admin-service': {
+            LOGGING_MODERATION: [
+                'emptySchemaMigratesAndKeepsExactUuidWithoutChangingPolicyFields()',
+                'populatedLegacyRowsBlockMigrationWithoutChangingRowsOrMigrationHistory()',
+                'concurrentModerationWriterBlocksMigrationThenItsCommittedRowForcesRefusal()',
+            ],
+            LOGGING_REPORT: [
+                'freshSchemaMigratesWithCanonicalAccountUuidsAndNumericLocalIdentifiers()',
+                'emptyAffectedTablesUpgradeFromV1007AndGenericLogAccountIdRemainsNumeric()',
+                'existingCanonicalModerationRowsAreUntouchedByReportOnlyMigration()',
+                'retainedPlayerReportRefusesWithoutChangingRowsOrMigrationHistory()',
+                'migrationWaitsForConcurrentWriterAndRefusesAfterItsRowCommits()',
+            ],
+        },
+        'social-groups-service': {
+            SOCIAL: [
+                'emptyLegacyFrontierConvergesAndTypedRepositoriesRoundTripCanonicalAccountUuids()',
+                '[1] table = "guilds"', '[2] table = "guild_members"',
+                '[3] table = "chat_messages"', '[4] table = "friend_links"',
+                '[5] table = "mail_messages"', '[6] table = "account_friend_links"',
+                'concurrentWriterCommitsBeforeEmptyCheckAndItsEvidenceIsPreserved()',
+            ],
+        },
+    }
+
+    def setUp(self):
+        (ROOT / 'build').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='required-pg-proof-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def fixture(self, module, mutation=None, fallback=False, check_exit=0):
+        import xml.etree.ElementTree as element_tree
+
+        root = self.root / f'{module}-{mutation}-{fallback}-{check_exit}'
+        root.mkdir()
+        for relative in ['.github/scripts/run-gradle-module-checks.sh',
+                         'dev-tools/validation/inspect-test-results.sh']:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        validation = root / 'dev-tools/validation'
+        (validation / 'run-gradle-with-dependency-recovery.sh').write_text(
+            '#!/bin/bash\nrunner="$2"; shift 3; exec "$runner" "$@"\n')
+        (validation / 'collect-gradle-compile-failure.py').write_text(
+            'import sys\n'
+            "if '--capture-log' in sys.argv: sys.stdout.buffer.write(sys.stdin.buffer.read())\n")
+        runner = root / 'gradlew'
+        runner.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> calls\n'
+                          + (f'cp generated-reports/TEST-*.xml services/{module}/build/test-results/integrationTest/ 2>/dev/null || true\n'
+                             if mutation != 'stale-only' else '')
+                          + f'exit {check_exit}\n')
+        runner.chmod(0o755)
+        reports = root / f'services/{module}/build/test-results/integrationTest'
+        reports.mkdir(parents=True)
+        documents = []
+        for suite, names in self.REQUIRED[module].items():
+            document = element_tree.Element('testsuite', name=suite, tests=str(len(names)),
+                                            failures='0', errors='0', skipped='0')
+            for name in names:
+                element_tree.SubElement(document, 'testcase', classname=suite, name=name)
+            element_tree.SubElement(document, 'system-out').text = 'STRICT_OUTPUT_SECRET'
+            documents.append(document)
+        # Seed old green reports before every run. Only the Gradle fixture may
+        # regenerate proof, so an up-to-date/skipped/no-source result must refuse.
+        for index, item in enumerate(documents):
+            element_tree.ElementTree(item).write(reports / f'TEST-{index}.xml')
+        generated_reports = root / 'generated-reports'
+        generated_reports.mkdir()
+        document = documents[-1]
+        case = document.find('testcase')
+        if mutation == 'missing-case':
+            document.remove(case)
+            document.set('tests', str(len(document.findall('testcase'))))
+        elif mutation == 'duplicate-case':
+            case.set('name', document.findall('testcase')[1].get('name'))
+        elif mutation in ('skipped', 'child-skipped', 'failure', 'error'):
+            tag = 'skipped' if 'skipped' in mutation else mutation
+            element_tree.SubElement(case, tag).text = 'PRIVATE_FAILURE_CONTENT'
+            if mutation != 'child-skipped':
+                document.set({'skipped': 'skipped', 'failure': 'failures', 'error': 'errors'}[tag], '1')
+        elif mutation == 'counter-skipped':
+            document.set('skipped', '1')
+        elif mutation == 'zero-tests':
+            for testcase in document.findall('testcase'):
+                document.remove(testcase)
+            document.set('tests', '0')
+        elif mutation == 'wrong-count':
+            document.set('tests', '999')
+        elif mutation == 'missing-counter':
+            del document.attrib['tests']
+        elif mutation == 'wrong-class':
+            case.set('classname', 'unrelated.Suite')
+        for index, item in enumerate(documents):
+            if mutation == 'no-reports' or (mutation == 'missing-suite' and index == 0):
+                continue
+            element_tree.ElementTree(item).write(generated_reports / f'TEST-{index}.xml')
+        if mutation == 'duplicate-suite':
+            shutil.copyfile(generated_reports / 'TEST-0.xml', generated_reports / 'TEST-duplicate.xml')
+        elif mutation == 'malformed':
+            (generated_reports / 'TEST-malformed.xml').write_text('<testsuite')
+        env = dict(os.environ)
+        if fallback:
+            binary = root / 'bin'
+            binary.mkdir()
+            mktemp = binary / 'mktemp'
+            mktemp.write_text('#!/bin/bash\nexit 1\n')
+            mktemp.chmod(0o755)
+            env['PATH'] = str(binary) + os.pathsep + env['PATH']
+        retained = None
+        if mutation in ('symlink-results', 'symlink-build', 'symlink-report'):
+            original = (reports.parent if mutation == 'symlink-results' else
+                        reports.parent.parent if mutation == 'symlink-build' else reports / 'TEST-0.xml')
+            retained = root / 'retained-external-output'
+            original.rename(retained)
+            original.symlink_to(retained, target_is_directory=retained.is_dir())
+        result = subprocess.run(['bash', '.github/scripts/run-gradle-module-checks.sh', module],
+                                cwd=root, env=env, text=True, capture_output=True, timeout=5, check=False)
+        if retained is not None:
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse((root / 'calls').exists(), 'unsafe output paths must refuse before Gradle')
+            self.assertTrue(retained.exists(), 'refusal must preserve external output')
+            return result
+        calls = (root / 'calls').read_text().splitlines()
+        self.assertEqual(1, len(calls), 'proof failures must not retry Gradle')
+        self.assertIn('--no-build-cache', calls[0])
+        self.assertIn('--no-configuration-cache', calls[0])
+        self.assertIn(f':{module}:check', calls[0])
+        self.assertIn(f':{module}:integrationTest --rerun', calls[0])
+        self.assertIn('-PfullCheck', calls[0])
+        self.assertNotIn('STRICT_OUTPUT_SECRET', result.stdout + result.stderr)
+        self.assertNotIn('PRIVATE_FAILURE_CONTENT', result.stdout + result.stderr)
+        return result
+
+    def test_current_named_proofs_run_in_normal_and_capture_fallback_paths(self):
+        for module in self.REQUIRED:
+            for fallback in (False, True):
+                with self.subTest(module=module, fallback=fallback):
+                    result = self.fixture(module, fallback=fallback)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertIn('Strict JUnit proof: passed', result.stdout)
+                    for suite, cases in self.REQUIRED[module].items():
+                        for case in cases:
+                            self.assertIn(f'Case {suite}#{case}: executions=1 outcome=passed', result.stdout)
+
+    def test_symlinked_output_paths_refuse_without_deletion_or_gradle(self):
+        for module in self.REQUIRED:
+            for fallback in (False, True):
+                for mutation in ('symlink-results', 'symlink-build', 'symlink-report'):
+                    with self.subTest(module=module, fallback=fallback, mutation=mutation):
+                        self.fixture(module, mutation, fallback=fallback)
+
+    def test_missing_partial_corrupt_duplicate_and_skipped_proofs_refuse(self):
+        mutations = ['stale-only', 'no-reports', 'missing-suite', 'missing-case', 'duplicate-case',
+                     'skipped', 'child-skipped', 'counter-skipped', 'failure', 'error',
+                     'zero-tests', 'wrong-count', 'missing-counter', 'wrong-class',
+                     'duplicate-suite', 'malformed']
+        for module in self.REQUIRED:
+            for fallback in (False, True):
+                for mutation in mutations:
+                    with self.subTest(module=module, fallback=fallback, mutation=mutation):
+                        result = self.fixture(module, mutation, fallback)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn('Strict JUnit proof: failed', result.stdout)
+
+    def test_original_gradle_failure_is_preserved_without_inspecting_partial_proof(self):
+        for module in self.REQUIRED:
+            for fallback in (False, True):
+                with self.subTest(module=module, fallback=fallback):
+                    result = self.fixture(module, 'no-reports', fallback, check_exit=17)
+                    self.assertEqual(17, result.returncode)
+                    self.assertNotIn('Strict JUnit proof:', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()
