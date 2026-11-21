@@ -437,6 +437,7 @@ class InitialGameplayReleaseModelTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 UUID.randomUUID(),
+                1,
                 InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
                 DIGEST,
                 DIGEST,
@@ -446,11 +447,28 @@ class InitialGameplayReleaseModelTest {
                 "absence-only",
                 java.time.Instant.EPOCH))
         .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.EffectReadback(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                0,
+                InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                DIGEST,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectReadbackState.PREPARED_FENCED,
+                InitialGameplayReleaseModel.EffectReadbackAuthority
+                    .GAME_SESSION_DURABLE_CURRENT_STATE,
+                "invalid-generation",
+                java.time.Instant.EPOCH))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("attemptOrdinal must be positive");
     var closed =
         new InitialGameplayReleaseModel.EffectReadback(
             UUID.randomUUID(),
             UUID.randomUUID(),
             UUID.randomUUID(),
+            1,
             InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
             DIGEST,
             DIGEST,
@@ -504,6 +522,7 @@ class InitialGameplayReleaseModelTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 UUID.randomUUID(),
+                1,
                 InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
                 DIGEST,
                 DIGEST,

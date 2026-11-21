@@ -11,17 +11,19 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEf
  */
 public interface InitialGameplayReleaseEffectPort {
   /**
-   * RETRYABLE_NO_EFFECT is a definitive owner rejection for this exact attempt, never a timeout or
-   * absence observation. The owner must not apply the rejected attempt later. NOT_DISPATCHED means
-   * the local adapter can prove it never sent this attempt; it is retryable without owner evidence.
-   * A possibly transmitted request must not be classified as NOT_DISPATCHED.
+   * Applies the effect for its exact attempt and dispatch ordinal. RETRYABLE_NO_EFFECT is a
+   * definitive owner rejection for this exact attempt, never a timeout or absence observation. The
+   * owner must not apply the rejected attempt later. NOT_DISPATCHED means the local adapter can
+   * prove it never sent this attempt; it is retryable without owner evidence. A possibly
+   * transmitted request must not be classified as NOT_DISPATCHED.
    */
-  EffectApplyResult apply(TypedEffect effect, UUID attemptId);
+  EffectApplyResult apply(TypedEffect effect, UUID attemptId, int attemptOrdinal);
 
   /**
-   * Returns evidence bound to this exact attempt. PROVEN_NO_EFFECT requires the owner to have
-   * durably closed the attempt so a delayed claimant can no longer apply it; absence alone is not
-   * proof.
+   * Returns evidence bound to this exact attempt and dispatch ordinal. The owner must return the
+   * requested ordinal in the typed receipt so an earlier observation for a reused attempt ID cannot
+   * satisfy a later dispatch. PROVEN_NO_EFFECT requires the owner to have durably closed the
+   * attempt so a delayed claimant can no longer apply it; absence alone is not proof.
    *
    * <p>AVAILABLE carries the owner's original observation timestamp. The adapter must establish
    * that it is comparable with the recovery controller's UTC clock. The journal checks it against
@@ -33,7 +35,7 @@ public interface InitialGameplayReleaseEffectPort {
    * transition requires a fresh exact observation from the owner. Returning the older receipt with
    * a new timestamp is insufficient.
    */
-  EffectReadbackResolution readback(TypedEffect effect, UUID attemptId);
+  EffectReadbackResolution readback(TypedEffect effect, UUID attemptId, int attemptOrdinal);
 
   record EffectApplyResult(ApplyStatus status, String outcomeCode) {
     public EffectApplyResult {

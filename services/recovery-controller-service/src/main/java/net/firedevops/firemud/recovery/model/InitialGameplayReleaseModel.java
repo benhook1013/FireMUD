@@ -691,6 +691,7 @@ public final class InitialGameplayReleaseModel {
       UUID operationId,
       UUID effectId,
       UUID attemptId,
+      int attemptOrdinal,
       EffectKind effectKind,
       String operationTupleDigest,
       String payloadDigest,
@@ -702,6 +703,9 @@ public final class InitialGameplayReleaseModel {
       attemptId = requiredUuid(attemptId, "attemptId");
       operationId = requiredUuid(operationId, "operationId");
       effectId = requiredUuid(effectId, "effectId");
+      if (attemptOrdinal < 1) {
+        throw new IllegalArgumentException("attemptOrdinal must be positive");
+      }
       Objects.requireNonNull(effectKind, "effectKind must not be null");
       operationTupleDigest = requiredDigest(operationTupleDigest, "operationTupleDigest");
       payloadDigest = requiredDigest(payloadDigest, "payloadDigest");

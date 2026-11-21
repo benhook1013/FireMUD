@@ -83,7 +83,7 @@ jobs:
               return;
             }
             const plan = plans[0];
-            if (plan.run_id !== run.id || plan.run_attempt !== attempt ||
+            if (plan.run_id !== run.id || (plan.run_attempt !== undefined && plan.run_attempt !== attempt) ||
                 plan.head_sha !== run.head_sha ||
                 plan.status !== 'completed' || plan.conclusion !== 'success' || !Array.isArray(plan.steps)) {
               core.info('No successful Preview Plan for the exact source attempt; no dispatch.');
@@ -169,11 +169,18 @@ jobs:
             }
             const resolvedMatchesRecorded = resolved[4] === recordedMerge.sha &&
               resolved[2] === recordedMerge.parents[0].sha;
-            const resolvedMatchesCurrent = resolved[4] === merge.sha && resolved[2] === base.object.sha;
             // A stale event base can accompany a newer historical merge. Its
             // plan must independently resolve that merge and its actual parent.
-            if ((!resolvedMatchesRecorded && !resolvedMatchesCurrent) ||
-                (recordedMerge.parents[0].sha !== recorded[2] && !resolvedMatchesRecorded)) {
+            if (recordedMerge.parents[0].sha !== recorded[2] && !resolvedMatchesRecorded) {
+              core.info('Recorded merge and event base disagree without exact resolved evidence; no dispatch.');
+              return;
+            }
+            let resolvedMerge = resolved[4] === recordedMerge.sha ? recordedMerge : merge;
+            if (resolved[4] !== resolvedMerge.sha) {
+              ({data: resolvedMerge} = await github.rest.repos.getCommit({...context.repo, ref: resolved[4]}));
+            }
+            if (resolvedMerge?.sha !== resolved[4] || resolvedMerge.parents?.length !== 2 ||
+                resolvedMerge.parents[0].sha !== resolved[2] || resolvedMerge.parents[1].sha !== resolved[3]) {
               core.info('Resolved preview tuple does not match its verified merge parents; no dispatch.');
               return;
             }
@@ -235,6 +242,16 @@ jobs:
                 if (inventory.workflow_runs.length < 100) break;
                 if (page === 3) throw new Error('Active runtime inventory exceeds bounded lookup');
               }
+            }
+            const {data: latestRun} = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: run.id,
+            });
+            if (latestRun?.id !== run.id || latestRun.run_attempt !== attempt ||
+                latestRun.head_sha !== run.head_sha || latestRun.event !== run.event ||
+                latestRun.path !== run.path || latestRun.status !== 'completed' ||
+                latestRun.conclusion !== run.conclusion) {
+              core.info('Source attempt changed during runtime lookup; no dispatch.');
+              return;
             }
             const {data: latestPr} = await github.rest.pulls.get({
               ...context.repo, pull_number: source.number,

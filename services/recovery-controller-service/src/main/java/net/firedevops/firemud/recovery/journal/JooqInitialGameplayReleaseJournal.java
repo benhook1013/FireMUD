@@ -816,6 +816,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !current.effect().operationId().equals(retained.operationId())
         || !current.effect().effectId().equals(retained.effectId())
         || !attemptId.equals(retained.attemptId())
+        || retained.attemptOrdinal() != ordinal
         || current.effect().kind() != retained.effectKind()
         || !current.effect().operationTupleDigest().equals(retained.operationTupleDigest())
         || !current.payloadDigest().equals(retained.payloadDigest())
@@ -916,6 +917,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (readback.observedAt().isBefore(previous.observedAt())) {
       throw conflict("effect readback predates the retained same-attempt observation");
     }
+    if (previous.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
+        && readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
+        && !readback.observedAt().isAfter(previous.observedAt())) {
+      throw conflict("definitive effect readback must be newer than retained partial evidence");
+    }
   }
 
   private boolean hasValidatedUnknownReadback(
@@ -964,6 +970,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             readback.operationId(),
             readback.effectId(),
             readback.attemptId(),
+            readback.attemptOrdinal(),
             readback.effectKind(),
             readback.operationTupleDigest(),
             readback.payloadDigest(),
@@ -975,6 +982,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   private void requireReadbackMatches(
       EffectReadback readback, OutboxEntry outbox, UUID operationId, UUID effectId) {
+    if (readback.attemptOrdinal() != outbox.attemptCount()) {
+      throw conflict("effect readback dispatch generation changed");
+    }
     if (!readback.operationId().equals(operationId)
         || !readback.operationId().equals(outbox.effect().operationId())
         || !readback.effectId().equals(effectId)

@@ -4064,7 +4064,7 @@ run_preview_derive_target() {
   env \
     PATH="$preview_derive_stub_dir:$PATH" \
     EVENT_NAME=pull_request \
-    GITHUB_REF=refs/heads/develop \
+    GITHUB_REF=refs/pull/901/merge \
     DEFAULT_BRANCH=develop \
     EVENT_ACTION=synchronize \
     EVENT_PR_NUMBER=901 \
@@ -4076,7 +4076,7 @@ run_preview_derive_target() {
     CLIENT_ACTION='' \
     GITHUB_REPOSITORY=example/FireMUD \
     GH_TOKEN=fake \
-    GITHUB_SHA="$preview_derive_head_lower" \
+    GITHUB_SHA="$preview_derive_merge_lower" \
     PREVIEW_DERIVE_PR_JSON="$preview_derive_pr_json" \
     PREVIEW_DERIVE_PR_JSON_1='' \
     PREVIEW_DERIVE_PR_JSON_2='' \

@@ -1974,6 +1974,10 @@ jobs:
     if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: runtime-image-promotion-${{ needs.image-meta.outputs.head_branch }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write

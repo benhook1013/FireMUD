@@ -11,6 +11,7 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
   echo "python3 with PyYAML is required for the preview runner isolation contract." >&2
   exit 1
 }
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Preview runner isolation contract requires Python assertions; unset PYTHONOPTIMIZE.")'
 
 python3 - "$ROOT_DIR" <<'PY'
 from __future__ import annotations

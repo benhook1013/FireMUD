@@ -36,7 +36,11 @@ async function execute(f, sent = []) {
     return {data: f.inventory ?? {total_count: f.jobs.length, jobs: f.jobs}};
   }, rest: {
     actions: {
-      getWorkflowRun: async () => ({data: f.run}),
+      getWorkflowRun: async ({run_id}) => {
+        assert.equal(run_id, 99);
+        f.runReads = (f.runReads ?? 0) + 1;
+        return {data: f.runReads === 1 ? f.run : f.latestRun ?? f.run};
+      },
       getWorkflow: async () => ({data: {id: 42, path: '.github/workflows/runtime-images.yml'}}),
       listWorkflowRuns: async args => {
         assert.equal(args.workflow_id, 42);
@@ -53,12 +57,13 @@ async function execute(f, sent = []) {
     }},
     git: {getRef: async ({ref}) => {
       assert.equal(ref, 'heads/' + f.pr.base.ref);
-      return {data: f.base};
+      f.baseReads = (f.baseReads ?? 0) + 1;
+      return {data: f.baseReads === 1 ? f.base : f.latestBase ?? f.base};
     }},
     repos: {
       getCommit: async ({ref}) => {
         (f.mergeReads ??= []).push(ref);
-        return {data: f.mergeReads.length === 1 ? f.recordedMerge : f.merge};
+        return {data: [f.recordedMerge, f.merge, f.resolvedMerge][f.mergeReads.length - 1]};
       },
       createDispatchEvent: async p => sent.push(p),
     },
@@ -92,6 +97,10 @@ test('a completed render failure permits repair when the plan was eligible', asy
   const f = fixture(); f.run.conclusion = 'failure';
   assert.equal((await execute(f)).length, 1);
 });
+test('the pinned Jobs endpoint identifies a plan without a row-level attempt number', async () => {
+  const f = fixture(); delete f.jobs[0].run_attempt;
+  assert.equal((await execute(f)).length, 1);
+});
 for (const [name, mutate] of Object.entries({
   wrongPath: f => f.run.path = '.github/workflows/attacker.yml',
   wrongQualifiedPath: f => f.run.path += '@refs/pull/8/merge',
@@ -122,6 +131,7 @@ for (const [name, mutate] of Object.entries({
   wrongRun: f => f.run.id = 100,
   wrongAttempt: f => f.run.run_attempt = 3,
   wrongJobAttempt: f => f.jobs[0].run_attempt = 3,
+  nullJobAttempt: f => f.jobs[0].run_attempt = null,
   duplicatePlan: f => f.jobs.push(f.jobs[0]),
   duplicateTuple: f => f.jobs[0].steps.push(f.jobs[0].steps[0]),
   failedTuple: f => f.jobs[0].steps[0].conclusion = "failure",
@@ -326,6 +336,33 @@ test('a resolved historical merge can precede a second base advance', async () =
   assert.equal(dispatches[0].client_payload.base_sha, B);
   assert.equal(dispatches[0].client_payload.merge_sha, A);
   assert.deepEqual(f.mergeReads, [E, A]);
+});
+
+test('a third independently verified merge can be the resolved plan', async () => {
+  const plannedMerge = 'f'.repeat(40);
+  const plannedBase = '0'.repeat(40);
+  for (const exact of [true, false]) {
+    const f = fixture();
+    f.jobs[0].steps[1] = tupleStep('resolved', plannedBase, plannedMerge);
+    f.resolvedMerge = {sha: plannedMerge, parents: [{sha: exact ? plannedBase : D}, {sha: C}]};
+    const dispatches = await execute(f);
+    assert.equal(dispatches.length, exact ? 1 : 0);
+    if (exact) assert.equal(dispatches[0].client_payload.merge_sha, A);
+    assert.deepEqual(f.mergeReads, [E, A, plannedMerge]);
+  }
+});
+
+test('a branch ref advance during lookup invalidates the live merge', async () => {
+  const f = fixture();
+  f.latestBase = {object: {sha: 'f'.repeat(40)}};
+  assert.deepEqual(await execute(f), []);
+  assert.equal(f.baseReads, 2);
+});
+
+test('a newer source attempt during lookup invalidates the plan observation', async () => {
+  const f = fixture(); f.latestRun = {...f.run, run_attempt: 3};
+  assert.deepEqual(await execute(f), []);
+  assert.equal(f.runReads, 2);
 });
 
 test('truncated or oversized attempt inventory is refused', async () => {

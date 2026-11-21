@@ -2211,6 +2211,21 @@ fi
 
 if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
   case "$*" in
+    *actions/runs/201/attempts/2/jobs?per_page=100)
+      if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
+        : >"$CONTRACT_STALLED_LOOKUP_MARKER"
+        sleep 12
+      fi
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-success.json"; exit 0 ;;
+    *actions/runs/201)
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-201.json"; exit 0 ;;
+    *actions/runs/203/attempts/3/jobs?per_page=100)
+      if [[ -n "${CONTRACT_PUBLISHER_LOOKUP_LOG:-}" ]]; then
+        printf '%s\n' 203 >>"$CONTRACT_PUBLISHER_LOOKUP_LOG"
+      fi
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-203.json"; exit 0 ;;
+    *actions/runs/203)
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-203.json"; exit 0 ;;
     *actions/runs/101) cat "$CONTRACT_DUPLICATE_DIR/duplicate-source-${CONTRACT_DUPLICATE_EVENT:-typed}.json"; exit 0 ;;
     "api repos/example/FireMUD") printf '%s\n' '{"full_name":"example/FireMUD","default_branch":"develop"}'; exit 0 ;;
     *actions/runs/202)
@@ -2225,12 +2240,27 @@ if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
       exit 0
       ;;
     *actions/runs/202/attempts/2/jobs?per_page=100)
+      if [[ -n "${CONTRACT_PUBLISHER_LOOKUP_LOG:-}" ]]; then
+        printf '%s\n' 202 >>"$CONTRACT_PUBLISHER_LOOKUP_LOG"
+      fi
       if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
         : >"$CONTRACT_STALLED_LOOKUP_MARKER"
         sleep 12
       fi
       cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-$CONTRACT_DUPLICATE_JOB.json"; exit 0 ;;
   esac
+fi
+
+if [[ -n "${CONTRACT_REFRESH_SOURCE_PAYLOAD:-}" && "$*" == *"actions/workflows/runtime-images.yml/runs"* ]]; then
+  invocation=0
+  [[ ! -f "$CONTRACT_REFRESH_SOURCE_STATE" ]] || invocation="$(cat "$CONTRACT_REFRESH_SOURCE_STATE")"
+  printf '%s\n' "$((invocation + 1))" >"$CONTRACT_REFRESH_SOURCE_STATE"
+  if (( invocation == 0 )); then
+    cat "$CONTRACT_SOURCE_PAYLOAD"
+  else
+    cat "$CONTRACT_REFRESH_SOURCE_PAYLOAD"
+  fi
+  exit 0
 fi
 
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
@@ -2368,6 +2398,12 @@ typed_source = {**source, "event": "repository_dispatch", "head_branch": "develo
 (root / "duplicate-native.json").write_text(json.dumps({"workflow_runs": [pending_duplicate, source]}))
 (root / "duplicate-late-publisher.json").write_text(json.dumps({"workflow_runs": [
     {**pending_duplicate, "status": "completed", "conclusion": "success"}, typed_source]}))
+initial_alternate_wait = {**pending_duplicate, "event": "repository_dispatch", "head_branch": "develop",
+    "head_sha": "d" * 40, "status": "completed", "conclusion": "success"}
+pending_alternate = {**typed_source, "status": "in_progress", "conclusion": None}
+completed_alternate = {**typed_source, "status": "completed", "conclusion": "success"}
+(root / "refresh-alternates-initial.json").write_text(json.dumps({"workflow_runs": [initial_alternate_wait, pending_alternate]}))
+(root / "refresh-alternates-completed.json").write_text(json.dumps({"workflow_runs": [initial_alternate_wait, completed_alternate]}))
 terminal_duplicate = {**pending_duplicate, "status": "completed", "conclusion": "failure"}
 intermediate_duplicate = {**typed_source, "id": 103, "created_at": "2026-07-24T00:04:30Z"}
 for name, runs in {
@@ -2385,6 +2421,13 @@ publisher = {**base, "run_attempt": 2, "path": publisher_path, "head_branch": "d
     "head_repository": repository}
 native_publisher = {**publisher, "event": "workflow_run", "display_title": "Publish PR Runtime Images " + source["display_title"]}
 (root / "duplicate-publisher-native.json").write_text(json.dumps(native_publisher))
+direct_source = {**pending_duplicate, "status": "completed", "conclusion": "success"}
+direct_publisher = {**native_publisher, "id": 201, "run_attempt": 2,
+    "created_at": "2026-07-24T00:07:00Z"}
+alternate_publisher = {**native_publisher, "id": 202, "run_attempt": 2,
+    "created_at": "2026-07-24T00:06:00Z"}
+(root / "direct-success-sources.json").write_text(json.dumps({"workflow_runs": [direct_source, source]}))
+(root / "duplicate-publisher-201.json").write_text(json.dumps(direct_publisher))
 for variant, change in {
     "bare": {},
     "qualified": {"path": publisher_path + "@develop"},
@@ -2402,6 +2445,26 @@ for conclusion in ["success", "skipped"]:
              {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": conclusion}
          ]}
     ]}))
+(root / "duplicate-publisher-203.json").write_text(json.dumps({**publisher, "id": 203, "run_attempt": 3,
+    "created_at": "2026-07-24T00:04:30Z"}))
+(root / "duplicate-jobs-203.json").write_text(json.dumps({"total_count": 1, "jobs": [
+    {"name": "Publish Fixed PR Merge Image Tags", "run_id": 203, "run_attempt": 3,
+     "status": "completed", "conclusion": "success", "steps": [
+         {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": "skipped"}
+     ]}
+]}))
+(root / "duplicate-jobs-success-absent.json").write_text(json.dumps({"total_count": 1, "jobs": [
+    {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202,
+     "status": "completed", "conclusion": "success", "steps": [
+         {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": "success"}
+     ]}
+]}))
+(root / "duplicate-jobs-success-null.json").write_text(json.dumps({"total_count": 1, "jobs": [
+    {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202, "run_attempt": None,
+     "status": "completed", "conclusion": "success", "steps": [
+         {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": "success"}
+     ]}
+]}))
 fixtures = {
     "dispatch-success": base,
     "callback-success": native_publisher,
@@ -2413,6 +2476,15 @@ fixtures = {
 }
 for name, run in fixtures.items():
     (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name.startswith("callback-") else "repository_dispatch", "workflow_runs": [run]}))
+multiple_publishers = [
+    {**base, "id": 202, "created_at": "2026-07-24T00:04:00Z"},
+    {**base, "id": 203, "created_at": "2026-07-24T00:04:30Z"},
+]
+(root / "dispatch-multiple-publishers.json").write_text(json.dumps({"total_count": 2,
+    "fixture_event": "repository_dispatch", "workflow_runs": multiple_publishers}))
+direct_and_alternate = [alternate_publisher, direct_publisher]
+(root / "direct-and-alt-publishers.json").write_text(json.dumps({"total_count": 2,
+    "fixture_event": "workflow_run", "workflow_runs": direct_and_alternate}))
 # Matching publication remains discoverable beyond the first page.
 many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index}"} for index in range(100)] + [base]
 (root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
@@ -2459,6 +2531,44 @@ for event in typed native; do
     fi
   done
 done
+for job_fixture in success-absent success-null; do
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB="$job_fixture" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/job-run-attempt-$job_fixture.output" 2>"$contract_fixture_dir/job-run-attempt-$job_fixture.error"; then
+    [[ "$job_fixture" == "success-absent" ]] || { echo "Present null run_attempt must be rejected" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/job-run-attempt-$job_fixture.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$job_fixture" == "success-null" ]] || { cat "$contract_fixture_dir/job-run-attempt-$job_fixture.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/job-run-attempt-$job_fixture.error" 'Timed out waiting for runtime-images workflow'
+  fi
+done
+
+if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_PUBLISHER_LOOKUP_LOG="$contract_fixture_dir/publisher-candidate-lookups" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-multiple-publishers.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/multiple-publishers.output" 2>"$contract_fixture_dir/multiple-publishers.error"; then
+  require_contains "$contract_fixture_dir/multiple-publishers.output" 'Trusted PR image publisher 202 succeeded'
+else
+  cat "$contract_fixture_dir/multiple-publishers.error" >&2
+  exit 1
+fi
+[[ "$(cat "$contract_fixture_dir/publisher-candidate-lookups")" == $'203\n202' ]] || {
+  echo "Publisher verification must try the newer incumbent and then its older matching candidate" >&2
+  exit 1
+}
+
 for variant in terminal multi terminal-no-proof; do
   if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
     CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
@@ -2488,6 +2598,39 @@ BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
     >"$contract_fixture_dir/late-publisher.output"
 require_contains "$contract_fixture_dir/late-publisher.output" 'Matching runtime-images workflow 104 succeeded'
 require_contains "$contract_fixture_dir/late-publisher.output" 'Trusted PR image publisher 202 succeeded'
+
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+  CONTRACT_DUPLICATE_EVENT=native CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_STALLED_LOOKUP_MARKER="$contract_fixture_dir/direct-before-alternate.lookup" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-success-sources.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/direct-and-alt-publishers.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/direct-before-alternate.output"
+require_contains "$contract_fixture_dir/direct-before-alternate.output" 'Trusted PR image publisher 201 succeeded'
+[[ ! -e "$contract_fixture_dir/direct-before-alternate.lookup" ]] || {
+  echo "A positive direct publisher must be checked before querying alternate publisher jobs" >&2
+  exit 1
+}
+
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_REFRESH_SOURCE_STATE="$contract_fixture_dir/refresh-source-state" \
+  CONTRACT_REFRESH_SOURCE_PAYLOAD="$contract_fixture_dir/refresh-alternates-completed.json" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/refresh-alternates-initial.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/refreshed-alternate.output" 2>"$contract_fixture_dir/refreshed-alternate.error" || {
+      cat "$contract_fixture_dir/refreshed-alternate.output" "$contract_fixture_dir/refreshed-alternate.error" >&2
+      exit 1
+    }
+require_contains "$contract_fixture_dir/refreshed-alternate.output" 'Matching runtime-images workflow 104 succeeded'
+require_contains "$contract_fixture_dir/refreshed-alternate.output" 'Trusted PR image publisher 202 succeeded'
 
 stalled_status=0
 CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \

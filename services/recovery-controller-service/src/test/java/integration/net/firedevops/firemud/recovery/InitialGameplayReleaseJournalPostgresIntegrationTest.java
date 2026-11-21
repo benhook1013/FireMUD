@@ -78,6 +78,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(SCHEMA)
             .defaultSchema(SCHEMA)
+            .table("flyway_schema_history_recovery_control")
             .placeholders(Map.of("serviceSchema", SCHEMA))
             .locations("classpath:db/recovery-control-migration")
             .load();
@@ -161,6 +162,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(),
             prepare.effect().effectId(),
             prepareAttempt,
+            prepare.attemptCount(),
             prepare.effect().kind(),
             prepare.effect().operationTupleDigest(),
             prepare.payloadDigest(),
@@ -183,6 +185,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(),
             prepareEffectId,
             UUID.randomUUID(),
+            prepare.attemptCount(),
             prepare.effect().kind(),
             prepare.effect().operationTupleDigest(),
             prepare.payloadDigest(),
@@ -266,6 +269,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(),
             handoff.effect().effectId(),
             handoffAttempt,
+            handoff.attemptCount(),
             handoff.effect().kind(),
             handoff.effect().operationTupleDigest(),
             handoff.payloadDigest(),
@@ -383,14 +387,34 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     journal.recordEffectReadback(dispatched, unknown, base.plusSeconds(6));
     String retained = storedOutbox(operationId, effectId);
 
-    for (EffectReadbackState delayedState :
-        List.of(EffectReadbackState.UNKNOWN_OR_PARTIAL, EffectReadbackState.PREPARED_FENCED)) {
-      EffectReadback delayed =
-          readbackFor(dispatched, attemptId, delayedState, "delayed", base.plusSeconds(5));
+    for (EffectReadback delayed :
+        List.of(
+            readbackFor(
+                dispatched,
+                attemptId,
+                EffectReadbackState.UNKNOWN_OR_PARTIAL,
+                "delayed-unknown",
+                base.plusSeconds(5)),
+            readbackFor(
+                dispatched,
+                attemptId,
+                EffectReadbackState.PREPARED_FENCED,
+                "delayed-older-definitive",
+                base.plusSeconds(5)),
+            readbackFor(
+                dispatched,
+                attemptId,
+                EffectReadbackState.PREPARED_FENCED,
+                "delayed-equal-time-definitive",
+                base.plusSeconds(6)))) {
       assertThatThrownBy(
               () -> journal.recordEffectReadback(dispatched, delayed, base.plusSeconds(7)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
-          .hasMessageContaining("predates the retained same-attempt observation");
+          .hasMessageContaining(
+              delayed.observedAt().equals(unknown.observedAt())
+                      && delayed.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
+                  ? "definitive effect readback must be newer than retained partial evidence"
+                  : "predates the retained same-attempt observation");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
       assertThat(journal.find(operationId)).contains(before);
       assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
@@ -983,10 +1007,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             "closed-a",
             base.plusSeconds(5)),
         base.plusSeconds(5));
+    String closedA = storedClosure(a);
     OutboxEntry b =
         journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(6));
+    assertThat(storedClosure(a)).isEqualTo(closedA);
     String before = storedOutbox(operationId, effectId);
-    String closedA = storedClosure(a);
     assertThat(
             journal.recordAmbiguousEffectForDispatch(a, "DELAYED_AMBIGUOUS", base.plusSeconds(7)))
         .isFalse();
@@ -1091,6 +1116,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThatThrownBy(() -> journal.recordEffectReadback(original, oldReadback, receivedAt))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("effect readback dispatch generation changed");
+    assertThatThrownBy(() -> journal.recordEffectReadback(replacement, oldReadback, receivedAt))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect readback dispatch generation changed");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
     assertThat(journal.find(operationId)).contains(operation);
     assertThat(journal.findNextEffect(operationId)).contains(replacement);
@@ -1124,6 +1152,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
           .schemas(SCHEMA)
           .defaultSchema(SCHEMA)
+          .table("flyway_schema_history_recovery_control")
+          .placeholders(Map.of("serviceSchema", SCHEMA))
           .locations("classpath:db/recovery-control-migration")
           .target("1")
           .load()
@@ -1160,6 +1190,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
                 .schemas(SCHEMA)
                 .defaultSchema(SCHEMA)
+                .table("flyway_schema_history_recovery_control")
+                .placeholders(Map.of("serviceSchema", SCHEMA))
                 .locations("classpath:db/recovery-control-migration")
                 .load();
         if (claimed) {
@@ -1242,6 +1274,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         entry.effect().operationId(),
         entry.effect().effectId(),
         attempt,
+        entry.attemptCount(),
         entry.effect().kind(),
         entry.effect().operationTupleDigest(),
         entry.payloadDigest(),

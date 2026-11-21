@@ -147,7 +147,9 @@ public final class InitialGameplayReleaseController {
     final EffectApplyResult applyResult;
     try {
       applyResult =
-          Objects.requireNonNull(effectPort.apply(dispatched.effect(), attemptId), "applyResult");
+          Objects.requireNonNull(
+              effectPort.apply(dispatched.effect(), attemptId, dispatched.attemptCount()),
+              "applyResult");
     } catch (RuntimeException exception) {
       journal.recordAmbiguousEffectForDispatch(
           dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", clock.instant());
@@ -181,7 +183,7 @@ public final class InitialGameplayReleaseController {
     }
     EffectReadbackResolution resolution;
     try {
-      resolution = effectPort.readback(outbox.effect(), attemptId);
+      resolution = effectPort.readback(outbox.effect(), attemptId, outbox.attemptCount());
     } catch (RuntimeException exception) {
       return requireOperation(operation.scope().operationId());
     }

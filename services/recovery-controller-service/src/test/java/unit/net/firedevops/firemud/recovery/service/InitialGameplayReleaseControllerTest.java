@@ -3,6 +3,7 @@ package net.firedevops.firemud.recovery.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -195,11 +196,11 @@ class InitialGameplayReleaseControllerTest {
             DIGEST,
             "proof-identity-1");
 
-    var result = port.apply(effect, UUID.randomUUID());
+    var result = port.apply(effect, UUID.randomUUID(), 1);
     assertThat(result.status())
         .isEqualTo(InitialGameplayReleaseEffectPort.ApplyStatus.NOT_DISPATCHED);
     assertThat(result.outcomeCode()).isEqualTo("GAME_SESSION_EFFECT_OWNER_UNAVAILABLE");
-    assertThat(port.readback(effect, UUID.randomUUID()).status())
+    assertThat(port.readback(effect, UUID.randomUUID(), 1).status())
         .isEqualTo(InitialGameplayReleaseEffectPort.ReadbackStatus.UNAVAILABLE);
   }
 
@@ -275,14 +276,18 @@ class InitialGameplayReleaseControllerTest {
                       : new UUID(
                           ~requested.getMostSignificantBits(),
                           requested.getLeastSignificantBits()));
-          if (ownsClaim) when(claimed.effect()).thenReturn(effect);
+          if (ownsClaim) {
+            when(claimed.effect()).thenReturn(effect);
+            when(claimed.attemptCount()).thenReturn(2);
+          }
           return claimed;
         });
     if (ownsClaim && applyResult == null) {
-      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any(), anyInt()))
           .thenThrow(new IllegalStateException("response lost after possible owner send"));
     } else if (ownsClaim) {
-      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any())).thenReturn(applyResult);
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any(), anyInt()))
+          .thenReturn(applyResult);
     }
     var controller =
         new InitialGameplayReleaseController(
@@ -306,8 +311,8 @@ class InitialGameplayReleaseControllerTest {
     if (!ownsClaim) {
       verifyNoInteractions(port);
     } else {
-      verify(port).apply(effect, claimedAttempt.get());
-      verify(port, never()).readback(any(), any());
+      verify(port).apply(effect, claimedAttempt.get(), 2);
+      verify(port, never()).readback(any(), any(), anyInt());
     }
     if (ownsClaim && expectedRetrySource == null) {
       verify(journal)
@@ -484,10 +489,10 @@ class InitialGameplayReleaseControllerTest {
         .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
     when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
     if (throwsException) {
-      when(effectPort.readback(effect, attempt))
+      when(effectPort.readback(effect, attempt, outbox.attemptCount()))
           .thenThrow(new IllegalStateException("owner readback failed"));
     } else {
-      when(effectPort.readback(effect, attempt))
+      when(effectPort.readback(effect, attempt, outbox.attemptCount()))
           .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable());
     }
     var controller =
@@ -498,7 +503,7 @@ class InitialGameplayReleaseControllerTest {
             effectPort);
 
     assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(after);
-    verify(effectPort).readback(effect, attempt);
+    verify(effectPort).readback(effect, attempt, outbox.attemptCount());
     verify(journal, never()).recordEffectReadback(any(), any(), any());
   }
 
@@ -558,6 +563,7 @@ class InitialGameplayReleaseControllerTest {
             scope.operationId(),
             effect.effectId(),
             attempt,
+            outbox.attemptCount(),
             effect.kind(),
             DIGEST,
             DIGEST,
@@ -569,7 +575,7 @@ class InitialGameplayReleaseControllerTest {
             now.plusSeconds(1));
     when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(operation));
     when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
-    when(effectPort.readback(effect, attempt))
+    when(effectPort.readback(effect, attempt, outbox.attemptCount()))
         .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback));
     var controller =
         new InitialGameplayReleaseController(

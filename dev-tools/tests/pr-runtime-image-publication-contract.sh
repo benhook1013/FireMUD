@@ -20,6 +20,14 @@ from pathlib import Path
 source = Path(sys.argv[1]).read_text()
 group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
 cancel = re.search(r"^  cancel-in-progress: (.*)$", source, re.MULTILINE).group(1)
+promotion = re.search(r"^  publish-runtime-images:\n((?:^    .*\n|^\n)+)", source, re.MULTILINE).group(1)
+assert re.search(
+    r"^    concurrency:\n"
+    r"      group: runtime-image-promotion-\$\{\{ needs\.image-meta\.outputs\.head_branch \}\}\n"
+    r"      cancel-in-progress: false\n"
+    r"      queue: max$", promotion, re.MULTILINE
+)
+assert re.search(r'assert_current_branch_head\n\s+promote_alias "\$candidate" "\$branch_tag"', promotion)
 
 class Context:
     def __init__(self, value=None):
@@ -118,6 +126,8 @@ assert evaluate(nonprotected, cancel) == "False", nonprotected
 check(nonprotected, "ci-push-run-96-attempt-2-required")
 assert evaluate(push_callback("Develop", "success", 98, 1)).lower() != \
        evaluate(push_callback("develop", "success", 97, 1)).lower()
+assert evaluate(push_callback("develop", "success", 91, 2)).lower() != \
+       evaluate(push_callback("main", "success", 91, 2)).lower()
 
 for value in [0, False, "", None]:
     invalid = copy.deepcopy(dispatch)

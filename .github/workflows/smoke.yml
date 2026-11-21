@@ -572,7 +572,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "d237e316d765c6f0c2ec5569af93cbaf218d1f9c65e0877eec1ed2f87c6a0457";
+            const canonicalRuntimeWorkflowSha256 = "777b2527be618a77674d20338ca30bca771f81afd010165bb33b2b72465779df";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
               "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
               "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
@@ -1555,10 +1555,18 @@ jobs:
                     core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
                     continue smokeGatePolling;
                   }
-                  const { data: acceptanceAttempt } = await withTransientGitHubRetry(
-                    "current-base runtime attempt lookup after live identity validation",
-                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
-                  );
+                  let acceptanceAttempt;
+                  try {
+                    ({ data: acceptanceAttempt } = await withTransientGitHubRetry(
+                      "current-base runtime attempt lookup after live identity validation",
+                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                    ));
+                  } catch (error) {
+                    if (isTransientOptionalGitHubError(error) && await resumePendingPrimary(
+                      `Runtime alternative ${matching.id} final current-base attempt is temporarily unavailable; retry exact primary selection.`
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
                   if (acceptanceAttempt.id !== matching.id ||
                       acceptanceAttempt.run_attempt !== matching.run_attempt ||
                       acceptanceAttempt.status !== "completed" || acceptanceAttempt.conclusion !== "success") {

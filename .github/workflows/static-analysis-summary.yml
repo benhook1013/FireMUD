@@ -220,7 +220,7 @@ jobs:
                   job.conclusion === "skipped" &&
                   (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
                 const substantive = data.jobs.some(job => job.name === gateName);
-                if (metadata && !substantive) continue;
+                if (metadata && !substantive && candidate.conclusion === "skipped") continue;
                 if (!substantive) {
                   if (candidate.status === "completed" && terminalFailure.has(candidate.conclusion)) {
                     return { ...candidate, jobs: data.jobs };
@@ -241,8 +241,8 @@ jobs:
                   checkName.startsWith("CodeQL Analysis (") &&
                   workflowRun?.status === "completed"
                 ) {
-                  // A failed producer without a language job did not establish a skip.
-                  if (terminalFailure.has(workflowRun.conclusion)) return "unavailable";
+                  // A failed run or partial rerun without a language job did not prove a skip.
+                  if (terminalFailure.has(workflowRun.conclusion) || workflowRun.run_attempt > 1) return "unavailable";
                   return "skipped";
                 }
                 if (workflowRun?.status === "completed") {

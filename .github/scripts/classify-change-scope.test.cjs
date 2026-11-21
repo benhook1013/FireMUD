@@ -542,6 +542,7 @@ test("shared modules force every Gradle module, including common-redis-contracts
   ]);
 
   assert.equal(result.runAll, true);
+  assert.ok(result.affectedModules.includes("common-redis-contracts"));
   assert.deepEqual(result.affectedModules, ALL_MODULES);
   assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("recovery-controller-service", "hosted-environment-identity-controller"));
 });

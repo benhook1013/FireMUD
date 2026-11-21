@@ -13,6 +13,7 @@ from pathlib import Path
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
+RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
@@ -141,6 +142,8 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
     migrations = discover_migration_files(snapshot)
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
+        if RECOVERY_MIGRATION_DIR in item.path and not recovery_location_configured(snapshot, item.project):
+            continue
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
     for adopter in saga_adopters(snapshot):
@@ -148,10 +151,24 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
     return grouped, migrations
 
 
+def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
+    # The isolated owner uses the packaged Spring Flyway settings in application.yml.
+    settings = snapshot.get(f"services/{project}/src/main/resources/application.yml", b"").decode()
+    spring = re.search(r"(?m)^spring:[ \t]*\n((?:[ \t]+[^\n]*\n|\n)+)", settings + "\n")
+    flyway = re.search(r"(?m)^  flyway:[ \t]*\n((?:    [^\n]*\n|\n)+)", spring[1]) if spring else None
+    locations = re.search(r"(?m)^    locations:[ \t]*(.+)$", flyway[1]) if flyway else None
+    return bool(locations and "classpath:db/recovery-control-migration" in {
+        path.strip().strip("\"'") for path in locations[1].split(",")
+    })
+
+
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
     grouped, migrations = effective_sets(current)
     parent_grouped, parent_migrations = effective_sets(parent) if parent is not None else ({}, [])
     issues = []
+    for project in sorted({item.project for item in migrations if RECOVERY_MIGRATION_DIR in item.path}):
+        if not recovery_location_configured(current, project):
+            issues.append(f"services/{project}: packaged Spring Flyway configuration does not select the recovery-control location")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -265,8 +282,13 @@ def run_self_test() -> None:
     check("java/sql duplicate", {**history, "services/example-service/src/main/java/db/migration/V1__dup.java": b"// dup"}, history, "duplicate version V1")
 
     recovery = "services/recovery-controller-service/src/main/resources/db/recovery-control-migration/"
-    recovery_history = {recovery + "V1__journal.sql": b"-- journal"}
+    recovery_config = "services/recovery-controller-service/src/main/resources/application.yml"
+    recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+    recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("disconnected isolated recovery history", {
+        **recovery_history, recovery_config: recovery_settings.replace(b"recovery-control-migration", b"migration"),
+    }, recovery_history, "historical effective migration no longer applied")
     check("duplicate recovery version", {**recovery_history, recovery + "V1__duplicate.sql": b"-- duplicate"},
           recovery_history, "duplicate version V1")
     check("changed recovery history", {recovery + "V1__journal.sql": b"-- rewritten"},
@@ -275,6 +297,7 @@ def run_self_test() -> None:
         root = Path(tmp)
         (root / recovery).mkdir(parents=True)
         (root / recovery / "V1__journal.sql").write_bytes(b"-- journal")
+        (root / recovery_config).write_bytes(recovery_settings)
         if current_snapshot(root) != recovery_history or not all(map(relevant_path, recovery_history)):
             raise AssertionError("isolated recovery history is not selected for both snapshots")
 

@@ -114,13 +114,13 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
         raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
 
 
-def effective_group(group, action, base_ref):
+def effective_group(group, action, base_ref, workflow_name="Required Gate"):
     values = {
         "github.event.changes.base.ref": repr(base_ref),
         "github.event.pull_request.number": "42",
         "github.event.action": repr(action),
         "github.event_name": "'pull_request'",
-        "github.workflow": "'Required Gate'",
+        "github.workflow": repr(workflow_name),
         "github.run_id": "123",
         "github.ref": "'refs/pull/42/merge'",
     }
@@ -136,6 +136,19 @@ def effective_group(group, action, base_ref):
         tree = ast.parse(body, mode="eval")
         return str(interpret_selector(tree.body))
     return re.sub(r"\$\{\{(.*?)\}\}", render, group)
+
+
+def cross_workflow_group_collisions(rendered_groups):
+    owners = {}
+    collisions = []
+    for workflow, action, group in rendered_groups:
+        key = group.casefold()
+        prior = owners.get(key)
+        if prior is not None and prior[0] != workflow:
+            collisions.append((prior, (workflow, action, group)))
+        else:
+            owners[key] = (workflow, action, group)
+    return collisions
 
 
 def can_reuse_required_name(name, required_names):
@@ -337,6 +350,31 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     assert collided != group and not isolates_metadata_group(collided, run_scoped), workflow
     if concurrency.get("cancel-in-progress") != "true":
         raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
+
+rendered_substantive_groups = []
+for workflow, (workflow_name, *_rest) in gates.items():
+    data = yaml.load((root / ".github/workflows" / workflow).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    group = data["concurrency"]["group"]
+    if data.get("name") != workflow_name:
+        raise SystemExit(f"{workflow} actual name must match its required-gate contract")
+    for action, base_ref in (("opened", None), ("synchronize", None), ("reopened", None), ("edited", "develop")):
+        rendered_substantive_groups.append((
+            workflow,
+            action,
+            effective_group(group, action, base_ref, workflow_name),
+        ))
+
+collisions = cross_workflow_group_collisions(rendered_substantive_groups)
+if collisions:
+    first, second = collisions[0]
+    raise SystemExit(
+        f"required workflows {first[0]} and {second[0]} share a substantive concurrency group "
+        f"for the same PR (case-insensitive): {first[2]!r} / {second[2]!r}"
+    )
+assert cross_workflow_group_collisions([
+    ("validation.yml", "opened", "required-pr-42"),
+    ("smoke.yml", "edited", "REQUIRED-PR-42"),
+]), "the collision detector must model GitHub's case-insensitive group comparison"
 PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
@@ -675,7 +713,7 @@ const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request", captureLookupFailure = false) {
   let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0, refreshInventoryReads = 0;
-  const liveFallback = kind.startsWith("trusted-current-base");
+  const liveFallback = kind.startsWith("trusted-current-base") || kind === "optional-final-acceptance-transient";
   const h0 = kind.startsWith("optional-final-read-");
   const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
   const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
@@ -686,6 +724,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const primaryCanRecover = h0 && !cancelledPrimary && !cancelledWithReplacement && badStatus === 503;
   const primaryReady = () => primaryCanRecover && primaryInventoryReads > 1;
   let alternativeJobsReads = 0, primaryInventoryReads = 0, lookupFailure;
+  let pullRequestLookups = 0, acceptanceLookupArmed = false, acceptanceLookupAttempts = 0;
   const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
   const tupleAdvanced = () => kind === "trusted-current-base-advances" && currentRunReads >= 2;
   let rerunStartedDuringLatestIdentityRead = false;
@@ -731,6 +770,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
+      pullRequestLookups += 1;
+      if (kind === "optional-final-acceptance-transient" && pullRequestLookups === 4) {
+        acceptanceLookupArmed = true;
+      }
       if (kind === "trusted-current-base-attempt-advances" && currentRunReads >= 2) {
         rerunStartedDuringLatestIdentityRead = true;
       }
@@ -753,6 +796,15 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       getWorkflowRun: async ({run_id: runId}) => {
         if (runId === 43 && primaryReady()) return {data: exactPrimary};
         if (runId === 44 && cancelledWithReplacement) return {data: dispatchPrimary};
+        if (kind === "optional-final-acceptance-transient" && runId === 44) {
+          return {data: {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
+            head_branch: "develop", status: "completed", conclusion: "success"}};
+        }
+        if (kind === "optional-final-acceptance-transient" && acceptanceLookupArmed) {
+          acceptanceLookupAttempts += 1;
+          if (acceptanceLookupAttempts === 4) acceptanceLookupArmed = false;
+          throw Object.assign(new Error("final current-base workflow-run lookup unavailable"), {status: 503});
+        }
         currentRunReads += 1;
         if (finalAttemptError && currentRunReads >= 2) {
           throw Object.assign(new Error("alternative final workflow-run unavailable"),
@@ -772,6 +824,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       assert.equal(input.attempt_number, exactPrimary.run_attempt);
       return {data: exactPrimary};
     }
+    if (kind === "optional-final-acceptance-transient" && input.run_id === 44) {
+      return {data: {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
+        head_branch: "develop", status: "completed", conclusion: "success"}};
+    }
     if (cancelledWithReplacement && input.run_id === 44) {
       assert.equal(input.attempt_number, dispatchPrimary.run_attempt);
       return {data: dispatchPrimary};
@@ -788,6 +844,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     if (input.run_id === 43 && primaryReady()) {
       assert.equal(input.attempt_number, exactPrimary.run_attempt);
       return [{...job, run_id: 43, head_sha: head, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
+    if (kind === "optional-final-acceptance-transient" && input.run_id === 44) {
+      return [{...job, run_id: 44, head_sha: defaultSha, steps: [...job.steps,
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
     if (cancelledWithReplacement && input.run_id === 44) {
@@ -826,6 +886,18 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
+    if (kind === "optional-final-acceptance-transient" && input.event === "repository_dispatch") {
+      primaryInventoryReads += 1;
+      const pending = {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
+        head_branch: "develop", created_at: "2026-09-01T00:00:01Z",
+        status: primaryInventoryReads === 1 ? "in_progress" : "completed",
+        conclusion: primaryInventoryReads === 1 ? null : "success"};
+      const completed = {...source, id: 42, event: "repository_dispatch", head_sha: defaultSha,
+        head_branch: "develop", created_at: "2026-09-01T00:00:00Z",
+        status: "completed", conclusion: "success"};
+      yield {data: primaryInventoryReads === 1 ? [pending, completed] : [pending]};
+      return;
+    }
     if (h0 && input.event === "pull_request") {
       primaryInventoryReads += 1;
       const primary = {...exactPrimary, status: cancelledPrimary || cancelledWithReplacement || primaryReady() ? "completed" : "queued",
@@ -863,7 +935,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     if (!captureLookupFailure) throw error;
     lookupFailure = error;
   }
-  return {failures, refs, snapshots, info, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads, lookupFailure};
+  return {failures, refs, snapshots, info, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads,
+    acceptanceLookupAttempts, lookupFailure};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -917,6 +990,14 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     assert.deepEqual(result.failures, [], kind);
     if (kind.endsWith("-snapshot")) assert.equal(result.alternativeJobsReads, 11, kind);
   }
+  const finalCurrentBaseRetry = await scenario("optional-final-acceptance-transient", "repository_dispatch");
+  assert.equal(finalCurrentBaseRetry.acceptanceLookupAttempts, 4,
+    "the final optional current-base attempt read must exhaust only its bounded transient retries");
+  assert.equal(finalCurrentBaseRetry.primaryInventoryReads, 2,
+    "a transient final current-base attempt read must restore and reselect the pending exact producer");
+  assert(finalCurrentBaseRetry.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));
+  assert.deepEqual(finalCurrentBaseRetry.failures, [],
+    "the pending exact producer may pass after the final transient read recovers");
   for (const [kind, code] of [["optional-final-read-attempt-forbidden", 403], ["optional-final-read-attempt-missing", 404]]) {
     const result = await scenario(kind, "repository_dispatch", true);
     assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, code, kind);

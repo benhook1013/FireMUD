@@ -112,10 +112,10 @@ jobs:
               const moduleScopeAvailable =
                 Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules) &&
                 Array.isArray(ALL_MODULES) && completeModules.every(module => ALL_MODULES.includes(module));
-              // An old module inventory must not turn proven documentation-only PRs
-              // into full builds. Re-read complete native paths rather than trusting
-              // an old classifier's module knowledge for new service directories.
-              let documentationOnly = false;
+              // Re-read complete native paths before preserving an older classifier's
+              // lightweight lane. Unrecognized service and runtime inputs keep full proof.
+              let lightweightFallback = false;
+              let fallbackPython = false;
               if (!moduleScopeAvailable && scope.lightweightOnly === true &&
                   context.eventName === "pull_request") {
                 try {
@@ -134,33 +134,40 @@ jobs:
                   const knownDoc = path => path === "README.md" || (typeof path === "string" &&
                     /^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) &&
                     !path.split("/").includes(".."));
+                  const knownValidationPython = path => typeof path === "string" &&
+                    /^dev-tools\/validation\/[A-Za-z0-9_./-]+\.py$/.test(path) &&
+                    !path.split("/").includes("..") &&
+                    path !== "dev-tools/validation/gradle-run-supervisor.py";
+                  const knownLightweightPath = path => knownDoc(path) || knownValidationPython(path);
                   const after = (await github.rest.pulls.get({
                     ...context.repo, pull_number: eventPr.number,
                   })).data;
-                  documentationOnly = exactEvent(before) && exactEvent(after) &&
+                  lightweightFallback = exactEvent(before) && exactEvent(after) &&
                     Number.isInteger(context.payload.pull_request.changed_files) &&
                     entries.length > 0 && entries.length === context.payload.pull_request.changed_files &&
-                    entries.every(entry => entry && knownDoc(entry.filename) &&
+                    entries.every(entry => entry && knownLightweightPath(entry.filename) &&
                       ["added", "removed", "modified", "renamed"].includes(entry.status) &&
-                      (entry.status !== "renamed" || knownDoc(entry.previous_filename)) &&
-                      (entry.previous_filename === undefined || knownDoc(entry.previous_filename)));
+                      (entry.status !== "renamed" || knownLightweightPath(entry.previous_filename)) &&
+                      (entry.previous_filename === undefined || knownLightweightPath(entry.previous_filename)));
+                  fallbackPython = lightweightFallback && entries.some(entry =>
+                    knownValidationPython(entry.filename) || knownValidationPython(entry.previous_filename));
                 } catch {
                   // Missing or incomplete native evidence keeps the full fallback.
                 }
               }
               outputs = {
-                run_all: scope.runAll || (!moduleScopeAvailable && !documentationOnly),
+                run_all: scope.runAll || (!moduleScopeAvailable && !lightweightFallback),
                 affected_services: scope.affectedServices,
-                affected_modules: documentationOnly ? [] : (moduleScopeAvailable ? scope.affectedModules : completeModules),
-                bootable_modules: documentationOnly ? [] : (moduleScopeAvailable ? scope.bootableModules : completeBootableModules),
+                affected_modules: lightweightFallback ? [] : (moduleScopeAvailable ? scope.affectedModules : completeModules),
+                bootable_modules: lightweightFallback ? [] : (moduleScopeAvailable ? scope.bootableModules : completeBootableModules),
                 docs_changed: scope.docsChanged,
                 frontend_changed: scope.frontendChanged,
-                python_changed: scope.pythonChanged,
+                python_changed: scope.pythonChanged || fallbackPython,
                 design_docs_changed: scope.designDocsChanged,
-                validation_python_changed: scope.validationPythonChanged,
+                validation_python_changed: scope.validationPythonChanged || fallbackPython,
                 postgres_runtime_proof_changed:
                   scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,
-                lightweight_only: (moduleScopeAvailable || documentationOnly) && scope.lightweightOnly,
+                lightweight_only: (moduleScopeAvailable || lightweightFallback) && scope.lightweightOnly,
               };
             } else {
               core.warning("Base revision predates the change classifier; using complete validation scope.");

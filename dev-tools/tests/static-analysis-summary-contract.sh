@@ -85,6 +85,8 @@ python3 - "$workflow" "$test_root/summary-target.js" <<'PY_TARGET'
 import sys
 from pathlib import Path
 import yaml
+if not __debug__:
+    raise SystemExit("Static analysis summary resolver proof requires Python assertions")
 workflow = yaml.load(Path(sys.argv[1]).read_text(), Loader=yaml.BaseLoader)
 assert "concurrency" not in workflow, "unvalidated callbacks must not share a workflow queue"
 resolver = workflow["jobs"]["resolve-summary-target"]
@@ -255,7 +257,7 @@ const github = {
             created_at: "2026-09-20T12:00:00Z",
             run_attempt: 1,
             status: "completed",
-            conclusion: "success",
+            conclusion: "skipped",
           },
           {
             id: 250,
@@ -712,6 +714,37 @@ run(github, context, core).then(async () => {
                     rerunWrites.some(row => row.body.includes("checks passed"))) {
                   throw new Error("a prior attempt's status cannot replace the selected running rerun");
                 }
+                github.paginate = async (method, input) => {
+                  const rows = await savedPaginate(method, input);
+                  return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                    ? rows.map(row => row.id === 270 ? {...row, conclusion: "startup_failure"} : row)
+                    : rows;
+                };
+                const rawNameStart = calls.updated.length;
+                await run(github, context, core);
+                if (!calls.updated.slice(rawNameStart).some(row => row.body.includes("CodeQL gate: \`startup_failure\`"))) {
+                  throw new Error("a terminal workflow failure with a raw skipped gate name must remain visible");
+                }
+                github.paginate = savedPaginate;
+                github.request = async (route, input) => {
+                  if (input.run_id !== 200) return savedRequest(route, input);
+                  const job = (id, name) => ({id, name, run_id: 200, run_attempt: 2, head_sha: currentHeadSha,
+                    status: "completed", conclusion: "success"});
+                  return {data: {total_count: 2, jobs: [job(20021, "CodeQL Gate"), job(20022, "CodeQL Analysis (javascript-typescript)")]}};
+                };
+                github.paginate = async (method, input) => {
+                  const rows = await savedPaginate(method, input);
+                  return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                    ? rows.map(row => row.id === 200 ? {...row, run_attempt: 2, conclusion: "success"} : row)
+                    : rows;
+                };
+                const partialStart = calls.updated.length;
+                await run(github, context, core);
+                if (!calls.updated.slice(partialStart).some(row => row.body.includes("CodeQL analysis (java): \`unavailable\`") &&
+                    row.body.includes("CodeQL analysis (javascript-typescript): \`success\`"))) {
+                  throw new Error("a partial rerun cannot report an unobserved language as skipped");
+                }
+                github.paginate = savedPaginate;
                 github.request = async (route, input) => {
                   if (input.run_id !== 270) return savedRequest(route, input);
                   return {data: {total_count: 1, jobs: [{
@@ -786,7 +819,7 @@ run(github, context, core).then(async () => {
                     const jobs = response.data.jobs;
                     const gate = jobs.find(job => job.name === "CodeQL Gate");
                     if (duplicate) jobs.push({...gate, id: gate.id + 50000});
-                    else gate.run_attempt += 1;
+                    else gate.run_attempt = input.attempt_number + 1;
                     return {data: {jobs, total_count: jobs.length}};
                   };
                   const unavailableStart = calls.updated.length;

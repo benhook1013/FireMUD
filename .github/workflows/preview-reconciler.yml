@@ -276,6 +276,20 @@ jobs:
             local namespace_uid
             local namespace_resource_version
             local next_retry_count
+            local reservation_namespace_json
+
+            proof_retry_reservation_count=""
+            proof_retry_previous_count=""
+            proof_retry_previous_base_sha=""
+            proof_retry_previous_head_sha=""
+            proof_retry_previous_merge_sha=""
+            proof_retry_previous_image_tag=""
+            proof_retry_reservation_namespace_uid=""
+            proof_retry_reservation_resource_version=""
+            proof_retry_reservation_base_sha=""
+            proof_retry_reservation_head_sha=""
+            proof_retry_reservation_merge_sha=""
+            proof_retry_reservation_image_tag=""
 
             if ! fresh_namespace_json="$(
               kubectl get namespace "${namespace}" --ignore-not-found -o json
@@ -334,19 +348,108 @@ jobs:
               echo "Skipping PR #${pr_number}: proof retry budget exhausted for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}." >&2
               return 3
             fi
-            if ! kubectl annotate namespace "${namespace}" \
+            if ! reservation_namespace_json="$(kubectl annotate namespace "${namespace}" \
               "firemud.dev/proof-retry-count=${next_retry_count}" \
               "firemud.dev/proof-retry-base-sha=${base_sha}" \
               "firemud.dev/proof-retry-head-sha=${head_sha}" \
               "firemud.dev/proof-retry-merge-sha=${merge_sha}" \
               "firemud.dev/proof-retry-image-tag=${image_tag}" \
               --overwrite \
-              --resource-version "${namespace_resource_version}" >/dev/null; then
+              --resource-version "${namespace_resource_version}" -o json)"; then
               echo "Skipping PR #${pr_number}: Namespace ${namespace} changed before proof retry evidence could be recorded." >&2
               return 1
             fi
+            proof_retry_reservation_count="${next_retry_count}"
+            proof_retry_previous_count="${retry_count}"
+            proof_retry_previous_base_sha="${retry_base_sha}"
+            proof_retry_previous_head_sha="${retry_head_sha}"
+            proof_retry_previous_merge_sha="${retry_merge_sha}"
+            proof_retry_previous_image_tag="${retry_image_tag}"
+            proof_retry_reservation_namespace_uid="${namespace_uid}"
+            proof_retry_reservation_resource_version="$(jq -er --arg uid "${namespace_uid}" \
+              '.metadata | select(.uid == $uid) | .resourceVersion | select(type == "string" and length > 0)' \
+              <<<"${reservation_namespace_json}" 2>/dev/null || true)"
+            proof_retry_reservation_base_sha="${base_sha}"
+            proof_retry_reservation_head_sha="${head_sha}"
+            proof_retry_reservation_merge_sha="${merge_sha}"
+            proof_retry_reservation_image_tag="${image_tag}"
             echo "Recorded proof retry ${next_retry_count}/3 for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag})."
             return 0
+          }
+
+          compensate_rejected_proof_retry() {
+            local namespace="$1"
+            local pr_number="$2"
+            local fresh_namespace_json
+            local fresh_namespace_tuple
+            local current_base_sha
+            local current_head_sha
+            local current_merge_sha
+            local current_image_tag
+            local retry_count
+            local retry_base_sha
+            local retry_head_sha
+            local retry_merge_sha
+            local retry_image_tag
+            local namespace_uid
+            local namespace_resource_version
+            local -a annotations=()
+
+            if [[ -z "${proof_retry_reservation_count}" ]]; then
+              return 0
+            fi
+            if ! fresh_namespace_json="$(kubectl get namespace "${namespace}" --ignore-not-found -o json)"; then
+              echo "Unable to verify proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+              return 1
+            fi
+            if [[ -z "${fresh_namespace_json}" ]] ||
+              ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
+              echo "Unable to verify proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+              return 1
+            fi
+            IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
+              _ _ _ _ _ _ _ _ _ retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag \
+              namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
+            if [[ "${namespace_uid}" != "${proof_retry_reservation_namespace_uid}" ||
+              -z "${proof_retry_reservation_resource_version}" ||
+              "${namespace_resource_version}" != "${proof_retry_reservation_resource_version}" ||
+              "${current_base_sha}" != "${proof_retry_reservation_base_sha}" ||
+              "${current_head_sha}" != "${proof_retry_reservation_head_sha}" ||
+              "${current_merge_sha}" != "${proof_retry_reservation_merge_sha}" ||
+              "${current_image_tag}" != "${proof_retry_reservation_image_tag}" ||
+              "${retry_count}" != "${proof_retry_reservation_count}" ||
+              "${retry_base_sha}" != "${proof_retry_reservation_base_sha}" ||
+              "${retry_head_sha}" != "${proof_retry_reservation_head_sha}" ||
+              "${retry_merge_sha}" != "${proof_retry_reservation_merge_sha}" ||
+              "${retry_image_tag}" != "${proof_retry_reservation_image_tag}" ||
+              -z "${namespace_resource_version}" ]]; then
+              echo "Proof-retry reservation for PR #${pr_number} changed before confirmed-rejection compensation; leaving its budget charged." >&2
+              return 1
+            fi
+
+            if [[ -n "${proof_retry_previous_count}" ]]; then
+              annotations+=(
+                "firemud.dev/proof-retry-count=${proof_retry_previous_count}"
+                "firemud.dev/proof-retry-base-sha=${proof_retry_previous_base_sha}"
+                "firemud.dev/proof-retry-head-sha=${proof_retry_previous_head_sha}"
+                "firemud.dev/proof-retry-merge-sha=${proof_retry_previous_merge_sha}"
+                "firemud.dev/proof-retry-image-tag=${proof_retry_previous_image_tag}"
+              )
+            else
+              annotations+=(
+                firemud.dev/proof-retry-count-
+                firemud.dev/proof-retry-base-sha-
+                firemud.dev/proof-retry-head-sha-
+                firemud.dev/proof-retry-merge-sha-
+                firemud.dev/proof-retry-image-tag-
+              )
+            fi
+            if ! kubectl annotate namespace "${namespace}" "${annotations[@]}" \
+              --overwrite --resource-version "${namespace_resource_version}" >/dev/null; then
+              echo "Unable to release rejected proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+              return 1
+            fi
+            echo "Released proof-retry reservation for PR #${pr_number} after GitHub confirmed dispatch rejection."
           }
 
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
@@ -365,6 +468,7 @@ jobs:
               and (.event | type == "string" and length > 0)
               and (.path | type == "string" and length > 0)
               and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
+              and (if .status == "completed" then (.conclusion | type == "string" and length > 0) else true end)
               ' <<<"$latest" >/dev/null || return 2
             jq -e --argjson id "$run_id" --arg head "$head" --arg pr "$pr" --arg event "$event" --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" '
               .id == $id and .head_sha == $head
@@ -373,7 +477,7 @@ jobs:
               and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
               and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
             ' <<<"$latest" >/dev/null || return 1
-            if jq -e '.status == "completed"' <<<"$latest" >/dev/null; then return 1; fi
+            if jq -e '.status == "completed" and .conclusion != "success"' <<<"$latest" >/dev/null; then return 1; fi
             [[ "$jobs_available" == true ]] || return 2
             jq -e --argjson attempt "$attempt" '.run_attempt == $attempt' <<<"$latest" >/dev/null || return 2
             jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
@@ -382,7 +486,8 @@ jobs:
                   and (.total_count < 100)
                   and ([$jobs[] | select(.name == "Preview Plan")] | length == 1)
                   and any($jobs[];
-                    .name == "Preview Plan" and .run_id == $id and .run_attempt == $attempt
+                    .name == "Preview Plan" and .run_id == $id
+                    and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
                     and .head_sha == $head and .status == "completed" and .conclusion == "success"
                     and ([.steps[]? | select(.name | startswith("Preview resolved tuple "))] | length == 1)
                     and any(.steps[]?;
@@ -392,6 +497,11 @@ jobs:
             jq -e --arg tuple "$tuple" '
               any(.jobs[] | select(.name == "Preview Plan") | .steps[]; .name == $tuple)
               ' <<<"$jobs" >/dev/null || return 1
+            if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null; then
+              # The trusted consumer may be queued after the active-run inventory.
+              # Defer one cycle after an exact successful source completion.
+              return 3
+            fi
           }
 
           trusted_consumer_has_tuple() {
@@ -419,7 +529,8 @@ jobs:
               | (($jobs | type) == "array") and (.total_count == ($jobs | length)) and (.total_count < 100)
                 and ([$jobs[] | select(.name == "Validate Trusted Preview Target")] | length == 1)
                 and any($jobs[]; .name == "Validate Trusted Preview Target" and .run_id == $id
-                  and .run_attempt == $attempt and .head_sha == $head and .status == "completed")
+                  and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
+                  and .head_sha == $head and .status == "completed")
             ' <<<"$jobs" >/dev/null || return 2
             jq -e --arg tuple "$tuple" '
               any(.jobs[] | select(.name == "Validate Trusted Preview Target" and .conclusion == "success");
@@ -687,6 +798,7 @@ jobs:
 
             active_preview_run_id="$(jq -rs '[.[] | select(.exact)][0].id // empty' <<<"$preview_candidates")"
             active_preview_lookup_unknown=false
+            completed_preview_handoff_run_id=""
             if [[ -z "$active_preview_run_id" ]]; then
               # A same-head title is not proof: the base can move independently.
               tuple_step="Preview resolved tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
@@ -708,6 +820,9 @@ jobs:
                 if [[ "$lookup_status" -eq 0 ]]; then
                   active_preview_run_id="$run_id"
                   break
+                elif [[ "$lookup_status" -eq 3 ]]; then
+                  completed_preview_handoff_run_id="$run_id"
+                  break
                 elif [[ "$lookup_status" -eq 2 ]]; then
                   active_preview_lookup_unknown=true
                 fi
@@ -716,6 +831,10 @@ jobs:
 
             if [[ -n "${active_preview_run_id}" ]]; then
               echo "Skipping proof retry for PR #${pr_number}: preview source or trusted consumer run ${active_preview_run_id} for ${base_sha}/${head_sha}/${merge_sha} is already queued or in progress."
+              continue
+            fi
+            if [[ -n "${completed_preview_handoff_run_id}" ]]; then
+              echo "Deferring proof retry for PR #${pr_number}: successful exact preview source run ${completed_preview_handoff_run_id} may still be handing off to the trusted consumer."
               continue
             fi
             if [[ "$active_preview_lookup_unknown" == true ]]; then
@@ -732,11 +851,24 @@ jobs:
               require_deployed_tuple=true
             fi
             # A consumer may finish deployment and proof during the active-run lookup.
+            local proof_retry_reservation_count=""
+            local proof_retry_previous_count=""
+            local proof_retry_previous_base_sha=""
+            local proof_retry_previous_head_sha=""
+            local proof_retry_previous_merge_sha=""
+            local proof_retry_previous_image_tag=""
+            local proof_retry_reservation_namespace_uid=""
+            local proof_retry_reservation_resource_version=""
+            local proof_retry_reservation_base_sha=""
+            local proof_retry_reservation_head_sha=""
+            local proof_retry_reservation_merge_sha=""
+            local proof_retry_reservation_image_tag=""
             prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
               "$require_deployed_tuple" "$priority" || continue
 
             echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"
-            gh api \
+            dispatch_exit=0
+            if dispatch_response="$(gh api --include \
               --method POST \
               "repos/${GITHUB_REPOSITORY}/dispatches" \
               -f event_type=preview-deploy \
@@ -747,8 +879,25 @@ jobs:
               -f "client_payload[base_sha]=${base_sha}" \
               -f "client_payload[merge_sha]=${merge_sha}" \
               -f "client_payload[image_tag]=${image_tag}" \
-              -f 'client_payload[preview_domain]=preview.firedevops.net'
-            dispatch_sent=true
+              -f 'client_payload[preview_domain]=preview.firedevops.net')"; then
+              dispatch_exit=0
+            else
+              dispatch_exit=$?
+            fi
+            dispatch_status_line_count="$(grep -cE '^HTTP/[0-9.]+ [0-9]{3} ' <<<"${dispatch_response}" || true)"
+            dispatch_http_status="$(awk '/^HTTP\/[0-9.]+ [0-9][0-9][0-9] / { print $2; exit }' <<<"${dispatch_response}")"
+            if [[ "${dispatch_exit}" -eq 0 && "${dispatch_status_line_count}" -eq 1 &&
+              "${dispatch_http_status}" == 204 ]]; then
+              dispatch_sent=true
+            elif [[ "${dispatch_status_line_count}" -eq 1 && "${dispatch_http_status}" =~ ^4[0-9][0-9]$ ]]; then
+              echo "GitHub confirmed preview dispatch rejection for PR #${pr_number} (HTTP ${dispatch_http_status})."
+              if ! compensate_rejected_proof_retry "$namespace" "$pr_number"; then
+                echo "The rejected dispatch could not be safely compensated; its proof-retry budget remains charged." >&2
+              fi
+            else
+              echo "Preview dispatch outcome for PR #${pr_number} is ambiguous (gh=${dispatch_exit}, HTTP=${dispatch_http_status:-unknown}); proof-retry budget remains charged." >&2
+              dispatch_sent=true
+            fi
             done
           }
 

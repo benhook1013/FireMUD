@@ -43,9 +43,12 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.deepEqual(JSON.parse(outputs.bootable_modules),
       compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
   }
-  for (const [entries, count, expected, drift] of [
+  for (const [entries, count, expected, drift, expectsPython = false] of [
     [[{filename: "design/README.md"}], 1, true],
     [[{filename: "README.md"}], 1, true],
+    [[{filename: "dev-tools/validation/check-flyway-versions.py"}], 1, true, undefined, true],
+    [[{filename: "dev-tools/validation/gradle-run-supervisor.py"}], 1, false],
+    [[{filename: "services/recovery-controller-service/src/main/java/Example.java"}], 1, false],
     [[{filename: "README.md", status: "renamed", previous_filename: "services/new-service/Main.java"}], 1, false],
     [[{filename: "design/README.md"}], 1, false, "head-before"],
     [[{filename: "design/README.md"}], 1, false, "head-after"],
@@ -74,6 +77,8 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
         head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}},
     {setOutput: (name, value) => outputs[name] = value, warning() {}});
     assert.equal(outputs.lightweight_only, String(expected));
+    assert.equal(outputs.validation_python_changed, String(expectsPython));
+    assert.equal(outputs.python_changed, String(expectsPython));
     assert.equal(outputs.run_all, String(!expected));
     assert.deepEqual(JSON.parse(outputs.affected_modules), expected ? [] : ALL_MODULES);
     assert.deepEqual(JSON.parse(outputs.bootable_modules), expected ? [] : [...BOOTABLE_MODULES]);

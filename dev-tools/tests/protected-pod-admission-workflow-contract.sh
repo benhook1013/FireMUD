@@ -35,7 +35,12 @@ with tempfile.TemporaryDirectory(prefix="firemud-policy-wait-") as directory:
     command("date", 'import os,pathlib\np=pathlib.Path(os.environ["CLOCK"]);n=int(p.read_text()) if p.exists() else 0;p.write_text(str(n+30));print(n)\n')
     command("sleep", 'pass\n')
     command("kubectl", '''import os,pathlib,json,sys
-p=pathlib.Path(os.environ["CALLS"]);n=int(p.read_text()) if p.exists() else 0;p.write_text(str(n+1))
+assert "--request-timeout=5s" in sys.argv
+policy = sys.argv[sys.argv.index("validatingadmissionpolicy") + 1]
+p=pathlib.Path(os.environ["CALLS"])
+calls=p.read_text().splitlines() if p.exists() else []
+n=len(calls)
+p.write_text("\\n".join([*calls, policy]) + "\\n")
 if os.environ["CASE"]=="api-error":sys.exit(1)
 ready=os.environ["CASE"] in ("ready", "warnings", "ignore") or (os.environ["CASE"]=="late" and n>0)
 print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" if os.environ["CASE"]=="ignore" else "Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
@@ -49,7 +54,12 @@ print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" i
         result = subprocess.run(["bash", "-c", "set -euo pipefail\nrun_wait() {\n"+wait+"\n}\nrun_wait"], env=env, capture_output=True, text=True, timeout=10)
         assert (result.returncode == 0) == success, (case, result.stderr)
         if success:
-            assert int((tmp/"calls").read_text()) >= 4
+            calls = (tmp/"calls").read_text().splitlines()
+            assert set(calls) == {
+                "firemud-trust-runtime-namespace-boundary", "firemud-trust-runtime-binding-boundary",
+                "firemud-trust-runtime-pod-boundary", "firemud-trust-runtime-pod-identity",
+            }
+            assert len(calls) == (5 if case == "late" else 4)
         else:
             assert "policy_readiness=timeout" in result.stderr
 print("Protected Pod workflow bounded cleanup/readiness contract passed")
