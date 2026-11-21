@@ -56,6 +56,22 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     insertPointer(dsl, 3L, 20L, "alpha", "preview", 202L, false, false, "ISOLATED");
     insertPointer(dsl, 4L, 10L, "demo", "preview", 102L, true, false, "SHARED");
     migrateToVersion(dataSource, "8");
+    var retainedRows = dsl.fetch("SELECT * FROM gameplay_admission_pointer ORDER BY id");
+    var retainedHistory = dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank");
+    // The current numeric reader requires the real mixed-representation schema, not V8 alone.
+    migrateToVersion(dataSource, "27");
+    assertThat(
+            dsl.select(retainedRows.fields())
+                .from("gameplay_admission_pointer")
+                .orderBy(DSL.field("id"))
+                .fetch())
+        .isEqualTo(retainedRows);
+    assertThat(dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank"))
+        .containsAll(retainedHistory);
+    assertThat(
+            dsl.fetch("SELECT representation_version FROM gameplay_admission_pointer")
+                .getValues(0, Integer.class))
+        .containsOnly(1);
     DatabaseGameplayAdmissionPointerAuthorityService service =
         new DatabaseGameplayAdmissionPointerAuthorityService(
             new GameplayAdmissionPointerRepository(dsl),

@@ -82,6 +82,8 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
@@ -1770,8 +1772,9 @@ class GameSessionGrpcServiceTest {
     Mockito.verify(gameInstanceService).stopSession(1L);
   }
 
-  @Test
-  void startSessionRejectsAtIpPreflightWithoutStoppingExistingSession() {
+  @ParameterizedTest
+  @ValueSource(strings = {"1.2.3.4", "", " "})
+  void startSessionRejectsRunningReplacementBeforeLimiterOrCandidateEffects(String clientIp) {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -1788,7 +1791,6 @@ class GameSessionGrpcServiceTest {
             gameInstanceRepository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
                 1L, 42L, "RUNNING"))
         .thenReturn(java.util.Optional.of(existing));
-    Mockito.when(ipLimiter.canAccept("1.2.3.4", 77L)).thenReturn(false);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
     GameSessionGrpcService service =
@@ -1808,7 +1810,7 @@ class GameSessionGrpcServiceTest {
             .setTenantId("1")
             .setGameTemplateId("7")
             .setControlPlaneRequestId("cp-1")
-            .setClientIp("1.2.3.4")
+            .setClientIp(clientIp)
             .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {
@@ -1826,227 +1828,16 @@ class GameSessionGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("CONNECTION_LIMIT", ref.get().getError().getCode());
+    assertEquals("SESSION_REPLACEMENT_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals("", ref.get().getSessionId());
+    assertEquals("RUNNING", existing.getStatus());
+    Mockito.verifyNoInteractions(ipLimiter, gameInstanceService);
     Mockito.verify(gameInstanceService, Mockito.never())
         .startSession(
             Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
             Mockito.anyBoolean());
     Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
     Mockito.verify(ipLimiter, Mockito.never()).tryRegister(Mockito.anyString(), Mockito.anyLong());
-  }
-
-  @Test
-  void startSessionReplacementTransfersIpAndStopsOldSessionAfterSuccess() {
-    PingService pingService = Mockito.mock(PingService.class);
-    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
-    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
-    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    TickService tickService = Mockito.mock(TickService.class);
-    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    GameInstance existing = new GameInstance();
-    existing.setId(77L);
-    existing.setTenantId(1L);
-    existing.setOwnerAccountId(42L);
-    existing.setStatus("RUNNING");
-    Mockito.when(
-            gameInstanceRepository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
-                1L, 42L, "RUNNING"))
-        .thenReturn(java.util.Optional.of(existing));
-    Mockito.when(ipLimiter.canAccept("1.2.3.4", 77L)).thenReturn(true);
-    Mockito.when(ipLimiter.transferRegistration("1.2.3.4", 77L, 88L)).thenReturn(true);
-    Mockito.when(
-            gameInstanceService.startSession(
-                Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
-                Mockito.eq(false)))
-        .thenReturn(
-            new GameInstanceDto(
-                88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
-    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
-    GameSessionGrpcService service =
-        newService(
-            pingService,
-            gameInstanceService,
-            featureFlagService,
-            textCommandInterpreter,
-            gameInstanceRepository,
-            tickService,
-            meterRegistry,
-            ipLimiter);
-
-    AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
-    service.startSession(
-        StartSessionRequest.newBuilder()
-            .setTenantId("1")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setClientIp("1.2.3.4")
-            .setOwnerAccountId("42")
-            .build(),
-        new StreamObserver<StartSessionResponse>() {
-          @Override
-          public void onNext(StartSessionResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("88", ref.get().getSessionId());
-    Mockito.verify(ipLimiter).transferRegistration("1.2.3.4", 77L, 88L);
-    Mockito.verify(ipLimiter, Mockito.never()).tryRegister(Mockito.anyString(), Mockito.anyLong());
-    Mockito.verify(ipLimiter, Mockito.never()).release(77L);
-    Mockito.verify(gameInstanceService).stopSession(77L);
-  }
-
-  @Test
-  void startSessionKeepsNewSessionWhenOldReplacementTeardownFails() {
-    PingService pingService = Mockito.mock(PingService.class);
-    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
-    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
-    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    TickService tickService = Mockito.mock(TickService.class);
-    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    GameInstance existing = new GameInstance();
-    existing.setId(77L);
-    existing.setTenantId(1L);
-    existing.setOwnerAccountId(42L);
-    existing.setStatus("RUNNING");
-    Mockito.when(
-            gameInstanceRepository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
-                1L, 42L, "RUNNING"))
-        .thenReturn(java.util.Optional.of(existing));
-    Mockito.when(ipLimiter.canAccept("1.2.3.4", 77L)).thenReturn(true);
-    Mockito.when(ipLimiter.transferRegistration("1.2.3.4", 77L, 88L)).thenReturn(true);
-    Mockito.when(
-            gameInstanceService.startSession(
-                Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
-                Mockito.eq(false)))
-        .thenReturn(
-            new GameInstanceDto(
-                88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
-    Mockito.doThrow(new IllegalStateException("Failed to stop old session"))
-        .when(gameInstanceService)
-        .stopSession(77L);
-    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
-    GameSessionGrpcService service =
-        newService(
-            pingService,
-            gameInstanceService,
-            featureFlagService,
-            textCommandInterpreter,
-            gameInstanceRepository,
-            tickService,
-            meterRegistry,
-            ipLimiter);
-
-    AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
-    service.startSession(
-        StartSessionRequest.newBuilder()
-            .setTenantId("1")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setClientIp("1.2.3.4")
-            .setOwnerAccountId("42")
-            .build(),
-        new StreamObserver<StartSessionResponse>() {
-          @Override
-          public void onNext(StartSessionResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("88", ref.get().getSessionId());
-    assertFalse(ref.get().hasError());
-    Mockito.verify(gameInstanceService).stopSession(77L);
-  }
-
-  @Test
-  void startSessionFailedReplacementDoesNotStopExistingSession() {
-    PingService pingService = Mockito.mock(PingService.class);
-    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
-    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
-    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    TickService tickService = Mockito.mock(TickService.class);
-    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    GameInstance existing = new GameInstance();
-    existing.setId(77L);
-    existing.setTenantId(1L);
-    existing.setOwnerAccountId(42L);
-    existing.setStatus("RUNNING");
-    Mockito.when(
-            gameInstanceRepository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
-                1L, 42L, "RUNNING"))
-        .thenReturn(java.util.Optional.of(existing));
-    Mockito.when(ipLimiter.canAccept("1.2.3.4", 77L)).thenReturn(true);
-    Mockito.when(ipLimiter.transferRegistration("1.2.3.4", 77L, 88L)).thenReturn(false);
-    Mockito.when(ipLimiter.tryRegister("1.2.3.4", 88L)).thenReturn(false);
-    Mockito.when(
-            gameInstanceService.startSession(
-                Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
-                Mockito.eq(false)))
-        .thenReturn(
-            new GameInstanceDto(
-                88L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 42L, "RUNNING"));
-    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
-    GameSessionGrpcService service =
-        newService(
-            pingService,
-            gameInstanceService,
-            featureFlagService,
-            textCommandInterpreter,
-            gameInstanceRepository,
-            tickService,
-            meterRegistry,
-            ipLimiter);
-
-    AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
-    service.startSession(
-        StartSessionRequest.newBuilder()
-            .setTenantId("1")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setClientIp("1.2.3.4")
-            .setOwnerAccountId("42")
-            .build(),
-        new StreamObserver<StartSessionResponse>() {
-          @Override
-          public void onNext(StartSessionResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            fail(t);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("CONNECTION_LIMIT", ref.get().getError().getCode());
-    Mockito.verify(gameInstanceService).stopSession(88L);
-    Mockito.verify(gameInstanceService, Mockito.never()).stopSession(77L);
-    Mockito.verify(ipLimiter, Mockito.never()).release(77L);
   }
 
   @Test

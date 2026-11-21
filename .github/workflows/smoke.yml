@@ -616,7 +616,7 @@ jobs:
             // Include held-admission proof, authenticated cleanup, and their executed inputs.
             const canonicalPlayClassifierSha256 = {
               "dev-tools/verify-smoke-images.sh": "559e0713cc86ab533cc23214e56ece2e7cf4e069d1bb7541a1e09bff36ad4c67",
-              "dev-tools/smoke/smoke_common.py": "a1e36948b500ac796295560cb8c22321ebe47eab78be9e1f4d58837053547534",
+              "dev-tools/smoke/smoke_common.py": "5ef1c63af05aa833dbb3f66569cc016362218f474036ab239fb08b84e178c3e8",
               "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b",
               "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
               "dev-tools/smoke/held-admission-qualification.sh": "b548a773f1786b72d40a3728052a336cb249257a3f40735f005b060812184ed3",

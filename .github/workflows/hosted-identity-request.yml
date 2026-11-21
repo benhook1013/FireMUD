@@ -1207,6 +1207,22 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write verification namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write verification identity-requester kubeconfig
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Revalidate open PR before runtime verification
         env:
@@ -1220,6 +1236,7 @@ jobs:
       - name: Capture exact runtime Namespace UID before verification
         id: capture-runtime-namespace
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
@@ -1293,6 +1310,10 @@ jobs:
 
       - name: Wait for exact controller identity projection
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          IDENTITY_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             "pr-${{ needs.validate-target.outputs.pr_number }}" \
@@ -1305,6 +1326,7 @@ jobs:
 
       - name: Wait for runtime rollouts
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -1315,6 +1337,7 @@ jobs:
         id: runtime-port
         if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -1386,6 +1409,7 @@ jobs:
         if: ${{ !cancelled() && failure() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -1462,7 +1486,9 @@ jobs:
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
         run: |
-          rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+          rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \
+            "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
   publish-preview-proof:
     name: Publish Verified Hosted Preview Proof

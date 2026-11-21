@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -61,9 +62,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
     def _bootstrap_manifest_fixture(self) -> str:
         workflow = self.validator._load_workflow(ROOT)
         deploy_job = workflow["jobs"]["dev-demo-deploy"]
-        return self.validator._find_step(
-            deploy_job, "Create dev-demo smoke account"
-        )["run"]
+        return self.validator._find_step(deploy_job, "Create dev-demo smoke account")["run"]
 
     def _write_workflow_fixture(
         self,
@@ -138,9 +137,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"'
         )
         self.assertIn(canonical_command, bootstrap_manifest)
-        reformatted_manifest = bootstrap_manifest.replace(
-            canonical_command, reformatted_command, 1
-        )
+        reformatted_manifest = bootstrap_manifest.replace(canonical_command, reformatted_command, 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, reformatted_manifest)
@@ -148,19 +145,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_reports_extra_bootstrap_secret_command_options(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        command_end = (
-            '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"'
-        )
+        command_end = '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"'
         self.assertIn(command_end, bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            command_end, f"{command_end} \\\n--dry-run=client", 1
-        )
+        invalid_manifest = bootstrap_manifest.replace(command_end, f"{command_end} \\\n--dry-run=client", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "only --from-file arguments are allowed"
-            ):
+            with self.assertRaisesRegex(AssertionError, "only --from-file arguments are allowed"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_legacy_player_bootstrap_payload(self):
@@ -181,9 +172,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "      },"
         )
         self.assertIn(canonical_payload, bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            canonical_payload, legacy_payload, 1
-        )
+        invalid_manifest = bootstrap_manifest.replace(canonical_payload, legacy_payload, 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
@@ -251,9 +240,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "      },"
         )
         self.assertIn(canonical_payload, bootstrap_manifest)
-        reformatted_manifest = bootstrap_manifest.replace(
-            canonical_payload, reformatted_payload, 1
-        )
+        reformatted_manifest = bootstrap_manifest.replace(canonical_payload, reformatted_payload, 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, reformatted_manifest)
@@ -288,9 +275,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "dynamic :80 local-port syntax"
-            ):
+            with self.assertRaisesRegex(AssertionError, "dynamic :80 local-port syntax"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_literal_bootstrap_port_assignment(self):
@@ -299,52 +284,72 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         dynamic_forward = "service/spring-cloud-gateway \\\n  :80 \\\n"
         self.assertIn(dynamic_assignment, bootstrap_manifest)
         self.assertIn(dynamic_forward, bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            dynamic_assignment, "BOOTSTRAP_GATEWAY_PORT=12345", 1
-        )
+        invalid_manifest = bootstrap_manifest.replace(dynamic_assignment, "BOOTSTRAP_GATEWAY_PORT=12345", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "dynamically selected local port"
-            ):
+            with self.assertRaisesRegex(AssertionError, "dynamically selected local port"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_missing_pre_python_liveness_check(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        liveness_check = (
-            'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
-        )
+        liveness_check = 'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
         self.assertEqual(2, bootstrap_manifest.count(liveness_check))
         invalid_manifest = bootstrap_manifest.replace(liveness_check, "", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "recheck port-forward liveness before invoking Python"
-            ):
+            with self.assertRaisesRegex(AssertionError, "recheck port-forward liveness before invoking Python"):
                 self.validator.validate_workflow(root)
+
+    def test_gateway_port_parser_uses_pod_target_and_validates_port(self):
+        manifest = self._bootstrap_manifest_fixture()
+        parser = manifest.split("# BEGIN gateway port parser", 1)[1].split("# END gateway port parser", 1)[0]
+        cases = {
+            "Forwarding from 127.0.0.1:12345 -> 8080": "12345",
+            "Forwarding from 127.0.0.1:00080 -> 8080": "80",
+            "Forwarding from 127.0.0.1:65535 -> 8080": "65535",
+            "Forwarding from 127.0.0.1:12345 -> 80": None,
+            "Forwarding from 0.0.0.0:12345 -> 8080": None,
+            "Forwarding from 127.0.0.1:0 -> 8080": None,
+            "Forwarding from 127.0.0.1:65536 -> 8080": None,
+            "Forwarding from 127.0.0.1:123456 -> 8080": None,
+            "Forwarding from 127.0.0.1:12345 -> 8080 trailing": None,
+            "unrelated startup output": None,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "port-forward.log"
+            for line, expected in cases.items():
+                with self.subTest(line=line):
+                    log.write_text(line + "\n")
+                    result = subprocess.run(
+                        ["bash", "-c", parser + '\nparse_bootstrap_gateway_port "$1"', "parser-test", str(log)],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    if expected is None:
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertEqual("", result.stdout)
+                    else:
+                        self.assertEqual(0, result.returncode, result.stderr)
+                        self.assertEqual(expected + "\n", result.stdout)
 
     def test_validate_workflow_rejects_unbounded_port_forward_readiness(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertIn("for attempt in {1..30}; do", bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            "for attempt in {1..30}; do", "while true; do", 1
-        )
+        invalid_manifest = bootstrap_manifest.replace("for attempt in {1..30}; do", "while true; do", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "short bounded port-forward readiness loop"
-            ):
+            with self.assertRaisesRegex(AssertionError, "short bounded port-forward readiness loop"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_bootstrap_manifest_without_env_from(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertIn("envFrom:", bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            "envFrom:", "missingEnvFrom:", 1
-        )
+        invalid_manifest = bootstrap_manifest.replace("envFrom:", "missingEnvFrom:", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
@@ -359,9 +364,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "${{ success() || steps.cluster-access.outputs.available == 'true' }}",
             "${{ steps.cluster-access.outputs.available == 'true' && success() }}",
         ):
-            with self.subTest(
-                smoke_condition=smoke_condition
-            ), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(smoke_condition=smoke_condition), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._write_workflow_fixture(
                     root,
@@ -380,10 +383,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             self._write_workflow_fixture(
                 root,
                 self._bootstrap_manifest_fixture(),
-                smoke_condition=(
-                    "${{ success() && "
-                    "steps.cluster-access.outputs.available != 'true' }}"
-                ),
+                smoke_condition=("${{ success() && steps.cluster-access.outputs.available != 'true' }}"),
             )
             self.validator.validate_workflow(root)
 
@@ -418,9 +418,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
     def test_smoke_account_contract_reports_missing_script_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            missing = root / (
-                "services/game-session-service/websocket-login-look-smoke.sh"
-            )
+            missing = root / ("services/game-session-service/websocket-login-look-smoke.sh")
             with self.assertRaises(AssertionError) as raised:
                 self.validator._validate_smoke_account_contract(root)
         self.assertEqual(
@@ -429,10 +427,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         )
 
     def test_smoke_account_contract_reports_missing_marker(self):
-        missing_marker = (
-            "verify_smoke_account(account_api_base, login_email, password, "
-            "timeout_seconds)"
-        )
+        missing_marker = "verify_smoke_account(account_api_base, login_email, password, timeout_seconds)"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for relative_path in (
@@ -442,8 +437,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 script = root / relative_path
                 script.parent.mkdir(parents=True, exist_ok=True)
                 script.write_text(
-                    'login_email = os.environ.get("SMOKE_LOGIN_EMAIL", '
-                    'os.environ["DEMO_SMOKE_EMAIL"])\n',
+                    'login_email = os.environ.get("SMOKE_LOGIN_EMAIL", os.environ["DEMO_SMOKE_EMAIL"])\n',
                     encoding="utf-8",
                 )
             with self.assertRaises(AssertionError) as raised:
@@ -463,9 +457,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ) as urlopen,
             redirect_stdout(success_output),
         ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
+            verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
         login_request = urlopen.call_args.args[0]
         self.assertEqual(
             "http://account.test/auth/login",
@@ -508,9 +500,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             redirect_stderr(failure_stderr),
             self.assertRaises(RuntimeError) as raised,
         ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
+            verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
         self.assertEqual(
             "Smoke account validation failed with status 401",
             str(raised.exception),
@@ -553,9 +543,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             patch("smoke_common.time.sleep") as sleep,
             redirect_stdout(retry_output),
         ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
+            verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
         self.assertEqual(
             3,
             retry_urlopen.call_count,
@@ -596,9 +584,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             redirect_stderr(exhausted_stderr),
             self.assertRaises(RuntimeError) as raised,
         ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
+            verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
         self.assertEqual(
             "Smoke account validation failed with status 503",
             str(raised.exception),
@@ -646,9 +632,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             redirect_stderr(transport_stderr),
             self.assertRaises(RuntimeError) as raised,
         ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
+            verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
         self.assertEqual(
             "Smoke account validation failed due to a transport error",
             str(raised.exception),
@@ -700,9 +684,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             redirect_stderr(non_retryable_stderr),
             self.assertRaises(RuntimeError) as raised,
         ):
-            verify_smoke_account(
-                "http://account.test", "demo@example.com", "swordfish", 5
-            )
+            verify_smoke_account("http://account.test", "demo@example.com", "swordfish", 5)
         self.assertEqual(
             "Smoke account validation failed with status 400",
             str(raised.exception),
@@ -763,25 +745,15 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "}",
             "}",
         ]
-        self.assertEqual(
-            validator._cleanup_function_end_index(nested_group, 0), len(nested_group)
-        )
+        self.assertEqual(validator._cleanup_function_end_index(nested_group, 0), len(nested_group))
         for fixture in (["if true", "then", "fi"], ["if true; then echo inline; fi"]):
             with (
                 self.subTest(fixture=fixture),
                 self.assertRaisesRegex(AssertionError, "unsupported shell if form"),
             ):
                 validator.closing_fi_index(fixture, 0)
-        self.assertIsNone(
-            validator.closing_fi_index(
-                ['if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then', "true"], 0
-            )
-        )
-        self.assertIsNone(
-            validator._cleanup_function_end_index(
-                ["cleanup_bootstrap_temp_dir() {", "true"], 0
-            )
-        )
+        self.assertIsNone(validator.closing_fi_index(['if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then', "true"], 0))
+        self.assertIsNone(validator._cleanup_function_end_index(["cleanup_bootstrap_temp_dir() {", "true"], 0))
 
     def test_summary_helper_paths_allow_only_workspace_root_variables(self):
         validator = self.validator
@@ -803,9 +775,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                     matches = list(validator._helper_matches(fixture))
                     self.assertEqual(len(matches), 1)
                     self.assertEqual(
-                        validator.normalize_summary_helper_path(
-                            matches[0].group("invocation"), root
-                        ),
+                        validator.normalize_summary_helper_path(matches[0].group("invocation"), root),
                         expected.resolve(),
                     )
             unsupported = "$HOME/dev-tools/tests/smoke-transport-contract.sh"
@@ -814,9 +784,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 validator.normalize_summary_helper_path(match.group("invocation"), root)
 
             outside = root.parent / "dev-tools/tests/smoke-transport-contract.sh"
-            with self.assertRaisesRegex(
-                ValueError, "summary helper path escapes repository root"
-            ):
+            with self.assertRaisesRegex(ValueError, "summary helper path escapes repository root"):
                 validator.discover_summary_writers(
                     [
                         validator.WorkflowRunSource(
@@ -839,10 +807,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 False,
             ),
             (
-                (
-                    'printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\n'
-                    'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"'
-                ),
+                ('printf "%s" "$DEMO_SMOKE_PASSWORD" >/tmp/password\necho "safe summary" >> "$GITHUB_STEP_SUMMARY"'),
                 False,
             ),
             (
@@ -850,35 +815,19 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 True,
             ),
             (
-                (
-                    "cat <<'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
+                ("cat <<'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\nunsafe: $DEMO_SMOKE_PASSWORD\nSUMMARY_EOF"),
                 True,
             ),
             (
-                (
-                    "cat <<-'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n"
-                    "\tunsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
+                ("cat <<-'SUMMARY_EOF' >> \"$GITHUB_STEP_SUMMARY\"\n\tunsafe: $DEMO_SMOKE_PASSWORD\nSUMMARY_EOF"),
                 True,
             ),
             (
-                (
-                    "cat >> \"$GITHUB_STEP_SUMMARY\" <<'SUMMARY_EOF'\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
+                ("cat >> \"$GITHUB_STEP_SUMMARY\" <<'SUMMARY_EOF'\nunsafe: $DEMO_SMOKE_PASSWORD\nSUMMARY_EOF"),
                 True,
             ),
             (
-                (
-                    "cat <<'SUMMARY_EOF' | tee \"$GITHUB_STEP_SUMMARY\"\n"
-                    "unsafe: $DEMO_SMOKE_PASSWORD\n"
-                    "SUMMARY_EOF"
-                ),
+                ("cat <<'SUMMARY_EOF' | tee \"$GITHUB_STEP_SUMMARY\"\nunsafe: $DEMO_SMOKE_PASSWORD\nSUMMARY_EOF"),
                 True,
             ),
             (
@@ -912,10 +861,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 regions = validator.summary_write_regions(fixture)
                 self.assertEqual(
-                    any(
-                        validator.has_forbidden_summary_reference(region)
-                        for region in regions
-                    ),
+                    any(validator.has_forbidden_summary_reference(region) for region in regions),
                     unsafe,
                 )
 
@@ -981,8 +927,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             reachable_helpers = [
                 writer
                 for writer in writers
-                if writer.resolved_helper_path
-                in {helper_one.resolve(), helper_two.resolve()}
+                if writer.resolved_helper_path in {helper_one.resolve(), helper_two.resolve()}
             ]
             self.assertEqual(len(reachable_helpers), 2)
             self.assertTrue(all(writer.summary_reachable for writer in reachable_helpers))
@@ -1019,19 +964,11 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             writers = validator.discover_summary_writers(sources, root)
             self.assertEqual(len(writers), 3)
             resolved_helper_paths = [
-                writer.resolved_helper_path
-                for writer in writers
-                if writer.resolved_helper_path is not None
+                writer.resolved_helper_path for writer in writers if writer.resolved_helper_path is not None
             ]
-            self.assertCountEqual(
-                resolved_helper_paths, [helper_one.resolve(), helper_two.resolve()]
-            )
+            self.assertCountEqual(resolved_helper_paths, [helper_one.resolve(), helper_two.resolve()])
             self.assertTrue(
-                all(
-                    writer.summary_reachable
-                    for writer in writers
-                    if writer.resolved_helper_path is not None
-                )
+                all(writer.summary_reachable for writer in writers if writer.resolved_helper_path is not None)
             )
 
     def test_helper_reprocesses_when_reachability_is_upgraded(self):
@@ -1050,16 +987,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                     "summary-step",
                     'bash dev-tools/summary.sh >> "$GITHUB_STEP_SUMMARY"',
                 ),
-                validator.WorkflowRunSource(
-                    "job", "non-summary-step", "bash dev-tools/summary.sh"
-                ),
+                validator.WorkflowRunSource("job", "non-summary-step", "bash dev-tools/summary.sh"),
             ]
             writers = validator.discover_summary_writers(sources, root)
-            reachable_helpers = [
-                writer
-                for writer in writers
-                if writer.resolved_helper_path == helper.resolve()
-            ]
+            reachable_helpers = [writer for writer in writers if writer.resolved_helper_path == helper.resolve()]
             self.assertEqual(len(reachable_helpers), 1)
             self.assertTrue(reachable_helpers[0].summary_reachable)
 
@@ -1074,9 +1005,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                     'bash dev-tools/missing-summary.sh >> "$GITHUB_STEP_SUMMARY"',
                 )
             ]
-            with self.assertRaisesRegex(
-                AssertionError, "summary helper file is missing"
-            ):
+            with self.assertRaisesRegex(AssertionError, "summary helper file is missing"):
                 validator.discover_summary_writers(source, root)
 
     def test_discovery_fails_closed_for_unsupported_variable_helper(self):
