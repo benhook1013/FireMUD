@@ -323,14 +323,14 @@ services:
       <<: *service-health
 
   postgres:
-    image: postgres:19@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60
+    image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
     command: ["postgres", "-c", "max_connections=200"]
     entrypoint: ["/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh"]
     mem_limit: 1g
     restart: unless-stopped
     env_file: *service-env-file
     environment:
-      PGDATA: /var/lib/postgresql/19/docker
+      PGDATA: /var/lib/postgresql/18/docker
       POSTGRES_USER: ${FIREMUD_POSTGRES_USER}
       POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD}
       POSTGRES_DB: ${FIREMUD_POSTGRES_DB}

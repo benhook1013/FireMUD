@@ -1541,7 +1541,7 @@ require_contains(
 postgres_runtime_proof_step = find_step(
     ci,
     "postgres-runtime-upgrade-proof",
-    "Prove PostgreSQL 16 to 19 logical restore on isolated Docker volumes",
+    "Prove PostgreSQL 16 to 18 logical restore on isolated Docker volumes",
     "ci workflow",
 )
 require_equal(

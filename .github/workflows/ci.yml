@@ -192,7 +192,7 @@ jobs:
         with:
           requirements: yaml
 
-      - name: Prove PostgreSQL 16 to 19 logical restore on isolated Docker volumes
+      - name: Prove PostgreSQL 16 to 18 logical restore on isolated Docker volumes
         env:
           FIREMUD_POSTGRES_RUNTIME_DOCKER_PROOF: required
         run: bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh

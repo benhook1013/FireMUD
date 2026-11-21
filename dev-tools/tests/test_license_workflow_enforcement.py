@@ -207,10 +207,10 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
         expected = {
             f"Maven:io.javaoperatorsdk:{module}:{version}"
             for module in ("operator-framework", "operator-framework-core")
-            for version in ("5.6.3", "5.6.4")
+            for version in ("5.6.3", "5.6.4", "5.7.0")
         } | {
             f"Maven:io.javaoperatorsdk:operator-framework-spring-boot-starter:{version}"
-            for version in ("6.7.3", "6.7.4")
+            for version in ("6.7.3", "6.7.4", "6.8.0")
         }
         self.assertEqual(len(expected), len(java_operator))
         self.assertEqual(expected, {entry["id"] for entry in java_operator})

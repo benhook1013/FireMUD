@@ -624,7 +624,7 @@ jobs:
               "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
               "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
-              "docker/docker-compose.yml": "c0901dada396b4856e790d5af8768834b4c09bd0b62581d317e4ee5ee1887afb",
+              "docker/docker-compose.yml": "cd3957cace554958f0a1077754809cb75fc9c83bbf0beca99de4a8cf9bf86929",
               "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
               "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
