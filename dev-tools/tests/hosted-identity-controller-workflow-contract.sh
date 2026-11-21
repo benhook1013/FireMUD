@@ -1034,7 +1034,6 @@ assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "
     "github.event.workflow_run.conclusion == 'success' && "
     "github.event.workflow_run.head_repository.full_name == github.repository && "
-    "github.event.workflow_run.name == 'PR Preview Environment' && "
     "(github.event.workflow_run.event == 'pull_request' || "
     "github.event.workflow_run.event == 'repository_dispatch')) || "
     "(github.event_name == 'pull_request_target' && "

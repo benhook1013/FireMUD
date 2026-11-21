@@ -9,8 +9,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # green. Base retargets keep the required name and rerun the full gate.
 python3 - "$ROOT_DIR" <<'PY'
 import ast
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 import yaml
@@ -112,11 +114,11 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
         raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
 
 
-def effective_group(group, base_ref):
+def effective_group(group, action, base_ref):
     values = {
         "github.event.changes.base.ref": repr(base_ref),
         "github.event.pull_request.number": "42",
-        "github.event.action": "'edited'",
+        "github.event.action": repr(action),
         "github.event_name": "'pull_request'",
         "github.workflow": "'Required Gate'",
         "github.run_id": "123",
@@ -175,10 +177,14 @@ assert not can_reuse_required_name("CodeQL Analysis (${{ matrix.language }})", {
 
 
 def isolates_metadata_group(group, run_scoped):
-    metadata = effective_group(group, None)
-    retarget = effective_group(group, "develop")
+    metadata = effective_group(group, "edited", None)
     expected_suffix = "-metadata-123" if run_scoped else "-metadata"
-    return metadata != retarget and metadata.endswith(expected_suffix) and retarget.endswith("-required")
+    substantive = [effective_group(group, action, base_ref) for action, base_ref in (
+        ("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None),
+    )]
+    return metadata.endswith(expected_suffix) and all(
+        name != metadata and name.endswith("-required") for name in substantive
+    )
 
 
 def excludes_metadata(expression):
@@ -282,6 +288,23 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
         raise SystemExit(f"{workflow} {gate_name} result step cannot ignore failures")
     if "if" in result_steps[0]:
         raise SystemExit(f"{workflow} {gate_name} result step must run unconditionally")
+    if workflow == "codeql.yml":
+        step = result_steps[0]
+        if step["env"].get("SHOULD_RUN") != "${{ needs.changes.outputs.should_run }}" or \
+           step["env"].get("ANALYZE_RESULT") != "${{ needs.analyze.result }}":
+            raise SystemExit("CodeQL enforcement must use actual detector and analyzer results")
+        for changes, should_run, analyze, success in (
+            ("success", "true", "failure", False),
+            ("success", "true", "success", True),
+            ("success", "false", "skipped", True),
+            ("failure", "false", "skipped", False),
+            ("success", "", "skipped", False),
+        ):
+            outcome = subprocess.run(["bash", "-e", "-c", step["run"]], check=False, capture_output=True,
+                                     env={**os.environ, "CHANGES_RESULT": changes,
+                                          "SHOULD_RUN": should_run, "ANALYZE_RESULT": analyze})
+            if (outcome.returncode == 0) != success:
+                raise SystemExit(f"CodeQL enforcement returned {outcome.returncode} for {changes}/{should_run}/{analyze}")
     if any("if" in step and "edited" in step["if"] for step in gate.get("steps", [])):
         raise SystemExit(f"{workflow} {gate_name} steps must not branch on edits; the job condition owns that")
 
@@ -303,13 +326,15 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     if "github.event.pull_request.number" not in group or META.split(" && ", 1)[1] not in group or suffix not in group:
         raise SystemExit(f"{workflow} concurrency group must keep metadata runs out of the PR's required namespace")
     if not isolates_metadata_group(group, run_scoped):
-        raise SystemExit(f"{workflow} effective metadata and retarget groups must differ")
+        raise SystemExit(f"{workflow} effective metadata and substantive groups must differ")
     # The old substring guard would accept this expression despite its bypass.
     bypassed = group.replace(META, "true && 'required' || " + META, 1)
     assert bypassed != group and META in bypassed and suffix in bypassed
-    assert effective_group(bypassed, None) == effective_group(bypassed, "develop"), workflow
-    assert effective_group(bypassed, None).endswith("-required"), workflow
+    assert effective_group(bypassed, "edited", None) == effective_group(bypassed, "edited", "develop"), workflow
+    assert effective_group(bypassed, "edited", None).endswith("-required"), workflow
     assert not isolates_metadata_group(bypassed, run_scoped), workflow
+    collided = group.replace(META, f"github.event.action == 'synchronize' || {META}", 1)
+    assert collided != group and not isolates_metadata_group(collided, run_scoped), workflow
     if concurrency.get("cancel-in-progress") != "true":
         raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
 PY
@@ -656,6 +681,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
   const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
   const duplicatePrimary = kind === "optional-final-read-duplicate";
+  const disappearingSnapshot = kind === "optional-final-read-incomplete-snapshot";
   const badStatus = kind.endsWith("-forbidden") ? 403 : kind.endsWith("-missing") ? 404 : 503;
   const primaryCanRecover = h0 && !cancelledPrimary && !cancelledWithReplacement && badStatus === 503;
   const primaryReady = () => primaryCanRecover && primaryInventoryReads > 1;
@@ -729,7 +755,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
         if (runId === 44 && cancelledWithReplacement) return {data: dispatchPrimary};
         currentRunReads += 1;
         if (finalAttemptError && currentRunReads >= 2) {
-          throw Object.assign(new Error(`alternative final workflow-run HTTP ${badStatus}`), {status: badStatus});
+          throw Object.assign(new Error("alternative final workflow-run unavailable"),
+            kind.endsWith("-network") ? {cause: {code: "ECONNRESET"}} : {status: badStatus});
         }
         if (incompleteSnapshot) {
           snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
@@ -741,9 +768,16 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
-    if (input.run_id === 43 && primaryReady()) return {data: exactPrimary};
-    if (cancelledWithReplacement && input.run_id === 44) return {data: dispatchPrimary};
+    if (input.run_id === 43 && primaryReady()) {
+      assert.equal(input.attempt_number, exactPrimary.run_attempt);
+      return {data: exactPrimary};
+    }
+    if (cancelledWithReplacement && input.run_id === 44) {
+      assert.equal(input.attempt_number, dispatchPrimary.run_attempt);
+      return {data: dispatchPrimary};
+    }
     if ((cancelledPrimary || cancelledWithReplacement) && input.run_id === 43) {
+      assert.equal(input.attempt_number, exactPrimary.run_attempt);
       return {data: {...source, id: 43, event: "pull_request", status: "completed", conclusion: "cancelled"}};
     }
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
@@ -752,17 +786,22 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     if (input.run_id === 43 && primaryReady()) {
+      assert.equal(input.attempt_number, exactPrimary.run_attempt);
       return [{...job, run_id: 43, head_sha: head, steps: [...job.steps,
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
     if (cancelledWithReplacement && input.run_id === 44) {
+      assert.equal(input.attempt_number, dispatchPrimary.run_attempt);
       return [{...job, run_id: 44, steps: [...job.steps,
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
     assert.equal(input.run_id, 42);
     if (h0 && ++alternativeJobsReads > (cancelledPrimary ? 0 : 2) && !finalAttemptError) {
+      assert.equal(input.attempt_number, source.run_attempt);
       if (kind.endsWith("-malformed")) return null;
-      throw Object.assign(new Error(`H0 alternative final attempt jobs HTTP ${badStatus}`), {status: badStatus});
+      if (disappearingSnapshot) return [];
+      throw Object.assign(new Error("alternative final attempt jobs unavailable"),
+        kind.endsWith("-network") ? {code: "ECONNRESET"} : {status: badStatus});
     }
     if (finalAttemptError && alternativeJobsReads > 2) {
       return [{...job, steps: [...job.steps,
@@ -844,6 +883,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   }
   for (const [kind, event, selectionMessage] of [
     ["optional-final-read-refresh", "repository_dispatch", "supersedes the pending native wait"],
+    ["optional-final-read-jobs-network", "repository_dispatch", "supersedes the pending native wait"],
     ["optional-final-read-duplicate", "pull_request", "precedes the pending duplicate"],
   ]) {
     const result = await scenario(kind, event);
@@ -869,10 +909,14 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   assert.equal(cancelledReplacement.alternativeJobsReads, 6, "old dispatch proof exhausts final jobs retries");
   assert(cancelledReplacement.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));
   assert.deepEqual(cancelledReplacement.failures, []);
-  const finalAttempt = await scenario("optional-final-read-attempt-transient", "repository_dispatch");
-  assert.equal(finalAttempt.primaryInventoryReads, 2, "failed final attempt read resumes the native producer");
-  assert(finalAttempt.info.some(line => line.includes("Found runtime-images run 43 with status=completed")));
-  assert.deepEqual(finalAttempt.failures, []);
+  for (const kind of ["optional-final-read-attempt-transient", "optional-final-read-attempt-network",
+    "optional-final-read-incomplete-snapshot"]) {
+    const result = await scenario(kind, "repository_dispatch");
+    assert.equal(result.primaryInventoryReads, 2, `${kind} resumes the native producer`);
+    assert(result.info.some(line => line.includes("Found runtime-images run 43 with status=completed")), kind);
+    assert.deepEqual(result.failures, [], kind);
+    if (kind.endsWith("-snapshot")) assert.equal(result.alternativeJobsReads, 11, kind);
+  }
   for (const [kind, code] of [["optional-final-read-attempt-forbidden", 403], ["optional-final-read-attempt-missing", 404]]) {
     const result = await scenario(kind, "repository_dispatch", true);
     assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, code, kind);

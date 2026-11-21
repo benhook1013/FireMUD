@@ -96,15 +96,17 @@ check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
 for event in [base, dispatch, {"event_name": "workflow_dispatch"},
               {"event_name": "workflow_run", "event": {"workflow_run": {"event": "pull_request", "head_branch": "develop"}}}]:
     assert evaluate(event, cancel) == "False", event
-def push_callback(branch, conclusion, run_id, attempt):
+def push_callback(branch, conclusion, run_id, attempt, head_sha="older"):
     return {**base, "event_name": "workflow_run", "event": {"workflow_run": {
-        "event": "push", "head_branch": branch, "conclusion": conclusion,
+        "event": "push", "head_branch": branch, "head_sha": head_sha, "conclusion": conclusion,
         "id": run_id, "run_attempt": attempt}}}
 
 for branch in ("main", "develop"):
     event = push_callback(branch, "success", 91, 2)
     assert evaluate(event, cancel) == "True", event
-    check(event, f"branch-{branch}-required")
+    check(event, f"branch-{branch}-sha-older-ci-91-attempt-2-required")
+    check(push_callback(branch, "success", 97, 1, "newer"),
+          f"branch-{branch}-sha-newer-ci-97-attempt-1-required")
     for conclusion, run_id, attempt in (("failure", 92, 1), ("cancelled", 93, 2),
                                        ("timed_out", 94, 3), (None, 95, 1)):
         event = push_callback(branch, conclusion, run_id, attempt)
@@ -114,6 +116,8 @@ for branch in ("main", "develop"):
 nonprotected = push_callback("feature/x", "success", 96, 2)
 assert evaluate(nonprotected, cancel) == "False", nonprotected
 check(nonprotected, "ci-push-run-96-attempt-2-required")
+assert evaluate(push_callback("Develop", "success", 98, 1)).lower() != \
+       evaluate(push_callback("develop", "success", 97, 1)).lower()
 
 for value in [0, False, "", None]:
     invalid = copy.deepcopy(dispatch)

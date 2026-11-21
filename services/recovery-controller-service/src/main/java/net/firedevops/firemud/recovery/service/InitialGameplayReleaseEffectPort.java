@@ -28,6 +28,10 @@ public interface InitialGameplayReleaseEffectPort {
    * the persisted dispatch time and the controller's time after receiving the readback. If that
    * clock relationship cannot be established, return UNAVAILABLE. Do not replace the observation
    * with an adapter or controller receipt timestamp.
+   *
+   * <p>If a newer partial observation supersedes an older definitive receipt, advancing the
+   * transition requires a fresh exact observation from the owner. Returning the older receipt with
+   * a new timestamp is insufficient.
    */
   EffectReadbackResolution readback(TypedEffect effect, UUID attemptId);
 

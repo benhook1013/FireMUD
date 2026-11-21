@@ -244,13 +244,15 @@ jobs:
             return "$repair_success"
           }
 
-          record_proof_retry() {
+          prepare_preview_dispatch() {
             local namespace="$1"
             local pr_number="$2"
             local base_sha="$3"
             local head_sha="$4"
             local merge_sha="$5"
             local image_tag="$6"
+            local require_deployed_tuple="$7"
+            local priority="$8"
             local fresh_namespace_json
             local fresh_namespace_tuple
             local current_base_sha
@@ -278,12 +280,19 @@ jobs:
             if ! fresh_namespace_json="$(
               kubectl get namespace "${namespace}" --ignore-not-found -o json
             )"; then
-              echo "Unable to recheck namespace ${namespace} before proof retry dispatch." >&2
+              echo "Unable to recheck namespace ${namespace} before preview dispatch." >&2
               return 1
             fi
             if [[ -z "${fresh_namespace_json}" ]]; then
-              echo "Skipping PR #${pr_number}: namespace ${namespace} disappeared before proof retry dispatch." >&2
-              return 1
+              if [[ "$require_deployed_tuple" == true ]]; then
+                echo "Skipping PR #${pr_number}: namespace ${namespace} disappeared before proof retry dispatch." >&2
+                return 1
+              fi
+              if [[ "$priority" != true && "$available_slots" -le 0 ]]; then
+                echo "Skipping ordinary PR #${pr_number}: preview capacity is full."
+                return 1
+              fi
+              return 0
             fi
             if ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
               echo "Skipping PR #${pr_number}: malformed namespace proof-retry evidence; refusing dispatch." >&2
@@ -298,8 +307,11 @@ jobs:
               "${current_head_sha}" != "${head_sha}" ||
               "${current_merge_sha}" != "${merge_sha}" ||
               "${current_image_tag}" != "${image_tag}" ]]; then
-              echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
-              return 1
+              if [[ "$require_deployed_tuple" == true ]]; then
+                echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
+                return 1
+              fi
+              return 0
             fi
             if [[ "${proof_base_sha}" == "${base_sha}" &&
               "${proof_head_sha}" == "${head_sha}" &&
@@ -341,9 +353,29 @@ jobs:
           available_slots=$((max_active - active_count))
           dispatch_sent=false
           automatic_preview_has_tuple() {
-            local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" jobs latest
+            local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" jobs latest jobs_available=true
             # 0: exact active tuple, 1: proven nonmatch, 2: unavailable/unfinished proof.
-            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || return 2
+            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
+            latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
+            jq -e '
+              type == "object"
+              and (.id | type == "number" and . > 0 and . == floor)
+              and (.run_attempt | type == "number" and . > 0 and . == floor)
+              and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+              and (.event | type == "string" and length > 0)
+              and (.path | type == "string" and length > 0)
+              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
+              ' <<<"$latest" >/dev/null || return 2
+            jq -e --argjson id "$run_id" --arg head "$head" --arg pr "$pr" --arg event "$event" --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" '
+              .id == $id and .head_sha == $head
+              and .event == $event and .workflow_id == $workflow_id
+              and .repository.full_name == $repository and .head_repository.full_name == $repository
+              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
+              and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
+            ' <<<"$latest" >/dev/null || return 1
+            if jq -e '.status == "completed"' <<<"$latest" >/dev/null; then return 1; fi
+            [[ "$jobs_available" == true ]] || return 2
+            jq -e --argjson attempt "$attempt" '.run_attempt == $attempt' <<<"$latest" >/dev/null || return 2
             jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
                 .jobs as $jobs
                 | (($jobs | type) == "array") and (.total_count == ($jobs | length))
@@ -357,48 +389,21 @@ jobs:
                       (.name | test("^Preview resolved tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
                       and .status == "completed" and .conclusion == "success"))
               ' <<<"$jobs" >/dev/null || return 2
-            latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
-            jq -e '
-              type == "object"
-              and (.id | type == "number" and . > 0 and . == floor)
-              and (.run_attempt | type == "number" and . > 0 and . == floor)
-              and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
-              and (.event | type == "string" and length > 0)
-              and (.path | type == "string" and length > 0)
-              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
-              ' <<<"$latest" >/dev/null || return 2
-            if jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" --arg pr "$pr" --arg event "$event" --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" '
-              .id == $id and .run_attempt != $attempt and .head_sha == $head
-              and .event == $event and .workflow_id == $workflow_id
-              and .repository.full_name == $repository and .head_repository.full_name == $repository
-              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
-              and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
-              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
-              ' <<<"$latest" >/dev/null; then
-              return 2
-            fi
-            jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" --arg pr "$pr" --arg event "$event" --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" '
-              .id == $id and .run_attempt == $attempt and .head_sha == $head
-              and .event == $event and .workflow_id == $workflow_id
-              and .repository.full_name == $repository and .head_repository.full_name == $repository
-              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
-              and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
-              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
-            ' <<<"$latest" >/dev/null || return 1
             jq -e --arg tuple "$tuple" '
               any(.jobs[] | select(.name == "Preview Plan") | .steps[]; .name == $tuple)
               ' <<<"$jobs" >/dev/null || return 1
           }
 
           trusted_consumer_has_tuple() {
-            local run_id="$1" attempt="$2" run_head="$3" tuple="$4" jobs latest
+            local run_id="$1" attempt="$2" run_head="$3" tuple="$4" jobs latest jobs_available=true
             # A workflow_run display title is inherited from its source. Use the
             # trusted validator's completed attempt evidence to bind the tuple.
-            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || return 2
+            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
             latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
             jq -e --argjson id "$run_id" --argjson workflow_id "$consumer_workflow_id" \
-              --arg repository "$GITHUB_REPOSITORY" --arg default_branch "$DEFAULT_BRANCH" '
-              .id == $id and .workflow_id == $workflow_id and .event == "workflow_run"
+              --arg repository "$GITHUB_REPOSITORY" --arg default_branch "$DEFAULT_BRANCH" --arg head "$run_head" '
+              .id == $id and .workflow_id == $workflow_id and .event == "workflow_run" and .head_sha == $head
+              and (.run_attempt | type == "number" and . > 0 and . == floor)
               and .repository.full_name == $repository and .head_repository.full_name == $repository
               and .head_branch == $default_branch
               and (.path | IN(".github/workflows/hosted-identity-request.yml",
@@ -407,8 +412,8 @@ jobs:
               and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
             ' <<<"$latest" >/dev/null || return 2
             if jq -e '.status == "completed"' <<<"$latest" >/dev/null; then return 1; fi
-            jq -e --argjson attempt "$attempt" --arg head "$run_head" \
-              '.run_attempt == $attempt and .head_sha == $head' <<<"$latest" >/dev/null || return 2
+            [[ "$jobs_available" == true ]] || return 2
+            jq -e --argjson attempt "$attempt" '.run_attempt == $attempt' <<<"$latest" >/dev/null || return 2
             jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$run_head" '
               .jobs as $jobs
               | (($jobs | type) == "array") and (.total_count == ($jobs | length)) and (.total_count < 100)
@@ -686,8 +691,14 @@ jobs:
               # A same-head title is not proof: the base can move independently.
               tuple_step="Preview resolved tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
               consumer_tuple="Trusted preview deploy tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
+              lookup_count=0
               while IFS=$'\t' read -r run_id run_attempt run_event run_head; do
                 [[ -n "$run_id" ]] || continue
+                if (( lookup_count >= 3 )); then
+                  active_preview_lookup_unknown=true
+                  break
+                fi
+                lookup_count=$((lookup_count + 1))
                 lookup_status=0
                 if [[ "$run_event" == workflow_run ]]; then
                   trusted_consumer_has_tuple "$run_id" "$run_attempt" "$run_head" "$consumer_tuple" || lookup_status=$?
@@ -700,7 +711,7 @@ jobs:
                 elif [[ "$lookup_status" -eq 2 ]]; then
                   active_preview_lookup_unknown=true
                 fi
-              done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[:3][] | [.id, .run_attempt, .event, .head_sha] | @tsv' <<<"$preview_candidates")
+              done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[] | [.id, .run_attempt, .event, .head_sha] | @tsv' <<<"$preview_candidates")
             fi
 
             if [[ -n "${active_preview_run_id}" ]]; then
@@ -712,19 +723,17 @@ jobs:
               continue
             fi
 
+            require_deployed_tuple=false
             if [[ "${namespace_exists}" == "true" &&
               "${current_base_sha}" == "${base_sha}" &&
               "${current_head_sha}" == "${head_sha}" &&
               "${current_merge_sha}" == "${merge_sha}" &&
-              "${current_image_tag}" == "${image_tag}" &&
-              ("${proof_base_sha}" != "${base_sha}" ||
-                "${proof_head_sha}" != "${head_sha}" ||
-                "${proof_merge_sha}" != "${merge_sha}" ||
-                "${proof_image_tag}" != "${image_tag}" ||
-                -z "${namespace_uid}" ||
-                "${proof_namespace_uid}" != "${namespace_uid}") ]]; then
-              record_proof_retry "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" || continue
+              "${current_image_tag}" == "${image_tag}" ]]; then
+              require_deployed_tuple=true
             fi
+            # A consumer may finish deployment and proof during the active-run lookup.
+            prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
+              "$require_deployed_tuple" "$priority" || continue
 
             echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"
             gh api \

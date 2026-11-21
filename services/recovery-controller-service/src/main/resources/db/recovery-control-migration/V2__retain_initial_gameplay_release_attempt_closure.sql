@@ -27,3 +27,11 @@ CREATE TABLE recovery_control.initial_gameplay_release_attempt_closure (
     CHECK (recorded_at >= dispatched_at),
     PRIMARY KEY (outbox_id, attempt_id)
 );
+
+CREATE TABLE recovery_control.initial_gameplay_release_attempt_rejection (
+    outbox_id UUID NOT NULL
+        REFERENCES recovery_control.initial_gameplay_release_outbox(outbox_id) ON DELETE RESTRICT,
+    attempt_id UUID NOT NULL,
+    attempt_ordinal INTEGER NOT NULL CHECK (attempt_ordinal > 0),
+    PRIMARY KEY (outbox_id, attempt_id)
+);

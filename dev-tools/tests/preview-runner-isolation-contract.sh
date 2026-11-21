@@ -474,30 +474,33 @@ else:
 # The plan's local actions and scripts must come from the default branch; the
 # render's PR checkout is exact, unprivileged, and bound to the planned merge.
 plan_checkouts = checkouts(preview_jobs["preview-plan"])
-if len(plan_checkouts) != 1 or plan_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}":
-    raise AssertionError("preview plan must check out the trusted default branch")
+if len(plan_checkouts) != 1:
+    raise AssertionError("preview plan must have one trusted tools checkout")
 render_checkouts = checkouts(preview_jobs["preview-render"])
 if len(render_checkouts) != 2:
     raise AssertionError("preview render must isolate trusted tools and candidate chart checkouts")
-def check_render_tools_checkout(checkout: dict[str, Any]) -> None:
+
+def check_trusted_tools_checkout(checkout: dict[str, Any]) -> None:
     options = checkout.get("with", {})
     if options.get("ref") != "${{ github.event.repository.default_branch }}" or options.get("path") is not None:
-        raise AssertionError("preview render tools must remain rooted at the trusted default branch")
+        raise AssertionError("preview tools must remain rooted at the trusted default branch")
     if "repository" in options and options["repository"] != "${{ github.repository }}":
-        raise AssertionError("preview render tools must check out the current repository")
+        raise AssertionError("preview tools must check out the current repository")
 
-check_render_tools_checkout(render_checkouts[0])
-foreign_tools_checkout = {
-    **render_checkouts[0],
-    "with": {**render_checkouts[0]["with"], "repository": "other-owner/other-repo"},
-}
-try:
-    check_render_tools_checkout(foreign_tools_checkout)
-except AssertionError as error:
-    if str(error) != "preview render tools must check out the current repository":
-        raise
-else:
-    raise AssertionError("foreign render tools checkout escaped repository checking")
+for tools_checkout in (plan_checkouts[0], render_checkouts[0]):
+    check_trusted_tools_checkout(tools_checkout)
+    for override, reason in (
+        ({"repository": "other-owner/other-repo"}, "preview tools must check out the current repository"),
+        ({"path": "candidate"}, "preview tools must remain rooted at the trusted default branch"),
+    ):
+        try:
+            check_trusted_tools_checkout({**tools_checkout, "with": {**tools_checkout["with"], **override}})
+        except AssertionError as error:
+            if str(error) != reason:
+                raise
+        else:
+            raise AssertionError(f"untrusted tools checkout escaped checking: {override}")
+
 def check_candidate_checkout(step: dict[str, Any]) -> None:
     options = step.get("with", {})
     if options.get("repository", "$"+"{{ github.repository }}") != "$"+"{{ github.repository }}":

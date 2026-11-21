@@ -32,14 +32,19 @@ public interface InitialGameplayReleaseJournal {
 
   OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now);
 
-  /** False only for an exact dispatch superseded after validated durable owner closure. */
-  boolean recordRetryableEffectForDispatch(OutboxEntry dispatch, String outcomeCode, Instant now);
+  /** False only for an exact dispatch superseded after definitive owner rejection or closure. */
+  boolean recordRetryableEffectForDispatch(
+      OutboxEntry dispatch, RetrySource source, String outcomeCode, Instant now);
 
-  /** False only for an exact dispatch superseded after validated durable owner closure. */
+  /** False only for an exact dispatch superseded after definitive owner rejection or closure. */
   boolean recordAmbiguousEffectForDispatch(OutboxEntry dispatch, String outcomeCode, Instant now);
 
-  Operation recordEffectReadback(
-      UUID operationId, UUID effectId, UUID attemptId, EffectReadback readback, Instant now);
+  enum RetrySource {
+    NOT_DISPATCHED,
+    OWNER_REJECTED
+  }
+
+  Operation recordEffectReadback(OutboxEntry dispatch, EffectReadback readback, Instant now);
 
   Optional<OutboxEntry> findEffect(UUID operationId, EffectKind effectKind);
 }

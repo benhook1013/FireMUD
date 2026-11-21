@@ -335,21 +335,6 @@ jobs:
               return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
-            const { data: finalPullRequest } = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: issueNumber,
-            });
-            if (
-              finalPullRequest.state !== "open" ||
-              finalPullRequest.head?.repo?.id !== sourceRepositoryId ||
-              finalPullRequest.head?.ref !== sourceBranch ||
-              finalPullRequest.head?.sha !== headSha ||
-              finalPullRequest.base?.sha !== baseSha
-            ) {
-              core.info("The pull-request base or head changed while static analysis was being summarized.");
-              return;
-            }
-
             // Reruns can advance a producer without changing the PR tuple.
             for (const run of Object.values(workflowRuns)) {
               if (!run) continue;
@@ -364,6 +349,20 @@ jobs:
                 return;
               }
             }
+
+            const comparisonIsCurrent = async () => {
+              const { data: current } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: issueNumber,
+              });
+              const matches = current.state === "open" &&
+                current.head?.repo?.id === sourceRepositoryId && current.head?.ref === sourceBranch &&
+                current.head?.sha === headSha && current.base?.sha === baseSha &&
+                current.base?.ref === currentPullRequest.base?.ref;
+              if (!matches) core.info("The pull-request base or head changed while static analysis was being summarized.");
+              return matches;
+            };
+            if (!(await comparisonIsCurrent())) return;
 
             if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({
@@ -381,6 +380,7 @@ jobs:
 
             for (const comment of summaryComments) {
               if (comment.id === existing?.id) continue;
+              if (!(await comparisonIsCurrent())) return;
               try {
                 await github.rest.issues.deleteComment({
                   ...context.repo,

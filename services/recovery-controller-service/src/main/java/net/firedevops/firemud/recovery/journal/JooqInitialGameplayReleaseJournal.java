@@ -248,7 +248,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       Operation operation = selectOperation(tx, operationId, true);
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
       requireEffectMatchesOperation(current.effect(), operation);
-      if (hasRetainedClosure(tx, current, attemptId, null)) {
+      if (hasRetainedClosure(tx, current, attemptId, null)
+          || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
         throw conflict("a retry must use a new effect attempt identity");
       }
       if (current.state() == EffectOutboxState.DISPATCHED
@@ -288,18 +289,29 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   @Override
   public boolean recordRetryableEffectForDispatch(
-      OutboxEntry dispatch, String outcomeCode, Instant now) {
-    return recordNonterminalEffectOutcome(dispatch, outcomeCode, EffectOutboxState.RETRYABLE, now);
+      OutboxEntry dispatch, RetrySource source, String outcomeCode, Instant now) {
+    Objects.requireNonNull(source, "retry source must not be null");
+    return recordNonterminalEffectOutcome(
+        dispatch,
+        outcomeCode,
+        EffectOutboxState.RETRYABLE,
+        source == RetrySource.OWNER_REJECTED,
+        now);
   }
 
   @Override
   public boolean recordAmbiguousEffectForDispatch(
       OutboxEntry dispatch, String outcomeCode, Instant now) {
-    return recordNonterminalEffectOutcome(dispatch, outcomeCode, EffectOutboxState.AMBIGUOUS, now);
+    return recordNonterminalEffectOutcome(
+        dispatch, outcomeCode, EffectOutboxState.AMBIGUOUS, false, now);
   }
 
   private boolean recordNonterminalEffectOutcome(
-      OutboxEntry dispatch, String outcomeCode, EffectOutboxState resultState, Instant now) {
+      OutboxEntry dispatch,
+      String outcomeCode,
+      EffectOutboxState resultState,
+      boolean ownerRejected,
+      Instant now) {
     Objects.requireNonNull(dispatch, "dispatch must not be null");
     InitialGameplayReleaseModel.requiredOutcomeCode(outcomeCode);
     UUID operationId = dispatch.effect().operationId();
@@ -312,13 +324,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       requireEffectMatchesOperation(current.effect(), operation);
       if (dispatch.state() != EffectOutboxState.DISPATCHED
           || attemptId == null
-          || !dispatch.outboxId().equals(current.outboxId())
-          || !dispatch.effect().equals(current.effect())
-          || !dispatch.payloadDigest().equals(current.payloadDigest())) {
+          || !sameEffect(dispatch, current)) {
         throw conflict("effect dispatch tuple changed");
       }
       if (!Objects.equals(current.lastAttemptId(), attemptId)) {
-        if (hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())) {
+        if (hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())
+            || hasRetainedOwnerRejection(tx, current, attemptId, dispatch.attemptCount())) {
           return false;
         }
         throw conflict("effect attempt identity changed");
@@ -326,17 +337,32 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       if (dispatch.attemptCount() != current.attemptCount()) {
         throw conflict("effect dispatch generation changed");
       }
-      if (current.state() == resultState
-          || current.state() == EffectOutboxState.ACKNOWLEDGED
+      if (current.state() == EffectOutboxState.ACKNOWLEDGED
           || (current.lastAttemptId() != null
               && current.state() == EffectOutboxState.RETRYABLE
               && resultState == EffectOutboxState.AMBIGUOUS)) {
         return true;
       }
-      if (current.state() != EffectOutboxState.DISPATCHED
+      if (current.state() != resultState
+          && current.state() != EffectOutboxState.DISPATCHED
           && !(current.state() == EffectOutboxState.AMBIGUOUS
               && resultState == EffectOutboxState.RETRYABLE)) {
         throw conflict("effect is not in a dispatchable attempt");
+      }
+      if (ownerRejected) {
+        tx.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
+                (outbox_id, attempt_id, attempt_ordinal)
+            VALUES (?, ?, ?)
+            ON CONFLICT (outbox_id, attempt_id) DO NOTHING
+            """,
+            current.outboxId(),
+            attemptId,
+            dispatch.attemptCount());
+      }
+      if (current.state() == resultState) {
+        return true;
       }
       tx.execute(
           """
@@ -358,18 +384,30 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   @Override
   public Operation recordEffectReadback(
-      UUID operationId, UUID effectId, UUID attemptId, EffectReadback readback, Instant now) {
+      OutboxEntry dispatch, EffectReadback readback, Instant now) {
+    Objects.requireNonNull(dispatch, "dispatch must not be null");
     Objects.requireNonNull(readback, "readback must not be null");
     Objects.requireNonNull(now, "now must not be null");
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
       Operation operation = selectOperation(tx, operationId, true);
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
       requireEffectMatchesOperation(current.effect(), operation);
-      requireReadbackMatches(readback, current, operationId, effectId);
-      if (current.lastAttemptId() == null || !current.lastAttemptId().equals(attemptId)) {
+      if (!sameEffect(dispatch, current)
+          || (dispatch.state() != EffectOutboxState.DISPATCHED
+              && dispatch.state() != EffectOutboxState.AMBIGUOUS)) {
+        throw conflict("effect readback dispatch tuple changed");
+      }
+      if (dispatch.lastAttemptId() == null
+          || !dispatch.lastAttemptId().equals(current.lastAttemptId())) {
         throw conflict("effect readback belongs to another attempt");
       }
+      if (dispatch.attemptCount() != current.attemptCount()) {
+        throw conflict("effect readback dispatch generation changed");
+      }
+      requireReadbackMatches(readback, current, operationId, effectId);
       String readbackDigest = tupleCodec.digest(readback);
       if (current.state() == EffectOutboxState.ACKNOWLEDGED
           || current.state() == EffectOutboxState.RETRYABLE) {
@@ -481,6 +519,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       return selectOperation(tx, operationId, false);
     });
+  }
+
+  private static boolean sameEffect(OutboxEntry dispatch, OutboxEntry current) {
+    return dispatch.outboxId().equals(current.outboxId())
+        && dispatch.effect().equals(current.effect())
+        && dispatch.payloadDigest().equals(current.payloadDigest());
   }
 
   @Override
@@ -784,6 +828,29 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
             .isAfter(row.get("recorded_at", OffsetDateTime.class).toInstant())) {
       throw conflict("retained attempt closure does not match the exact dispatched tuple");
+    }
+    return true;
+  }
+
+  private static boolean hasRetainedOwnerRejection(
+      DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
+    Record row =
+        tx.fetchOne(
+            """
+            SELECT attempt_ordinal FROM recovery_control.initial_gameplay_release_attempt_rejection
+            WHERE outbox_id = ? AND attempt_id = ?
+            """,
+            current.outboxId(),
+            attemptId);
+    if (row == null) {
+      return false;
+    }
+    Integer ordinal = row.get("attempt_ordinal", Integer.class);
+    if (ordinal == null
+        || ordinal < 1
+        || ordinal > current.attemptCount()
+        || (expectedOrdinal != null && !expectedOrdinal.equals(ordinal))) {
+      throw conflict("retained owner rejection dispatch generation changed");
     }
     return true;
   }

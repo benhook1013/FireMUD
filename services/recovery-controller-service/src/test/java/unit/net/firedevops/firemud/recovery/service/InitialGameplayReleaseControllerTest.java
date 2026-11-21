@@ -20,7 +20,9 @@ import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Laun
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.MaintenanceLockPresence;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Mutation;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Target;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
@@ -32,8 +34,12 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicT
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
 import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.EffectApplyResult;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.EvidenceResolution;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.ResolutionStatus;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -199,20 +205,33 @@ class InitialGameplayReleaseControllerTest {
 
   @Test
   void pendingEffectClaimedByAnotherAttemptDoesNotDispatch() {
-    assertPendingClaimHandling(false, false);
+    assertPendingClaimHandling(false, null, null);
   }
 
   @Test
   void pendingEffectApplyExceptionRecordsAmbiguousNotRetryable() {
-    assertPendingClaimHandling(true, true);
+    assertPendingClaimHandling(true, null, null);
   }
 
   @Test
   void pendingEffectAmbiguousResultUsesClaimedDispatch() {
-    assertPendingClaimHandling(true, false);
+    assertPendingClaimHandling(true, EffectApplyResult.ambiguous("OWNER_PENDING"), null);
   }
 
-  private void assertPendingClaimHandling(boolean ownsClaim, boolean transportException) {
+  @Test
+  void pendingEffectNotDispatchedRecordsLocalRetryProvenance() {
+    assertPendingClaimHandling(
+        true, EffectApplyResult.notDispatched("TRANSPORT_REFUSED"), RetrySource.NOT_DISPATCHED);
+  }
+
+  @Test
+  void pendingEffectDefinitiveOwnerRejectionRecordsOwnerRetryProvenance() {
+    assertPendingClaimHandling(
+        true, EffectApplyResult.retryableNoEffect("OWNER_REJECTED"), RetrySource.OWNER_REJECTED);
+  }
+
+  private void assertPendingClaimHandling(
+      boolean ownsClaim, EffectApplyResult applyResult, RetrySource expectedRetrySource) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var operation = mock(Operation.class);
@@ -259,13 +278,11 @@ class InitialGameplayReleaseControllerTest {
           if (ownsClaim) when(claimed.effect()).thenReturn(effect);
           return claimed;
         });
-    if (ownsClaim && transportException) {
+    if (ownsClaim && applyResult == null) {
       when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
           .thenThrow(new IllegalStateException("response lost after possible owner send"));
     } else if (ownsClaim) {
-      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
-          .thenReturn(
-              InitialGameplayReleaseEffectPort.EffectApplyResult.ambiguous("OWNER_PENDING"));
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any())).thenReturn(applyResult);
     }
     var controller =
         new InitialGameplayReleaseController(
@@ -275,19 +292,31 @@ class InitialGameplayReleaseControllerTest {
             port);
     assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
     assertThat(claimedAttempt.get()).isNotNull();
-    verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any());
-    verify(journal, never()).recordEffectReadback(any(), any(), any(), any(), any());
-    if (ownsClaim) {
+    if (expectedRetrySource == null) {
+      verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any(), any());
+    } else {
+      verify(journal)
+          .recordRetryableEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(expectedRetrySource),
+              org.mockito.ArgumentMatchers.eq(applyResult.outcomeCode()),
+              any());
+    }
+    verify(journal, never()).recordEffectReadback(any(), any(), any());
+    if (!ownsClaim) {
+      verifyNoInteractions(port);
+    } else {
       verify(port).apply(effect, claimedAttempt.get());
       verify(port, never()).readback(any(), any());
+    }
+    if (ownsClaim && expectedRetrySource == null) {
       verify(journal)
           .recordAmbiguousEffectForDispatch(
               org.mockito.ArgumentMatchers.same(claimed),
               org.mockito.ArgumentMatchers.eq(
-                  transportException ? "EFFECT_CALL_OUTCOME_UNKNOWN" : "OWNER_PENDING"),
+                  applyResult == null ? "EFFECT_CALL_OUTCOME_UNKNOWN" : applyResult.outcomeCode()),
               any());
     } else {
-      verifyNoInteractions(port);
       verify(journal, never()).recordAmbiguousEffectForDispatch(any(), any(), any());
     }
   }
@@ -312,17 +341,19 @@ class InitialGameplayReleaseControllerTest {
         .isEqualTo("OWNER_BUSY");
   }
 
-  @Test
-  void unavailableOwnerEvidenceReturnsConcurrentExactCommittedTransition() {
-    assertUnavailableTransition(true);
+  @ParameterizedTest
+  @EnumSource(ResolutionStatus.class)
+  void ownerEvidenceFailureReturnsConcurrentExactCommittedTransition(ResolutionStatus status) {
+    assertEvidenceFailureTransition(status, true);
   }
 
-  @Test
-  void unavailableOwnerEvidenceWithoutCommittedTransitionStillFailsClosed() {
-    assertUnavailableTransition(false);
+  @ParameterizedTest
+  @EnumSource(ResolutionStatus.class)
+  void ownerEvidenceFailureWithoutCommittedTransitionStillFailsClosed(ResolutionStatus status) {
+    assertEvidenceFailureTransition(status, false);
   }
 
-  private void assertUnavailableTransition(boolean committed) {
+  private void assertEvidenceFailureTransition(ResolutionStatus status, boolean committed) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var codec = mock(InitialGameplayReleaseTupleCodec.class);
     var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
@@ -360,8 +391,13 @@ class InitialGameplayReleaseControllerTest {
         .thenReturn(
             java.util.Optional.empty(),
             committed ? java.util.Optional.of(after) : java.util.Optional.empty());
-    when(provider.read(scope))
-        .thenReturn(InitialGameplayReleaseEvidenceProvider.EvidenceResolution.unavailable());
+    InitialGameplayReleaseEvidence changedEvidence = null;
+    if (status == ResolutionStatus.AVAILABLE) {
+      changedEvidence = mock(InitialGameplayReleaseEvidence.class);
+      when(changedEvidence.evidenceIdentity()).thenReturn("proof");
+      when(codec.digest(changedEvidence)).thenReturn("d".repeat(64));
+    }
+    when(provider.read(scope)).thenReturn(new EvidenceResolution(status, changedEvidence));
     var controller =
         new InitialGameplayReleaseController(
             journal, codec, provider, mock(InitialGameplayReleaseEffectPort.class));
@@ -369,10 +405,14 @@ class InitialGameplayReleaseControllerTest {
 
     if (committed) {
       assertThat(controller.resume(command)).isSameAs(after);
+    } else if (status == ResolutionStatus.AVAILABLE) {
+      assertThatThrownBy(() -> controller.resume(command))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("owner evidence changed after readiness was recorded");
     } else {
       assertThatThrownBy(() -> controller.resume(command))
           .isInstanceOf(OwnerBoundaryUnavailableException.class)
-          .hasMessage("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_UNAVAILABLE");
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_" + status.name());
     }
     verify(journal, org.mockito.Mockito.times(2)).findTransition(tuple);
     verify(journal, never()).transition(any(), any());
@@ -459,7 +499,7 @@ class InitialGameplayReleaseControllerTest {
 
     assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(after);
     verify(effectPort).readback(effect, attempt);
-    verify(journal, never()).recordEffectReadback(any(), any(), any(), any(), any());
+    verify(journal, never()).recordEffectReadback(any(), any(), any());
   }
 
   @Test
@@ -541,6 +581,6 @@ class InitialGameplayReleaseControllerTest {
     assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
         .isInstanceOf(
             net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException.class);
-    verify(journal, never()).recordEffectReadback(any(), any(), any(), any(), any());
+    verify(journal, never()).recordEffectReadback(any(), any(), any());
   }
 }

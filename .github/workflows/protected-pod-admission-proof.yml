@@ -186,7 +186,7 @@ jobs:
               | jq -er '.serverVersion.gitVersion')"
             expected_server_version="${KIND_NODE_IMAGE#*:v}"
             expected_server_version="${expected_server_version%%@*}"
-            [[ "${server_version#v}" == "$expected_server_version"* ]] || {
+            [[ "$server_version" == "v${expected_server_version}" ]] || {
               echo "Kubernetes API version did not match the pinned kind node image" >&2
               exit 1
             }

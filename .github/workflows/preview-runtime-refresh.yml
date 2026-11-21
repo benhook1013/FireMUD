@@ -11,7 +11,7 @@ permissions: {}
 
 jobs:
   refresh:
-    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure') && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -44,7 +44,8 @@ jobs:
               (typeof run.path === 'string' && run.path.startsWith(previewPath + '@') &&
                run.path.length > previewPath.length + 1);
             if (!pathMatches ||
-                run.event !== 'pull_request' || run.conclusion !== 'success' ||
+                run.event !== 'pull_request' || run.status !== 'completed' ||
+                !['success', 'failure'].includes(run.conclusion) ||
                 run.repository?.full_name !== repository ||
                 run.head_repository?.full_name !== repository ||
                 run.id !== context.payload.workflow_run.id || !sha.test(run.head_sha)) {
@@ -85,20 +86,27 @@ jobs:
             if (plan.run_id !== run.id || plan.run_attempt !== attempt ||
                 plan.head_sha !== run.head_sha ||
                 plan.status !== 'completed' || plan.conclusion !== 'success' || !Array.isArray(plan.steps)) {
-              core.info('Preview Plan does not belong to the successful source attempt; no dispatch.');
+              core.info('No successful Preview Plan for the exact source attempt; no dispatch.');
               return;
             }
-            const tupleSteps = plan.steps.filter(step => String(step.name || '').startsWith('Preview event tuple'));
-            const step = tupleSteps.length === 1 ? tupleSteps[0] : null;
-            // Native attempt metadata records the event tuple, not authority by itself.
-            // Bind it to run/head/association and Git merge parents before use.
-            const recorded = step?.status === 'completed' && step?.conclusion === 'success'
-              ? String(step.name).match(/^Preview event tuple pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40})$/)
-              : null;
+            const recordedTuple = kind => {
+              const prefix = `Preview ${kind} tuple `;
+              const steps = plan.steps.filter(step => typeof step?.name === 'string' && step.name.startsWith(prefix));
+              const step = steps.length === 1 ? steps[0] : null;
+              return step?.status === 'completed' && step.conclusion === 'success'
+                ? step.name.slice(prefix.length).match(/^pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40})$/)
+                : null;
+            };
+            const recorded = recordedTuple('event');
+            const resolved = recordedTuple('resolved');
             const sourceNumber = Number(recorded?.[1]);
-            if (!recorded || !Number.isSafeInteger(sourceNumber) ||
-                recorded[3] !== run.head_sha || !Array.isArray(run.pull_requests)) {
-              core.info('Missing or invalid immutable preview tuple metadata; await a fresh preview render.');
+            // The event tuple supplies initial comparison identity. The successful
+            // resolved marker proves the plan selected an eligible deployment.
+            if (!recorded || !resolved || !Number.isSafeInteger(sourceNumber) ||
+                (run.path !== previewPath && run.path !== `${previewPath}@refs/pull/${sourceNumber}/merge`) ||
+                recorded[3] !== run.head_sha || resolved[3] !== run.head_sha ||
+                resolved[1] !== recorded[1] || !Array.isArray(run.pull_requests)) {
+              core.info('Missing or invalid immutable eligible preview tuple metadata; await a fresh preview plan.');
               return;
             }
             const associations = run.pull_requests.filter(item => item?.number === sourceNumber);
@@ -159,12 +167,14 @@ jobs:
               core.info('Current merge is not the exact current base/head tuple; no dispatch.');
               return;
             }
-            // An event can retain an older base while its merge SHA already
-            // identifies the current test merge. Admit that mismatch only when
-            // both independent GitHub reads prove the exact same current merge.
-            if (recordedMerge.parents[0].sha !== recorded[2] &&
-                (recordedMerge.sha !== merge.sha || recordedMerge.parents[0].sha !== base.object.sha)) {
-              core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
+            const resolvedMatchesRecorded = resolved[4] === recordedMerge.sha &&
+              resolved[2] === recordedMerge.parents[0].sha;
+            const resolvedMatchesCurrent = resolved[4] === merge.sha && resolved[2] === base.object.sha;
+            // A stale event base can accompany a newer historical merge. Its
+            // plan must independently resolve that merge and its actual parent.
+            if ((!resolvedMatchesRecorded && !resolvedMatchesCurrent) ||
+                (recordedMerge.parents[0].sha !== recorded[2] && !resolvedMatchesRecorded)) {
+              core.info('Resolved preview tuple does not match its verified merge parents; no dispatch.');
               return;
             }
             // Reuse the canonical default-branch path classifier rather than

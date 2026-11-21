@@ -10,15 +10,20 @@ const script = workflow.jobs.refresh.steps[1].with.script;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const E = 'e'.repeat(40);
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), D = 'd'.repeat(40);
+const tupleStep = (kind, base, merge) => ({
+  name: `Preview ${kind} tuple pr-7 base-${base} head-${C} merge-${merge}`,
+  status: 'completed', conclusion: 'success',
+});
 function fixture() {
   return {
-    run: {id: 99, run_attempt: 2, display_title: `PR preview 7 base-${D} head-${C} merge-${E}`, path: '.github/workflows/preview.yml', event: 'pull_request', conclusion: 'success',
+    run: {id: 99, run_attempt: 2, display_title: `PR preview 7 base-${D} head-${C} merge-${E}`, path: '.github/workflows/preview.yml', event: 'pull_request', status: 'completed', conclusion: 'success',
       repository: {full_name: 'example/FireMUD'}, head_repository: {full_name: 'example/FireMUD'},
       head_sha: C, pull_requests: [{number: 7, head: {sha: C}, base: {sha: D}}]},
     pr: {number: 7, state: 'open', head: {sha: C, repo: {full_name: 'example/FireMUD'}},
       base: {ref: 'develop', repo: {full_name: 'example/FireMUD'}},
       merge_commit_sha: A, labels: [], user: {login: 'developer'}},
-    jobs: [{name: 'Preview Plan', run_id: 99, run_attempt: 2, head_sha: C, workflow_name: 'PR Preview Environment', status: 'completed', conclusion: 'success', steps: [{name: `Preview event tuple pr-7 base-${D} head-${C} merge-${E}`, status: 'completed', conclusion: 'success'}]}],
+    jobs: [{name: 'Preview Plan', run_id: 99, run_attempt: 2, head_sha: C, workflow_name: 'PR Preview Environment', status: 'completed', conclusion: 'success',
+      steps: [tupleStep('event', D, E), tupleStep('resolved', D, E)]}],
     recordedMerge: {sha: E, parents: [{sha: D}, {sha: C}]},
     base: {object: {sha: B}}, merge: {sha: A, parents: [{sha: B}, {sha: C}]},
   };
@@ -50,7 +55,13 @@ async function execute(f, sent = []) {
       assert.equal(ref, 'heads/' + f.pr.base.ref);
       return {data: f.base};
     }},
-    repos: {getCommit: async ({ref}) => ({data: ref === E ? f.recordedMerge : f.merge}), createDispatchEvent: async p => sent.push(p)},
+    repos: {
+      getCommit: async ({ref}) => {
+        (f.mergeReads ??= []).push(ref);
+        return {data: f.mergeReads.length === 1 ? f.recordedMerge : f.merge};
+      },
+      createDispatchEvent: async p => sent.push(p),
+    },
   }};
   await new AsyncFunction('github', 'context', 'core', 'require', script)(github,
     {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99, run_attempt: 2}, repository: {default_branch: 'develop'}}}, {info(message) {(f.messages ??= []).push(message);}}, name => {
@@ -71,14 +82,23 @@ async function execute(f, sent = []) {
   return sent;
 }
 test('exact stale-base current tuple produces only the typed refresh', async () => {
-  assert.deepEqual(await execute(fixture()), [{owner: 'example', repo: 'FireMUD',
+  const f = fixture();
+  assert.deepEqual(await execute(f), [{owner: 'example', repo: 'FireMUD',
     event_type: 'pr-runtime-base-refresh', client_payload: {pr_number: '7', base_ref: 'develop',
       base_sha: B, head_sha: C, merge_sha: A, image_tag: `pr-merge-${A}`}}]);
+  assert.deepEqual(f.mergeReads, [E, A]);
+});
+test('a completed render failure permits repair when the plan was eligible', async () => {
+  const f = fixture(); f.run.conclusion = 'failure';
+  assert.equal((await execute(f)).length, 1);
 });
 for (const [name, mutate] of Object.entries({
   wrongPath: f => f.run.path = '.github/workflows/attacker.yml',
+  wrongQualifiedPath: f => f.run.path += '@refs/pull/8/merge',
   wrongEvent: f => f.run.event = 'repository_dispatch',
-  failedSource: f => f.run.conclusion = 'failure',
+  unfinishedSource: f => f.run.status = 'in_progress',
+  cancelledSource: f => f.run.conclusion = 'cancelled',
+  failedPlan: f => { f.run.conclusion = 'failure'; f.jobs[0].conclusion = 'failure'; },
   wrongRepository: f => f.run.repository.full_name = 'fork/FireMUD',
   forkSource: f => f.run.head_repository.full_name = 'fork/FireMUD',
   absentAssociation: f => f.run.pull_requests = [],
@@ -105,6 +125,10 @@ for (const [name, mutate] of Object.entries({
   duplicatePlan: f => f.jobs.push(f.jobs[0]),
   duplicateTuple: f => f.jobs[0].steps.push(f.jobs[0].steps[0]),
   failedTuple: f => f.jobs[0].steps[0].conclusion = "failure",
+  skippedResolvedTuple: f => f.jobs[0].steps[1].conclusion = 'skipped',
+  missingResolvedTuple: f => f.jobs[0].steps.pop(),
+  badResolvedParent: f => f.jobs[0].steps[1] = tupleStep('resolved', B, E),
+  ambiguousResolvedTuple: f => f.jobs[0].steps.push(f.jobs[0].steps[1]),
   malformedTuple: f => f.jobs[0].steps[0].name = "Preview event tuple invalid",
   invalidBase: f => f.base.object.sha = 'invalid',
   invalidMerge: f => f.pr.merge_commit_sha = 'invalid',
@@ -279,8 +303,29 @@ test('priority removed during active lookup refuses dispatch', async () => {
 
 test('event base drift can repair the independently revalidated current merge', async () => {
   const f = fixture();
-  f.jobs[0].steps[0].name = `Preview event tuple pr-7 base-${D} head-${C} merge-${A}`;
+  f.jobs[0].steps = [tupleStep('event', D, A), tupleStep('resolved', B, A)];
+  f.recordedMerge = structuredClone(f.merge);
   assert.equal((await execute(f)).length, 1);
+  assert.deepEqual(f.mergeReads, [A, A]);
+
+  const moved = fixture();
+  moved.jobs[0].steps = [tupleStep('event', D, A), tupleStep('resolved', B, A)];
+  moved.recordedMerge = structuredClone(moved.merge);
+  moved.merge.parents[0].sha = D;
+  assert.deepEqual(await execute(moved), []);
+  assert.deepEqual(moved.mergeReads, [A, A]);
+});
+
+test('a resolved historical merge can precede a second base advance', async () => {
+  const intermediateBase = 'f'.repeat(40);
+  const f = fixture();
+  f.recordedMerge.parents[0].sha = intermediateBase;
+  f.jobs[0].steps[1] = tupleStep('resolved', intermediateBase, E);
+  const dispatches = await execute(f);
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0].client_payload.base_sha, B);
+  assert.equal(dispatches[0].client_payload.merge_sha, A);
+  assert.deepEqual(f.mergeReads, [E, A]);
 });
 
 test('truncated or oversized attempt inventory is refused', async () => {

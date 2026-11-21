@@ -526,6 +526,16 @@ jobs:
 
             class TerminalGitHubRequestError extends Error {}
 
+            function isTransientOptionalGitHubError(error) {
+              const status = error?.status ?? error?.response?.status;
+              const code = error?.code ?? error?.cause?.code;
+              return !(error instanceof TerminalGitHubRequestError) && (retryableStatuses.has(status) ||
+                (status == null && [
+                  "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH",
+                  "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
+                ].includes(code)));
+            }
+
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
               let retryDelayMs = 1000;
@@ -562,7 +572,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "d104522a14446575e61675897a300e387b2f50f3d1c918509751aad3a150b057";
+            const canonicalRuntimeWorkflowSha256 = "d237e316d765c6f0c2ec5569af93cbaf218d1f9c65e0877eec1ed2f87c6a0457";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
               "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
               "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
@@ -1171,6 +1181,18 @@ jobs:
                 retryPrimary: retryPrimary?.identity === identityKey(currentIdentity) ? retryPrimary : null,
               };
               retryPrimary = null;
+              async function resumePendingPrimary(message) {
+                const remainingMs = timeoutMs - (Date.now() - started);
+                if (!selection.pendingPrimary || remainingMs <= 0) return false;
+                core.warning(message);
+                retryPrimary = {
+                  id: selection.pendingPrimary.id,
+                  run_attempt: selection.pendingPrimary.run_attempt,
+                  identity: identityKey(currentIdentity),
+                };
+                await new Promise((resolve) => setTimeout(resolve, Math.min(sleepMs, remainingMs)));
+                return true;
+              }
               let matching = await findMatchingRuntimeImagesRun(
                 currentIdentity.sourceEvent,
                 expectedDisplayTitle,
@@ -1234,13 +1256,7 @@ jobs:
                     "repository_dispatch", expectedDisplayTitle, currentIdentity
                   );
                 } catch (error) {
-                  const status = error?.status ?? error?.response?.status;
-                  const code = error?.code ?? error?.cause?.code;
-                  const networkFailure = status == null && [
-                    "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH",
-                    "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
-                  ].includes(code);
-                  if (!retryableStatuses.has(status) && !networkFailure) throw error;
+                  if (!isTransientOptionalGitHubError(error)) throw error;
                   core.warning("Trusted refresh inventory is unavailable; retain the native wait.");
                 }
                 try {
@@ -1356,20 +1372,12 @@ jobs:
                       )
                     );
                   } catch (error) {
-                    const status = error?.status ?? error?.response?.status;
-                    if (!selection.pendingPrimary || !retryableStatuses.has(status)) throw error;
                     // Re-read the pending comparison on the next bounded poll. No
                     // partial evidence from this alternative carries into that poll.
-                    core.warning(
+                    if (isTransientOptionalGitHubError(error) && await resumePendingPrimary(
                       `Runtime alternative ${matching.id} jobs are temporarily unavailable; retry exact primary selection.`
-                    );
-                    retryPrimary = {
-                      id: selection.pendingPrimary.id,
-                      run_attempt: selection.pendingPrimary.run_attempt,
-                      identity: identityKey(currentIdentity),
-                    };
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                    continue smokeGatePolling;
+                    )) continue smokeGatePolling;
+                    throw error;
                   }
                   if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
                     return;
@@ -1421,8 +1429,10 @@ jobs:
                     ));
                     continue;
                   }
-                  // A rerun may have superseded the attempt whose snapshot never materialized.
-                  // Only the same run's provably newer attempt warrants reselection.
+                  if (await resumePendingPrimary(
+                    `Runtime alternative ${matching.id} never exposed a complete smoke snapshot; retry exact primary selection.`
+                  )) continue smokeGatePolling;
+                  // With no pending primary, only the same run's provably newer attempt warrants reselection.
                   const { data: latestSnapshotAttempt } = await withTransientGitHubRetry(
                     "runtime attempt lookup after incomplete smoke snapshot",
                     () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
@@ -1522,16 +1532,10 @@ jobs:
                     () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
                   ));
                 } catch (error) {
-                  const status = error?.status ?? error?.response?.status;
-                  if (!selection.pendingPrimary || !retryableStatuses.has(status)) throw error;
-                  core.warning(`Runtime alternative ${matching.id} final attempt is temporarily unavailable; retry exact primary selection.`);
-                  retryPrimary = {
-                    id: selection.pendingPrimary.id,
-                    run_attempt: selection.pendingPrimary.run_attempt,
-                    identity: identityKey(currentIdentity),
-                  };
-                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                  continue smokeGatePolling;
+                  if (isTransientOptionalGitHubError(error) && await resumePendingPrimary(
+                    `Runtime alternative ${matching.id} final attempt is temporarily unavailable; retry exact primary selection.`
+                  )) continue smokeGatePolling;
+                  throw error;
                 }
                 if (!positiveInteger(matching.run_attempt) || currentAttempt.id !== matching.id ||
                     currentAttempt.run_attempt !== matching.run_attempt ||

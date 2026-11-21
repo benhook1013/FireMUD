@@ -33,7 +33,7 @@ grep -Fq 'cancel-in-progress: false' "$workflow"
 grep -Fq 'group: static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}' "$workflow"
 grep -Fq 'const headSha = currentPullRequest.head?.sha;' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
-grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
+grep -Fq 'current.base?.sha === baseSha' "$workflow"
 grep -Fq 'run?.display_title === expectedTitle' "$workflow"
 grep -Fq 'comment.user?.login === "github-actions[bot]"' "$workflow"
 grep -Fq 'if (comment.id === existing?.id) continue;' "$workflow"
@@ -159,6 +159,8 @@ let changeHeadDuringComments = false;
 let deleteStatus = null;
 let existingBody = "### Static Analysis Summary\nold";
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
+const mutationCounts = () => [calls.updated.length, calls.created.length, calls.deleted.length];
+const mutationsChanged = before => mutationCounts().some((count, index) => count !== before[index]);
 const codeqlListWorkflowRuns = async () => undefined;
 const checksListForRef = async () => undefined;
 const commentsList = async () => undefined;
@@ -750,16 +752,26 @@ run(github, context, core).then(async () => {
                 }
                 github.paginate = savedPaginate;
                 const savedActions = github.rest.actions;
-                const staleBefore = [calls.updated.length, calls.created.length, calls.deleted.length];
+                const staleBefore = mutationCounts();
                 github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
                   const {data} = await savedActions.getWorkflowRun(input);
                   return {data: {...data, run_attempt: data.run_attempt + 1}};
                 }};
                 try { await run(github, context, core); }
                 finally { github.rest.actions = savedActions; }
-                if (staleBefore.some((length, index) =>
-                    length !== [calls.updated.length, calls.created.length, calls.deleted.length][index])) {
+                if (mutationsChanged(staleBefore)) {
                   throw new Error("a producer rerun after evidence read must not mutate comments");
+                }
+                const beforeHeadMovement = mutationCounts();
+                github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
+                  const response = await savedActions.getWorkflowRun(input);
+                  currentHeadSha = "e".repeat(40);
+                  return response;
+                }};
+                try { await run(github, context, core); }
+                finally { github.rest.actions = savedActions; currentHeadSha = headSha; }
+                if (mutationsChanged(beforeHeadMovement)) {
+                  throw new Error("head movement during producer recheck must not mutate comments");
                 }
 
                 let currentAttempt = 1;
@@ -786,21 +798,21 @@ run(github, context, core).then(async () => {
                   }
                 }
                 currentAttempt = 2;
-                const staleAttemptWrites = calls.updated.length + calls.created.length;
+                const staleAttemptWrites = mutationCounts();
                 let staleAttemptRefused = false;
                 try { await run(github, context, core); } catch (error) {
                   staleAttemptRefused = error.message.includes("cannot confirm the current workflow attempt");
                 } finally { github.rest.actions = savedActions; }
-                if (!staleAttemptRefused || calls.updated.length + calls.created.length !== staleAttemptWrites) {
+                if (!staleAttemptRefused || mutationsChanged(staleAttemptWrites)) {
                   throw new Error("an older ambiguous snapshot must not overwrite a newer summary");
                 }
-                const writesBefore = calls.updated.length + calls.created.length;
+                const writesBefore = mutationCounts();
                 github.request = async () => ({ data: { total_count: 101, jobs: [] } });
                 let refused = false;
                 try { await run(github, context, core); } catch (error) {
                   refused = error.message.includes("jobs are incomplete");
                 } finally { github.request = savedRequest; }
-                if (!refused || calls.updated.length + calls.created.length !== writesBefore) throw new Error("incomplete candidate jobs must not publish success");
+                if (!refused || mutationsChanged(writesBefore)) throw new Error("incomplete candidate jobs must not mutate comments");
                 console.log("static analysis summary behavioral contract passed");
               },
             );

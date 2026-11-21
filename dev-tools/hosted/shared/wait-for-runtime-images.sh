@@ -166,7 +166,11 @@ for run in ranked[:8] if alternates else ranked[:1]:
 }
 
 fetch_publisher_runs() {
-  python3 - "${GITHUB_REPOSITORY}" "$1" "$2" "$3" <<'PY_PUBLISHERS'
+  local -a bound=()
+  if [[ -n "${4:-}" ]]; then
+    bound=(timeout --kill-after=1s "$4")
+  fi
+  "${bound[@]}" python3 - "${GITHUB_REPOSITORY}" "$1" "$2" "$3" <<'PY_PUBLISHERS'
 import json
 import re
 import subprocess
@@ -273,7 +277,9 @@ if wait_mode == "pull-request":
 else:
     matching_runs = []
 if len(sys.argv) > 7:
-    matching_runs = [run for run in matching_runs if run.get("event") == "repository_dispatch"
+    event, title = sys.argv[7:9]
+    matching_runs = [run for run in matching_runs if run.get("event") == event
+                     and run.get("display_title") == title
                      and run.get("status") == "completed" and run.get("conclusion") == "success"]
 if not matching_runs:
     print("missing")
@@ -291,47 +297,63 @@ print(
 ' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
 
-# Only a source-ID-bound typed callback with positive native publication proof
-# can finish the wait ahead of a competing producer. Skipped publication cannot.
+fetch_alternate_run_metadata() {
+  local lookup_deadline="$1"
+  local remaining=$((lookup_deadline - SECONDS))
+  (( remaining > 0 )) || return 1
+  timeout --kill-after=1s "$remaining" gh api "$2"
+}
+
+# A typed publication binds the source run ID. A native callback binds the
+# immutable tuple, which the trusted publisher revalidates before writing.
+# Both paths need a positive publication step in the exact current attempt.
 use_completed_duplicate_publication() {
-  local state older_id older_created inventory upper line publisher_id run attempt jobs latest publisher_path default_branch repository_info
-  IFS=$'\t' read -r state older_id _ _ _ _ older_created <<<"$1"
+  local state older_id older_created source_event inventory upper line publisher_id run attempt jobs latest publisher_path default_branch repository_info
+  local source_state="$1" lookup_deadline="$2" remaining
+  local source source_attempt source_title source_latest publisher_event expected_title
+  IFS=$'\t' read -r state older_id _ _ _ source_event older_created <<<"$source_state"
   [[ "$state" == "found" ]] || return 1
-  local source source_attempt source_latest
-  source="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
-  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source" | read_run_state)" == "$1" ]] || return 1
-  source_attempt="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+  source="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
+  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source" | read_run_state)" == "$source_state" ]] || return 1
+  source_title="$(jq -er '.display_title | select(type == "string")' <<<"$source")" || return 1
+  source_attempt="$(jq -er --arg repo "$GITHUB_REPOSITORY" --arg head "$head_sha" '
     select(.repository.full_name == $repo and .head_repository.full_name == $repo)
+    | select(.event != "pull_request" or .head_sha == $head)
     | .run_attempt | select(type == "number" and . >= 1 and floor == .)
   ' <<<"$source")" || return 1
+  if [[ "$source_event" == "pull_request" ]]; then
+    publisher_event="workflow_run"
+    expected_title="Publish PR Runtime Images ${source_title}"
+  else
+    publisher_event="repository_dispatch"
+    expected_title="Publish PR Runtime Images source-run-${older_id}"
+  fi
   upper="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  inventory="$(fetch_publisher_runs repository_dispatch "$older_created" "$upper")" || return 1
-  line="$(read_publisher_state "$older_id" completed-typed <<<"$inventory")" || return 1
+  remaining=$((lookup_deadline - SECONDS))
+  (( remaining > 0 )) || return 1
+  inventory="$(fetch_publisher_runs "$publisher_event" "$older_created" "$upper" "$remaining")" || return 1
+  line="$(read_publisher_state "$older_id" "$publisher_event" "$expected_title" <<<"$inventory")" || return 1
   IFS=$'\t' read -r state publisher_id _ <<<"$line"
   [[ "$state" == "found" && "$publisher_id" =~ ^[1-9][0-9]*$ ]] || return 1
-  run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
+  run="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
   publisher_path="$(jq -er '.path | select(type == "string")' <<<"$run")" || return 1
-  default_branch=""
-  if [[ "$publisher_path" != ".github/workflows/publish-pr-runtime-images.yml" ]]; then
-    # GitHub may qualify the path by its short ref. A typed dispatch runs
-    # on the repository default; bind any suffix to that authoritative ref.
-    [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@"* ]] || return 1
-    repository_info="$(gh api "repos/${GITHUB_REPOSITORY}")" || return 1
-    default_branch="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
-      select(.full_name == $repo) | .default_branch
-      | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$"))
-    ' <<<"$repository_info")" || return 1
-    [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@${default_branch}" ]] || return 1
-  fi
+  repository_info="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}")" || return 1
+  default_branch="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+    select(.full_name == $repo) | .default_branch
+    | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$"))
+  ' <<<"$repository_info")" || return 1
+  # Either event runs on the default branch; a short path suffix must agree.
+  [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml" ||
+     "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@${default_branch}" ]] || return 1
   attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" --arg path "$publisher_path" --arg branch "$default_branch" \
-    --arg title "Publish PR Runtime Images source-run-${older_id}" '
-      select(.id == $id and .event == "repository_dispatch" and .display_title == $title
-        and .path == $path and ($branch == "" or .head_branch == $branch)
+    --arg title "$expected_title" --arg event "$publisher_event" '
+      select(.id == $id and .event == $event and .display_title == $title
+        and .path == $path and .head_branch == $branch
         and .repository.full_name == $repo and .head_repository.full_name == $repo
         and .status == "completed" and .conclusion == "success")
       | .run_attempt | select(type == "number" and . >= 1 and floor == .)
     ' <<<"$run")" || return 1
-  jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}/attempts/${attempt}/jobs?per_page=100")" || return 1
+  jobs="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}/attempts/${attempt}/jobs?per_page=100")" || return 1
   jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" '
     (.jobs | type == "array") and (.total_count == (.jobs | length)) and
     ([.jobs[] | select(.name == "Publish Fixed PR Merge Image Tags")] as $jobs |
@@ -341,20 +363,38 @@ use_completed_duplicate_publication() {
         ([.steps[] | select(.name == "Publish fixed PR image tags")] as $steps |
           ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
   ' <<<"$jobs" >/dev/null || return 1
-  latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
-  jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" --arg path "$publisher_path" --arg branch "$default_branch" '
+  latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
+  jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" --arg path "$publisher_path" --arg branch "$default_branch" \
+    --arg title "$expected_title" --arg event "$publisher_event" --arg repo "$GITHUB_REPOSITORY" '
     .id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"
-    and .path == $path and ($branch == "" or .head_branch == $branch)
+    and .path == $path and .head_branch == $branch and .event == $event and .display_title == $title
+    and .repository.full_name == $repo and .head_repository.full_name == $repo
   ' <<<"$latest" >/dev/null || return 1
-  source_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
-  jq -e --argjson attempt "$source_attempt" '.run_attempt == $attempt' <<<"$source_latest" >/dev/null || return 1
-  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source_latest" | read_run_state)" == "$1" ]] || return 1
-  printf 'Trusted PR image publisher %s succeeded for %s before a duplicate producer.\n' "$publisher_id" "$image_tag"
+  source_latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
+  jq -e --argjson attempt "$source_attempt" --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" '
+    .run_attempt == $attempt and .repository.full_name == $repo and .head_repository.full_name == $repo
+    and .display_title == $title and (.event != "pull_request" or .head_sha == $head)
+  ' <<<"$source_latest" >/dev/null || return 1
+  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source_latest" | read_run_state)" == "$source_state" ]] || return 1
+  (( SECONDS < lookup_deadline )) || return 1
+  printf 'Trusted PR image publisher %s succeeded for %s via an alternate producer.\n' "$publisher_id" "$image_tag"
+}
+
+find_completed_alternate_publication() {
+  local alternate_sources="$1" lookup_deadline="$2" older_state
+  while IFS= read -r older_state; do
+    (( SECONDS < lookup_deadline )) || break
+    if use_completed_duplicate_publication "$older_state" "$lookup_deadline"; then
+      return 0
+    fi
+  done <<<"$alternate_sources"
+  return 1
 }
 
 wait_for_pr_publisher() {
   local source_run_id="$1"
   local source_created_at="$2"
+  local alternate_sources="$3"
   local coverage_unavailable=false
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
@@ -374,21 +414,31 @@ wait_for_pr_publisher() {
       fi
       publisher_payload+="${publisher_payload:+,}${event_payload}"
     done
+    local state run_id run_status run_conclusion run_url
+    publisher_payload="[${publisher_payload}]"
+    publisher_state=""
+    if [[ "${fetch_failed}" == "false" ]] &&
+      publisher_state="$(read_publisher_state "${source_run_id}" <<<"${publisher_payload}")"; then
+      IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
+      if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+        printf 'Trusted PR image publisher %s succeeded for %s.\n' "${run_id}" "${image_tag}"
+        return 0
+      fi
+    fi
+    if find_completed_alternate_publication "$alternate_sources" "$publisher_deadline"; then
+      return 0
+    fi
     if [[ "${fetch_failed}" == "true" ]]; then
       coverage_unavailable=true
       sleep "${sleep_seconds}"
       continue
     fi
     coverage_unavailable=false
-    publisher_payload="[${publisher_payload}]"
-    if ! publisher_state="$(read_publisher_state "${source_run_id}" <<<"${publisher_payload}")"; then
+    if [[ -z "${publisher_state}" ]]; then
       printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
       sleep "${sleep_seconds}"
       continue
     fi
-
-    local state run_id run_status run_conclusion run_url
-    IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
 
     if [[ "${state}" == "missing" ]]; then
       local elapsed_seconds=$((SECONDS - publisher_start_epoch))
@@ -403,10 +453,6 @@ wait_for_pr_publisher() {
       continue
     fi
 
-    if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
-      printf 'Trusted PR image publisher %s succeeded for %s.\n' "${run_id}" "${image_tag}"
-      return 0
-    fi
     if [[ "${run_status}" == "completed" ]]; then
       printf 'Trusted PR image publisher %s completed with %s for %s.\n' \
         "${run_id}" "${run_conclusion}" "${image_tag}" >&2
@@ -464,21 +510,19 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]] &&
-    older_states="$(read_run_state "$run_id" alternates <<<"$workflow_payload")"; then
-    while IFS= read -r older_state; do
-      [[ "$SECONDS" -lt "$deadline" ]] || break
-      if use_completed_duplicate_publication "$older_state"; then
-        exit 0
-      fi
-    done <<<"$older_states"
+  older_states=""
+  if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]]; then
+    if older_states="$(read_run_state "$run_id" alternates <<<"$workflow_payload")" &&
+      find_completed_alternate_publication "$older_states" "$deadline"; then
+      exit 0
+    fi
   fi
 
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
     if [[ "${wait_mode}" == "pull-request" ]]; then
-      wait_for_pr_publisher "${run_id}" "${run_created_at}"
+      wait_for_pr_publisher "${run_id}" "${run_created_at}" "$older_states"
     fi
     exit 0
   fi

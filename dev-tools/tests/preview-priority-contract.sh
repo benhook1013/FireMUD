@@ -5,6 +5,9 @@ report_contract_failure() {
 }
 trap 'report_contract_failure "$?" "$LINENO"' ERR
 
+# Python assertions are part of the contract, including the native tuple markers.
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Preview priority contract requires Python assertions; unset PYTHONOPTIMIZE.")'
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
@@ -112,6 +115,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     exit 1
   fi
   if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]] ||
+    [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL:-false}" == true && "$count" -eq 1 ]] ||
     [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK:-false}" == true && "$count" -gt 1 ]]; then
     exit 0
   fi
@@ -121,13 +125,13 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     exit 0
   fi
   if [[ -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}" ]]; then
-    rm -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
     if [[ "${FAKE_ANNOTATE_CONFIRMATION_ERROR:-false}" == true ]]; then
       exit 1
     fi
     if [[ "${FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE:-false}" == true ]]; then
       exit 0
     fi
+    rm -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
   fi
   canonical_head() {
     case "${1:-}" in
@@ -485,12 +489,19 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254' ]]
   printf '%s' "${FAKE_PREVIEW_SOURCE_LATEST_JSON:-null}"
   exit 0
 fi
-if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5256/attempts/1/jobs?per_page=100' ]]; then
-  printf '%s' "${FAKE_TRUSTED_CONSUMER_JOBS_JSON:-null}"
+if [[ "$1" == api && "$resource" =~ ^repos/example/FireMUD/actions/runs/(525[6-9])/attempts/1/jobs\?per_page=100$ ]]; then
+  [[ "${FAKE_TRUSTED_CONSUMER_JOBS_FAIL:-false}" != true ]] || exit 1
+  run_id="${BASH_REMATCH[1]}"
+  if [[ "$run_id" == 5256 ]]; then
+    printf '%s' "${FAKE_TRUSTED_CONSUMER_JOBS_JSON:-null}"
+  else
+    jq -c --argjson id "$run_id" '.jobs[] |= (.run_id = $id | .steps[].name |= sub("merge-[0-9a-f]{40}$"; "merge-dddddddddddddddddddddddddddddddddddddddd"))' \
+      <<<"${FAKE_TRUSTED_CONSUMER_JOBS_JSON:-null}"
+  fi
   exit 0
 fi
-if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5256' ]]; then
-  printf '%s' "${FAKE_TRUSTED_CONSUMER_LATEST_JSON:-null}"
+if [[ "$1" == api && "$resource" =~ ^repos/example/FireMUD/actions/runs/(525[6-9])$ ]]; then
+  jq -c --argjson id "${BASH_REMATCH[1]}" '.id = $id' <<<"${FAKE_TRUSTED_CONSUMER_LATEST_JSON:-null}"
   exit 0
 fi
 if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
@@ -2581,7 +2592,7 @@ grep -Fqx \
 test -s "$FAKE_DISPATCH_LOG"
 
 # An automatic run must prove exactly this tuple in its current native attempt.
-for tuple_case in current qualified target old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path wrong_list_id wrong_latest_repo jobs_unavailable latest_unavailable old_event_current_plan event_only latest_missing_head latest_missing_path jobs_incomplete jobs_malformed stale_attempt_old_tuple; do
+for tuple_case in current qualified target old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path wrong_list_id wrong_latest_repo jobs_unavailable latest_unavailable old_event_current_plan event_only latest_missing_head latest_missing_path jobs_incomplete jobs_malformed stale_attempt_old_tuple completed_failed_plan; do
   reset_case
   reconciler_pull_request_output="$TEMP_DIR/reconciler-pull-request-$tuple_case.out"
   tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
@@ -2589,7 +2600,8 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
   plan_jobs="$(jq -cn --arg tuple "$tuple_name" --arg old "$old_tuple_name" \
     --arg head "$preview_head_sha" --arg variant "$tuple_case" '
       def step($name): {name:$name,status:"completed",conclusion:"success"};
-      [{name:"Preview Plan",run_id:5254,run_attempt:2,head_sha:$head,status:"completed",conclusion:"success",
+      [{name:"Preview Plan",run_id:5254,run_attempt:2,head_sha:$head,status:"completed",
+        conclusion:(if $variant == "completed_failed_plan" then "failure" else "success" end),
         steps:(if $variant == "old_merge" or $variant == "stale_attempt_old_tuple" then [step($old)]
                elif $variant == "ambiguous" then [step($tuple),step($old)]
                elif $variant == "event_only" then [step($tuple | sub("resolved"; "event"))]
@@ -2603,7 +2615,9 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
     {id:5254,run_attempt:(if $variant == "stale_attempt" or $variant == "stale_attempt_old_tuple" then 3 else 2 end),
      head_sha:$head,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:173511323,repository:{full_name:(if $variant == "wrong_latest_repo" then "example/Other" else "example/FireMUD" end)},head_repository:{full_name:"example/FireMUD"},pull_requests:[{number:901}],path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
      | if $variant == "latest_missing_head" then del(.head_sha)
-       elif $variant == "latest_missing_path" then del(.path) else . end')"
+       elif $variant == "latest_missing_path" then del(.path)
+       elif $variant == "completed_failed_plan" then .status = "completed"
+       else . end')"
   (
     cd "$ROOT_DIR"
     FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
@@ -2638,19 +2652,29 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
   fi
 done
 
-for observation_case in duplicate-rows workflow-run-only consumer-title-only consumer-stale-attempt; do
+for observation_case in duplicate-rows lookup-overflow workflow-run-only consumer-title-only consumer-stale-attempt consumer-finished consumer-finished-without-proof consumer-active-jobs-unavailable; do
 reset_case
 reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance-${observation_case}.out"
 consumer_run="$(jq -cn '{id:5256,run_attempt:1,event:"workflow_run",workflow_id:357129350,
   path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",
   head_branch:"develop",head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",display_title:"PR preview 901",
   repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},status:"in_progress"}')"
+namespace_absent_on_initial=false
+proof_complete=false
+if [[ "$observation_case" == consumer-finished || "$observation_case" == consumer-finished-without-proof ]]; then
+  namespace_absent_on_initial=true
+fi
+if [[ "$observation_case" == consumer-finished ]]; then
+  proof_complete=true
+fi
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL="$namespace_absent_on_initial" \
+    FAKE_PR_901_PROOF_COMPLETE="$proof_complete" \
+    FAKE_TRUSTED_CONSUMER_JOBS_FAIL="$([[ "$observation_case" == consumer-finished-without-proof || "$observation_case" == consumer-active-jobs-unavailable ]] && echo true || echo false)" \
     FAKE_TRUSTED_CONSUMER_JOBS_JSON="$(jq -cn \
       --arg observation "$observation_case" \
       --arg tuple "Trusted preview deploy tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}" '
@@ -2659,37 +2683,46 @@ consumer_run="$(jq -cn '{id:5256,run_attempt:1,event:"workflow_run",workflow_id:
         steps:[{name:(if $observation == "consumer-title-only" then "Verify workflow source and immutable PR metadata" else $tuple end),
           status:"completed",conclusion:"success"}]}]}')" \
     FAKE_TRUSTED_CONSUMER_LATEST_JSON="$(jq -c --arg observation "$observation_case" \
-      'if $observation == "consumer-stale-attempt" then .run_attempt = 2 else . end' <<<"$consumer_run")" \
+      'if $observation == "consumer-stale-attempt" then .run_attempt = 2
+       elif $observation | startswith("consumer-finished") then .status = "completed"
+       else . end' <<<"$consumer_run")" \
     FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
       --arg observation "$observation_case" \
-      --argjson consumer "$consumer_run" \
-      --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" '
+      --argjson consumer "$consumer_run" '
         [{workflow_runs:(
           if $observation == "duplicate-rows" then
-            {id:5256,run_attempt:1,workflow_id:173511323,event:"repository_dispatch",
-             path:".github/workflows/preview.yml",name:$title,head_branch:"develop",
-             head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-             repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
-             display_title:$title}
-            | [. + {status:"queued"}, . + {status:"in_progress"}]
+            [$consumer, (5257, 5258 | $consumer + {id:., status:("queued", "in_progress")})]
+          elif $observation == "lookup-overflow" then
+            [range(5256; 5260) | $consumer + {id:.}]
           else
             [$consumer]
           end)}]')" \
     PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_active_status_advance_output"
+) > "$reconciler_active_status_advance_output" 2>&1
 if [[ "$observation_case" == duplicate-rows || "$observation_case" == workflow-run-only ]]; then
   grep -Fqx \
     "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
     "$reconciler_active_status_advance_output"
   test ! -e "$FAKE_ANNOTATE_LOG"
   test ! -e "$FAKE_DISPATCH_LOG"
-elif [[ "$observation_case" == consumer-stale-attempt ]]; then
+elif [[ "$observation_case" == consumer-stale-attempt || "$observation_case" == lookup-overflow || "$observation_case" == consumer-active-jobs-unavailable ]]; then
   grep -Fqx \
     "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
     "$reconciler_active_status_advance_output"
   test ! -e "$FAKE_ANNOTATE_LOG"
   test ! -e "$FAKE_DISPATCH_LOG"
+elif [[ "$observation_case" == consumer-finished ]]; then
+  grep -Fqx 'Skipping PR #901: proof completed before retry dispatch.' "$reconciler_active_status_advance_output"
+  test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+elif [[ "$observation_case" == consumer-finished-without-proof ]]; then
+  grep -Fqx \
+    "Recorded proof retry 1/3 for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag})." \
+    "$reconciler_active_status_advance_output"
+  test -s "$FAKE_ANNOTATE_LOG"
+  test -s "$FAKE_DISPATCH_LOG"
 else
   grep -Fqx \
     "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
@@ -2898,7 +2931,7 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_empty_deployed_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 
 reset_case
 reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
@@ -2913,7 +2946,7 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_absent_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 grep -Fqx 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
 
 reset_case
@@ -2991,8 +3024,8 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_absent_on_recheck_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
-test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 3
 
 reset_case
 reconciler_namespace_error_output="$TEMP_DIR/reconciler-namespace-error.out"
@@ -3103,7 +3136,7 @@ grep -qx 'Namespace pr-901 was deleted during requested-head repair; dispatching
 grep -Fqx \
   "annotate namespace pr-901 firemud.dev/requested-preview-base-sha=${preview_base_sha} firemud.dev/requested-preview-head-sha=${preview_head_sha} firemud.dev/requested-preview-merge-sha=${preview_merge_sha} firemud.dev/requested-preview-image-tag=${preview_image_tag} --overwrite --resource-version rv-901" \
   "$FAKE_ANNOTATE_LOG"
-test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 4
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
@@ -3703,7 +3736,7 @@ grep -Fq "run-name: \${{ github.event_name == 'workflow_run' && github.event.wor
 # shellcheck disable=SC2016 # Assert one fail-closed JSON snapshot feeds each namespace decision.
 grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
   "$reconciler_workflow"
-# shellcheck disable=SC2016 # Assert the initial, repair, and proof-retry namespace snapshots.
+# shellcheck disable=SC2016 # Assert the initial, repair, and pre-dispatch namespace snapshots.
 test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 4
 # shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
 grep -Fq 'requested preview tuple changed during annotation repair check' "$reconciler_workflow"

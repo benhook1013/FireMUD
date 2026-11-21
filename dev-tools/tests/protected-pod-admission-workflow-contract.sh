@@ -4,6 +4,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
 import json, os, pathlib, subprocess, sys, tempfile
 import yaml
+if not __debug__:
+    raise SystemExit("Protected Pod admission proof requires Python assertions")
 root = pathlib.Path(sys.argv[1])
 workflow = yaml.safe_load((root / ".github/workflows/protected-pod-admission-proof.yml").read_text())
 steps = workflow["jobs"]["admission-only"]["steps"]
@@ -15,6 +17,12 @@ inspects = [line for script in runs for line in script.splitlines() if 'owner_la
 assert len(inspects) == 2
 assert all('15s docker inspect' in line and '|| owner_label=""' in line for line in inspects)
 proof = next(script for script in runs if "policy_deadline=" in script)
+version_guard = proof[proof.index('expected_server_version='):proof.index("printf 'kubernetes_context=")]
+for actual, expected in [("v1.34.1", 0), ("v1.34.10", 1), ("v1.34.1-unexpected", 1)]:
+    result = subprocess.run(["bash", "-c", version_guard], capture_output=True, env={
+        **os.environ, "KIND_NODE_IMAGE": "kindest/node:v1.34.1@sha256:pin", "server_version": actual,
+    })
+    assert result.returncode == expected, (actual, result.returncode, result.stderr)
 wait = proof[proof.index('policy_deadline='):proof.index('elapsed fixture_rollout')]
 wait = wait[:wait.index('phase_started=')]
 # Execute the real wait body against bounded fake API/time, never a cluster.

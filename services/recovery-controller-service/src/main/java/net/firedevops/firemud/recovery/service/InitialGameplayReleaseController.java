@@ -8,6 +8,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.ContinueRecovery;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
@@ -128,7 +129,7 @@ public final class InitialGameplayReleaseController {
         || outbox.state() == EffectOutboxState.RETRYABLE) {
       return applyEffect(operation, outbox);
     }
-    return readBackEffect(operation, outbox, outbox.lastAttemptId());
+    return readBackEffect(operation, outbox);
   }
 
   private Operation applyEffect(Operation operation, OutboxEntry outbox) {
@@ -156,7 +157,12 @@ public final class InitialGameplayReleaseController {
         || applyResult.status() == ApplyStatus.NOT_DISPATCHED) {
       // An exact, durably closed prior dispatch can be superseded while the apply call was pending.
       journal.recordRetryableEffectForDispatch(
-          dispatched, applyResult.outcomeCode(), clock.instant());
+          dispatched,
+          applyResult.status() == ApplyStatus.NOT_DISPATCHED
+              ? RetrySource.NOT_DISPATCHED
+              : RetrySource.OWNER_REJECTED,
+          applyResult.outcomeCode(),
+          clock.instant());
       return requireOperation(operation.scope().operationId());
     }
     if (applyResult.status() == ApplyStatus.AMBIGUOUS) {
@@ -164,10 +170,11 @@ public final class InitialGameplayReleaseController {
           dispatched, applyResult.outcomeCode(), clock.instant());
       return requireOperation(operation.scope().operationId());
     }
-    return readBackEffect(operation, dispatched, attemptId);
+    return readBackEffect(operation, dispatched);
   }
 
-  private Operation readBackEffect(Operation operation, OutboxEntry outbox, UUID attemptId) {
+  private Operation readBackEffect(Operation operation, OutboxEntry outbox) {
+    UUID attemptId = outbox.lastAttemptId();
     if (attemptId == null) {
       throw new InitialGameplayReleaseConflictException(
           "IDEMPOTENCY_CONFLICT: dispatched effect has no attempt identity");
@@ -189,8 +196,7 @@ public final class InitialGameplayReleaseController {
       throw new InitialGameplayReleaseConflictException(
           "IDEMPOTENCY_CONFLICT: effect readback observation time changed");
     }
-    return journal.recordEffectReadback(
-        operation.scope().operationId(), outbox.effect().effectId(), attemptId, readback, now);
+    return journal.recordEffectReadback(outbox, readback, now);
   }
 
   private Operation transition(
@@ -222,14 +228,13 @@ public final class InitialGameplayReleaseController {
     if (prior.isPresent()) {
       return prior.orElseThrow();
     }
-    EvidenceResolution resolution = evidenceProvider.read(operation.scope());
-    if (resolution.status() == ResolutionStatus.UNAVAILABLE) {
-      Optional<Operation> committedWhileReading = journal.findTransition(tuple);
-      if (committedWhileReading.isPresent()) {
-        return committedWhileReading.orElseThrow();
-      }
+    try {
+      verifyFreshEvidence(operation, evidenceProvider.read(operation.scope()));
+    } catch (OwnerBoundaryUnavailableException
+        | IllegalArgumentException
+        | InitialGameplayReleaseConflictException evidenceFailure) {
+      return journal.findTransition(tuple).orElseThrow(() -> evidenceFailure);
     }
-    verifyFreshEvidence(operation, resolution);
     return journal.transition(tuple, clock.instant());
   }
 

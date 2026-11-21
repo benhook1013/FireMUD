@@ -45,6 +45,8 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
   }
   for (const [entries, count, expected, drift] of [
     [[{filename: "design/README.md"}], 1, true],
+    [[{filename: "README.md"}], 1, true],
+    [[{filename: "README.md", status: "renamed", previous_filename: "services/new-service/Main.java"}], 1, false],
     [[{filename: "design/README.md"}], 1, false, "head-before"],
     [[{filename: "design/README.md"}], 1, false, "head-after"],
     [[{filename: "design/README.md"}], 1, false, "base-after"],
