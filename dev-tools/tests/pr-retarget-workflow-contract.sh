@@ -2412,25 +2412,52 @@ JSON
 fi
 EOF
 chmod +x "$contract_fixture_dir/gh"
+# Advance the fixture clock at poll sleeps so API fixture speed cannot govern
+# success or timeout. The outer timeout still bounds a broken fixture.
+cat >"$contract_fixture_dir/publisher-clock.sh" <<'EOF'
+if [[ "${0##*/}" == "wait-for-runtime-images.sh" ]]; then
+  unset SECONDS
+  SECONDS=0
+  sleep() {
+    SECONDS=$((SECONDS + 1))
+  }
+  if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
+    timeout() {
+      local timeout_budget="${2:-0}" timeout_status
+      if command timeout "$@"; then
+        timeout_status=0
+      else
+        timeout_status=$?
+      fi
+      if [[ -f "$CONTRACT_STALLED_LOOKUP_MARKER" && "$timeout_status" -ne 0 ]]; then
+        SECONDS=$((SECONDS + timeout_budget))
+      fi
+      return "$timeout_status"
+    }
+  fi
+fi
+EOF
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
 PATH="$contract_fixture_dir:$PATH" \
 GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$contract_fixture_dir/output"
 require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
 
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
 CONTRACT_GH_STATE_FILE="$contract_fixture_dir/gh-state" \
 PATH="$contract_fixture_dir:$PATH" \
 GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$contract_fixture_dir/retry-output" \
@@ -2639,31 +2666,6 @@ many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images
 (root / "dispatch-outside-window.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-07-23T00:00:00Z"}]}))
 (root / "dispatch-invalid-date.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-02-31T00:00:00Z"}]}))
 PY_FIXTURES
-# Advance the fixture clock at poll sleeps so API fixture speed cannot govern
-# success or timeout. The outer timeout still bounds a broken fixture.
-cat >"$contract_fixture_dir/publisher-clock.sh" <<'EOF'
-if [[ "${0##*/}" == "wait-for-runtime-images.sh" ]]; then
-  unset SECONDS
-  SECONDS=0
-  sleep() {
-    SECONDS=$((SECONDS + 1))
-  }
-  if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
-    timeout() {
-      local timeout_budget="${2:-0}" timeout_status
-      if command timeout "$@"; then
-        timeout_status=0
-      else
-        timeout_status=$?
-      fi
-      if [[ -f "$CONTRACT_STALLED_LOOKUP_MARKER" && "$timeout_status" -ne 0 ]]; then
-        SECONDS=$((SECONDS + timeout_budget))
-      fi
-      return "$timeout_status"
-    }
-  fi
-fi
-EOF
 for event in typed native; do
   source_inventory="duplicate-inventory"
   publisher_inventory="dispatch-success"
@@ -2803,7 +2805,7 @@ for direct_variant in native typed typed-native; do
       "$contract_fixture_dir/direct-skipped-$direct_variant.error" >&2
     exit 1
   fi
-  if rg -q 'Trusted PR image publisher .* succeeded' "$contract_fixture_dir/direct-skipped-$direct_variant.output"; then
+  if grep -Eq 'Trusted PR image publisher .* succeeded' "$contract_fixture_dir/direct-skipped-$direct_variant.output"; then
     echo "A direct publisher with a skipped image step was accepted for $direct_variant" >&2
     exit 1
   fi
@@ -2879,7 +2881,7 @@ CONTRACT_DUPLICATE_EVENT=typed CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
   echo "The fixture did not rerun the publisher during source revalidation" >&2
   exit 1
 }
-if rg -q 'Trusted PR image publisher .* succeeded' "$contract_fixture_dir/publisher-rerun.output"; then
+if grep -Eq 'Trusted PR image publisher .* succeeded' "$contract_fixture_dir/publisher-rerun.output"; then
   echo "A rerun publisher attempt was accepted using the predecessor attempt's job proof" >&2
   exit 1
 fi
@@ -2938,10 +2940,10 @@ for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
   [[ -f "$lookup_marker" ]] || { echo "Publisher lookup was not reached: $variant" >&2; exit 1; }
 done
 for fixture in missing-url empty-url; do
-  if CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
       >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
     echo "$fixture unexpectedly verified publication" >&2
@@ -2959,12 +2961,12 @@ for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispa
   else
     source_inventory=""
   fi
-  if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     CONTRACT_SOURCE_PAYLOAD="$source_inventory" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
       >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
     [[ "$fixture" == "dispatch-success" || "$fixture" == "dispatch-second-page" ]] || { echo "$fixture unexpectedly admitted publisher" >&2; exit 1; }
