@@ -2215,6 +2215,9 @@ fi
 if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
   case "$*" in
     *actions/runs/201/attempts/2/jobs?per_page=100)
+      if [[ -n "${CONTRACT_DIRECT_JOB_MARKER:-}" ]]; then
+        : >"$CONTRACT_DIRECT_JOB_MARKER"
+      fi
       if [[ "${CONTRACT_DUPLICATE_DIRECT_JOB:-success}" == "skipped" ]]; then
         cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-201-skipped.json"
       else
@@ -2556,7 +2559,7 @@ direct_typed_source = {**typed_source, "id": 104, "status": "completed", "conclu
 (root / "direct-typed-success-sources.json").write_text(json.dumps({
     "workflow_runs": [direct_typed_source, typed_source],
 }))
-direct_typed_publisher = {**alternate_publisher, "event": "repository_dispatch",
+direct_typed_publisher = {**direct_publisher, "event": "repository_dispatch",
     "display_title": "Publish PR Runtime Images source-run-104"}
 (root / "duplicate-publisher-201-typed.json").write_text(json.dumps(direct_typed_publisher))
 native_typed_direct_publisher = {**direct_publisher, "event": "workflow_run",
@@ -2781,6 +2784,7 @@ for direct_variant in native typed typed-native; do
   if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT="$direct_event" \
     CONTRACT_DUPLICATE_DIRECT_EVENT="$direct_event" CONTRACT_DUPLICATE_DIRECT_JOB=skipped \
     CONTRACT_DUPLICATE_DIRECT_PUBLISHER="$direct_publisher_variant" \
+    CONTRACT_DIRECT_JOB_MARKER="$contract_fixture_dir/direct-skipped-$direct_variant.checked" \
     CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
     CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$source_inventory.json" \
     CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/direct-publisher-only-$direct_variant.json" \
@@ -2793,7 +2797,11 @@ for direct_variant in native typed typed-native; do
     echo "A successful direct $direct_variant publisher workflow with a skipped image step must not be accepted" >&2
     exit 1
   fi
-  if ! grep -Fq 'Timed out waiting for trusted PR image publisher' \
+  [[ -f "$contract_fixture_dir/direct-skipped-$direct_variant.checked" ]] || {
+    echo "The skipped-step fixture did not reach the exact publisher job for $direct_variant" >&2
+    exit 1
+  }
+  if ! grep -Eq 'Timed out waiting for trusted PR image publisher|Publisher coverage unavailable at the wait deadline' \
     "$contract_fixture_dir/direct-skipped-$direct_variant.error"; then
     cat "$contract_fixture_dir/direct-skipped-$direct_variant.output" \
       "$contract_fixture_dir/direct-skipped-$direct_variant.error" >&2
