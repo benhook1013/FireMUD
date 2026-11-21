@@ -241,6 +241,36 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
                               "delivery-world",
                               "Durably delivered authored World")));
       var claim = deliveries.read(source.operationId()).orElseThrow();
+      var secondGame = new Game();
+      secondGame.setTenantId(UUID.randomUUID().toString());
+      secondGame.setName("Second authored World source");
+      secondGame.setDescription("A distinct pending claim for delivery pagination");
+      var savedSecondGame =
+          Objects.requireNonNull(
+              transaction(gd.store())
+                  .execute(ignored -> new GameRepository(gd.store().dsl()).save(secondGame)));
+      var secondSource =
+          Objects.requireNonNull(
+              transaction(gd.store())
+                  .execute(
+                      ignored ->
+                          sources.register(
+                              NAMESPACE,
+                              UUID.randomUUID(),
+                              savedSecondGame.getCanonicalTenantId(),
+                              "second-genuine-tenant",
+                              "second-delivery-world",
+                              "Second authored World")));
+      var firstPage = deliveries.readPending(NAMESPACE, null, 1);
+      assertThat(firstPage).hasSize(1);
+      var first = firstPage.get(0);
+      var secondPage = deliveries.readPending(NAMESPACE, first.request().intakeRequestId(), 1);
+      assertThat(secondPage).hasSize(1);
+      var second = secondPage.get(0);
+      assertThat(List.of(first.source(), second.source()))
+          .containsExactlyInAnyOrder(source, secondSource);
+      assertThat(deliveries.readPending(NAMESPACE, second.request().intakeRequestId(), 1))
+          .isEmpty();
       var intakes = new WorldAuthoredSourceIntakeRepository(world.dsl());
       assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId())).isEmpty();
       assertThat(claim.acknowledgedReceipt()).isEmpty();
@@ -271,6 +301,9 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(worldReceipt.receiptDigest()).isEqualTo(receipt.receiptDigest());
         assertThat(deliveries.read(source.operationId())).contains(acknowledged);
         assertThat(delivery.deliver(source.operationId())).isEqualTo(acknowledged);
+        assertThat(deliveries.readPending(NAMESPACE, null, 2))
+            .singleElement()
+            .satisfies(remaining -> assertThat(remaining.source()).isEqualTo(secondSource));
       }
     } finally {
       gdServer.shutdownNow();
