@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidenc
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest;
 import net.firedevops.firemud.gamesession.v1.GetRunOwnedFixtureLaunchAssociationResponse;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
@@ -942,6 +943,55 @@ public final class WorldCanonicalInstanceAssociationRepository {
     return readOwnerAssociation(canonicalGameInstanceId, true, true);
   }
 
+  /** Exact committed fixture receipt read; ordinary association readers remain PREPARING-only. */
+  Optional<WorldCanonicalInstanceAssociation> readFixtureActivationAssociationInOwnerTransaction(
+      WorldCanonicalInstanceFixtureActivationRequest request) {
+    requireReadOnlyRepeatableReadOwnerTransaction();
+    return readFixtureActivationAssociation(request, false);
+  }
+
+  /** Exact retained fixture authority under the writable hold owner transaction. */
+  Optional<WorldCanonicalInstanceAssociation> readFixtureActivationAssociationInHoldTransaction(
+      WorldCanonicalInstanceFixtureActivationRequest request) {
+    requireWritableActivationTransaction();
+    // Match lifecycle mutation ordering: lock World before the hold row is acquired.
+    dsl.fetch(
+        "SELECT wi.id FROM world_instance wi WHERE canonical_game_instance_id=? FOR UPDATE",
+        request.canonicalGameInstanceId());
+    return readFixtureActivationAssociation(request, true);
+  }
+
+  private Optional<WorldCanonicalInstanceAssociation> readFixtureActivationAssociation(
+      WorldCanonicalInstanceFixtureActivationRequest request, boolean writable) {
+    byte[] resultBytes =
+        new WorldCanonicalInstanceFixtureActivationResult(request).canonicalBytes();
+    Record receipt =
+        dsl.fetchOne(
+            "SELECT activation_request_id FROM world_run_owned_fixture_activation_operation "
+                + "WHERE activation_request_id=? AND canonical_game_instance_id=? "
+                + "AND request_bytes=? AND result_bytes=? AND outcome='COMMITTED' "
+                + "AND expected_lifecycle_epoch=1 AND expected_row_version=0 "
+                + "AND result_lifecycle_epoch=2 AND result_row_version=1",
+            request.activationRequestId(),
+            request.canonicalGameInstanceId(),
+            request.canonicalBytes(),
+            resultBytes);
+    if (receipt == null) return Optional.empty();
+    Record row = findByCanonicalGameInstance(request.canonicalGameInstanceId());
+    if (row == null)
+      throw new InvalidAssociationEvidenceException("Fixture receipt lost association");
+    var association = toRunOwnedFixtureAssociation(row, !writable, writable, true);
+    if (!association.identity().canonicalTenantId().equals(request.canonicalTenantId())
+        || !association
+            .runOwnedFixture()
+            .fixtureProvenanceDigest()
+            .equals(request.fixturePolicySealEvidenceDigest())) {
+      throw new InvalidAssociationEvidenceException(
+          "Fixture receipt request differs from association");
+    }
+    return Optional.of(association);
+  }
+
   /**
    * Locks and verifies the immutable fixture association inside a writable lifecycle transaction.
    */
@@ -975,7 +1025,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
         "RUN_OWNED_WORLD_ACTIVATION_UNAVAILABLE: fixture activation requires the later canonical lifecycle and hold composition");
   }
 
-  private static void requireFixtureAssociationMatches(
+  static void requireFixtureAssociationMatches(
       WorldCanonicalInstanceAssociation stored,
       RunOwnedCanonicalWorldLaunchEvidence evidence,
       PreparedWorldInstanceRequest originalGameSessionRequest) {
@@ -1152,6 +1202,14 @@ public final class WorldCanonicalInstanceAssociationRepository {
 
   private WorldCanonicalInstanceAssociation toRunOwnedFixtureAssociation(
       Record row, boolean inOwnerSnapshot, boolean inActivationTransaction) {
+    return toRunOwnedFixtureAssociation(row, inOwnerSnapshot, inActivationTransaction, false);
+  }
+
+  private WorldCanonicalInstanceAssociation toRunOwnedFixtureAssociation(
+      Record row,
+      boolean inOwnerSnapshot,
+      boolean inActivationTransaction,
+      boolean committedFixture) {
     if (!"RUN_OWNED_FIXTURE".equals(required(row, CANONICAL_AUTHORITY_KIND))
         || row.get(LAUNCH_BINDING_OPERATION_ID) != null
         || row.get(RELEASE_ATTESTATION_DIGEST) != null) {
@@ -1241,7 +1299,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
     Record worldRow = readWorldInstance(worldInstanceId);
     requireStoredFixtureAssociationColumns(
         row, identity, worldInstanceId, fixture, versionIdentity);
-    requireStoredFixtureWorldRow(worldRow, row, identity, fixture, versionIdentity);
+    requireStoredFixtureWorldRow(
+        worldRow, row, identity, fixture, versionIdentity, committedFixture);
     return new WorldCanonicalInstanceAssociation(
         identity, worldInstanceId, null, versionIdentity, null, fixture);
   }
@@ -1327,7 +1386,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
       Record associationRow,
       WorldCanonicalInstanceAssociation.CanonicalIdentity identity,
       WorldCanonicalInstanceAssociation.RunOwnedFixture fixture,
-      WorldAuthoredVersionIdentityReceipt versionIdentity) {
+      WorldAuthoredVersionIdentityReceipt versionIdentity,
+      boolean committedFixture) {
     String preparationInputDigest = fixture.preparationInputDigest();
     if (row == null
         || !"RUN_OWNED_FIXTURE".equals(row.get(INSTANCE_CANONICAL_AUTHORITY_KIND, String.class))
@@ -1378,9 +1438,10 @@ public final class WorldCanonicalInstanceAssociationRepository {
             fixture.preparingLifecycleEpoch())
         || fixture.preparingLifecycleEpoch() != 1L
         || !Objects.equals(
-            row.get(INSTANCE_LIFECYCLE_EPOCH, Long.class), fixture.preparingLifecycleEpoch())
-        || !"PREPARING".equals(row.get(INSTANCE_STATUS, String.class))
-        || !Objects.equals(row.get("row_version", Long.class), 0L)
+            row.get(INSTANCE_LIFECYCLE_EPOCH, Long.class), committedFixture ? 2L : 1L)
+        || !(committedFixture ? "ACTIVE" : "PREPARING")
+            .equals(row.get(INSTANCE_STATUS, String.class))
+        || !Objects.equals(row.get("row_version", Long.class), committedFixture ? 1L : 0L)
         || !Objects.equals(
             row.get(INSTANCE_CONTROL_PLANE_REQUEST_ID, String.class),
             identity.controlPlaneRequestId())

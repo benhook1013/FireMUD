@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Explicit, unregistered same-namespace World-only fixture terminal read.
+// Decoding the retained bytes supplies no Human or player admission authority.
+service GameSessionFixtureInitialAdmissionOwnerReadService {
+  rpc GetFixtureInitialAdmissionOwner(GetFixtureInitialAdmissionOwnerRequest)
+      returns (GetFixtureInitialAdmissionOwnerResponse);
+}
+
+message GetFixtureInitialAdmissionOwnerRequest {
+  string read_request_id = 1;
+  bytes fixture_hold_request_bytes = 2;
+  bytes hold_identity_bytes = 3;
+}
+
+message GetFixtureInitialAdmissionOwnerResponse {
+  string read_request_id = 1;
+  bytes fixture_hold_request_bytes = 2;
+  bytes hold_identity_bytes = 3;
+  bytes fixture_terminal_proof_bytes = 4;
+}

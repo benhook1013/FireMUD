@@ -88,7 +88,19 @@ public final class LoopbackMtlsTestPki {
     return tls;
   }
 
-  public record IdentitySpec(String alias, String workloadUri, boolean server) {}
+  public record IdentitySpec(String alias, String workloadUri, boolean server, boolean client) {
+    public IdentitySpec(String alias, String workloadUri, boolean server) {
+      this(alias, workloadUri, server, !server);
+    }
+
+    public IdentitySpec {
+      if (!server && !client) throw new IllegalArgumentException("Test identity needs an EKU");
+    }
+
+    String extendedKeyUsage() {
+      return server && client ? "serverAuth,clientAuth" : server ? "serverAuth" : "clientAuth";
+    }
+  }
 
   public record Identity(PrivateKey privateKey, X509Certificate certificate) {}
 
@@ -161,7 +173,9 @@ public final class LoopbackMtlsTestPki {
   private static Identity issueIdentity(
       Path directory, Path caStore, Path caFile, IdentitySpec identity) throws Exception {
     String alias = identity.alias();
-    String san = "URI:" + identity.workloadUri() + ",DNS:localhost,IP:127.0.0.1";
+    String san =
+        (identity.workloadUri() == null ? "" : "URI:" + identity.workloadUri() + ",")
+            + "DNS:localhost,IP:127.0.0.1";
     Path store = directory.resolve(alias + ".p12");
     Path request = directory.resolve(alias + ".csr");
     Path certificate = directory.resolve(alias + ".crt");
@@ -180,7 +194,7 @@ public final class LoopbackMtlsTestPki {
         "-ext",
         "KU=digitalSignature,keyEncipherment",
         "-ext",
-        "EKU=" + (identity.server() ? "serverAuth" : "clientAuth"),
+        "EKU=" + identity.extendedKeyUsage(),
         "-ext",
         "SAN=" + san,
         "-storetype",
@@ -227,7 +241,7 @@ public final class LoopbackMtlsTestPki {
         "-ext",
         "KU=digitalSignature,keyEncipherment",
         "-ext",
-        "EKU=" + (identity.server() ? "serverAuth" : "clientAuth"),
+        "EKU=" + identity.extendedKeyUsage(),
         "-ext",
         "SAN=" + san);
     keytool(

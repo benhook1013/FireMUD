@@ -28,6 +28,12 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
   private RunOwnedWorldFixtureEvidenceTestFixtures() {}
 
   public static RunOwnedCanonicalWorldLaunchEvidence create(ObjectMapper objectMapper) {
+    return create(objectMapper, "a".repeat(64), "b".repeat(64), "c".repeat(64));
+  }
+
+  /** Controlled upstream values bound to actual test-only reciprocal TLS recipients. */
+  public static RunOwnedCanonicalWorldLaunchEvidence create(
+      ObjectMapper objectMapper, String gameSessionLeaf, String worldLeaf, String caDigest) {
     long gameDesignTenant = 8_810_000L + (positiveLong() % 1_000_000L);
     long gameSessionTenant = 18_810_000L + (positiveLong() % 1_000_000L);
     long sourceGameRow = positiveLong();
@@ -38,7 +44,7 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
             + UUID.randomUUID().toString().replace("-", "");
     String operationId =
         RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
-                claimDigest, "fixture-run", "firemud-fixture-run", "a".repeat(64), "b".repeat(64))
+                claimDigest, "fixture-run", "firemud-fixture-run", gameSessionLeaf, caDigest)
             .toString();
     String releaseRef = UUID.randomUUID().toString();
     UUID registrationId = UUID.fromString(operationId);
@@ -154,11 +160,11 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
             false,
             "SHARED",
             "ALLOW_NEW",
-            "a".repeat(64),
+            gameSessionLeaf,
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
-            "b".repeat(64),
+            caDigest,
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64),
+            worldLeaf,
             claimDigest);
     // Controlled constructor data remains untrusted; these commitments do not prove owner writes.
     UUID creationRequestId = UUID.randomUUID();
@@ -214,10 +220,10 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
             operationId,
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
-            "a".repeat(64),
-            "b".repeat(64),
+            gameSessionLeaf,
+            caDigest,
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64),
+            worldLeaf,
             source,
             launchRead,
             creation,
@@ -283,10 +289,10 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
         descriptor,
         capabilityBytes,
         receiptBytes,
-        "a".repeat(64),
+        gameSessionLeaf,
         RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-        "c".repeat(64),
-        "b".repeat(64),
+        worldLeaf,
+        caDigest,
         gs);
   }
 

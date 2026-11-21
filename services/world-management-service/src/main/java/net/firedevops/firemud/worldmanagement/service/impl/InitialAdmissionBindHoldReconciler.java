@@ -7,6 +7,7 @@ import net.firedevops.firemud.worldmanagement.client.GameSessionInitialAdmission
 import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindOwnerProof;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldOwner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -27,10 +28,10 @@ public class InitialAdmissionBindHoldReconciler {
   private final InitialAdmissionBindHoldRepository holdRepository;
   private final InitialAdmissionBindHoldService holdService;
   private final ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider;
+  private final ObjectProvider<WorldFixtureInitialAdmissionHoldOwner> fixtureOwnerProvider;
   private final Clock clock;
   private final MeterRegistry meterRegistry;
 
-  @Autowired
   public InitialAdmissionBindHoldReconciler(
       InitialAdmissionBindHoldRepository holdRepository,
       InitialAdmissionBindHoldService holdService,
@@ -39,23 +40,63 @@ public class InitialAdmissionBindHoldReconciler {
     this(holdRepository, holdService, proofClientProvider, Clock.systemUTC(), meterRegistry);
   }
 
+  @Autowired
+  public InitialAdmissionBindHoldReconciler(
+      InitialAdmissionBindHoldRepository holdRepository,
+      InitialAdmissionBindHoldService holdService,
+      ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider,
+      MeterRegistry meterRegistry,
+      ObjectProvider<WorldFixtureInitialAdmissionHoldOwner> fixtureOwnerProvider) {
+    this(
+        holdRepository,
+        holdService,
+        proofClientProvider,
+        Clock.systemUTC(),
+        meterRegistry,
+        fixtureOwnerProvider);
+  }
+
   InitialAdmissionBindHoldReconciler(
       InitialAdmissionBindHoldRepository holdRepository,
       InitialAdmissionBindHoldService holdService,
       ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider,
       Clock clock,
       MeterRegistry meterRegistry) {
+    this(holdRepository, holdService, proofClientProvider, clock, meterRegistry, null);
+  }
+
+  private InitialAdmissionBindHoldReconciler(
+      InitialAdmissionBindHoldRepository holdRepository,
+      InitialAdmissionBindHoldService holdService,
+      ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider,
+      Clock clock,
+      MeterRegistry meterRegistry,
+      ObjectProvider<WorldFixtureInitialAdmissionHoldOwner> fixtureOwnerProvider) {
     this.holdRepository = holdRepository;
     this.holdService = holdService;
     this.proofClientProvider = proofClientProvider;
+    this.fixtureOwnerProvider = fixtureOwnerProvider;
     this.clock = clock;
     this.meterRegistry = meterRegistry;
   }
 
   @Scheduled(fixedDelayString = "${world.initial-admission-bind.reconcile-delay-ms:5000}")
   public void reconcilePendingHolds() {
+    // No fixture owner is registered by default. Explicit receiving composition may provide it.
+    if (fixtureOwnerProvider != null) {
+      WorldFixtureInitialAdmissionHoldOwner fixtureOwner = fixtureOwnerProvider.getIfAvailable();
+      if (fixtureOwner != null) {
+        try {
+          fixtureOwner.reconcilePending(32);
+        } catch (RuntimeException unavailable) {
+          logger.warn(
+              "Fixture hold recovery remains fenced errorType={}",
+              unavailable.getClass().getSimpleName());
+        }
+      }
+    }
     List<net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold> holds =
-        holdRepository.findNonterminal(32);
+        holdRepository.findNonterminalLegacy(32);
     if (holds.isEmpty()) {
       return;
     }

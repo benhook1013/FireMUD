@@ -242,6 +242,37 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
     }
   }
 
+  /**
+   * Revalidates the fixed immutable run/recipient binding for historical hold reads and recovery.
+   * It deliberately does not claim a current STARTING allocation or new activation authority. Fresh
+   * acquisition continues to use requireAuthenticatedEvidence and both actual owner reads.
+   */
+  public RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt requireConfiguredFixtureReceipt() {
+    if (!enabled) throw invalidEvidence();
+    requireExpectedRunBinding(runId, composeProjectName);
+    byte[] capabilityBytes = readImmutableWireFile(capabilityPath);
+    byte[] receiptBytes = readImmutableWireFile(sourceReceiptPath);
+    var capability = RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(capabilityBytes);
+    var receipt =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(receiptBytes, capability);
+    CertificatePins worldPins = configuredWorldCertificatePins(grpcProperties);
+    if (!runId.equals(capability.runId())
+        || !composeProjectName.equals(capability.composeProjectName())
+        || !runId.equals(receipt.runId())
+        || !composeProjectName.equals(receipt.composeProjectName())
+        || !GAME_SESSION_URI_SAN.equals(capability.gameSessionUriSan())
+        || !WORLD_MANAGEMENT_URI_SAN.equals(capability.worldManagementUriSan())
+        || !worldPins.uriSan().equals(capability.worldManagementUriSan())
+        || !worldPins.leafSha256().equals(capability.worldManagementLeafSha256())
+        || !worldPins.caSha256().equals(capability.caCertificateSha256())
+        || !worldPins.caSha256().equals(receipt.caCertificateSha256())
+        || !worldPins.uriSan().equals(receipt.worldManagementUriSan())
+        || !worldPins.leafSha256().equals(receipt.worldManagementLeafSha256())) {
+      throw invalidEvidence();
+    }
+    return receipt;
+  }
+
   private static boolean isRetryableOwnerReadFailure(
       VerificationStage stage, RuntimeException exception) {
     if (!(exception instanceof StatusRuntimeException statusException)

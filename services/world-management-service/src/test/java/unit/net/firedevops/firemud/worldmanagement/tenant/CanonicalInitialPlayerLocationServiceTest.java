@@ -38,6 +38,8 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayer
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class CanonicalInitialPlayerLocationServiceTest {
   private static final String NAMESPACE = "firemud";
@@ -254,6 +256,73 @@ class CanonicalInitialPlayerLocationServiceTest {
     assertThat(service.read(selection)).contains(retained);
     assertThat(entityReads.get()).isEqualTo(1);
     verifyNoInteractions(associations, holds, gameSession);
+  }
+
+  /** Retained placement is historical, but its immutable Entity receipt remains authoritative. */
+  @ParameterizedTest
+  @EnumSource(RetainedReceipt.class)
+  void retainedPlaceRetryNeverReconstructsAuthorityFromCurrentOwners(RetainedReceipt receipt) {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
+    var retained =
+        new Result(
+            Outcome.CONFLICT,
+            "CHARACTER_ALREADY_PLACED",
+            null,
+            null,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var location = mock(WorldCanonicalInitialPlayerLocationRepository.class);
+    when(location.readByOperationId(
+            eq(selection.placementOperationId()), any(RequestSelector.class)))
+        .thenReturn(Optional.of(retained));
+    var associations = mock(WorldCanonicalInstanceAssociationRepository.class);
+    var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var entityReads = new AtomicInteger();
+    var service =
+        new CanonicalInitialPlayerLocationService(
+            NAMESPACE,
+            associations,
+            holds,
+            location,
+            gameSession,
+            ignored -> {
+              entityReads.incrementAndGet();
+              return switch (receipt) {
+                case EXACT -> entityReceipt(selection);
+                case MISMATCHED -> mismatchedEntityReceipt(selection);
+                case UNAVAILABLE -> throw Status.UNAVAILABLE.asRuntimeException();
+              };
+            });
+
+    if (receipt == RetainedReceipt.EXACT) {
+      assertThat(service.place(selection)).isSameAs(retained);
+    } else {
+      assertThatThrownBy(() -> service.place(selection))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(
+                          receipt == RetainedReceipt.UNAVAILABLE
+                              ? Status.Code.UNAVAILABLE
+                              : Status.Code.FAILED_PRECONDITION));
+    }
+    assertThat(entityReads.get()).isEqualTo(1);
+    verifyNoInteractions(associations, holds, gameSession);
+    verify(location, never()).store(any());
+    verify(location)
+        .readByOperationId(eq(selection.placementOperationId()), any(RequestSelector.class));
+    assertThat(retained.requestBytes()).containsExactly((byte) 1);
+  }
+
+  private enum RetainedReceipt {
+    EXACT,
+    MISMATCHED,
+    UNAVAILABLE
   }
 
   @Test

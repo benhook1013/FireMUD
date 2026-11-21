@@ -8,6 +8,8 @@ plugins {
     id("net.firedevops.firemud.jooq-conventions")
 }
 
+apply(from = "${rootDir}/gradle/world-proof-migration-inputs.gradle")
+
 firemudJooq {
     packageName.set("net.firedevops.firemud.worldmanagement.jooq")
 }
@@ -18,6 +20,10 @@ dependencies {
     compileOnly(libs.jetbrains.annotations)
   testImplementation(testFixtures(project(":common-platform-core")))
   testImplementation(libs.bouncycastle.pkix)
+  add(
+      "integrationTestImplementation",
+      project(mapOf("path" to ":game-session-service", "configuration" to "gameSessionClassesProof"))
+  )
   testCompileOnly(libs.spotbugs.annotations)
   add("integrationTestCompileOnly", libs.spotbugs.annotations)
   add("crossServiceTestCompileOnly", libs.spotbugs.annotations)

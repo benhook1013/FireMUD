@@ -338,6 +338,10 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
 
   private static HoldIdentity requireStoredIdentity(
       Record row, Request expected, HoldIdentity identity) {
+    if (row.field("fixture_activation_request_id") != null
+        && row.get("fixture_activation_request_id", UUID.class) != null) {
+      throw new InvalidHoldEvidenceException("Fixture hold cannot be read as Human hold authority");
+    }
     byte[] storedRequest = required(row, "canonical_request_bytes", byte[].class);
     if (storedRequest == null
         || !Arrays.equals(storedRequest, expected.canonicalRequestBytes())

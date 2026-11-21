@@ -734,7 +734,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       harness.migrateLatest();
 
       Record after = terminal(harness, prepared.request());
-      assertThat(after.formatJSON()).isEqualTo(before.formatJSON());
+      assertOriginalRecordAndOnlyNullFixtureAdditions(before, after, fixturePurposeColumns());
       CanonicalInitialAdmissionRepository repository = repository(harness);
       assertThatThrownBy(
               () ->
@@ -746,7 +746,8 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                                   prepared.request(), prepared.protection())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("PENDING admission reservation retains different");
-      assertThat(terminal(harness, prepared.request()).formatJSON()).isEqualTo(before.formatJSON());
+      assertOriginalRecordAndOnlyNullFixtureAdditions(
+          before, terminal(harness, prepared.request()), fixturePurposeColumns());
     } finally {
       harness.close();
     }
@@ -981,7 +982,8 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       String historyBefore =
           harness
               .dsl()
-              .fetch("SELECT * " + "FROM flyway_schema_history ORDER BY installed_rank")
+              .fetch(
+                  "SELECT *, xmin::TEXT AS history_xmin FROM flyway_schema_history ORDER BY installed_rank")
               .formatJSON();
       int originalLastRank =
           harness
@@ -992,7 +994,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           harness
               .dsl()
               .fetchSingle(
-                  "SELECT * FROM game_session_canonical_initial_admission_intent "
+                  "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_canonical_initial_admission_intent "
                       + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
                   prepared.request().targetNamespace(),
                   prepared.request().initialAdmissionRequestId());
@@ -1001,7 +1003,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           harness
               .dsl()
               .fetchSingle(
-                  "SELECT * FROM game_session_start_session_operator_attempt "
+                  "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_start_session_operator_attempt "
                       + "WHERE target_namespace = ? AND owner_attempt_id = ?",
                   prepared.request().targetNamespace(),
                   prepared.original().ownerAttemptId());
@@ -1009,7 +1011,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           harness
               .dsl()
               .fetchSingle(
-                  "SELECT * FROM game_session_canonical_instance_launch "
+                  "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_canonical_instance_launch "
                       + "WHERE target_namespace = ? AND control_plane_request_id = ?",
                   prepared.request().targetNamespace(),
                   target.launch().association().controlPlaneRequestId());
@@ -1029,7 +1031,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               harness
                   .dsl()
                   .fetch(
-                      "SELECT * "
+                      "SELECT *, xmin::TEXT AS history_xmin "
                           + "FROM flyway_schema_history WHERE installed_rank <= ? "
                           + "ORDER BY installed_rank",
                       originalLastRank)
@@ -1043,38 +1045,38 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                           + "WHERE version IN ('1040.1', '1040.2') AND success")
                   .get(0, Long.class))
           .isEqualTo(2L);
-      assertThat(terminal(harness, prepared.request()).formatJSON())
-          .isEqualTo(pending.formatJSON());
+      assertOriginalRecordAndOnlyNullFixtureAdditions(
+          pending, terminal(harness, prepared.request()), fixturePurposeColumns());
+      assertOriginalRecordAndOnlyNullFixtureAdditions(
+          intentBefore,
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_canonical_initial_admission_intent "
+                      + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId()),
+          fixturePurposeColumns());
       assertThat(
               harness
                   .dsl()
                   .fetchSingle(
-                      "SELECT * FROM game_session_canonical_initial_admission_intent "
-                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                      prepared.request().targetNamespace(),
-                      prepared.request().initialAdmissionRequestId())
-                  .formatJSON())
-          .isEqualTo(intentBefore.formatJSON());
-      assertThat(
-              harness
-                  .dsl()
-                  .fetchSingle(
-                      "SELECT * FROM game_session_start_session_operator_attempt "
+                      "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_start_session_operator_attempt "
                           + "WHERE target_namespace = ? AND owner_attempt_id = ?",
                       prepared.request().targetNamespace(),
                       prepared.original().ownerAttemptId())
                   .formatJSON())
           .isEqualTo(originalBefore.formatJSON());
-      assertThat(
-              harness
-                  .dsl()
-                  .fetchSingle(
-                      "SELECT * FROM game_session_canonical_instance_launch "
-                          + "WHERE target_namespace = ? AND control_plane_request_id = ?",
-                      prepared.request().targetNamespace(),
-                      target.launch().association().controlPlaneRequestId())
-                  .formatJSON())
-          .isEqualTo(launchBefore.formatJSON());
+      assertOriginalRecordAndOnlyNullFixtureAdditions(
+          launchBefore,
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_canonical_instance_launch "
+                      + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                  prepared.request().targetNamespace(),
+                  target.launch().association().controlPlaneRequestId()),
+          List.of("fixture_canonical_version_id"));
 
       awaitOriginalOwnerLeaseExpiration(harness, prepared);
       assertThatThrownBy(
@@ -1089,8 +1091,8 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                                   prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("original owner lease is no longer live");
-      assertThat(terminal(harness, prepared.request()).formatJSON())
-          .isEqualTo(pending.formatJSON());
+      assertOriginalRecordAndOnlyNullFixtureAdditions(
+          pending, terminal(harness, prepared.request()), fixturePurposeColumns());
 
       harness
           .transactions()
@@ -1127,7 +1129,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           harness
               .dsl()
               .fetchSingle(
-                  "SELECT * FROM game_session_canonical_initial_admission_intent "
+                  "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_canonical_initial_admission_intent "
                       + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
                   prepared.request().targetNamespace(),
                   prepared.request().initialAdmissionRequestId());
@@ -1141,7 +1143,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               harness
                   .dsl()
                   .fetchSingle(
-                      "SELECT * FROM game_session_start_session_operator_attempt "
+                      "SELECT *, xmin::TEXT AS original_heap_xmin FROM game_session_start_session_operator_attempt "
                           + "WHERE target_namespace = ? AND owner_attempt_id = ?",
                       prepared.request().targetNamespace(),
                       prepared.original().ownerAttemptId())
@@ -1772,13 +1774,45 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
         request.holdBindingDigest());
   }
 
+  private static List<String> fixturePurposeColumns() {
+    return List.of(
+        "authority_kind",
+        "fixture_request_bytes",
+        "fixture_policy_request_bytes",
+        "fixture_policy_seal_evidence_digest");
+  }
+
+  /** Every original field, type/order and xmin survive; only these exact new fields may be NULL. */
+  private static void assertOriginalRecordAndOnlyNullFixtureAdditions(
+      Record before, Record after, List<String> expectedAdded) {
+    var added =
+        new java.util.LinkedHashSet<>(
+            java.util.Arrays.stream(after.fields()).map(org.jooq.Field::getName).toList());
+    added.removeAll(java.util.Arrays.stream(before.fields()).map(org.jooq.Field::getName).toList());
+    assertThat(added).containsExactlyInAnyOrderElementsOf(expectedAdded);
+    for (String column : expectedAdded) assertThat(after.get(column)).as(column).isNull();
+    assertThat(
+            java.util.Arrays.stream(after.fields())
+                .map(org.jooq.Field::getName)
+                .filter(name -> !expectedAdded.contains(name))
+                .toList())
+        .containsExactlyElementsOf(
+            java.util.Arrays.stream(before.fields()).map(org.jooq.Field::getName).toList());
+    for (var field : before.fields()) {
+      assertThat(Objects.requireNonNull(after.field(field.getName())).getDataType().getTypeName())
+          .as("SQL type of original %s", field.getName())
+          .isEqualTo(field.getDataType().getTypeName());
+    }
+    assertThat(after.into(before.fields()).formatJSON()).isEqualTo(before.formatJSON());
+  }
+
   private static Record terminal(
       CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness,
       CanonicalInitialAdmissionRequest request) {
     return harness
         .dsl()
         .fetchSingle(
-            "SELECT a.*, i.state AS intent_state, i.terminal_at AS intent_terminal, "
+            "SELECT a.*, a.xmin::TEXT AS original_attempt_xmin, i.state AS intent_state, i.terminal_at AS intent_terminal, "
                 + "i.updated_at AS intent_updated_at, p.updated_at AS pointer_updated_at, "
                 + "e.occurred_at AS audit_at "
                 + "FROM game_session_canonical_initial_admission_attempt a "

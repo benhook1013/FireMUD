@@ -398,7 +398,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetItemLoopStillSucceedsAfterUnavailableWebSocketLogoutAndClientClose() throws Exception {
+  void telnetItemLoopStillSucceedsAfterRefusedWebSocketLogoutAndDisconnect() throws Exception {
     ensureTestServicesStarted();
 
     try (GameplayWebSocketDriver webSocketClient = openReadyGatewayWebSocketClient("gateway-1")) {
@@ -463,12 +463,18 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               webSocketClient.awaitResponseMatching(
                   response -> response.contains("ERROR LOGOUT_UNAVAILABLE"),
                   "fail-closed logout response"))
+          .contains("ERROR LOGOUT_UNAVAILABLE")
           .contains("Logout is temporarily unavailable")
           .doesNotContain("OK LOGOUT");
       assertThat(
               sessionContextService.findByGameplayIdentity(
                   TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID))
           .isEqualTo(originalSession);
+      // Refusal must not claim durable logout or close the still-authorized transport.
+      int responsesBeforeLook = webSocketClient.responseCount();
+      webSocketClient.send("LOOK");
+      assertThat(webSocketClient.awaitTranscriptContainingAllAfter(responsesBeforeLook, "OK LOOK"))
+          .contains("OK LOOK");
     }
 
     try (GameplayTelnetDriver telnetClient = openReadyTelnetClient()) {

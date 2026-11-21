@@ -1599,7 +1599,7 @@ class VersionPublishCommandServiceImplTest {
     Version version = fixture.version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(2L);
-    List<PublishParticipantDigestDto> participantDigests = legacyParticipantDigests();
+    List<PublishParticipantDigestDto> participantDigests = ordinaryParticipantDigests();
     PublishedReleaseBundleDto bundle =
         publishedReleaseBundleDto(
             1L,
@@ -3244,13 +3244,13 @@ class VersionPublishCommandServiceImplTest {
             null));
   }
 
-  private List<PublishParticipantDigestDto> legacyParticipantDigests() {
+  private List<PublishParticipantDigestDto> ordinaryParticipantDigests() {
     String appliedCommitId = selectedIntent().selectedCommitId().toString();
     return List.of(
         new PublishParticipantDigestDto(
             "WORLD_MANAGEMENT", "10", null, appliedCommitId, "a".repeat(64), 3, null, null, null),
         new PublishParticipantDigestDto(
-            "ENTITY_MANAGEMENT", "10", null, appliedCommitId, "b".repeat(64), 1, null, null, null),
+            "ENTITY_MANAGEMENT", "10", null, appliedCommitId, "b".repeat(64), 2, null, null, null),
         new PublishParticipantDigestDto(
             "GAME_LOGIC", "10", null, appliedCommitId, "c".repeat(64), 1, null, null, null),
         new PublishParticipantDigestDto(
