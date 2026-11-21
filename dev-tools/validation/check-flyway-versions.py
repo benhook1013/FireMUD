@@ -154,21 +154,72 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
 
 
 def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
+    def flatten_properties(
+        value: object,
+        prefix: tuple[str, ...],
+        properties: dict[str, object],
+        ambiguous: set[str],
+    ) -> None:
+        if not isinstance(value, dict):
+            return
+        for key, child in value.items():
+            if not isinstance(key, str):
+                continue
+            parts = tuple(re.sub(r"[-_]", "", part).lower() for part in key.split("."))
+            path = ".".join((*prefix, *parts))
+            if path in properties and properties[path] != child:
+                ambiguous.add(path)
+            properties[path] = child
+            flatten_properties(child, (*prefix, *parts), properties, ambiguous)
+
     flyway = {}
     # Spring Boot gives .yml properties precedence over same-location .yaml.
     for extension in ("yaml", "yml"):
         config_path = f"services/{project}/src/main/resources/application.{extension}"
         try:
-            settings = yaml.safe_load(snapshot.get(config_path, b"")) or {}
+            documents = list(yaml.safe_load_all(snapshot.get(config_path, b"")))
         except yaml.YAMLError as error:
             raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
-        for section in ("spring", "flyway"):
-            if not isinstance(settings, dict):
+
+        for document in documents:
+            if document is None:
+                continue
+            if not isinstance(document, dict):
                 return False
-            settings = settings.get(section) or {}
-        if not isinstance(settings, dict):
-            return False
-        flyway.update(settings)
+            properties: dict[str, object] = {}
+            ambiguous: set[str] = set()
+            flatten_properties(document, (), properties, ambiguous)
+            enabled_path = "spring.flyway.enabled"
+            locations_path = "spring.flyway.locations"
+            guard_paths = {
+                path for path in properties
+                if path in {enabled_path, locations_path}
+                or path.startswith((enabled_path + ".", enabled_path + "[",
+                                    locations_path + ".", locations_path + "["))
+            }
+            if not guard_paths:
+                # Other documents, including profile-activated documents with no
+                # Flyway guard properties, do not affect this static qualification.
+                continue
+            if guard_paths & ambiguous or any(path not in {enabled_path, locations_path} for path in guard_paths):
+                return False
+
+            activation = properties.get("spring.config.activate")
+            legacy_profile_activation = (
+                "spring.profiles" in properties
+                and not isinstance(properties["spring.profiles"], dict)
+            )
+            if (isinstance(activation, dict) and activation) or any(
+                path.startswith("spring.config.activate.") for path in properties
+            ) or legacy_profile_activation:
+                # The checker cannot prove which profile/cloud-activated property
+                # source wins at runtime, so a conditional override of either guard
+                # property is not accepted.
+                return False
+
+            for path in guard_paths:
+                flyway[path.rsplit(".", 1)[-1]] = properties[path]
+
     if str(flyway.get("enabled", True)).strip().lower() not in {"true", "on", "yes", "1"}:
         return False
     locations = flyway.get("locations", [])
@@ -314,8 +365,49 @@ def run_self_test() -> None:
         b"spring:\n  flyway:\n    enabled: true\n    locations:\n"
         b"      - classpath:db/recovery-control-migration\n"
     )
+    yml_locations_override = b"spring:\n  flyway:\n    locations:\n      - classpath:db/migration\n"
+    check("application.yml replaces application.yaml locations list", {
+        recovery + "V1__journal.sql": b"-- journal",
+        yaml_config: recovery_list_settings,
+        recovery_config: yml_locations_override,
+    }, recovery_history, "historical effective migration no longer applied")
     check("equivalent enabled list recovery history",
           {**recovery_history, recovery_config: recovery_list_settings}, recovery_history, None)
+    dotted_recovery_settings = (
+        b"spring.flyway.enabled: true\n"
+        b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
+    )
+    check("dotted Spring Flyway recovery properties",
+          {**recovery_history, recovery_config: dotted_recovery_settings}, recovery_history, None)
+    dotted_disabled_settings = dotted_recovery_settings.replace(
+        b"spring.flyway.enabled: true", b"spring.flyway.enabled: false"
+    )
+    check("dotted Spring Flyway disable fails closed",
+          {**recovery_history, recovery_config: dotted_disabled_settings}, recovery_history,
+          "historical effective migration no longer applied")
+    harmless_second_document = recovery_settings + b"---\ncustom:\n  setting: value\n"
+    check("unrelated second YAML document",
+          {**recovery_history, recovery_config: harmless_second_document}, recovery_history, None)
+    changed_second_document = recovery_list_settings + (
+        b"---\nspring:\n  flyway:\n    locations:\n      - classpath:db/migration\n"
+    )
+    check("changed second-document Flyway location fails closed",
+          {**recovery_history, recovery_config: changed_second_document}, recovery_history,
+          "historical effective migration no longer applied")
+    conditional_second_document = recovery_settings + (
+        b"---\nspring:\n  config:\n    activate:\n      on-profile: production\n"
+        b"  flyway:\n    locations: classpath:db/migration\n"
+    )
+    check("conditional Flyway override fails closed",
+          {**recovery_history, recovery_config: conditional_second_document}, recovery_history,
+          "historical effective migration no longer applied")
+    profile_only_recovery = (
+        b"---\nspring:\n  config:\n    activate:\n      on-profile: recovery\n"
+        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+    )
+    check("recovery location requiring active profile fails closed",
+          {**recovery_history, recovery_config: profile_only_recovery}, recovery_history,
+          "historical effective migration no longer applied")
     for disabled in (
         recovery_settings.replace(b"    locations:", b"    enabled: false\n    locations:"),
         recovery_list_settings.replace(b"enabled: true", b'enabled: "false"'),

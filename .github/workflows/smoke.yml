@@ -1182,15 +1182,15 @@ jobs:
                 retryPrimary: retryPrimary?.identity === identityKey(currentIdentity) ? retryPrimary : null,
               };
               retryPrimary = null;
-              async function resumePendingPrimary(message) {
+              async function retryExactSelection(message, { requirePendingPrimary = true } = {}) {
                 const remainingMs = timeoutMs - (Date.now() - started);
-                if (!selection.pendingPrimary || remainingMs <= 0) return false;
+                if (remainingMs <= 0 || (requirePendingPrimary && !selection.pendingPrimary)) return false;
                 core.warning(message);
-                retryPrimary = {
+                retryPrimary = selection.pendingPrimary ? {
                   id: selection.pendingPrimary.id,
                   run_attempt: selection.pendingPrimary.run_attempt,
                   identity: identityKey(currentIdentity),
-                };
+                } : null;
                 await new Promise((resolve) => setTimeout(resolve, Math.min(sleepMs, remainingMs)));
                 return true;
               }
@@ -1375,7 +1375,7 @@ jobs:
                   } catch (error) {
                     // Re-read the pending comparison on the next bounded poll. No
                     // partial evidence from this alternative carries into that poll.
-                    if (isTransientOptionalGitHubError(error) && await resumePendingPrimary(
+                    if (isTransientOptionalGitHubError(error) && await retryExactSelection(
                       `Runtime alternative ${matching.id} jobs are temporarily unavailable; retry exact primary selection.`
                     )) continue smokeGatePolling;
                     throw error;
@@ -1430,7 +1430,7 @@ jobs:
                     ));
                     continue;
                   }
-                  if (await resumePendingPrimary(
+                  if (await retryExactSelection(
                     `Runtime alternative ${matching.id} never exposed a complete smoke snapshot; retry exact primary selection.`
                   )) continue smokeGatePolling;
                   // With no pending primary, only the same run's provably newer attempt warrants reselection.
@@ -1533,8 +1533,9 @@ jobs:
                     () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
                   ));
                 } catch (error) {
-                  if (isTransientOptionalGitHubError(error) && await resumePendingPrimary(
-                    `Runtime alternative ${matching.id} final attempt is temporarily unavailable; retry exact primary selection.`
+                  if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                    `Runtime run ${matching.id} final attempt is temporarily unavailable; retry exact selection.`,
+                    { requirePendingPrimary: false }
                   )) continue smokeGatePolling;
                   throw error;
                 }
@@ -1563,8 +1564,9 @@ jobs:
                       () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
                     ));
                   } catch (error) {
-                    if (isTransientOptionalGitHubError(error) && await resumePendingPrimary(
-                      `Runtime alternative ${matching.id} final current-base attempt is temporarily unavailable; retry exact primary selection.`
+                    if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                      `Runtime run ${matching.id} final current-base attempt is temporarily unavailable; retry exact selection.`,
+                      { requirePendingPrimary: false }
                     )) continue smokeGatePolling;
                     throw error;
                   }

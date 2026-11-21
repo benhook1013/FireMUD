@@ -255,6 +255,7 @@ jobs:
             local image_tag="$6"
             local require_deployed_tuple="$7"
             local priority="$8"
+            local expected_namespace_uid="$9"
             local fresh_namespace_json
             local fresh_namespace_tuple
             local current_base_sha
@@ -326,6 +327,11 @@ jobs:
               proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
               retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag \
               namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
+            if [[ "$require_deployed_tuple" == true &&
+              ( -z "$expected_namespace_uid" || "$namespace_uid" != "$expected_namespace_uid" ) ]]; then
+              echo "Skipping PR #${pr_number}: namespace ${namespace} was recreated before proof retry dispatch; refusing to charge its retry budget." >&2
+              return 1
+            fi
             if [[ "${current_base_sha}" != "${base_sha}" ||
               "${current_head_sha}" != "${head_sha}" ||
               "${current_merge_sha}" != "${merge_sha}" ||
@@ -474,9 +480,21 @@ jobs:
           }
           dispatch_sent=false
           completed_preview_source_updated_at=""
+          preview_source_skipped_render() {
+            local run_id="$1" attempt="$2" head="$3"
+            jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
+              [.jobs[] | select(.name == "Render Sanitized Preview Artifact")] as $renders
+              | ($renders | length) <= 1
+                and all($renders[]; .run_id == $id
+                  and ((has("run_attempt") | not) or .run_attempt == $attempt)
+                  and .head_sha == $head and .status == "completed" and .conclusion == "skipped")
+            '
+          }
+
           automatic_preview_has_tuple() {
             local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" jobs latest jobs_available=true
-            local event_tuple="${tuple/Preview resolved tuple /Preview event tuple }"
+            local dispatch_tuple="${tuple#Preview resolved tuple }"
+            local dispatch_title="Preview dispatch ${dispatch_tuple// /-}"
             # 0: exact active tuple, 1: proven nonmatch, 2: unavailable/unfinished proof.
             jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
             latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
@@ -490,17 +508,83 @@ jobs:
               and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
               and (if .status == "completed" then (.conclusion | type == "string" and length > 0) else true end)
               ' <<<"$latest" >/dev/null || return 2
-            jq -e --argjson id "$run_id" --arg head "$head" --arg pr "$pr" --arg event "$event" --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" '
-              .id == $id and .head_sha == $head
-              and .event == $event and .workflow_id == $workflow_id
-              and .repository.full_name == $repository and .head_repository.full_name == $repository
-              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
-              and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
-            ' <<<"$latest" >/dev/null || return 1
+            if [[ "$event" == repository_dispatch ]]; then
+              jq -e --argjson id "$run_id" --arg head "$head" --arg title "$dispatch_title" \
+                --arg event "$event" --arg workflow_name "$preview_workflow_name" \
+                --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" \
+                --arg default_branch "$DEFAULT_BRANCH" '
+                .id == $id and .head_sha == $head
+                and .event == $event and .workflow_id == $workflow_id
+                and .repository.full_name == $repository and .head_repository.full_name == $repository
+                and .head_branch == $default_branch and .display_title == $title
+                and (.name == $workflow_name or .name == .display_title)
+                and (.path | IN(".github/workflows/preview.yml",
+                  ".github/workflows/preview.yml@" + $default_branch,
+                  ".github/workflows/preview.yml@refs/heads/" + $default_branch))
+              ' <<<"$latest" >/dev/null || return 1
+            else
+              jq -e --argjson id "$run_id" --arg head "$head" --arg pr "$pr" --arg event "$event" \
+                --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" \
+                --arg pr_title "PR preview ${pr}" '
+                .id == $id and .head_sha == $head
+                and .event == $event and .workflow_id == $workflow_id
+                and .repository.full_name == $repository and .head_repository.full_name == $repository
+                and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
+                and .display_title == $pr_title
+                and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
+              ' <<<"$latest" >/dev/null || return 1
+            fi
             if jq -e '.status == "completed" and .conclusion != "success"' <<<"$latest" >/dev/null; then return 1; fi
-            if [[ "$event" == pull_request_target ]]; then return 2; fi
             [[ "$jobs_available" == true ]] || return 2
             jq -e --argjson attempt "$attempt" '.run_attempt == $attempt' <<<"$latest" >/dev/null || return 2
+            if [[ "$event" == repository_dispatch ]]; then
+              jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
+                .jobs as $jobs
+                | (($jobs | type) == "array") and (.total_count == ($jobs | length)) and (.total_count < 100)
+                  and all($jobs[]; type == "object" and (.name | type == "string")
+                    and (.run_id | type == "number" and . > 0 and . == floor)
+                    and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+                    and (.status | type == "string") and (.conclusion | type == "string"))
+                  and ([$jobs[] | select(.name == "Preview Plan")] | length) == 1
+                  and any($jobs[]; .name == "Preview Plan" and .run_id == $id
+                    and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
+                    and .head_sha == $head and .status == "completed" and .conclusion == "success"
+                    and (.steps | type == "array")
+                    and all(.steps[]; type == "object" and (.name | type == "string")
+                      and (.status | type == "string") and (.conclusion | type == "string"))
+                    and ([.steps[] | select(.name == "Explain preview skip")] | length) <= 1)
+              ' <<<"$jobs" >/dev/null || return 2
+              if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null &&
+                jq -e '
+                  any(.jobs[] | select(.name == "Preview Plan") | .steps[];
+                    .name == "Explain preview skip" and .status == "completed" and .conclusion == "success")
+                ' <<<"$jobs" >/dev/null; then
+                preview_source_skipped_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
+                # A completed, successful, explicitly explained no-op cannot still hand off a render.
+                return 1
+              fi
+              if ! jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
+                .jobs as $jobs
+                | ([$jobs[] | select(.name == "Render Sanitized Preview Artifact")] | length) == 1
+                  and any($jobs[]; .name == "Render Sanitized Preview Artifact" and .run_id == $id
+                    and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
+                    and .head_sha == $head and .status == "completed" and .conclusion == "success"
+                    and (.steps | type == "array")
+                    and all(.steps[]; type == "object" and (.name | type == "string")
+                      and (.status | type == "string") and (.conclusion | type == "string"))
+                    and ([.steps[] | select(.name == "Upload sanitized render artifact")] | length) == 1
+                    and any(.steps[]; .name == "Upload sanitized render artifact"
+                      and .status == "completed" and .conclusion == "success"))
+              ' <<<"$jobs" >/dev/null; then
+                return 2
+              fi
+              if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null; then
+                completed_preview_source_updated_at="$(jq -r '.updated_at // empty' <<<"$latest")"
+                return 3
+              fi
+              return 0
+            fi
+            if [[ "$event" == pull_request_target ]]; then return 2; fi
             jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
                 .jobs as $jobs
                 | (($jobs | type) == "array") and (.total_count == ($jobs | length))
@@ -524,6 +608,14 @@ jobs:
                         and .status == "completed" and .conclusion == "success")
                     end))
               ' <<<"$jobs" >/dev/null || return 2
+            if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null &&
+              jq -e '
+                any(.jobs[] | select(.name == "Preview Plan") | .steps[];
+                  .name == "Explain preview skip" and .status == "completed" and .conclusion == "success")
+              ' <<<"$jobs" >/dev/null; then
+              preview_source_skipped_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
+              return 1
+            fi
             if jq -e --arg tuple "$tuple" '
               any(.jobs[] | select(.name == "Preview Plan") | .steps[]; .name == $tuple)
               ' <<<"$jobs" >/dev/null; then
@@ -533,16 +625,6 @@ jobs:
                 (.name | test("^Preview resolved tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
                 and .status == "completed" and .conclusion == "success")
               ' <<<"$jobs" >/dev/null; then
-              return 1
-            elif jq -e --arg tuple "$event_tuple" '
-                any(.jobs[] | select(.name == "Preview Plan") | .steps[];
-                  .name == $tuple
-                  and .status == "completed" and .conclusion == "success")
-                and any(.jobs[] | select(.name == "Preview Plan") | .steps[];
-                  .name == "Explain preview skip" and .status == "completed" and .conclusion == "success")
-              ' <<<"$jobs" >/dev/null &&
-              jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null; then
-              # A completed successful plan with its successful skip explanation proves no deployable plan ran.
               return 1
             elif jq -e --arg prefix "Preview event tuple pr-${pr} base-" '
               any(.jobs[] | select(.name == "Preview Plan") | .steps[];
@@ -564,62 +646,91 @@ jobs:
             fi
           }
 
+          completed_preview_inventory() {
+            local event="$1" filter="$2" pages
+            # The handoff window measures completion (updated_at), not
+            # creation. An older run can finish or be rerun just before the scan.
+            pages="$(timeout 30s gh api --method GET --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs" \
+              -f "event=${event}" -f status=completed -f per_page=100 -f "$filter")" || return 1
+            jq -ce --argjson workflow_id "$preview_workflow_id" --arg event "$event" '
+              select(type == "array" and length > 0 and length <= 10)
+              | .[0].total_count as $count
+              | select(($count | type) == "number" and $count >= 0 and $count < 1000
+                       and $count == ($count | floor))
+              | select(all(.[]; type == "object" and .total_count == $count
+                  and (.workflow_runs | type == "array" and length <= 100)))
+              | [.[].workflow_runs[]] as $runs
+              | select(($runs | length) == $count
+                  and ([$runs[].id] | unique | length) == $count
+                  and all($runs[]; type == "object" and (.id | type == "number" and . > 0 and . == floor)
+                    and .workflow_id == $workflow_id and (.run_attempt | type == "number" and . > 0 and . == floor)
+                    and .event == $event and .status == "completed"
+                    and (.conclusion | type == "string") and (.name | type == "string")
+                    and (.display_title | type == "string") and (.head_branch | type == "string")
+                    and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+                    and (.path | type == "string")
+                    and (.updated_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+                    and (.repository.full_name | type == "string") and (.head_repository.full_name | type == "string")
+                    and (if $event == "pull_request" then (.pull_requests | type == "array") else true end)))
+              | {workflow_runs: $runs}
+            ' <<<"$pages"
+          }
+
           recent_successful_source_handoff() {
             local pr_number="$1" head_sha="$2" tuple_step="$3"
-            local source_runs source_candidates source_candidate_count source_inventory_now
+            local source_runs dispatch_source_runs source_candidates source_candidate_count source_inventory_now
             local run_id run_attempt run_event run_head run_updated_at lookup_status source_updated_epoch now_epoch source_age
             local consumer_runs consumer_candidates consumer_candidate_count
             local consumer_run_id consumer_attempt consumer_head consumer_status consumer_created_after
             local run_name="Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"
             local pr_title="PR preview ${pr_number}"
 
-            if ! source_runs="$(gh api --method GET \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs" \
-              -f event=pull_request -f status=completed -f per_page=100 -f "head_sha=${head_sha}")"; then
-              echo "Unable to inspect recent completed preview sources for PR #${pr_number}; retry budget unchanged." >&2
-              return 2
-            fi
-            if ! jq -e --argjson workflow_id "$preview_workflow_id" 'type == "object"
-              and (.total_count | type == "number" and . >= 0 and . == floor)
-              and (.workflow_runs | type == "array" and length <= 100)
-              and (.total_count == (.workflow_runs | length))
-              and all(.workflow_runs[]; type == "object" and (.id | type == "number" and . > 0 and . == floor)
-                and .workflow_id == $workflow_id and (.run_attempt | type == "number" and . > 0 and . == floor)
-                and (.event | type == "string") and (.status | type == "string")
-                and (.conclusion | type == "string") and (.name | type == "string")
-                and (.display_title | type == "string") and (.head_branch | type == "string")
-                and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
-                and (.path | type == "string")
-                and (.updated_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-                and (.repository.full_name | type == "string") and (.head_repository.full_name | type == "string")
-                and (.pull_requests | type == "array"))' <<<"$source_runs" >/dev/null; then
-              echo "Recent completed preview-source inventory is malformed or truncated; retry budget unchanged." >&2
-              return 2
-            fi
             source_inventory_now="$(date -u +%s)"
-            if ! source_candidates="$(jq -r \
+            if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")" ||
+              ! dispatch_source_runs="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")"; then
+              echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
+              return 2
+            fi
+            if ! source_candidates="$(printf '%s\n' "$source_runs" "$dispatch_source_runs" | jq -r -s \
               --arg repository "$GITHUB_REPOSITORY" --arg head "$head_sha" \
-              --arg workflow_name "$preview_workflow_name" --arg pr_title "$pr_title" \
-              --arg run_name "$run_name" --argjson workflow_id "$preview_workflow_id" \
+              --arg default_branch "$DEFAULT_BRANCH" --arg workflow_name "$preview_workflow_name" \
+              --arg pr_title "$pr_title" --arg run_name "$run_name" \
+              --argjson workflow_id "$preview_workflow_id" \
               --argjson now "$source_inventory_now" --argjson window "$preview_handoff_window_seconds" \
               --argjson pr_number "$pr_number" '
                 def positive_int: type == "number" and . > 0 and . == floor;
-                [ .workflow_runs[]
+                [ (.[0].workflow_runs[]
                   | select(type == "object" and (.id | positive_int) and (.run_attempt | positive_int)
                     and .workflow_id == $workflow_id and .event == "pull_request"
                     and .status == "completed" and .conclusion == "success"
                     and (.name == $workflow_name or .name == .display_title)
-                    and (.display_title == $pr_title or .display_title == $run_name)
+                    and .display_title == $pr_title
                     and .repository.full_name == $repository and .head_repository.full_name == $repository
                     and .head_sha == $head
                     and (.path == ".github/workflows/preview.yml"
                       or .path == (".github/workflows/preview.yml@refs/pull/" + ($pr_number | tostring) + "/merge"))
                     and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1)
-                  | (.updated_at | fromdateiso8601) as $updated
+                  | [.id, .run_attempt, .event, .head_sha, .updated_at]),
+                  (.[1].workflow_runs[]
+                  | select(type == "object" and (.id | positive_int) and (.run_attempt | positive_int)
+                    and .workflow_id == $workflow_id and .event == "repository_dispatch"
+                    and .status == "completed" and .conclusion == "success"
+                    and (.name == $workflow_name or .name == .display_title)
+                    and .display_title == $run_name
+                    and .repository.full_name == $repository and .head_repository.full_name == $repository
+                    and .head_branch == $default_branch
+                    and (.path | IN(".github/workflows/preview.yml",
+                      ".github/workflows/preview.yml@" + $default_branch,
+                      ".github/workflows/preview.yml@refs/heads/" + $default_branch)))
+                  | [.id, .run_attempt, .event, .head_sha, .updated_at])
+                ]
+                | map(.[4] as $updated_at
+                  | ($updated_at | fromdateiso8601) as $updated
                   | select($updated <= $now and ($now - $updated) < $window)
-                  | [.id, .run_attempt, .event, .head_sha, .updated_at]
-                ] | sort_by(.[0]) | reverse | .[] | @tsv
-              ' <<<"$source_runs")"; then
+                  | .)
+                | sort_by(.[0]) | reverse | .[] | @tsv
+              ')"; then
               echo "Unable to parse recent completed preview sources for PR #${pr_number}; retry budget unchanged." >&2
               return 2
             fi
@@ -633,7 +744,7 @@ jobs:
               [[ -n "$run_id" ]] || continue
               completed_preview_source_updated_at=""
               lookup_status=0
-              automatic_preview_has_tuple "$run_id" "$run_attempt" "$head_sha" "$tuple_step" "$pr_number" "$run_event" || lookup_status=$?
+              automatic_preview_has_tuple "$run_id" "$run_attempt" "$run_head" "$tuple_step" "$pr_number" "$run_event" || lookup_status=$?
               if [[ "$lookup_status" -eq 2 ]]; then
                 echo "Recent preview-source attempt ${run_id} could not be verified; retry budget unchanged." >&2
                 return 2
@@ -1051,7 +1162,7 @@ jobs:
                 if [[ "$run_event" == workflow_run ]]; then
                   trusted_consumer_has_tuple "$run_id" "$run_attempt" "$run_head" "$consumer_tuple" || lookup_status=$?
                 else
-                  automatic_preview_has_tuple "$run_id" "$run_attempt" "$head_sha" "$tuple_step" "$pr_number" "$run_event" || lookup_status=$?
+                  automatic_preview_has_tuple "$run_id" "$run_attempt" "$run_head" "$tuple_step" "$pr_number" "$run_event" || lookup_status=$?
                 fi
                 if [[ "$lookup_status" -eq 0 ]]; then
                   active_preview_run_id="$run_id"
@@ -1118,7 +1229,7 @@ jobs:
             local proof_retry_reservation_merge_sha=""
             local proof_retry_reservation_image_tag=""
             prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
-              "$require_deployed_tuple" "$priority" || continue
+              "$require_deployed_tuple" "$priority" "$namespace_uid" || continue
 
             echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"
             dispatch_exit=0

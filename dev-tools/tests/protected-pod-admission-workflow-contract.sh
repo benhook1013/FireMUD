@@ -42,10 +42,12 @@ calls=p.read_text().splitlines() if p.exists() else []
 n=len(calls)
 p.write_text("\\n".join([*calls, policy]) + "\\n")
 if os.environ["CASE"]=="api-error":sys.exit(1)
-ready=os.environ["CASE"] in ("ready", "warnings", "ignore") or (os.environ["CASE"]=="late" and n>0)
+case=os.environ["CASE"]
+ready=(case in ("ready", "warnings", "ignore") or (case=="late" and n>0)
+       or (case=="shared-deadline" and n==2 and policy=="firemud-trust-runtime-namespace-boundary"))
 print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" if os.environ["CASE"]=="ignore" else "Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
 ''')
-    for case, success in [("ready", True), ("late", True), ("stale", False), ("warnings", False), ("ignore", False), ("api-error", False)]:
+    for case, success in [("ready", True), ("late", True), ("stale", False), ("warnings", False), ("ignore", False), ("api-error", False), ("shared-deadline", False)]:
         for name in ("clock", "calls"):
             (tmp/name).unlink(missing_ok=True)
         env = dict(os.environ, PATH=str(tmp)+":"+os.environ["PATH"], CASE=case,
@@ -62,5 +64,10 @@ print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" i
             assert len(calls) == (5 if case == "late" else 4)
         else:
             assert "policy_readiness=timeout" in result.stderr
+            if case == "shared-deadline":
+                first = "firemud-trust-runtime-namespace-boundary"
+                second = "firemud-trust-runtime-binding-boundary"
+                assert (tmp/"calls").read_text().splitlines() == [first, first, first, second]
+                assert f"policy_readiness=timeout policy={second}" in result.stderr
 print("Protected Pod workflow bounded cleanup/readiness contract passed")
 PY

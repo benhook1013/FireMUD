@@ -116,6 +116,7 @@ jobs:
               // lightweight lane. Unrecognized service and runtime inputs keep full proof.
               let lightweightFallback = false;
               let fallbackPython = false;
+              let fallbackDesignDocs = false;
               if (!moduleScopeAvailable && scope.lightweightOnly === true &&
                   context.eventName === "pull_request") {
                 try {
@@ -134,6 +135,7 @@ jobs:
                   const knownDoc = path => path === "README.md" || (typeof path === "string" &&
                     /^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) &&
                     !path.split("/").includes(".."));
+                  const knownDesignDoc = path => knownDoc(path) && path.startsWith("design/");
                   const knownValidationPython = path => typeof path === "string" &&
                     /^dev-tools\/validation\/[A-Za-z0-9_./-]+\.py$/.test(path) &&
                     !path.split("/").includes("..") &&
@@ -151,6 +153,8 @@ jobs:
                       (entry.previous_filename === undefined || knownLightweightPath(entry.previous_filename)));
                   fallbackPython = lightweightFallback && entries.some(entry =>
                     knownValidationPython(entry.filename) || knownValidationPython(entry.previous_filename));
+                  fallbackDesignDocs = lightweightFallback && entries.some(entry =>
+                    knownDesignDoc(entry.filename) || knownDesignDoc(entry.previous_filename));
                 } catch {
                   // Missing or incomplete native evidence keeps the full fallback.
                 }
@@ -163,7 +167,7 @@ jobs:
                 docs_changed: scope.docsChanged,
                 frontend_changed: scope.frontendChanged,
                 python_changed: scope.pythonChanged || fallbackPython,
-                design_docs_changed: scope.designDocsChanged,
+                design_docs_changed: scope.designDocsChanged || fallbackDesignDocs,
                 validation_python_changed: scope.validationPythonChanged || fallbackPython,
                 postgres_runtime_proof_changed:
                   scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,

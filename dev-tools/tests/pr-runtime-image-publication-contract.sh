@@ -45,6 +45,7 @@ with tempfile.TemporaryDirectory() as temporary:
                     'printf "%s\\n" "$FIXTURE_LIVE_HEAD"\n')
     stub.chmod(0o755)
     for event in ("workflow_run", "workflow_dispatch"):
+        event_sha = "c" * 40 if event == "workflow_run" else branch_head
         script = meta
         for expression, value in {
             "github.event_name": event, "github.event.workflow_run.event": "push",
@@ -55,7 +56,7 @@ with tempfile.TemporaryDirectory() as temporary:
             output.write_text("")
             environment = {
                 **os.environ, "PATH": temporary + ":" + os.environ["PATH"],
-                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": branch_head,
+                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": event_sha,
                 "GITHUB_REF_NAME": "develop", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
                 "GITHUB_OUTPUT": str(output), "FIXTURE_LIVE_HEAD": live_head,
                 "EVENT_HEAD_BRANCH": "develop", "EVENT_HEAD_SHA": "",

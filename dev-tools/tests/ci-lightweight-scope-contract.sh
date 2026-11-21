@@ -43,9 +43,10 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.deepEqual(JSON.parse(outputs.bootable_modules),
       compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
   }
-  for (const [entries, count, expected, drift, expectsPython = false] of [
-    [[{filename: "design/README.md"}], 1, true],
+  for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false] of [
+    [[{filename: "design/README.md"}], 1, true, undefined, false, true],
     [[{filename: "README.md"}], 1, true],
+    [[{filename: "README.md", status: "renamed", previous_filename: "design/guide.md"}], 1, true, undefined, false, true],
     [[{filename: "dev-tools/validation/check-flyway-versions.py"}], 1, true, undefined, true],
     [[{filename: "dev-tools/validation/gradle-run-supervisor.py"}], 1, false],
     [[{filename: "services/recovery-controller-service/src/main/java/Example.java"}], 1, false],
@@ -58,13 +59,13 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     [[{filename: "services/new-service/README.md"}], 1, false],
     [[{filename: "design/README.md", previous_filename: "services/new-service/Main.java"}], 1, false],
     [[{filename: "design/../services/Main.md"}], 1, false],
-    [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true],
+    [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true, undefined, false, true],
   ]) {
     const outputs = {};
     await execute(name => name === "node:fs" ? {existsSync: () => true} : {
       ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
       classifyGithubChangeScope: async () => ({runAll: false, affectedModules: [],
-        bootableModules: [], affectedServices: [], lightweightOnly: true}),
+        bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false}),
     }, {rest: {pulls: {listFiles() {}, get: (() => {
       let calls = 0;
       return async () => { const call = calls++; return ({data: {number: 42, changed_files: count,
@@ -79,6 +80,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.equal(outputs.lightweight_only, String(expected));
     assert.equal(outputs.validation_python_changed, String(expectsPython));
     assert.equal(outputs.python_changed, String(expectsPython));
+    assert.equal(outputs.design_docs_changed, String(expectsDesignDocs));
     assert.equal(outputs.run_all, String(!expected));
     assert.deepEqual(JSON.parse(outputs.affected_modules), expected ? [] : ALL_MODULES);
     assert.deepEqual(JSON.parse(outputs.bootable_modules), expected ? [] : [...BOOTABLE_MODULES]);

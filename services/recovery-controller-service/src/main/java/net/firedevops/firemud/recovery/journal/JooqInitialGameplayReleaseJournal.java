@@ -435,11 +435,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         String storedDigest = stored == null ? null : stored.get("readback_digest", String.class);
         if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
           if (readbackDigest.equals(storedDigest)) {
+            requireSuccessfulReadbackState(readback, current.effect().kind());
             requireValidExactStoredReadback(readback, stored, storedDigest, current);
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
           if (stored != null && sameRetainedOutcome(readback, stored, storedDigest)) {
+            requireSuccessfulReadbackState(readback, current.effect().kind());
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
@@ -693,6 +695,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     InitialGameplayReleaseEvidence evidence =
         evidenceJson == null ? null : tupleCodec.readEvidence(evidenceJson.data());
+    if (evidenceJson != null && evidence == null) {
+      throw new IllegalStateException(
+          "Persisted initial gameplay release evidence is inconsistent");
+    }
     if (evidence != null
         && (!evidence.evidenceIdentity().equals(record.get("evidence_identity", String.class))
             || !tupleCodec.digest(evidence).equals(record.get("evidence_digest", String.class)))) {

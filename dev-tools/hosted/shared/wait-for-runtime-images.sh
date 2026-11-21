@@ -434,6 +434,36 @@ find_completed_alternate_publication() {
   return 1
 }
 
+branch_publication_attempt() {
+  jq -er --argjson id "$1" --arg repo "$GITHUB_REPOSITORY" '
+    select(.id == $id and .repository.full_name == $repo and .head_repository.full_name == $repo
+      and .status == "completed" and .conclusion == "success")
+    | .run_attempt | select(type == "number" and . >= 1 and floor == .)
+  '
+}
+
+verify_branch_publication() {
+  local run_id="$1" selected_state="$2" endpoint run attempt jobs latest
+  endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+  run="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 1
+  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$run" | read_run_state)" == "$selected_state" ]] || return 1
+  attempt="$(branch_publication_attempt "$run_id" <<<"$run")" || return 1
+  jobs="$(fetch_alternate_run_metadata "$deadline" "${endpoint}/attempts/${attempt}/jobs?per_page=100")" || return 1
+  jq -e --argjson id "$run_id" --argjson attempt "$attempt" '
+    (.jobs | type == "array") and (.total_count == (.jobs | length)) and
+    ([.jobs[] | select(.name == "Promote Smoke-Tested Runtime Images")] as $jobs |
+      ($jobs | length) == 1 and ($jobs[0] |
+        .run_id == $id and ((has("run_attempt") | not) or .run_attempt == $attempt) and
+        .status == "completed" and .conclusion == "success" and
+        ([.steps[] | select(.name == "Promote smoke-tested service digests")] as $steps |
+          ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
+  ' <<<"$jobs" >/dev/null || return 1
+  latest="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 1
+  [[ "$(branch_publication_attempt "$run_id" <<<"$latest")" == "$attempt" &&
+     "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$selected_state" ]] &&
+    (( SECONDS < deadline ))
+}
+
 wait_for_pr_publisher() {
   local source_state="$1"
   local alternate_sources="$2"
@@ -482,11 +512,13 @@ wait_for_pr_publisher() {
     if [[ "${fetch_failed}" == "false" ]] &&
       publisher_state="$(read_publisher_state "${source_run_id}" "${source_state_event}" <<<"${publisher_payload}")"; then
       IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
-      if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+      if [[ "${run_status}" == "completed" ]]; then
         if use_completed_duplicate_publication "$source_state" "$publisher_deadline" direct; then
           return 0
         fi
-        direct_success_unproven=true
+        if [[ "${run_conclusion}" == "success" ]]; then
+          direct_success_unproven=true
+        fi
       fi
     fi
     local refreshed_source_payload refreshed_alternates
@@ -595,6 +627,11 @@ while (( SECONDS < deadline )); do
   fi
 
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+    if [[ "${wait_mode}" == "branch" ]] && ! verify_branch_publication "$run_id" "$run_state"; then
+      printf 'Trusted branch runtime-image run %s has no verified promotion for %s yet.\n' "$run_id" "$image_tag" >&2
+      sleep "${sleep_seconds}"
+      continue
+    fi
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
     if [[ "${wait_mode}" == "pull-request" ]]; then

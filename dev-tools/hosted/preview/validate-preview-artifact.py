@@ -931,7 +931,13 @@ EXPECTED_GATEWAY_ENV_FROM = [
 
 
 def _validate_gateway_container_environment(container: dict, expected_namespace: str) -> None:
-    if container.get("env") != _expected_gateway_container_env(expected_namespace):
+    expected = _expected_gateway_container_env(expected_namespace)
+    # The default-branch validator can receive a supported merge base whose
+    # Gateway chart predates the two JVM footprint settings.
+    without_footprint_tuning = [
+        entry for entry in expected if entry["name"] not in {"JAVA_TOOL_OPTIONS", "MALLOC_ARENA_MAX"}
+    ]
+    if container.get("env") not in (expected, without_footprint_tuning):
         fail("Deployment/spring-cloud-gateway has an unsafe container env")
     if container.get("envFrom") != EXPECTED_GATEWAY_ENV_FROM:
         fail("Deployment/spring-cloud-gateway has an unsafe envFrom contract")

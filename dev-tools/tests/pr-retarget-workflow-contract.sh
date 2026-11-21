@@ -2389,6 +2389,9 @@ import sys
 payload = json.load(open(sys.argv[1]))
 event = re.search(r"event=([^&]+)", sys.argv[2]).group(1)
 page_number = int(re.search(r"&page=([0-9]+)", sys.argv[2]).group(1))
+if isinstance(payload, dict) and "fixture_events" in payload:
+    payload = payload["fixture_events"].get(event, {"total_count": 0, "workflow_runs": []})
+    payload["fixture_event"] = event
 pages = payload if isinstance(payload, list) else [payload]
 page = pages[min(page_number - 1, len(pages) - 1)]
 if page.get("fixture_event", "repository_dispatch") != event:
@@ -2571,6 +2574,12 @@ old_native_typed_publisher = {**native_typed_direct_publisher,
 (root / "duplicate-publisher-201-typed-native.json").write_text(json.dumps(native_typed_direct_publisher))
 (root / "duplicate-publisher-201-typed-native-old.json").write_text(json.dumps(old_native_typed_publisher))
 (root / "duplicate-publisher-typed-native.json").write_text(json.dumps(native_typed_alternate_publisher))
+(root / "typed-failed-after-native.json").write_text(json.dumps({"fixture_events": {
+    "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
+    "repository_dispatch": {"total_count": 1, "workflow_runs": [
+        {**direct_typed_publisher, "id": 205, "conclusion": "failure", "created_at": "2026-07-24T00:08:00Z"},
+    ]},
+}}))
 for event, publisher_run, fixture_event in [
     ("native", direct_publisher, "workflow_run"),
     ("typed", direct_typed_publisher, "repository_dispatch"),
@@ -2813,22 +2822,24 @@ for direct_variant in native typed typed-native; do
   fi
 done
 
-BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
-  CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER=typed-native \
-  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_DIRECT_JOB=success \
-  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
-  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/direct-publisher-only-typed-native.json" \
-  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-    >"$contract_fixture_dir/typed-native-direct.output" 2>"$contract_fixture_dir/typed-native-direct.error" || {
-      cat "$contract_fixture_dir/typed-native-direct.output" "$contract_fixture_dir/typed-native-direct.error" >&2
-      exit 1
-    }
-require_contains "$contract_fixture_dir/typed-native-direct.output" \
-  'Trusted PR image publisher 201 succeeded for pr-merge-'
-require_contains "$contract_fixture_dir/typed-native-direct.output" 'as the direct source'
+for publisher_fixture in direct-publisher-only-typed-native typed-failed-after-native; do
+  BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+    CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER=typed-native \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_DIRECT_JOB=success \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$publisher_fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/typed-native-direct.output" 2>"$contract_fixture_dir/typed-native-direct.error" || {
+        cat "$contract_fixture_dir/typed-native-direct.output" "$contract_fixture_dir/typed-native-direct.error" >&2
+        exit 1
+      }
+  require_contains "$contract_fixture_dir/typed-native-direct.output" \
+    'Trusted PR image publisher 201 succeeded for pr-merge-'
+  require_contains "$contract_fixture_dir/typed-native-direct.output" 'as the direct source'
+done
 
 if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
   CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER=typed-native-old \
@@ -2868,6 +2879,7 @@ require_contains "$contract_fixture_dir/cached-refresh.output" \
   'Trusted PR image publisher 202 succeeded for pr-merge-'
 require_contains "$contract_fixture_dir/cached-refresh.output" 'via an alternate producer'
 
+publisher_rerun_status=0
 CONTRACT_DUPLICATE_EVENT=typed CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
   CONTRACT_RERUN_PUBLISHER_ON_SOURCE_RECHECK="$contract_fixture_dir/publisher-rerun-marker" \
   CONTRACT_SOURCE_READ_STATE="$contract_fixture_dir/source-read-state" \
@@ -2878,7 +2890,11 @@ CONTRACT_DUPLICATE_EVENT=typed CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
   BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
   timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-    >"$contract_fixture_dir/publisher-rerun.output" 2>"$contract_fixture_dir/publisher-rerun.error" || :
+    >"$contract_fixture_dir/publisher-rerun.output" 2>"$contract_fixture_dir/publisher-rerun.error" || publisher_rerun_status=$?
+[[ "$publisher_rerun_status" == 1 ]] || {
+  echo "Expected the runtime waiter to exit 1 after rejecting the superseded attempt, got $publisher_rerun_status" >&2
+  exit 1
+}
 [[ -f "$contract_fixture_dir/publisher-rerun-marker" ]] || {
   echo "The fixture did not rerun the publisher during source revalidation" >&2
   exit 1

@@ -65,8 +65,25 @@ case "${GH_FIXTURE:-}" in
   empty)
     printf '%s' '[[]]'
     ;;
-  branch_runs)
-    printf '[{"workflow_runs":[{"id":103,"status":"completed","conclusion":"success","event":"workflow_run","head_sha":"dddddddddddddddddddddddddddddddddddddd","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z"}]}]' "$head_sha"
+  branch_runs|branch_obsolete)
+    source="$(printf '{"id":103,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
+    case "$*" in
+      *actions/runs/103)
+        printf '%s' "$source"
+        ;;
+      *actions/runs/103/attempts/2/jobs?per_page=100)
+        conclusion=success
+        [[ "$GH_FIXTURE" != branch_obsolete ]] || conclusion=skipped
+        printf '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"%s","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"%s"}]}]}' "$conclusion" "$conclusion"
+        ;;
+      *actions/workflows/runtime-images.yml/runs?*)
+        printf '[{"workflow_runs":[%s]}]' "$source"
+        ;;
+      *)
+        echo "Unexpected branch runtime-image API request in $GH_FIXTURE fixture" >&2
+        exit 2
+        ;;
+    esac
     ;;
   branch_wrong)
     printf '[{"workflow_runs":[{"id":104,"status":"completed","conclusion":"success","event":"workflow_run","head_sha":"dddddddddddddddddddddddddddddddddddddd","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z"}]}]' "$head_sha"
@@ -190,6 +207,15 @@ GH_FIXTURE=branch_runs \
   HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$head_sha" >/dev/null
+
+if branch_obsolete_output="$(
+  GH_FIXTURE=branch_obsolete HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 15s bash "$WAITER" "$head_sha" 2>&1
+)"; then
+  echo "branch waiter accepted a successful obsolete run without promotion" >&2
+  exit 1
+fi
+grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_obsolete_output"
 
 if branch_timeout_output="$(
   GH_FIXTURE=branch_wrong \

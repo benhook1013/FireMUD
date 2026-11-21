@@ -2661,6 +2661,19 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
                 [self._gateway_document()], "pr-42"
             )
 
+    def test_gateway_accepts_exact_environment_from_before_footprint_tuning(self):
+        document = self._gateway_document()
+        container = document["spec"]["template"]["spec"]["containers"][0]
+        expected = container["env"]
+        tuning = {"JAVA_TOOL_OPTIONS", "MALLOC_ARENA_MAX"}
+        with patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}):
+            container["env"] = [entry for entry in expected if entry["name"] not in tuning]
+            self.validator.validate_service_consumers([document], "pr-42")
+            for missing in ("JAVA_TOOL_OPTIONS", "MALLOC_ARENA_MAX", "SPRING_FLYWAY_TABLE"):
+                with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "unsafe container env"):
+                    container["env"] = [entry for entry in expected if entry["name"] != missing]
+                    self.validator.validate_service_consumers([document], "pr-42")
+
     def test_gateway_rejects_unsafe_gameplay_mount(self):
         for option, value in (("readOnly", False), ("subPath", "tls.key")):
             with self.subTest(option=option):

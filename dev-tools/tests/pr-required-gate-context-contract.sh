@@ -195,6 +195,8 @@ def isolates_metadata_group(group, run_scoped):
     substantive = [effective_group(group, action, base_ref) for action, base_ref in (
         ("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None),
     )]
+    if len({name.casefold() for name in substantive}) != 1:
+        return False
     return metadata.endswith(expected_suffix) and all(
         name != metadata and name.endswith("-required") for name in substantive
     )
@@ -551,6 +553,7 @@ const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
 const execute = new Function("github", "context", "core", "Date", "setTimeout", `return (async () => {\n${script}\n})()`);
 async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   let now = 1000;
+  let runLookups = 0;
   const start = now;
   const failures = [];
   const cancelledReads = new Set();
@@ -573,9 +576,14 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
     repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
-      getWorkflowRun: async ({run_id}) => ({data: {id: run_id,
-        run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
-        status: "completed", conclusion: cancelledReads.has(run_id) ? "cancelled" : "success"}}) },
+      getWorkflowRun: async ({run_id}) => {
+        runLookups += 1;
+        if (selectionCase === "sole-final-attempt-transient" && runLookups <= 4) {
+          throw Object.assign(new Error("final attempt temporarily unavailable"), {status: 503});
+        }
+        return {data: {id: run_id, run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
+          status: "completed", conclusion: cancelledReads.has(run_id) ? "cancelled" : "success"}};
+      } },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
     assert.equal(input.attempt_number, 1);
@@ -644,12 +652,15 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   const clock = { now: () => now, parse: Date.parse };
   const sleep = (callback, duration) => { now += duration; queueMicrotask(callback); };
   await execute(github, context, core, clock, sleep);
-  return { failures, minutes: (now - start) / 60000 };
+  return { failures, minutes: (now - start) / 60000, runLookups };
 }
 (async () => {
   const success = await scenario("success", 30);
   assert.deepEqual(success.failures, [], "exact producer success after 25 minutes must be admitted");
   assert.equal(success.minutes, 30);
+  const recovered = await scenario("success", 0, "sole-final-attempt-transient");
+  assert.deepEqual(recovered.failures, [], "the sole exact producer may recover after bounded final-read retries");
+  assert.equal(recovered.runLookups, 5, "reselection must perform a new final exact-attempt check");
   const failed = await scenario("failure", 30);
   assert.equal(failed.failures.length, 1);
   assert.match(failed.failures[0], /did not complete successfully/);

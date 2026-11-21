@@ -555,6 +555,38 @@ render_text = text(preview_jobs["preview-render"])
 for required in ("git -C candidate", "candidate/k8s/helm/firemud", "python3 ./dev-tools/hosted/preview/"):
     if required not in render_text:
         raise AssertionError(f"preview render lost isolated trusted-tools/candidate-data boundary: {required}")
+render_step = next(
+    step for step in preview_jobs["preview-render"]["steps"]
+    if step.get("name") == "Render and sanitize preview without credentials"
+)
+assert render_step["env"]["PLANNED_MERGE_SHA"] == "${{ needs.preview-plan.outputs.merge_sha }}"
+assert render_step["env"]["BASE_SHA"] == "${{ needs.preview-plan.outputs.base_sha }}"
+assert render_step["env"]["HEAD_SHA"] == "${{ needs.preview-plan.outputs.head_sha }}"
+render_guard, marker, _ = render_step["run"].partition('values="$RUNNER_TEMP/preview-values.yaml"')
+assert marker, "preview merge comparison must run before reading candidate values"
+merge_sha, base_sha, head_sha, moved_sha = (digit * 40 for digit in "abcf")
+fixture_git = r'''
+git() {
+    case "$*" in
+        "-C candidate rev-parse --verify HEAD^{commit}") printf '%s\n' "$CANDIDATE" ;;
+        "-C candidate rev-list --parents -n 1 $CANDIDATE") printf '%s %s\n' "$CANDIDATE" "$PARENTS" ;;
+        *) return 2 ;;
+    esac
+}
+'''
+for candidate, parents, expected in (
+    (merge_sha, f"{base_sha} {head_sha}", 0),
+    (moved_sha, f"{base_sha} {head_sha}", 1),
+    (merge_sha, f"{head_sha} {base_sha}", 1),
+):
+    result = subprocess.run(
+        ["bash", "-c", fixture_git + render_guard], capture_output=True, text=True,
+        env={"CANDIDATE": candidate, "PARENTS": parents, "PLANNED_MERGE_SHA": merge_sha,
+             "BASE_SHA": base_sha, "HEAD_SHA": head_sha}, timeout=5,
+    )
+    assert result.returncode == expected, (candidate, parents, result.stderr)
+    if expected:
+        assert "Stale preview merge ref" in result.stderr
 if re.search(r"(?:uses:|bash|python3)\s+(?:\./)?candidate/", render_text):
     raise AssertionError("preview render executes candidate tools or local actions")
 for job_name, job in preview_jobs.items():

@@ -86,6 +86,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       "ef9bbb81842b83253fcc6e6be7032ee744e563d109e4d0aab35146af85fe2c8f";
   private static final String V1_EVIDENCE_DIGEST =
       "3c811a041f71b88c21c1d023b3fa3f489054c14603e333f8ae9edc32f34ef79e";
+  private static final String V1_RESUME_TRANSITION_DIGEST =
+      "814d6a36a4c1046394985096a1ea82b498d445dd69eb19a1284a264e252e4e55";
   private static final String V1_OPERATION_TUPLE_DIGEST =
       "926bf0c737455039923849ac17a926440637204c2a4fa7a408f22dcac7c263cf";
   private static final String V1_PREPARE_EFFECT_PAYLOAD_DIGEST =
@@ -235,6 +237,21 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       }
       """
           .strip();
+  // Historical V1 writer payload for the retained resume tuple seeded by the migration fixture.
+  private static final String V1_RESUME_TRANSITION_PAYLOAD_TEMPLATE =
+      """
+      {
+        "operationId": "10000000-0000-0000-0000-000000000001",
+        "scopeDigest": "%s",
+        "verb": "RESUME",
+        "expectedPhase": "AWAITING_RESUME",
+        "maintenanceLockIdentity": "10000000-0000-0000-0000-000000000004",
+        "evidenceRef": "immutable-initial-layout-evidence",
+        "evidenceIdentity": "evidence-owner-record-31",
+        "evidenceDigest": "%s"
+      }
+      """
+          .strip();
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -310,6 +327,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .extracting(Operation::maintenanceLockIdentity)
           .isEqualTo(controllerLockIdentity);
       assertThat(created.maintenanceLockIdentity()).isEqualTo(controllerLockIdentity);
+      debugDsl.fetch("SELECT 'journal-log-redaction-positive-control'::text");
+      assertThat(logCapture.list)
+          .extracting(ILoggingEvent::getFormattedMessage)
+          .anyMatch(message -> message.contains("journal-log-redaction-positive-control"));
       assertThat(logCapture.list)
           .extracting(ILoggingEvent::getFormattedMessage)
           .noneMatch(message -> message.contains(controllerLockIdentity.toString()));
@@ -951,6 +972,29 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void evidenceReaderRejectsJsonbNullButAcceptsSqlNullForCollectingOperation() {
+    Scope scope = scope();
+    Operation collecting = journal.create(scope, UUID.randomUUID());
+    assertThat(collecting.phase()).isEqualTo(Phase.COLLECTING);
+    assertThat(collecting.evidence()).isNull();
+    assertThat(journal.find(scope.operationId())).contains(collecting);
+
+    InitialGameplayReleaseEvidence proof = evidence(scope);
+    journal.bindVerifiedEvidence(
+        scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), Instant.now());
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_operation "
+                    + "SET evidence_snapshot=CAST('null' AS jsonb) WHERE operation_id=?",
+                scope.operationId()))
+        .isEqualTo(1);
+
+    assertThatThrownBy(() -> journal.find(scope.operationId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Persisted initial gameplay release evidence is inconsistent");
+  }
+
+  @Test
   void outboxReadersRejectResealedPayloadForAnotherOperationRowKey() {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry original = authorizedDispatch(base);
@@ -1054,6 +1098,71 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasMessageContaining("retained effect readback does not match exact replay");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupt);
       assertThat(journal.find(operationId)).contains(settled);
+    }
+  }
+
+  @Test
+  void acknowledgedReadbackReplayRequiresTheEffectKindsSuccessfulStateInBothReplayBranches() {
+    for (EffectKind effectKind : EffectKind.values()) {
+      for (boolean exactReplay : List.of(true, false)) {
+        clearJournal();
+        Instant base = Instant.parse("2026-09-01T00:00:00Z");
+        OutboxEntry dispatched = authorizedDispatch(effectKind, base);
+        UUID operationId = dispatched.effect().operationId();
+        UUID effectId = dispatched.effect().effectId();
+        Instant observedAt =
+            base.plusSeconds(effectKind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED ? 5 : 7);
+        EffectReadbackState wrongState =
+            effectKind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+                ? EffectReadbackState.OWNER_HANDOFF_APPLIED
+                : EffectReadbackState.PREPARED_FENCED;
+        EffectReadback wrongStateReadback =
+            readbackFor(
+                dispatched,
+                dispatched.lastAttemptId(),
+                wrongState,
+                "wrong-effect-kind-state",
+                observedAt);
+        Operation acknowledged =
+            journal.recordEffectReadback(
+                dispatched,
+                readbackFor(
+                    dispatched,
+                    dispatched.lastAttemptId(),
+                    effectKind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+                        ? EffectReadbackState.PREPARED_FENCED
+                        : EffectReadbackState.OWNER_HANDOFF_APPLIED,
+                    "successful-readback",
+                    observedAt),
+                observedAt.plusSeconds(1));
+        assertThat(
+                dsl.execute(
+                    "UPDATE recovery_control.initial_gameplay_release_outbox "
+                        + "SET readback_payload=CAST(? AS jsonb), readback_digest=? "
+                        + "WHERE operation_id=? AND effect_id=?",
+                    tupleCodec.toJson(wrongStateReadback),
+                    tupleCodec.digest(wrongStateReadback),
+                    operationId,
+                    effectId))
+            .isEqualTo(1);
+        String corrupted = storedOutbox(operationId, effectId);
+        EffectReadback replay =
+            exactReplay
+                ? wrongStateReadback
+                : readbackFor(
+                    dispatched,
+                    dispatched.lastAttemptId(),
+                    wrongState,
+                    "wrong-effect-kind-state",
+                    observedAt.plusSeconds(2));
+
+        assertThatThrownBy(
+                () -> journal.recordEffectReadback(dispatched, replay, observedAt.plusSeconds(3)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("did not prove its exact durable outcome");
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupted);
+        assertThat(journal.find(operationId)).contains(acknowledged);
+      }
     }
   }
 
@@ -1414,6 +1523,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                     "SELECT payload::text FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
                     V1_OUTBOX_ID)
                 .get(0, String.class);
+        String transitionPayloadBefore =
+            legacyDsl
+                .fetchSingle(
+                    "SELECT tuple_payload::text FROM recovery_control.initial_gameplay_release_transition WHERE operation_id=? AND verb='resume'",
+                    V1_OPERATION_ID)
+                .get(0, String.class);
+        String transitionDigestBefore =
+            legacyDsl
+                .fetchSingle(
+                    "SELECT tuple_digest FROM recovery_control.initial_gameplay_release_transition WHERE operation_id=? AND verb='resume'",
+                    V1_OPERATION_ID)
+                .get(0, String.class);
         Flyway upgrade =
             Flyway.configure()
                 .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
@@ -1427,7 +1548,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           assertThatThrownBy(() -> upgrade.migrate())
               .hasStackTraceContaining("requires no prior claims");
           assertImmutableV1Payloads(
-              legacyDsl, scopeBefore, bindingBefore, evidenceBefore, payloadBefore);
+              legacyDsl,
+              scopeBefore,
+              bindingBefore,
+              evidenceBefore,
+              payloadBefore,
+              transitionPayloadBefore,
+              transitionDigestBefore);
           assertThat(
                   legacyDsl
                       .fetchSingle(
@@ -1439,10 +1566,27 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           upgrade.migrate();
           assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("2");
           assertImmutableV1Payloads(
-              legacyDsl, scopeBefore, bindingBefore, evidenceBefore, payloadBefore);
+              legacyDsl,
+              scopeBefore,
+              bindingBefore,
+              evidenceBefore,
+              payloadBefore,
+              transitionPayloadBefore,
+              transitionDigestBefore);
           InitialGameplayReleaseJournal upgradedJournal =
               new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
           Operation upgraded = upgradedJournal.find(V1_OPERATION_ID).orElseThrow();
+          PublicTransitionTuple v1Resume = v1ResumeTransition();
+          assertThat(upgradedJournal.findTransition(v1Resume)).contains(upgraded);
+          assertThat(upgradedJournal.transition(v1Resume, base.plusSeconds(1))).isEqualTo(upgraded);
+          assertImmutableV1Payloads(
+              legacyDsl,
+              scopeBefore,
+              bindingBefore,
+              evidenceBefore,
+              payloadBefore,
+              transitionPayloadBefore,
+              transitionDigestBefore);
           assertThat(upgraded.maintenanceLockIdentity()).isEqualTo(V1_LOCK_IDENTITY);
           assertThat(upgraded.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
           assertThat(upgraded.evidence()).isNotNull();
@@ -1480,7 +1624,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       String scopePayload,
       String bindingPayload,
       String evidencePayload,
-      String effectPayload) {
+      String effectPayload,
+      String transitionPayload,
+      String transitionDigest) {
     assertThat(
             legacyDsl
                 .fetchSingle(
@@ -1509,12 +1655,28 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                     V1_OUTBOX_ID)
                 .get(0, String.class))
         .isEqualTo(effectPayload);
+    assertThat(
+            legacyDsl
+                .fetchSingle(
+                    "SELECT tuple_payload::text FROM recovery_control.initial_gameplay_release_transition WHERE operation_id=? AND verb='resume'",
+                    V1_OPERATION_ID)
+                .get(0, String.class))
+        .isEqualTo(transitionPayload);
+    assertThat(
+            legacyDsl
+                .fetchSingle(
+                    "SELECT tuple_digest FROM recovery_control.initial_gameplay_release_transition WHERE operation_id=? AND verb='resume'",
+                    V1_OPERATION_ID)
+                .get(0, String.class))
+        .isEqualTo(transitionDigest);
   }
 
   private static void seedImmutableV1Journal(
       DSLContext seedDsl, boolean claimed, Instant timestamp) {
     String effectPayload =
         V1_PREPARE_EFFECT_PAYLOAD_TEMPLATE.formatted(V1_SCOPE_PAYLOAD, V1_OPERATION_TUPLE_DIGEST);
+    String resumePayload =
+        V1_RESUME_TRANSITION_PAYLOAD_TEMPLATE.formatted(V1_SCOPE_DIGEST, V1_EVIDENCE_DIGEST);
 
     seedDsl.execute(
         """
@@ -1543,6 +1705,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     seedDsl.execute(
         """
+        INSERT INTO recovery_control.initial_gameplay_release_transition (
+            operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase
+        ) VALUES (?, 'resume', ?, CAST(? AS jsonb), 'awaiting_resume', 'resume_authorized')
+        """,
+        V1_OPERATION_ID,
+        V1_RESUME_TRANSITION_DIGEST,
+        resumePayload);
+
+    seedDsl.execute(
+        """
         INSERT INTO recovery_control.initial_gameplay_release_outbox (
             outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
             payload_digest, payload, state, attempt_count, last_attempt_id,
@@ -1564,6 +1736,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         timestamp.atOffset(ZoneOffset.UTC));
   }
 
+  private static PublicTransitionTuple v1ResumeTransition() {
+    return new PublicTransitionTuple(
+        V1_OPERATION_ID,
+        V1_SCOPE_DIGEST,
+        TransitionVerb.RESUME,
+        Phase.AWAITING_RESUME,
+        V1_LOCK_IDENTITY,
+        "immutable-initial-layout-evidence",
+        "evidence-owner-record-31",
+        V1_EVIDENCE_DIGEST);
+  }
+
   private static OutboxEntry authorizedDispatch(Instant base) {
     Scope scope = scope();
     journal.create(scope, UUID.randomUUID());
@@ -1578,6 +1762,27 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     OutboxEntry pending = journal.findNextEffect(scope.operationId()).orElseThrow();
     return journal.claimEffect(
         scope.operationId(), pending.effect().effectId(), UUID.randomUUID(), base.plusSeconds(4));
+  }
+
+  private static OutboxEntry authorizedDispatch(EffectKind effectKind, Instant base) {
+    OutboxEntry prepare = authorizedDispatch(base);
+    if (effectKind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
+      return prepare;
+    }
+    EffectReadback prepared =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepare-readback-for-handoff",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(prepare, prepared, base.plusSeconds(5));
+    OutboxEntry handoff = journal.findNextEffect(prepare.effect().operationId()).orElseThrow();
+    return journal.claimEffect(
+        handoff.effect().operationId(),
+        handoff.effect().effectId(),
+        UUID.randomUUID(),
+        base.plusSeconds(6));
   }
 
   private static String storedClosure(OutboxEntry dispatch) {

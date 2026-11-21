@@ -39,4 +39,29 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
                 new SpringApplication()))
         .doesNotThrowAnyException();
   }
+
+  @Test
+  void rejectsCommaSeparatedRecoveryDatabaseHosts() {
+    assertThatThrownBy(() ->
+            postProcessor.postProcessEnvironment(
+                new MockEnvironment()
+                    .withProperty(
+                        RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
+                        "recovery-control.invalid,localhost"),
+                new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exactly one host");
+  }
+
+  @Test
+  void acceptsAnExplicitSingleRecoveryDatabaseHostname() {
+    assertThatCode(() ->
+            postProcessor.postProcessEnvironment(
+                new MockEnvironment()
+                    .withProperty(
+                        RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
+                        "recovery-control.invalid"),
+                new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
 }

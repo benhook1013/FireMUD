@@ -577,7 +577,7 @@ async function assertAssociationSelection() {
   for (const associations of [[{number: 42}, {number: 42}], [{number: 99}], null]) {
     reset(); source.pull_requests = associations;
     await run(github, context, core);
-    if (pullRequestReads || calls.paginate.length || calls.updated.length || calls.deleted.length) {
+    if (pullRequestReads || calls.paginate.length || calls.created.length || calls.updated.length || calls.deleted.length) {
       throw new Error("missing or duplicate matching association must fail before provider reads");
     }
   }
@@ -585,7 +585,7 @@ async function assertAssociationSelection() {
   for (const [repository, branch] of [[null, "feature"], [{id: 0}, "feature"], [{id: 123}, ""], [{id: 456}, "feature"], [{id: 123}, "different"]]) {
     reset(); source.head_repository = repository; source.head_branch = branch;
     await run(github, context, core);
-    if (calls.paginate.length || calls.updated.length || calls.deleted.length) {
+    if (calls.paginate.length || calls.created.length || calls.updated.length || calls.deleted.length) {
       throw new Error("invalid or mismatched concurrency identity must not publish");
     }
   }
