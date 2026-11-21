@@ -88,8 +88,19 @@ services:
     depends_on:
       account-service:
         condition: service_healthy
+    # Healthy once the first signer is promoted; signer readiness first waits out the 300 s
+    # maximum validator JWKS cache age, so allow well beyond that.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/firemud-signer-promoted"]
+      interval: 5s
+      timeout: 3s
+      retries: 150
+      start_period: 30s
 
   account-service:
+    # The pre-v1 signer, readiness and gameplay-login owners exceed the 512m default; a CI run
+    # lost Account without an error on its first post-promotion LOGIN.
+    mem_limit: 1g
     depends_on:
       redis-coord-replica:
         condition: service_started
@@ -119,6 +130,10 @@ services:
       - pre-v1-jwks-projection:/var/run/secrets/firemud/jwks:ro
 
   game-session-service:
+    # Authenticated LOGIN needs a promoted Account signer; start only once it is live.
+    depends_on:
+      pre-v1-jwt-materializer:
+        condition: service_healthy
     environment:
       FIREMUD_GAME_SESSION_AUTHENTICATED_GAMEPLAY_ENABLED: "true"
       FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_ENABLED: "true"

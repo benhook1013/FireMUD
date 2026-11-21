@@ -148,6 +148,22 @@ def generate_bundle(request):
     return json.dumps(bundle).encode("utf-8"), jwk
 
 
+PROMOTED_MARKER = "/tmp/firemud-signer-promoted"
+CALL_TIMEOUT_SECONDS = 30.0
+
+
+class TimedStub:
+    """Bounds every Account call so a restarted Account cannot leave the stand-in waiting forever."""
+
+    def __init__(self, stub, timeout):
+        self._stub = stub
+        self._timeout = timeout
+
+    def __getattr__(self, name):
+        method = getattr(self._stub, name)
+        return lambda request: method(request, timeout=self._timeout)
+
+
 def reconcile(pb, stub, secret):
     generation = stub.GetCurrentGenerationRequest(
         pb.GetCurrentGenerationRequestRequest(schema_version=SCHEMA_VERSION)
@@ -216,6 +232,9 @@ def reconcile(pb, stub, secret):
             resulting_slots=secret.slots(),
         )
     )
+    # The container healthcheck reads this marker; Game Session starts only once a signer is live.
+    with open(PROMOTED_MARKER, "w", encoding="utf-8") as marker:
+        marker.write(promotion.target_kid)
     return True
 
 
@@ -239,7 +258,7 @@ def main():
     channel = grpc.secure_channel(
         args.account, credentials, options=[("grpc.ssl_target_name_override", args.server_name)]
     )
-    stub = pb_grpc.AccountJwtSignerMaterializationServiceStub(channel)
+    stub = TimedStub(pb_grpc.AccountJwtSignerMaterializationServiceStub(channel), CALL_TIMEOUT_SECONDS)
     secret = SecretDir(args.secret_dir)
 
     enrolled = False
