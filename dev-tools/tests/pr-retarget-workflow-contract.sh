@@ -2227,7 +2227,9 @@ if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
       fi
       if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
         : >"$CONTRACT_STALLED_LOOKUP_MARKER"
-        command sleep 12
+        # A gh API request is a single process. Keep the blocked fixture so
+        # the inner timeout does not depend on cleanup of a shell's descendants.
+        exec sleep 12
       fi
       cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-${CONTRACT_DUPLICATE_JOB:-success}.json"; exit 0 ;;
     *actions/runs/203/attempts/3/jobs?per_page=100)
@@ -2419,22 +2421,14 @@ if [[ "${0##*/}" == "wait-for-runtime-images.sh" ]]; then
   unset SECONDS
   SECONDS=0
   sleep() {
-    SECONDS=$((SECONDS + 1))
+    # The actual blocked API call runs in a command substitution. Use its
+    # shared marker to advance the parent shell's clock after it returns.
+    if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" && -f "$CONTRACT_STALLED_LOOKUP_MARKER" ]]; then
+      SECONDS=$((SECONDS + HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS))
+    else
+      SECONDS=$((SECONDS + 1))
+    fi
   }
-  if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
-    timeout() {
-      local timeout_budget="${2:-0}" timeout_status
-      if command timeout "$@"; then
-        timeout_status=0
-      else
-        timeout_status=$?
-      fi
-      if [[ -f "$CONTRACT_STALLED_LOOKUP_MARKER" && "$timeout_status" -ne 0 ]]; then
-        SECONDS=$((SECONDS + timeout_budget))
-      fi
-      return "$timeout_status"
-    }
-  fi
 fi
 EOF
 BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
@@ -2916,7 +2910,11 @@ BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
   timeout 9s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
     >"$contract_fixture_dir/stalled-publisher.output" 2>"$contract_fixture_dir/stalled-publisher.error" || stalled_status=$?
-[[ -f "$contract_fixture_dir/stalled-publisher.lookup" && "$stalled_status" == "1" ]]
+if [[ ! -f "$contract_fixture_dir/stalled-publisher.lookup" || "$stalled_status" != "1" ]]; then
+  echo "Expected a real blocked publisher lookup and waiter exit 1, got $stalled_status" >&2
+  cat "$contract_fixture_dir/stalled-publisher.output" "$contract_fixture_dir/stalled-publisher.error" >&2
+  exit 1
+fi
 require_contains "$contract_fixture_dir/stalled-publisher.error" 'Timed out waiting for runtime-images workflow'
 
 for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
