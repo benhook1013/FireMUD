@@ -1,5 +1,5 @@
 # Shared base image for FireMUD services
-FROM eclipse-temurin:25.0.5_8-jre@sha256:a640968ae55027b322cedd5f8228b01a84baff0b9e9360e47601c6a111ba1699
+FROM eclipse-temurin:25.0.5.1_2-jre@sha256:4ed132f6832e9804b123e89a849a7b4502756ae64a4ee08ebab939d9d5d0a9fa
 LABEL org.opencontainers.image.source="https://github.com/benhook1013/FireMUD"
 RUN set -eu; \
     sources="/etc/apt/sources.list.d/ubuntu.sources"; \

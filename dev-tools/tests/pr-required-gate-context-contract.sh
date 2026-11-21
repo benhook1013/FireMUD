@@ -1080,6 +1080,9 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const preMergeRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Current default trusted refresh definition\n")]);
+const preMergeRefreshFixtureSha256 = require("node:crypto").createHash("sha256")
+  .update(preMergeRefreshBytes).digest("hex");
 const previousRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Previous trusted refresh definition\n")]);
 const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
   .update(previousRefreshBytes).digest("hex");
@@ -1092,6 +1095,7 @@ const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set(JSON.parse(
 for (const fingerprint of [
   "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
   "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+  "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1",
 ]) assert.ok(outgoingTrustedRefreshRuntimeWorkflowSha256.has(fingerprint),
   `outgoing trusted refresh fingerprint missing: ${fingerprint}`);
 const outgoingRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Outgoing trusted refresh fixture\n")]);
@@ -1157,7 +1161,8 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256,
-      new Set([...outgoingTrustedRefreshRuntimeWorkflowSha256, outgoingRefreshFixtureSha256]), canonicalPlayClassifierSha256,
+      new Set([...outgoingTrustedRefreshRuntimeWorkflowSha256, preMergeRefreshFixtureSha256, outgoingRefreshFixtureSha256]),
+      canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
       "benhook1013", "FireMUD", require, data);
@@ -1272,6 +1277,11 @@ function markerAccepted(overrides = {}) {
     }, event), true, "exact old fail-red default-branch producer remains a diagnostic exception only");
   }
   assert.equal(await verify(() => {}, "repository_dispatch"), true);
+  const usePreMergeRefresh = data => Object.assign(data.definitions[workflowPath], {
+    content: preMergeRefreshBytes.toString("base64"), size: preMergeRefreshBytes.length,
+  });
+  assert.equal(await verify(usePreMergeRefresh, "repository_dispatch", false), true,
+    "normal trusted refresh accepts the immutable pre-merge default producer");
   const usePreviousRefresh = data => Object.assign(data.definitions[workflowPath], {
     content: previousRefreshBytes.toString("base64"), size: previousRefreshBytes.length,
   });

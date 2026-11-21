@@ -25,7 +25,7 @@ jobs:
       run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -151,7 +151,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -303,7 +303,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -469,7 +469,7 @@ jobs:
     timeout-minutes: 95
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -572,10 +572,11 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "1e069f10479faeca137c56b731ecf4a7357d47b8f2dd536f6483a80c1c5fa9c5";
+            const canonicalRuntimeWorkflowSha256 = "c1ef3c564568f2b7f96f6fa88a90581a87990db29ebd0459fdc869743bcc1eba";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
               "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
               "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+              "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1",
             ]);
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
@@ -592,8 +593,8 @@ jobs:
               "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
               "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
-              "docker/docker-compose.yml": "a1f5681e786e39b9f2de9a2e3bc1ae5d78fb67066e7c42c5370e982c193ba12c",
-              "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
+              "docker/docker-compose.yml": "cd3957cace554958f0a1077754809cb75fc9c83bbf0beca99de4a8cf9bf86929",
+              "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
               "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
               "docker/docker-compose.grpc-mtls.override.yml": "dcee047f1492392035d57153ba8dfd6d38de33ca932d327f377440d5813577f0"
