@@ -1772,7 +1772,23 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
         request.holdBindingDigest());
   }
 
+  /**
+   * The exact Human attempt row. The run-owned fixture's {@code fixture_provenance_digest} column
+   * (V1070) is omitted while it is null, so pre- and post-upgrade Human rows compare exactly.
+   */
   private static Record terminal(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness,
+      CanonicalInitialAdmissionRequest request) {
+    Record row = terminalWithAllColumns(harness, request);
+    org.jooq.Field<?> fixture = row.field("fixture_provenance_digest");
+    if (fixture == null || row.get(fixture) != null) return row;
+    return row.into(
+        java.util.Arrays.stream(row.fields())
+            .filter(field -> !field.getName().equals("fixture_provenance_digest"))
+            .toArray(org.jooq.Field[]::new));
+  }
+
+  private static Record terminalWithAllColumns(
       CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness,
       CanonicalInitialAdmissionRequest request) {
     return harness

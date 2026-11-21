@@ -213,8 +213,8 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
     // This is a disposable Testcontainers baseline reset, not runtime/bootstrap behavior. Keep
     // the FK descendants explicit and temporarily suspend only the launch-evidence, retained
-    // actor-core, and Human runtime-completion TRUNCATE guards inside the same transaction;
-    // production SQL retains all three.
+    // actor-core, Human and fixture runtime-completion TRUNCATE guards inside the same
+    // transaction; production SQL retains all four.
     TransactionTemplate baselineReset =
         new TransactionTemplate(gameSession.bean(PlatformTransactionManager.class));
     BaselineTruncateGuardStates originalGuardStates =
@@ -227,16 +227,22 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                       requireOriginalTruncateGuardState(
                           jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE),
                       requireOriginalTruncateGuardState(
-                          jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION));
+                          jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION),
+                      requireOriginalTruncateGuardState(
+                          jdbc, BaselineTruncateGuard.FIXTURE_RUNTIME_COMPLETION));
               disableTruncateGuard(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH);
               requireTruncateGuardState(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, "D");
               disableTruncateGuard(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE);
               requireTruncateGuardState(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, "D");
               disableTruncateGuard(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION);
               requireTruncateGuardState(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION, "D");
+              disableTruncateGuard(jdbc, BaselineTruncateGuard.FIXTURE_RUNTIME_COMPLETION);
+              requireTruncateGuardState(
+                  jdbc, BaselineTruncateGuard.FIXTURE_RUNTIME_COMPLETION, "D");
               jdbc.execute(
                   """
                   TRUNCATE TABLE
+                      game_session_run_owned_fixture_runtime_completion,
                       game_session_canonical_human_runtime_completion,
                       gs_original_start_session_authored_actor_core_retention,
                       game_session_canonical_closed_admission_pointer_request,
@@ -273,6 +279,14 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                   jdbc,
                   BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION,
                   originalStates.humanRuntimeCompletion());
+              restoreTruncateGuard(
+                  jdbc,
+                  BaselineTruncateGuard.FIXTURE_RUNTIME_COMPLETION,
+                  originalStates.fixtureRuntimeCompletion());
+              requireTruncateGuardState(
+                  jdbc,
+                  BaselineTruncateGuard.FIXTURE_RUNTIME_COMPLETION,
+                  originalStates.fixtureRuntimeCompletion());
               return originalStates;
             });
     requireTruncateGuardState(
@@ -283,6 +297,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         jdbc,
         BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION,
         originalGuardStates.humanRuntimeCompletion());
+    requireTruncateGuardState(
+        jdbc,
+        BaselineTruncateGuard.FIXTURE_RUNTIME_COMPLETION,
+        originalGuardStates.fixtureRuntimeCompletion());
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
@@ -308,7 +326,11 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     HUMAN_RUNTIME_COMPLETION(
         "Human runtime completion",
         "game_session_canonical_human_runtime_completion",
-        "game_session_canonical_human_runtime_completion_no_truncate");
+        "game_session_canonical_human_runtime_completion_no_truncate"),
+    FIXTURE_RUNTIME_COMPLETION(
+        "run-owned fixture runtime completion",
+        "game_session_run_owned_fixture_runtime_completion",
+        "gs_run_owned_fixture_runtime_completion_no_truncate");
 
     private final String description;
     private final String tableName;
@@ -322,7 +344,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   }
 
   private record BaselineTruncateGuardStates(
-      String canonicalLaunch, String authoredActorCore, String humanRuntimeCompletion) {}
+      String canonicalLaunch,
+      String authoredActorCore,
+      String humanRuntimeCompletion,
+      String fixtureRuntimeCompletion) {}
 
   private static String requireOriginalTruncateGuardState(
       JdbcTemplate jdbc, BaselineTruncateGuard guard) {

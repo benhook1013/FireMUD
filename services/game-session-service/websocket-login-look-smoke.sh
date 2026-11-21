@@ -46,7 +46,7 @@ fi
 if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
   echo "Running direct WebSocket baseline plus explicit item/container/equipment mutation extension against ${SMOKE_GAME_SESSION_WS_URL}"
 else
-  echo "Running direct WebSocket WORLDS + LOGIN + PLAY + LOOK baseline against ${SMOKE_GAME_SESSION_WS_URL}"
+  echo "Running direct WebSocket WORLDS + LOGIN + fail-closed PLAY baseline against ${SMOKE_GAME_SESSION_WS_URL}"
 fi
 echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
@@ -63,7 +63,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 from smoke_common import (
     PlayEntitlementUnavailable,
     gameplay_item_container_equipment_steps,
-    login_play_look_steps,
+    websocket_fail_closed_play_steps,
     run_websocket_smoke_session,
     verify_smoke_account,
     wait_for_account_schema,
@@ -120,15 +120,12 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
         look_timeout_seconds,
     )
 else:
-    steps = login_play_look_steps(
+    steps = websocket_fail_closed_play_steps(
         login_email,
         password,
         world,
         worlds_expect,
         login_expect,
-        play_expect,
-        look_expect,
-        look_timeout=look_timeout_seconds,
     )
 steps += [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
 try:

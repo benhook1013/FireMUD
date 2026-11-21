@@ -1328,7 +1328,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
         true,
         false,
         "SHARED",
-        "ALLOW_NEW",
+        "PRESEEDED_ONLY",
         fingerprint(pki.gameSessionClient().certificate()),
         GS_URI,
         fingerprint(pki.caCertificateValue()),

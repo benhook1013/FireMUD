@@ -97,6 +97,35 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     canonicalGameplay = receiver.getIfAvailable();
   }
 
+  private AccountTenantCapacityGrpcService tenantCapacity;
+
+  /** Tenant capacity shares this AccountService registration; its receiver checks Game Session. */
+  @Autowired
+  void tenantCapacityReceiver(
+      ObjectProvider<net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner>
+          owner) {
+    var available = owner.getIfAvailable();
+    tenantCapacity =
+        available == null
+            ? null
+            : new AccountTenantCapacityGrpcService(available, workloadNamespace);
+  }
+
+  @Override
+  public void commitTenantCapacityAdmission(
+      net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse>
+          observer) {
+    if (tenantCapacity == null) {
+      observer.onError(
+          io.grpc.Status.UNIMPLEMENTED
+              .withDescription("Tenant capacity admission is not composed")
+              .asRuntimeException());
+      return;
+    }
+    tenantCapacity.commitTenantCapacityAdmission(request, observer);
+  }
+
   public AccountGrpcService(PingService pingService, AccountService accountService) {
     this(pingService, accountService, null, null);
   }

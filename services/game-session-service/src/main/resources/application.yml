@@ -140,6 +140,11 @@ firemud:
         - game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterOwnerRead
         - game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead
         - game_session.v1.GameSessionService/AuthorizeStartSession
+        - game_session.v1.CanonicalGameplayAdmissionDecisionReadService/ListVisiblePublicProductionAdmissionTargets
+        - game_session.v1.CanonicalGameplayAdmissionDecisionReadService/ResolvePublishedRealmAdmissionTarget
+        - game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetOriginalNewNeverAdmittedDecision
+        - game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetCanonicalGameplayAdmissionDecision
+        - game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetPublishedRealmAdmissionOwnerRead
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

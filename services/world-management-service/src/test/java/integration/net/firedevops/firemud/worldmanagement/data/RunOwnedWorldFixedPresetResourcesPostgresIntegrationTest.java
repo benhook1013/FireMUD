@@ -38,6 +38,9 @@ import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -54,8 +57,10 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRe
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
@@ -820,6 +825,126 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
+  void fixtureActivationMovesOriginalPreparingEpochToActiveOnceAndReplaysExactly()
+      throws Exception {
+    var evidence = controlledEvidence();
+    var service = nativeService(evidence);
+    prepareWithInstallation(service, evidence);
+    var association =
+        associationRepository()
+            .readRunOwnedFixtureAssociation(
+                evidence, RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence));
+    long id = association.worldInstanceId();
+    var request = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
+
+    var activated =
+        RunOwnedWorldFixtureLifecycleTestFactory.activate(
+            service, evidence, controlledInstallation, 1L);
+
+    assertThat(activated.status()).isEqualTo("ACTIVE");
+    assertThat(activated.lifecycleEpoch()).isEqualTo(2L);
+    assertThat(activated.tenantId()).isEqualTo(request.tenantId());
+    assertThat(activated.gameInstanceId()).isEqualTo(request.gameInstanceId());
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_run_owned_fixture_activation WHERE world_instance_id = ?",
+                id))
+        .isEqualTo(1L);
+    assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
+
+    var replay =
+        RunOwnedWorldFixtureLifecycleTestFactory.activate(
+            service, evidence, controlledInstallation, 1L);
+    assertThat(replay.status()).isEqualTo("ACTIVE");
+    assertThat(replay.lifecycleEpoch()).isEqualTo(2L);
+    assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                RunOwnedWorldFixtureLifecycleTestFactory.activate(
+                    service, evidence, controlledInstallation, 3L))
+        .hasMessageStartingWith("LIFECYCLE_EPOCH_MISMATCH:");
+    assertSqlState(
+        () ->
+            dsl.execute(
+                "UPDATE world_instance SET status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2 WHERE id = ?",
+                id),
+        "23514");
+    assertSqlState(
+        () ->
+            dsl.execute(
+                "DELETE FROM world_run_owned_fixture_activation WHERE world_instance_id = ?", id),
+        "23514");
+  }
+
+  @Test
+  void activeFixtureAcquiresAndReadsTypedInitialAdmissionHoldWithFixtureLifecycle()
+      throws Exception {
+    var evidence = controlledEvidence();
+    var service = nativeService(evidence);
+    prepareWithInstallation(service, evidence);
+    RunOwnedWorldFixtureLifecycleTestFactory.activate(
+        service, evidence, controlledInstallation, 1L);
+    var association =
+        associationRepository()
+            .readRunOwnedFixtureAssociation(
+                evidence, RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence));
+    var identity = association.identity();
+    var holdRequest =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            identity.targetNamespace(),
+            identity.canonicalTenantId(),
+            identity.worldSlug(),
+            identity.canonicalRealmId(),
+            identity.playableStateNamespaceId(),
+            identity.playableStateScope(),
+            identity.canonicalGameInstanceId(),
+            association.canonicalVersionId(),
+            2L,
+            "fixture-initial-admission-1",
+            "a".repeat(64),
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            identity.catalogRevision(),
+            null);
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            UUID.randomUUID(),
+            identity.targetNamespace(),
+            identity.canonicalTenantId(),
+            identity.worldSlug(),
+            identity.canonicalGameInstanceId(),
+            identity.playableStateNamespaceId(),
+            identity.playableStateScope(),
+            identity.publicProduction(),
+            identity.controlPlaneRequestId(),
+            association.canonicalVersionId(),
+            evidence.launchDescriptor().requestDigest(),
+            evidence.launchDescriptor().resultDigest(),
+            association.runOwnedFixture().fixtureProvenanceDigest());
+    var lifecycleRepository =
+        new WorldCanonicalInstanceLifecycleReadRepository(
+            dsl, transactionManager, associationRepository());
+    var holds =
+        new WorldCanonicalInitialAdmissionHoldRepository(
+            dsl, transactionManager, associationRepository(), lifecycleRepository);
+
+    var hold = holds.acquire(holdRequest, lifecycleRequest);
+    assertThat(holds.acquire(holdRequest, lifecycleRequest)).isEqualTo(hold);
+    var state = holds.readState(hold, lifecycleRequest).orElseThrow();
+
+    assertThat(state.isRunOwnedFixture()).isTrue();
+    assertThat(state.isPendingAtExpectedActiveEpoch()).isTrue();
+    assertThat(WorldCanonicalInitialAdmissionHoldState.fromStored(state.canonicalBytes()))
+        .isEqualTo(state);
+    assertSqlState(
+        () ->
+            dsl.execute(
+                "UPDATE world_instance SET status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2 WHERE id = ?",
+                association.worldInstanceId()),
+        "55000");
+  }
+
+  @Test
   void fixturePreparingCannotActivateAcquireHoldsPlaceActorsOrReuseConsumedManifests()
       throws Exception {
     var evidence = controlledEvidence();
@@ -850,7 +975,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 associationRepository()
                     .activateRunOwnedFixtureInOwnerTransaction(association, 1L, 0L))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageStartingWith("RUN_OWNED_WORLD_ACTIVATION_UNAVAILABLE:");
+        .hasMessageContaining("writable READ COMMITTED owner transaction");
     assertThat(
             dsl.fetchSingle(
                     "SELECT to_regprocedure(?)",
@@ -911,13 +1036,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           omitCanonical ? association.worldPrivateKeys().gameInstanceId() : null);
       selectors.put(
           "version_id", omitCanonical ? association.worldPrivateKeys().versionId() : null);
+      // Fixture holds go through the World owner only; a partial raw row is still refused.
       assertSqlState(
           () ->
               dsl.execute(
                   "INSERT INTO initial_admission_bind_hold SELECT (jsonb_populate_record(NULL::initial_admission_bind_hold, ?::jsonb)).*",
                   json(selectors)),
-          "23514",
-          "disabled");
+          omitCanonical ? "23514" : "23502");
     }
     assertSqlState(
         () ->
@@ -1501,8 +1626,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 install five consecutive catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L);
+          .as("V1046 through V1050 and V1070 install six consecutive catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -1529,6 +1654,12 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .isNotNull()
             .isEmpty();
       }
+      assertThat(
+              retainedRowsAtDefaultFrontierOriginalColumns.remove(
+                  "world_run_owned_fixture_activation"))
+          .as("new additive V1070 fixture activation table is installed and empty")
+          .isNotNull()
+          .isEmpty();
       for (String extendedTable :
           List.of("world_instance", "world_canonical_instance_topology_identity")) {
         assertThat(
@@ -3284,6 +3415,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1048");
     versions.add("1049");
     versions.add("1050");
+    versions.add("1070");
     return List.copyOf(versions);
   }
 
