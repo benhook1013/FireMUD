@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
@@ -37,6 +38,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
@@ -50,6 +52,11 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapDigest;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.Completion;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -61,7 +68,10 @@ import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmission
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -71,6 +81,8 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegist
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.EvidenceBundleReference;
 import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.ContextClaims;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -360,6 +372,124 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void exactCapacityRefusalCommitsAndReplaysAfterHeadroomReturns() {
+    Fixture f = fixture(true, true);
+    var request = capacityRequest(f);
+    long quota = request.evidence().quota();
+    assertThat(quota).isBetween(1L, 10L);
+    TenantCapacityAdmission.Request firstHold = null;
+    for (long used = 0; used < quota; used++) {
+      var occupying = capacityRequest(f);
+      assertThat(f.capacityOwner.commit(occupying, PEER).state())
+          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      if (firstHold == null) {
+        firstHold = occupying;
+      }
+    }
+    String readHeld =
+        "SELECT held_units FROM account_tenant_capacity_usage"
+            + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
+    assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
+        .isEqualTo(quota);
+    UUID requestId = request.identity().requestId();
+    var decision = new java.util.concurrent.atomic.AtomicReference<UUID>();
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(error.durableDenialId()).isNotNull();
+              decision.set(error.durableDenialId());
+            });
+    String readDenial =
+        "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions"
+            + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
+    Object[] identity = {f.tenantId, requestId, request.identity().admissionId()};
+    var retained = f.dsl.fetchSingle(readDenial, identity).intoMap();
+    assertThat(retained)
+        .containsEntry("decision", "NO_ACCEPT")
+        .containsEntry("refusal_code", "CAPACITY_QUOTA_EXCEEDED")
+        .containsEntry("decision_id", decision.get());
+    String countDeniedReservations =
+        "SELECT count(*) AS n FROM account_tenant_capacity_reservations"
+            + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
+    assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+
+    // The external no-execution observation is controlled; all Account storage mutations are real.
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.capacityOwner,
+            f.dsl,
+            (occupying, reservation, deadline) ->
+                new AccountTenantCapacityRecoveryWorker.Observation(
+                    PEER,
+                    reservation,
+                    net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                        occupying),
+                    AccountTenantCapacityRecoveryWorker.Disposition
+                        .NOT_EXECUTED_AFTER_AUTHORIZATION,
+                    occupying.admissionAttemptId(),
+                    7,
+                    "sha256:" + "e".repeat(64),
+                    "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
+            Clock.fixed(f.now, ZoneOffset.UTC));
+    assertThat(
+            recovery
+                .reconcile(
+                    java.util.Objects.requireNonNull(firstHold),
+                    AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
+                .state())
+        .isEqualTo(TenantCapacityAdmission.State.RELEASED);
+    assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
+        .isEqualTo(quota - 1);
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(error.durableDenialId()).isEqualTo(decision.get());
+            });
+    assertThat(f.dsl.fetchSingle(readDenial, identity).intoMap())
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
+        .isEqualTo(Math.toIntExact(quota + 1));
+    assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+  }
+
+  private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {
+    var entitlementRequest = f.request();
+    var entitlement = f.owner.evaluate(entitlementRequest, CONTROLLED_COMPACT_TOKEN);
+    var evidence =
+        TenantCapacityAdmission.Evidence.parse(
+            entitlement.canonicalBytes(), TenantCapacityAdmission.Owner.GAME_SESSION);
+    UUID requestId = entitlementRequest.requestId();
+    return new TenantCapacityAdmission.Request(
+            new TenantCapacityAdmission.Identity(f.tenantId, requestId, UUID.randomUUID()),
+            UUID.randomUUID(),
+            1,
+            NAMESPACE,
+            new TenantCapacityAdmission.PlayerContext(
+                f.account.getAccountUuid(),
+                f.tenantId,
+                f.scope.playableStateNamespaceId(),
+                f.scope.gameInstanceId(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                f.scope.realmId(),
+                requestId,
+                f.scope.playableStateScope()),
+            TenantCapacityAdmission.Operation.CAPACITY_CREATING,
+            new TenantCapacityAdmission.Shape(0, 0, 0),
+            new TenantCapacityAdmission.Shape(1, 0, 0),
+            evidence,
+            1L,
+            null)
+        .withDigest();
+  }
+
+  @Test
   void blockedAccountSourceReadIsCancelledWithinOwnerTransactionBudget() throws Exception {
     Fixture f = fixture(false);
     try (Connection blocker = f.dataSource.getConnection()) {
@@ -438,6 +568,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   private Fixture fixture(boolean join) {
+    return fixture(join, false);
+  }
+
+  private Fixture fixture(boolean join, boolean initializeCapacity) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
@@ -449,7 +583,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
-    return new Fixture(dataSource, join);
+    return new Fixture(dataSource, join, initializeCapacity);
   }
 
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
@@ -537,6 +671,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final class Fixture {
     private final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
+    private final Instant now;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
     private final AccountTenantMembershipRepository memberships;
@@ -545,9 +680,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private final UUID tenantId = UUID.randomUUID();
     private final CanonicalJoinScopeV2 scope;
     private final AccountPlayerAdmissionEntitlementOwner owner;
+    private final AccountTenantCapacityOwner capacityOwner;
 
-    private Fixture(DriverManagerDataSource dataSource, boolean join) {
+    private Fixture(DriverManagerDataSource dataSource, boolean join, boolean initializeCapacity) {
       this.dataSource = dataSource;
+      now = initializeCapacity ? Instant.now().truncatedTo(ChronoUnit.MICROS) : NOW;
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
@@ -635,12 +772,18 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               UUID.randomUUID(),
               7,
               3,
-              NOW.minusSeconds(20).toString(),
-              NOW.plusSeconds(120).toString());
+              now.minusSeconds(20).toString(),
+              now.plusSeconds(120).toString());
       String joinRequestId = UUID.randomUUID().toString();
       String callerBinding = "controlled-join-caller";
       transaction.execute(status -> {
         tenants.importVerified(tenantSource);
+        if (initializeCapacity) {
+          var bootstrap = new AccountTenantCreationBootstrapOperationRepository(dsl);
+          var claim = claimBootstrap(bootstrap, account, tenantSource);
+          bootstrap.complete(claim.requestId(), completion(claim));
+          new AccountCapacityRefusalBudgetRepository(dsl).provision(tenantId, 1);
+        }
         sources.initializeIssuerIfAbsent(ISSUER);
         generations.initializeTenantIfAbsent(tenantId);
         generations.initialize(
@@ -695,9 +838,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               mock(AccountGameplayCredentialRequestBinding.class),
               "a".repeat(64),
               UUID.randomUUID(),
-              NOW.minusSeconds(10).getEpochSecond(),
-              NOW.minusSeconds(10).getEpochSecond(),
-              NOW.plusSeconds(120).getEpochSecond());
+              now.minusSeconds(10).getEpochSecond(),
+              now.minusSeconds(10).getEpochSecond(),
+              now.plusSeconds(120).getEpochSecond());
       var candidate = mock(CommittedCandidateVerificationData.class);
       when(candidate.identity()).thenReturn(identity);
       when(candidate.authoritySnapshot())
@@ -727,6 +870,16 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
             return Optional.of(candidate);
           });
+      capacityOwner =
+          new AccountTenantCapacityOwner(
+              dsl,
+              accounts,
+              snapshots,
+              issuances,
+              scopes,
+              transactions,
+              Clock.fixed(now, ZoneOffset.UTC),
+              NAMESPACE);
       var targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
       controlledTarget(targets);
       owner =
@@ -743,7 +896,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               tenantEvents,
               targets,
               transactions,
-              Clock.fixed(NOW, ZoneOffset.UTC),
+              Clock.fixed(now, ZoneOffset.UTC),
               NAMESPACE);
     }
 
@@ -766,6 +919,74 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
           scope.connectScopeId(),
           PEER);
     }
+  }
+
+  private static StoredOperation claimBootstrap(
+      AccountTenantCreationBootstrapOperationRepository operations,
+      Account creator,
+      FreshTenantCreationEvidence creation) {
+    UUID accountId = creator.getAccountUuid();
+    UUID authorizationId = UUID.randomUUID();
+    String authorizationDigest =
+        AccountTenantCreationBootstrapDigest.sha256(
+            "fixture authorization".getBytes(StandardCharsets.UTF_8));
+    var evidence =
+        new FreshTenantCreatorEvidence(
+            1,
+            creation,
+            accountId,
+            authorizationId,
+            authorizationDigest,
+            FreshTenantCreatorDigest.evidenceDigest(
+                1, creation, accountId, authorizationId, authorizationDigest));
+    byte[] creatorPayload = AccountTenantCreationBootstrapDigest.creatorEvidencePayload(evidence);
+    byte[] sourcePayload = "fixture source snapshot".getBytes(StandardCharsets.UTF_8);
+    byte[] requestPayload =
+        AccountTenantCreationBootstrapDigest.requestPayload(creatorPayload, sourcePayload);
+    var claim =
+        operations.claim(
+            evidence,
+            creatorPayload,
+            sourcePayload,
+            AccountTenantCreationBootstrapDigest.sha256(sourcePayload),
+            requestPayload,
+            AccountTenantCreationBootstrapDigest.sha256(requestPayload),
+            1,
+            1);
+    assertThat(claim.claimed()).isTrue();
+    return claim.operation();
+  }
+
+  private static Completion completion(StoredOperation operation) {
+    // Controlled completion receipts exercise the real storage owner's guarded transition.
+    byte[] event = "fixture membership event".getBytes(StandardCharsets.UTF_8);
+    byte[] audit = "fixture bootstrap audit".getBytes(StandardCharsets.UTF_8);
+    byte[] result = "fixture bootstrap result".getBytes(StandardCharsets.UTF_8);
+    return new Completion(
+        1,
+        operation.baselineMembershipVersion() + 1,
+        operation.baselineMembershipAuthorityGeneration(),
+        "ACTIVE",
+        false,
+        "[\"tenantAdmin\"]".getBytes(StandardCharsets.UTF_8),
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+            + "membership/"
+            + operation.initiatingAccountUuid()
+            + "/"
+            + operation.tenantUuid(),
+        operation.requestId().toString(),
+        1,
+        "fixture-membership-event",
+        AccountTenantCreationBootstrapDigest.sha256(event),
+        false,
+        event,
+        UUID.randomUUID(),
+        "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED",
+        Instant.now().truncatedTo(ChronoUnit.MICROS),
+        AccountTenantCreationBootstrapDigest.sha256(audit),
+        audit,
+        result,
+        AccountTenantCreationBootstrapDigest.sha256(result));
   }
 
   private static FreshTenantCreationEvidence tenantSource(UUID tenantId) {

@@ -20,6 +20,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDecisionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -62,6 +63,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountGameplayDelegationIssuanceRepository issuances;
   private final AccountConnectScopeRepository scopes;
   private final AccountTenantCapacityRepository capacity;
+  private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
   private final Clock clock;
   private final String namespace;
@@ -81,6 +83,7 @@ public final class AccountTenantCapacityOwner {
     this.issuances = Objects.requireNonNull(issuances);
     this.scopes = Objects.requireNonNull(scopes);
     this.capacity = new AccountTenantCapacityRepository(dsl);
+    this.originDecisions = new AccountCapacityOriginDecisionRepository(dsl);
     this.clock = Objects.requireNonNull(clock);
     if (!GrpcPeerIdentity.isValidNamespace(namespace))
       throw new IllegalArgumentException("Namespace required");
@@ -95,20 +98,39 @@ public final class AccountTenantCapacityOwner {
     requireCaller(request, authenticatedCaller);
     request.requireStructurallyValid();
     if (!(request.context() instanceof PlayerContext)) throw unavailable();
-    return commitWithFreshSnapshot(() -> {
-      // Exact replay/conflict can linearize at the snapshot read without taking a mutation
-      // lock.
-      Record existing = capacity.findForReplay(request.identity());
-      if (existing != null) return capacity.exact(request, existing);
-      lockPlayerAccount(request);
-      if (request.capacityRearmFence() != 1) throw conflict();
-      current(request);
-      requireSupportedShape(request);
-      if (!request.evidence().permitsCreation())
-        throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-      return capacity.create(request, request.evidence().expiresAt(), clock);
-    });
+    CommitDecision decision =
+        commitWithFreshSnapshot(() -> {
+          // Replay precedes current sources and quota. A lost refusal response retains its
+          // original decision even if capacity becomes available before the caller retries.
+          Record existing = capacity.findForReplay(request.identity());
+          if (existing != null) {
+            return new CommitDecision(capacity.exact(request, existing), null);
+          }
+          if (request.capacityRearmFence() != 1) throw conflict();
+          UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
+          if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
+          originDecisions.requireFreshAttemptBinding(request);
+          lockPlayerAccount(request);
+          current(request);
+          requireSupportedShape(request);
+          if (!request.evidence().permitsCreation())
+            throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
+          var reservation =
+              capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
+          if (reservation.isPresent()) {
+            return new CommitDecision(reservation.orElseThrow(), null);
+          }
+          UUID denialId = originDecisions.refuseQuota(request);
+          requireCurrentLifetime(request.evidence(), clock.instant());
+          return new CommitDecision(null, denialId);
+        });
+    // Throw only after the transaction has committed the exact denial.
+    if (decision.denialId() != null)
+      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decision.denialId());
+    return decision.reservation();
   }
+
+  private record CommitDecision(Result reservation, UUID denialId) {}
 
   /** Only the Account-owned recovery worker calls this after storing terminal no-commit proof. */
   Result rearm(Request prior, Request next, UUID recoveryOwner, long claimFence) {
@@ -125,7 +147,7 @@ public final class AccountTenantCapacityOwner {
         || !Objects.equals(
             prior.evidence().fields().get("authorityTuple"),
             next.evidence().fields().get("authorityTuple"))) throw conflict();
-    return inTransaction(() -> {
+    return commitWithFreshSnapshot(() -> {
       lockPlayerAccount(next);
       Record row = capacity.find(prior.identity());
       if (row == null) throw conflict();
@@ -140,6 +162,8 @@ public final class AccountTenantCapacityOwner {
           || row.get("owner_readback", byte[].class) == null) throw conflict();
       current(next);
       requireSupportedShape(next);
+      originDecisions.accept(next);
+      requireClaim(row, recoveryOwner, claimFence, clock.instant());
       requireCurrentLifetime(next.evidence(), clock.instant());
       int history =
           dsl.execute(
@@ -236,6 +260,9 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
+    // Source reads can consume the remaining evaluation lifetime. Retained replays
+    // return before current(), but a fresh refusal must still be current after qualification.
+    requireCurrentLifetime(evidence, clock.instant());
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {
@@ -278,7 +305,7 @@ public final class AccountTenantCapacityOwner {
       throw conflict();
   }
 
-  private Result commitWithFreshSnapshot(Supplier<Result> action) {
+  private <T> T commitWithFreshSnapshot(Supplier<T> action) {
     Context caller = Context.current();
     Deadline localDeadline = Deadline.after(TRANSACTION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     Deadline incoming = caller.getDeadline();
