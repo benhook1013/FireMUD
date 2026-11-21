@@ -1,10 +1,17 @@
 package net.firedevops.firemud.recovery.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.zaxxer.hikari.HikariDataSource;
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.UUID;
 import javax.sql.DataSource;
 import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
@@ -15,8 +22,11 @@ import net.firedevops.firemud.recovery.service.DeniedInitialGameplayReleaseEvide
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseController;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider;
+import net.firedevops.firemud.recovery.service.OwnerBoundaryUnavailableException;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.jooq.impl.DataSourceConnectionProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -26,20 +36,23 @@ import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
 import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration;
+import org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider;
 import org.springframework.boot.test.context.TestComponent;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
 class RecoveryControllerOwnerConfigurationTest {
   private ApplicationContextRunner defaults() {
     return new ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(RecoveryControllerOwnerConfiguration.class))
-        .withBean(DSLContext.class, () -> mock(DSLContext.class))
+        .withBean(DSLContext.class, () -> DSL.using(SQLDialect.POSTGRES))
         .withBean(
             InitialGameplayReleaseTupleCodec.class,
             () -> new InitialGameplayReleaseTupleCodec(JsonMapper.builder().build()));
@@ -121,6 +134,47 @@ class RecoveryControllerOwnerConfigurationTest {
                   context.getBean(DSLContext.class).configuration().connectionProvider();
           var proxy = (TransactionAwareDataSourceProxy) provider.dataSource();
           assertThat(proxy.getTargetDataSource()).isSameAs(datasource);
+        });
+  }
+
+  @Test
+  void configuredJooqTransactionIsRejectedBeforeOwnerEffectDispatch() throws SQLException {
+    DataSource dataSource = mock(DataSource.class);
+    Connection connection = mock(Connection.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.getAutoCommit()).thenReturn(true);
+    InitialGameplayReleaseJournal journal = mock(InitialGameplayReleaseJournal.class);
+    InitialGameplayReleaseEffectPort effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    InitialGameplayReleaseController controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            effectPort);
+
+    new ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                DataSourceTransactionManagerAutoConfiguration.class, JooqAutoConfiguration.class))
+        .withBean(DataSource.class, () -> dataSource)
+        .withPropertyValues("spring.jooq.sql-dialect=POSTGRES")
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          DSLContext dsl = context.getBean(DSLContext.class);
+          assertThat(dsl.configuration().transactionProvider())
+              .isInstanceOf(SpringTransactionProvider.class);
+          assertThatThrownBy(() ->
+                  dsl.transactionResult(configuration -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                        .isTrue();
+                    assertThatThrownBy(() -> controller.reconcileNextEffect(UUID.randomUUID()))
+                        .isInstanceOf(OwnerBoundaryUnavailableException.class)
+                        .hasMessageContaining("RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
+                    throw new IllegalStateException("rollback caller-owned jOOQ transaction");
+                  }))
+              .isInstanceOf(RuntimeException.class);
+          verify(connection).rollback();
+          verifyNoInteractions(journal, effectPort);
         });
   }
 

@@ -122,7 +122,6 @@ for (const [name, mutate] of Object.entries({
   malformedLabels: f => f.pr.labels = [{name: 3}],
   appBot: f => f.pr.user.login = 'app/renovate',
   bot: f => f.pr.user.login = 'renovate[bot]',
-  currentBase: f => { f.jobs[0].steps[0].name = `Preview event tuple pr-7 base-${B} head-${C} merge-${E}`; f.recordedMerge.parents[0].sha = B; },
   legacyTitle: f => f.jobs[0].steps = [],
   missingTitle: f => f.jobs = [],
   spoofTitleHead: f => f.jobs[0].steps[0].name = `Preview event tuple pr-7 base-${D} head-${B} merge-${E}`,
@@ -149,6 +148,14 @@ for (const [name, mutate] of Object.entries({
 })) test(`fails closed: ${name}`, async () => {
   const f = fixture(); mutate(f); assert.deepEqual(await execute(f), []);
 });
+test('a current integration event merge needs no lookup of the live merge', async () => {
+  const f = fixture();
+  f.jobs[0].steps = [tupleStep('event', B, E), tupleStep('resolved', B, E)];
+  f.recordedMerge.parents[0].sha = B;
+  assert.deepEqual(await execute(f), []);
+  assert.deepEqual(f.mergeReads, [E]);
+});
+
 test('observer checks out only trusted policy and has no artifact or candidate execution', () => {
   assert.deepEqual(workflow.permissions, {});
   assert.deepEqual(workflow.jobs.refresh.permissions,
@@ -343,6 +350,7 @@ test('a third independently verified merge can be the resolved plan', async () =
   const plannedBase = '0'.repeat(40);
   for (const exact of [true, false]) {
     const f = fixture();
+    f.recordedMerge.parents[0].sha = '1'.repeat(40);
     f.jobs[0].steps[1] = tupleStep('resolved', plannedBase, plannedMerge);
     f.resolvedMerge = {sha: plannedMerge, parents: [{sha: exact ? plannedBase : D}, {sha: C}]};
     const dispatches = await execute(f);

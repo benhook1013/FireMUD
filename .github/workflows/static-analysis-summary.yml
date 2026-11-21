@@ -269,10 +269,11 @@ jobs:
                 return [label, normalizeStatus(candidates[0], checkName, workflowRun)];
               });
 
-            const workflowRuns = {
+            const selectWorkflowRuns = async () => ({
               codeql: await workflowRunFor("codeql.yml", "CodeQL Gate"),
               license: await workflowRunFor("license-scan.yml", "License Gate"),
-            };
+            });
+            const workflowRuns = await selectWorkflowRuns();
             // Each serialized producer completion publishes one bounded snapshot.
             // A running counterpart stays pending until its completion callback refreshes this comment.
             const checks = resolveStatuses(workflowRuns);
@@ -346,6 +347,16 @@ jobs:
                   current.event !== "pull_request" || current.head_sha !== headSha ||
                   current.display_title !== run.display_title) {
                 core.info("A selected producer attempt changed while static analysis was being summarized.");
+                return;
+              }
+            }
+
+            if (!failedChecks.length && !unavailableChecks.length && !pendingChecks.length) {
+              const latest = await selectWorkflowRuns();
+              if (Object.entries(workflowRuns).some(([name, selected]) =>
+                ["id", "run_attempt", "status", "conclusion"].some(field =>
+                  selected?.[field] !== latest[name]?.[field]))) {
+                core.info("A producer selection changed before the passing summary could be published.");
                 return;
               }
             }

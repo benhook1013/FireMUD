@@ -3,9 +3,14 @@ package integration.net.firedevops.firemud.recovery;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -44,13 +49,16 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.conf.Settings;
 import org.jooq.impl.DSL;
+import org.jooq.tools.LoggerListener;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -61,6 +69,161 @@ import tools.jackson.databind.json.JsonMapper;
 class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final String SCHEMA = "recovery_control";
   private static final String DIGEST = "b".repeat(64);
+  private static final UUID V1_OPERATION_ID =
+      UUID.fromString("10000000-0000-0000-0000-000000000001");
+  private static final UUID V1_PLAYABLE_NAMESPACE_ID =
+      UUID.fromString("10000000-0000-0000-0000-000000000003");
+  private static final UUID V1_LOCK_IDENTITY =
+      UUID.fromString("10000000-0000-0000-0000-000000000004");
+  private static final UUID V1_OUTBOX_ID = UUID.fromString("10000000-0000-0000-0000-000000000010");
+  private static final UUID V1_EFFECT_ID = UUID.fromString("10000000-0000-0000-0000-000000000011");
+  private static final UUID V1_PRIOR_ATTEMPT_ID =
+      UUID.fromString("10000000-0000-0000-0000-000000000012");
+  private static final String V1_SCOPE_PAYLOAD =
+      """
+      {
+        "operationId": "10000000-0000-0000-0000-000000000001",
+        "canonicalTenantId": "10000000-0000-0000-0000-000000000002",
+        "targetNamespace": "release-target",
+        "playableStateNamespaceId": "10000000-0000-0000-0000-000000000003",
+        "peerStorageBinding": {
+          "targetNamespace": "release-target",
+          "clusterIdentity": "cluster-a",
+          "peerWorkloadIdentity": "recovery-peer",
+          "storageIdentity": "storage-uid-1",
+          "storageRevision": "revision-7",
+          "bindingDigest": "@DIGEST@"
+        },
+        "evidenceRef": "immutable-initial-layout-evidence"
+      }
+      """
+          .strip()
+          .replace("@DIGEST@", DIGEST);
+  private static final String V1_PEER_STORAGE_BINDING_PAYLOAD =
+      """
+      {
+        "targetNamespace": "release-target",
+        "clusterIdentity": "cluster-a",
+        "peerWorkloadIdentity": "recovery-peer",
+        "storageIdentity": "storage-uid-1",
+        "storageRevision": "revision-7",
+        "bindingDigest": "@DIGEST@"
+      }
+      """
+          .strip()
+          .replace("@DIGEST@", DIGEST);
+  private static final String V1_EVIDENCE_PAYLOAD =
+      """
+      {
+        "evidenceRef": "immutable-initial-layout-evidence",
+        "evidenceIdentity": "evidence-owner-record-31",
+        "migration": {
+          "migrationOperationId": "10000000-0000-0000-0000-000000000005",
+          "disposition": "VERIFIED",
+          "storageIdentity": "storage-uid-1",
+          "inventoryRevision": "writer-inventory-r9",
+          "inventoryDigest": "@DIGEST@"
+        },
+        "issuerLayout": {
+          "layoutOperationId": "10000000-0000-0000-0000-000000000006",
+          "descriptor": {
+            "descriptorIdentity": "issuer-layout-v1",
+            "revision": "layout-r4",
+            "digest": "@DIGEST@",
+            "partitionIds": [
+              0,
+              1
+            ]
+          },
+          "accountIssuerSourceIdentity": "account-issuer-source-identity-1",
+          "operationFence": 101,
+          "coverageFence": "10000000-0000-0000-0000-000000000007",
+          "inventoryRevision": "writer-inventory-r9",
+          "inventoryDigest": "@DIGEST@",
+          "acknowledgements": [
+            {
+              "partitionId": 0,
+              "acknowledgementIdentity": "partition-0-ack",
+              "acknowledgedLayoutDigest": "@DIGEST@",
+              "readbackDigest": "@DIGEST@",
+              "capacity": 32
+            },
+            {
+              "partitionId": 1,
+              "acknowledgementIdentity": "partition-1-ack",
+              "acknowledgedLayoutDigest": "@DIGEST@",
+              "readbackDigest": "@DIGEST@",
+              "capacity": 64
+            }
+          ],
+          "capacityVector": {
+            "0": 32,
+            "1": 64
+          }
+        },
+        "writerFencing": {
+          "inventory": {
+            "revision": "writer-inventory-r9",
+            "digest": "@DIGEST@",
+            "legacyWriterIdentity": "legacy-layout-writer",
+            "applicableWriterIdentities": [
+              "writer-a",
+              "writer-b"
+            ]
+          },
+          "legacyWriterDisposition": "STOPPED",
+          "writerAcknowledgements": [
+            {
+              "writerIdentity": "writer-a",
+              "disposition": "FENCED",
+              "fenceIdentity": "fence-a",
+              "inventoryDigest": "@DIGEST@"
+            },
+            {
+              "writerIdentity": "writer-b",
+              "disposition": "FENCED",
+              "fenceIdentity": "fence-b",
+              "inventoryDigest": "@DIGEST@"
+            }
+          ]
+        },
+        "worldInitialization": {
+          "ownerService": "WORLD_MANAGEMENT",
+          "initializationOperationId": "10000000-0000-0000-0000-000000000008",
+          "playableStateNamespaceId": "10000000-0000-0000-0000-000000000003",
+          "disposition": "VERIFIED",
+          "sourceIdentity": "world-init-source-1",
+          "resultDigest": "@DIGEST@"
+        },
+        "entityInitialization": {
+          "ownerService": "ENTITY_MANAGEMENT",
+          "initializationOperationId": "10000000-0000-0000-0000-000000000009",
+          "playableStateNamespaceId": "10000000-0000-0000-0000-000000000003",
+          "disposition": "VERIFIED",
+          "sourceIdentity": "entity-init-source-1",
+          "resultDigest": "@DIGEST@"
+        },
+        "regionLease": {
+          "regionIdentity": "region-a",
+          "leaseIdentity": "lease-identity-51",
+          "executorGeneration": 10
+        }
+      }
+      """
+          .strip()
+          .replace("@DIGEST@", DIGEST);
+  private static final String V1_PREPARE_EFFECT_PAYLOAD_TEMPLATE =
+      """
+      {
+        "operationId": "10000000-0000-0000-0000-000000000001",
+        "effectId": "10000000-0000-0000-0000-000000000011",
+        "maintenanceLockIdentity": "10000000-0000-0000-0000-000000000004",
+        "scope": %s,
+        "operationTupleDigest": "%s",
+        "evidenceIdentity": "evidence-owner-record-31"
+      }
+      """
+          .strip();
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -112,6 +275,38 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             + "recovery_control.initial_gameplay_release_outbox, "
             + "recovery_control.initial_gameplay_release_transition, "
             + "recovery_control.initial_gameplay_release_operation");
+  }
+
+  @Test
+  void journalDoesNotLogControllerLockIdentityAtDebug() {
+    Logger logger = (Logger) LoggerFactory.getLogger(LoggerListener.class);
+    Level priorLevel = logger.getLevel();
+    ListAppender<ILoggingEvent> logCapture = new ListAppender<>();
+    logCapture.start();
+    logger.addAppender(logCapture);
+    logger.setLevel(Level.DEBUG);
+    try {
+      DSLContext debugDsl =
+          DSL.using(dsl.configuration().derive(new Settings().withExecuteLogging(true)));
+      InitialGameplayReleaseJournal debugJournal =
+          new JooqInitialGameplayReleaseJournal(debugDsl, tupleCodec);
+      Scope requested = scope();
+      UUID controllerLockIdentity = UUID.randomUUID();
+
+      Operation created = debugJournal.create(requested, controllerLockIdentity);
+      assertThat(debugJournal.find(requested.operationId()))
+          .get()
+          .extracting(Operation::maintenanceLockIdentity)
+          .isEqualTo(controllerLockIdentity);
+      assertThat(created.maintenanceLockIdentity()).isEqualTo(controllerLockIdentity);
+      assertThat(logCapture.list)
+          .extracting(ILoggingEvent::getFormattedMessage)
+          .noneMatch(message -> message.contains(controllerLockIdentity.toString()));
+    } finally {
+      logger.detachAppender(logCapture);
+      logger.setLevel(priorLevel);
+      logCapture.stop();
+    }
   }
 
   @Test
@@ -529,8 +724,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(replacement)
         .contains(
             "\"readback_identity\":null", "\"readback_payload\":null", "\"readback_digest\":null");
+    assertThat(journal.recordEffectReadback(dispatched, terminal, base.plusSeconds(9)))
+        .isEqualTo(authorized);
     assertThatThrownBy(
-            () -> journal.recordEffectReadback(dispatched, terminal, base.plusSeconds(9)))
+            () -> journal.recordEffectReadback(dispatched, observedAgain, base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(replacement);
   }
@@ -583,7 +780,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID nextAttempt = UUID.randomUUID();
     journal.claimEffect(operationId, effectId, nextAttempt, base.plusSeconds(8));
     String replaced = storedOutbox(operationId, effectId);
-    assertThatThrownBy(() -> journal.recordEffectReadback(dispatched, closure, base.plusSeconds(9)))
+    assertThat(journal.recordEffectReadback(dispatched, closure, base.plusSeconds(9)))
+        .isEqualTo(beforeReplay);
+    assertThatThrownBy(() -> journal.recordEffectReadback(dispatched, future, base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(replaced);
   }
@@ -998,20 +1197,37 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     OutboxEntry a = authorizedDispatch(base);
     UUID operationId = a.effect().operationId();
     UUID effectId = a.effect().effectId();
-    journal.recordEffectReadback(
-        a,
+    EffectReadback closedAReadback =
         readbackFor(
             a,
             a.lastAttemptId(),
             EffectReadbackState.PROVEN_NO_EFFECT,
             "closed-a",
-            base.plusSeconds(5)),
-        base.plusSeconds(5));
+            base.plusSeconds(5));
+    journal.recordEffectReadback(a, closedAReadback, base.plusSeconds(5));
     String closedA = storedClosure(a);
     OutboxEntry b =
         journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(6));
     assertThat(storedClosure(a)).isEqualTo(closedA);
     String before = storedOutbox(operationId, effectId);
+    Operation beforeReplay = journal.find(operationId).orElseThrow();
+    assertThat(journal.recordEffectReadback(a, closedAReadback, base.plusSeconds(7)))
+        .isEqualTo(beforeReplay);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    assertThat(journal.findNextEffect(operationId)).contains(b);
+    EffectReadback alteredAReadback =
+        readbackFor(
+            a,
+            a.lastAttemptId(),
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "altered-closed-a",
+            base.plusSeconds(5));
+    assertThatThrownBy(() -> journal.recordEffectReadback(a, alteredAReadback, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect readback changed after definitive no effect");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    assertThat(storedClosure(a)).isEqualTo(closedA);
+    assertThat(journal.findNextEffect(operationId)).contains(b);
     assertThat(
             journal.recordAmbiguousEffectForDispatch(a, "DELAYED_AMBIGUOUS", base.plusSeconds(7)))
         .isFalse();
@@ -1161,30 +1377,32 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       try (Connection legacyConnection =
           DriverManager.getConnection(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
         DSLContext legacyDsl = DSL.using(legacyConnection, SQLDialect.POSTGRES);
-        InitialGameplayReleaseJournal legacy =
-            new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
         Instant base = Instant.parse("2026-09-01T00:00:00Z");
-        Scope scope = scope();
-        legacy.create(scope, UUID.randomUUID());
-        InitialGameplayReleaseEvidence proof = evidence(scope);
-        Operation ready =
-            legacy.bindVerifiedEvidence(
-                scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base);
-        Operation awaiting =
-            legacy.transition(transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base);
-        legacy.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base);
-        OutboxEntry pending = legacy.findNextEffect(scope.operationId()).orElseThrow();
-        if (claimed) {
-          assertThat(
-                  legacyDsl.execute(
-                      "UPDATE recovery_control.initial_gameplay_release_outbox "
-                          + "SET state='dispatched', attempt_count=1, last_attempt_id=?, "
-                          + "last_dispatched_at=now() WHERE outbox_id=?",
-                      UUID.randomUUID(),
-                      pending.outboxId()))
-              .isEqualTo(1);
-        }
-        OutboxEntry before = legacy.findNextEffect(scope.operationId()).orElseThrow();
+        seedImmutableV1Journal(legacyDsl, claimed, base);
+        String scopeBefore =
+            legacyDsl
+                .fetchSingle(
+                    "SELECT scope_payload::text FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                    V1_OPERATION_ID)
+                .get(0, String.class);
+        String bindingBefore =
+            legacyDsl
+                .fetchSingle(
+                    "SELECT peer_storage_binding::text FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                    V1_OPERATION_ID)
+                .get(0, String.class);
+        String evidenceBefore =
+            legacyDsl
+                .fetchSingle(
+                    "SELECT evidence_snapshot::text FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                    V1_OPERATION_ID)
+                .get(0, String.class);
+        String payloadBefore =
+            legacyDsl
+                .fetchSingle(
+                    "SELECT payload::text FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                    V1_OUTBOX_ID)
+                .get(0, String.class);
         Flyway upgrade =
             Flyway.configure()
                 .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
@@ -1197,7 +1415,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         if (claimed) {
           assertThatThrownBy(() -> upgrade.migrate())
               .hasStackTraceContaining("requires no prior claims");
-          assertThat(legacy.findNextEffect(scope.operationId())).contains(before);
+          assertImmutableV1Payloads(
+              legacyDsl, scopeBefore, bindingBefore, evidenceBefore, payloadBefore);
           assertThat(
                   legacyDsl
                       .fetchSingle(
@@ -1208,12 +1427,32 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         } else {
           upgrade.migrate();
           assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("2");
-          assertThat(legacy.findNextEffect(scope.operationId())).contains(pending);
+          assertImmutableV1Payloads(
+              legacyDsl, scopeBefore, bindingBefore, evidenceBefore, payloadBefore);
+          InitialGameplayReleaseJournal upgradedJournal =
+              new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
+          Operation upgraded = upgradedJournal.find(V1_OPERATION_ID).orElseThrow();
+          assertThat(upgraded.maintenanceLockIdentity()).isEqualTo(V1_LOCK_IDENTITY);
+          assertThat(upgraded.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+          assertThat(upgraded.evidence()).isNotNull();
+          assertThat(upgraded.evidence().evidenceIdentity()).isEqualTo("evidence-owner-record-31");
+          OutboxEntry pending = upgradedJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
+          assertThat(pending.outboxId()).isEqualTo(V1_OUTBOX_ID);
+          assertThat(pending.effect().effectId()).isEqualTo(V1_EFFECT_ID);
+          assertThat(pending.effect().maintenanceLockIdentity()).isEqualTo(V1_LOCK_IDENTITY);
+          assertThat(pending.payloadDigest()).isEqualTo(tupleCodec.digest(pending.effect()));
+          assertThat(
+                  legacyDsl
+                      .fetchSingle(
+                          "SELECT payload::text FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                          V1_OUTBOX_ID)
+                      .get(0, String.class))
+              .isEqualTo(payloadBefore);
           UUID freshAttempt = UUID.randomUUID();
           OutboxEntry dispatched =
-              legacy.claimEffect(
-                  scope.operationId(), pending.effect().effectId(), freshAttempt, base);
-          assertThat(dispatched.outboxId()).isEqualTo(pending.outboxId());
+              upgradedJournal.claimEffect(
+                  V1_OPERATION_ID, pending.effect().effectId(), freshAttempt, base);
+          assertThat(dispatched.outboxId()).isEqualTo(V1_OUTBOX_ID);
           assertThat(dispatched.effect()).isEqualTo(pending.effect());
           assertThat(dispatched.state()).isEqualTo(EffectOutboxState.DISPATCHED);
           assertThat(dispatched.lastAttemptId()).isEqualTo(freshAttempt);
@@ -1223,6 +1462,105 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
+  }
+
+  private static void assertImmutableV1Payloads(
+      DSLContext legacyDsl,
+      String scopePayload,
+      String bindingPayload,
+      String evidencePayload,
+      String effectPayload) {
+    assertThat(
+            legacyDsl
+                .fetchSingle(
+                    "SELECT scope_payload::text FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                    V1_OPERATION_ID)
+                .get(0, String.class))
+        .isEqualTo(scopePayload);
+    assertThat(
+            legacyDsl
+                .fetchSingle(
+                    "SELECT peer_storage_binding::text FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                    V1_OPERATION_ID)
+                .get(0, String.class))
+        .isEqualTo(bindingPayload);
+    assertThat(
+            legacyDsl
+                .fetchSingle(
+                    "SELECT evidence_snapshot::text FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                    V1_OPERATION_ID)
+                .get(0, String.class))
+        .isEqualTo(evidencePayload);
+    assertThat(
+            legacyDsl
+                .fetchSingle(
+                    "SELECT payload::text FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                    V1_OUTBOX_ID)
+                .get(0, String.class))
+        .isEqualTo(effectPayload);
+  }
+
+  private static void seedImmutableV1Journal(
+      DSLContext seedDsl, boolean claimed, Instant timestamp) {
+    Scope v1Scope = tupleCodec.readScope(V1_SCOPE_PAYLOAD);
+    InitialGameplayReleaseEvidence v1Evidence = tupleCodec.readEvidence(V1_EVIDENCE_PAYLOAD);
+    String scopeDigest = tupleCodec.digest(v1Scope);
+    String evidenceDigest = tupleCodec.digest(v1Evidence);
+    String operationTupleDigest =
+        tupleCodec.operationTupleDigest(v1Scope, V1_LOCK_IDENTITY, v1Evidence);
+    String effectPayload =
+        V1_PREPARE_EFFECT_PAYLOAD_TEMPLATE.formatted(V1_SCOPE_PAYLOAD, operationTupleDigest);
+    var effect =
+        tupleCodec.readEffect(
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED.databaseValue(), effectPayload);
+    String payloadDigest = tupleCodec.digest(effect);
+
+    seedDsl.execute(
+        """
+        INSERT INTO recovery_control.initial_gameplay_release_operation (
+            operation_id, target_namespace, playable_state_namespace_id,
+            peer_storage_binding, scope_payload, evidence_ref, scope_digest,
+            maintenance_lock_identity, phase, evidence_snapshot, evidence_identity,
+            evidence_digest, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?,
+                  'resume_authorized', CAST(? AS jsonb), ?, ?, 4,
+                  CAST(? AS timestamptz), CAST(? AS timestamptz))
+        """,
+        V1_OPERATION_ID,
+        "release-target",
+        V1_PLAYABLE_NAMESPACE_ID,
+        V1_PEER_STORAGE_BINDING_PAYLOAD,
+        V1_SCOPE_PAYLOAD,
+        "immutable-initial-layout-evidence",
+        scopeDigest,
+        V1_LOCK_IDENTITY,
+        V1_EVIDENCE_PAYLOAD,
+        "evidence-owner-record-31",
+        evidenceDigest,
+        timestamp.atOffset(ZoneOffset.UTC),
+        timestamp.atOffset(ZoneOffset.UTC));
+
+    seedDsl.execute(
+        """
+        INSERT INTO recovery_control.initial_gameplay_release_outbox (
+            outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
+            payload_digest, payload, state, attempt_count, last_attempt_id,
+            last_dispatched_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'prepare_playable_state_fenced', ?, ?, CAST(? AS jsonb),
+                  ?, ?, ?, CAST(? AS timestamptz), CAST(? AS timestamptz), CAST(? AS timestamptz))
+        """,
+        V1_OUTBOX_ID,
+        V1_OPERATION_ID,
+        V1_EFFECT_ID,
+        operationTupleDigest,
+        payloadDigest,
+        effectPayload,
+        claimed ? "dispatched" : "pending",
+        claimed ? 1 : 0,
+        claimed ? V1_PRIOR_ATTEMPT_ID : null,
+        claimed ? timestamp.atOffset(ZoneOffset.UTC) : null,
+        timestamp.atOffset(ZoneOffset.UTC),
+        timestamp.atOffset(ZoneOffset.UTC));
   }
 
   private static OutboxEntry authorizedDispatch(Instant base) {

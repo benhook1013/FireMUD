@@ -516,6 +516,31 @@ class InitialGameplayReleaseModelTest {
   }
 
   @Test
+  void persistedEvidenceRejectsNoncanonicalAndDuplicateNormalizedCapacityKeys() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    String json = codec.toJson(evidence(scope(UUID.randomUUID())));
+    ObjectNode noncanonical = (ObjectNode) mapper.readTree(json);
+    ObjectNode noncanonicalCapacity = (ObjectNode) noncanonical.at("/issuerLayout/capacityVector");
+    var oneCapacity = noncanonicalCapacity.remove("1");
+    noncanonicalCapacity.set("01", oneCapacity);
+    String noncanonicalJson = mapper.writeValueAsString(noncanonical);
+
+    ObjectNode duplicateNormalized = (ObjectNode) mapper.readTree(json);
+    ObjectNode duplicateCapacity =
+        (ObjectNode) duplicateNormalized.at("/issuerLayout/capacityVector");
+    duplicateCapacity.set("01", duplicateCapacity.get("1").deepCopy());
+    String duplicateNormalizedJson = mapper.writeValueAsString(duplicateNormalized);
+
+    assertThatThrownBy(() -> codec.readEvidence(noncanonicalJson))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("noncanonical shape");
+    assertThatThrownBy(() -> codec.readEvidence(duplicateNormalizedJson))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("noncanonical shape");
+  }
+
+  @Test
   void journalReadbackRejectsNulInIdentityBeforePersistence() {
     assertThatThrownBy(() ->
             new InitialGameplayReleaseModel.EffectReadback(

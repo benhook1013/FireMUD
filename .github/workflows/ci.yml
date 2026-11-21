@@ -788,10 +788,10 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
-      - name: Set up Python for Gradle recovery
+      - name: Set up Python for Flyway validation and Gradle recovery
         uses: ./.github/actions/setup-python
         with:
-          requirements: none
+          requirements: yaml
 
       - name: 🧪 Check Flyway Migration Versions
         env:

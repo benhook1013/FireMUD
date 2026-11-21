@@ -26,6 +26,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.jooq.Record;
+import org.jooq.conf.Settings;
 import org.jooq.impl.DSL;
 
 /**
@@ -41,7 +42,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   public JooqInitialGameplayReleaseJournal(
       DSLContext dsl, InitialGameplayReleaseTupleCodec tupleCodec) {
-    this.dsl = Objects.requireNonNull(dsl, "dsl must not be null");
+    Objects.requireNonNull(dsl, "dsl must not be null");
+    Settings journalSettings = (Settings) dsl.configuration().settings().clone();
+    journalSettings.setExecuteLogging(false);
+    this.dsl = DSL.using(dsl.configuration().derive(journalSettings));
     this.tupleCodec = Objects.requireNonNull(tupleCodec, "tupleCodec must not be null");
   }
 
@@ -400,15 +404,25 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               && dispatch.state() != EffectOutboxState.AMBIGUOUS)) {
         throw conflict("effect readback dispatch tuple changed");
       }
-      if (dispatch.lastAttemptId() == null
-          || !dispatch.lastAttemptId().equals(current.lastAttemptId())) {
+      if (dispatch.lastAttemptId() == null) {
         throw conflict("effect readback belongs to another attempt");
       }
+      if (!dispatch.lastAttemptId().equals(current.lastAttemptId())) {
+        EffectReadback retainedClosure =
+            findRetainedClosure(tx, current, dispatch.lastAttemptId(), dispatch.attemptCount());
+        if (retainedClosure == null) {
+          throw conflict("effect readback belongs to another attempt");
+        }
+        if (!readback.equals(retainedClosure) || readback.observedAt().isAfter(now)) {
+          throw conflict("effect readback changed after definitive no effect");
+        }
+        return operation;
+      }
+      String readbackDigest = tupleCodec.digest(readback);
       if (dispatch.attemptCount() != current.attemptCount()) {
         throw conflict("effect readback dispatch generation changed");
       }
       requireReadbackMatches(readback, current, operationId, effectId);
-      String readbackDigest = tupleCodec.digest(readback);
       if (current.state() == EffectOutboxState.ACKNOWLEDGED
           || current.state() == EffectOutboxState.RETRYABLE) {
         Record stored =
@@ -793,6 +807,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   private boolean hasRetainedClosure(
       DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
+    return findRetainedClosure(tx, current, attemptId, expectedOrdinal) != null;
+  }
+
+  private EffectReadback findRetainedClosure(
+      DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
     Record row =
         tx.fetchOne(
             """
@@ -802,12 +821,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             """,
             current.outboxId(),
             attemptId);
-    if (row == null) return false;
+    if (row == null) return null;
     Integer ordinal = row.get("attempt_ordinal", Integer.class);
+    OffsetDateTime dispatchedAt = row.get("dispatched_at", OffsetDateTime.class);
+    OffsetDateTime recordedAt = row.get("recorded_at", OffsetDateTime.class);
     if (ordinal == null
         || ordinal < 1
         || ordinal > current.attemptCount()
-        || (expectedOrdinal != null && !expectedOrdinal.equals(ordinal))) {
+        || (expectedOrdinal != null && !expectedOrdinal.equals(ordinal))
+        || dispatchedAt == null
+        || recordedAt == null) {
       throw conflict("retained effect dispatch generation changed");
     }
     EffectReadback retained =
@@ -821,16 +844,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !current.effect().operationTupleDigest().equals(retained.operationTupleDigest())
         || !current.payloadDigest().equals(retained.payloadDigest())
         || !tupleCodec.digest(retained).equals(row.get("readback_digest", String.class))
-        || retained
-            .observedAt()
-            .isBefore(row.get("dispatched_at", OffsetDateTime.class).toInstant())
+        || retained.observedAt().isBefore(dispatchedAt.toInstant())
         || retained
             .observedAt()
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
-            .isAfter(row.get("recorded_at", OffsetDateTime.class).toInstant())) {
+            .isAfter(recordedAt.toInstant())) {
       throw conflict("retained attempt closure does not match the exact dispatched tuple");
     }
-    return true;
+    return retained;
   }
 
   private static boolean hasRetainedOwnerRejection(

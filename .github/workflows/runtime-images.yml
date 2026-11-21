@@ -256,6 +256,15 @@ jobs:
               echo "Runtime branch publication is restricted to main or develop." >&2
               exit 1
             }
+            current_head="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${HEAD_BRANCH}" --jq '.object.sha')"
+            [[ "$current_head" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "Runtime publication could not prove the live ${HEAD_BRANCH} head." >&2
+              exit 1
+            }
+            if [[ "$current_head" != "$HEAD_SHA" ]]; then
+              echo "Skipping runtime builds for obsolete ${HEAD_BRANCH}@${HEAD_SHA}; current head is ${current_head}."
+              exit 0
+            fi
           fi
 
           if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "repository_dispatch" ]; then
@@ -285,7 +294,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify successful CI push for manual publication
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.meta.outputs.head_sha != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA: ${{ steps.meta.outputs.head_sha }}

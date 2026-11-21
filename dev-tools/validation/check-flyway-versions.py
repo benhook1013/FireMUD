@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
@@ -152,14 +154,30 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
 
 
 def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
-    # The isolated owner uses the packaged Spring Flyway settings in application.yml.
-    settings = snapshot.get(f"services/{project}/src/main/resources/application.yml", b"").decode()
-    spring = re.search(r"(?m)^spring:[ \t]*\n((?:[ \t]+[^\n]*\n|\n)+)", settings + "\n")
-    flyway = re.search(r"(?m)^  flyway:[ \t]*\n((?:    [^\n]*\n|\n)+)", spring[1]) if spring else None
-    locations = re.search(r"(?m)^    locations:[ \t]*(.+)$", flyway[1]) if flyway else None
-    return bool(locations and "classpath:db/recovery-control-migration" in {
-        path.strip().strip("\"'") for path in locations[1].split(",")
-    })
+    flyway = {}
+    # Spring Boot gives .yml properties precedence over same-location .yaml.
+    for extension in ("yaml", "yml"):
+        config_path = f"services/{project}/src/main/resources/application.{extension}"
+        try:
+            settings = yaml.safe_load(snapshot.get(config_path, b"")) or {}
+        except yaml.YAMLError as error:
+            raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
+        for section in ("spring", "flyway"):
+            if not isinstance(settings, dict):
+                return False
+            settings = settings.get(section) or {}
+        if not isinstance(settings, dict):
+            return False
+        flyway.update(settings)
+    if str(flyway.get("enabled", True)).strip().lower() not in {"true", "on", "yes", "1"}:
+        return False
+    locations = flyway.get("locations", [])
+    if isinstance(locations, str):
+        locations = locations.split(",")
+    return isinstance(locations, list) and any(
+        isinstance(location, str) and location.strip() == "classpath:db/recovery-control-migration"
+        for location in locations
+    )
 
 
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
@@ -168,7 +186,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     issues = []
     for project in sorted({item.project for item in migrations if RECOVERY_MIGRATION_DIR in item.path}):
         if not recovery_location_configured(current, project):
-            issues.append(f"services/{project}: packaged Spring Flyway configuration does not select the recovery-control location")
+            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway and select the recovery-control location")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -286,6 +304,24 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    yaml_config = recovery_config.removesuffix(".yml") + ".yaml"
+    renamed_recovery_config = {recovery + "V1__journal.sql": b"-- journal", yaml_config: recovery_settings}
+    check("equivalent application.yaml recovery history", renamed_recovery_config, recovery_history, None)
+    check("application.yml override disables recovery history", {
+        **renamed_recovery_config, recovery_config: b"spring:\n  flyway:\n    enabled: false\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    recovery_list_settings = (
+        b"spring:\n  flyway:\n    enabled: true\n    locations:\n"
+        b"      - classpath:db/recovery-control-migration\n"
+    )
+    check("equivalent enabled list recovery history",
+          {**recovery_history, recovery_config: recovery_list_settings}, recovery_history, None)
+    for disabled in (
+        recovery_settings.replace(b"    locations:", b"    enabled: false\n    locations:"),
+        recovery_list_settings.replace(b"enabled: true", b'enabled: "false"'),
+    ):
+        check("disabled recovery history", {**recovery_history, recovery_config: disabled},
+              recovery_history, "historical effective migration no longer applied")
     check("disconnected isolated recovery history", {
         **recovery_history, recovery_config: recovery_settings.replace(b"recovery-control-migration", b"migration"),
     }, recovery_history, "historical effective migration no longer applied")

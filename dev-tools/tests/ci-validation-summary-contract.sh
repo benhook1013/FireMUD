@@ -200,11 +200,21 @@ async function noWrites(config, reject = false) {
         + ': `' + conclusion + '`'));
     }
   }
-  const newModules = harness({jobs: [...clone(jobs),
+  const moduleJobs = [
     row('Build and Test (recovery-controller-service / full)', 995),
-    row('Build and Test (common-redis-contracts / full)', 996)]});
+    row('Build and Test (common-redis-contracts / full)', 996),
+  ];
+  const newModules = harness({jobs: [...clone(jobs), ...moduleJobs]});
   await newModules.run();
   assert.match(newModules.calls.creates[0].body, /All validation checks passed/);
+  for (const failedModule of moduleJobs) {
+    const moduleFailure = harness({jobs: [...clone(jobs), ...moduleJobs.map(job =>
+      job.id === failedModule.id ? {...job, conclusion: 'failure'} : job)]});
+    await moduleFailure.run();
+    assert.match(moduleFailure.calls.creates[0].body, /One or more validation checks failed/);
+    assert.match(moduleFailure.calls.creates[0].body, /Service build\/test matrix: `failure`/);
+    assert.doesNotMatch(moduleFailure.calls.creates[0].body, /All validation checks passed/);
+  }
   const metadataSplit = clone(jobs);
   for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }
   assert.equal((await noWrites({ jobs: metadataSplit })).comments.length, 0);

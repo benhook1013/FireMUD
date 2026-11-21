@@ -114,15 +114,15 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
         raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
 
 
-def effective_group(group, action, base_ref, workflow_name="Required Gate"):
+def effective_group(group, action, base_ref, workflow_name="Required Gate", *, push_branch=None):
     values = {
         "github.event.changes.base.ref": repr(base_ref),
         "github.event.pull_request.number": "42",
         "github.event.action": repr(action),
-        "github.event_name": "'pull_request'",
+        "github.event_name": repr("push" if push_branch else "pull_request"),
         "github.workflow": repr(workflow_name),
         "github.run_id": "123",
-        "github.ref": "'refs/pull/42/merge'",
+        "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else "refs/pull/42/merge"),
     }
 
     def render(match):
@@ -265,6 +265,8 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
         f"{workflow_name} ${{{{ github.event_name == 'pull_request' && format('pr-{{0}} base-{{1}} head-{{2}}', "
         "github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}"
     )
+    if workflow in {"codeql.yml", "license-scan.yml"}:
+        expected_title += f"${{{{ {META} && ' mode-metadata' || '' }}}}"
     if data.get("run-name") != expected_title:
         raise SystemExit(f"{workflow} must publish its canonical pull-request run title")
     if data["jobs"]["changes"].get("name") != change_job:
@@ -371,6 +373,17 @@ if collisions:
         f"required workflows {first[0]} and {second[0]} share a substantive concurrency group "
         f"for the same PR (case-insensitive): {first[2]!r} / {second[2]!r}"
     )
+for branch in ("main", "develop"):
+    push_groups = []
+    for workflow in ("ci.yml", "security.yml"):
+        data = yaml.load((root / ".github/workflows" / workflow).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        push_groups.append((
+            workflow,
+            "push",
+            effective_group(data["concurrency"]["group"], None, None, data["name"], push_branch=branch),
+        ))
+    if cross_workflow_group_collisions(push_groups):
+        raise SystemExit(f"Security and Validation share a push concurrency group on {branch}")
 assert cross_workflow_group_collisions([
     ("validation.yml", "opened", "required-pr-42"),
     ("smoke.yml", "edited", "REQUIRED-PR-42"),

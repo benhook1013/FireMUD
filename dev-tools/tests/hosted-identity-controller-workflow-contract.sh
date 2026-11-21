@@ -6623,12 +6623,13 @@ case "$resource" in
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
+      --arg base_sha "${TEST_PR_BASE_SHA:-dddddddddddddddddddddddddddddddddddddddd}" \
       --arg merge "${TEST_PR_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
       --argjson changed_files "$changed_file_count" \
-      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
     printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
@@ -6852,12 +6853,14 @@ FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
 # association; the sanitized artifact also records the different execution merge M.
 native_merge_sha=dddddddddddddddddddddddddddddddddddddddd
 native_source_run_json="$(jq -c '.pull_requests[0].base.sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$valid_workflow_run_json")"
+TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
 TEST_PR_MERGE_SHA="$native_merge_sha" \
 FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$native_source_run_json" \
   run_deploy_target_fixture native-distinct-merge 0 'action=deploy'
 grep -Fxq 'head_sha=cccccccccccccccccccccccccccccccccccccccc' "$TEMP_DIR/deploy-target-native-distinct-merge.output"
 grep -Fxq "merge_sha=$native_merge_sha" "$TEMP_DIR/deploy-target-native-distinct-merge.output"
+TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
 TEST_PR_MERGE_SHA="$native_merge_sha" \
 FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$native_source_run_json" \

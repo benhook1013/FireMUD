@@ -13,8 +13,11 @@ python3 -c 'import sys; sys.exit(0 if __debug__ else "Runtime image publication 
 # This bounded expression uses only property reads, equality, boolean operators and format.
 python3 - "$RUNTIME_WORKFLOW" <<'PY_CONCURRENCY'
 import copy
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 source = Path(sys.argv[1]).read_text()
@@ -28,6 +31,43 @@ assert re.search(
     r"      queue: max$", promotion, re.MULTILINE
 )
 assert re.search(r'assert_current_branch_head\n\s+promote_alias "\$candidate" "\$branch_tag"', promotion)
+
+# Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
+meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
+                 source, re.MULTILINE | re.DOTALL).group(1)
+meta = re.sub(r"(?m)^          ", "", meta)
+branch_head = "a" * 40
+with tempfile.TemporaryDirectory() as temporary:
+    output = Path(temporary) / "output"
+    stub = Path(temporary) / "gh"
+    stub.write_text('#!/usr/bin/env bash\n'
+                    '[[ "$*" == "api repos/owner/repo/git/ref/heads/develop --jq .object.sha" ]] || exit 2\n'
+                    'printf "%s\\n" "$FIXTURE_LIVE_HEAD"\n')
+    stub.chmod(0o755)
+    for event in ("workflow_run", "workflow_dispatch"):
+        script = meta
+        for expression, value in {
+            "github.event_name": event, "github.event.workflow_run.event": "push",
+            "github.event.workflow_run.conclusion": "success", "github.event.workflow_run.head_sha": branch_head,
+        }.items():
+            script = script.replace("${{ " + expression + " }}", value)
+        for live_head, admitted, status in [(branch_head, True, 0), ("b" * 40, False, 0), ("unknown", False, 1)]:
+            output.write_text("")
+            environment = {
+                **os.environ, "PATH": temporary + ":" + os.environ["PATH"],
+                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": branch_head,
+                "GITHUB_REF_NAME": "develop", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_OUTPUT": str(output), "FIXTURE_LIVE_HEAD": live_head,
+                "EVENT_HEAD_BRANCH": "develop", "EVENT_HEAD_SHA": "",
+            }
+            result = subprocess.run(["bash", "-c", script], env=environment, capture_output=True, text=True)
+            assert result.returncode == status, result.stderr
+            if admitted:
+                assert f"head_sha={branch_head}\n" in output.read_text()
+                assert "head_branch=develop\n" in output.read_text()
+            else:
+                assert not output.read_text(), output.read_text()
+assert "github.event_name == 'workflow_dispatch' && steps.meta.outputs.head_sha != ''" in source
 
 class Context:
     def __init__(self, value=None):
@@ -158,7 +198,9 @@ require_contains() {
   }
 }
 
-require_contains 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title ||'
+require_contains "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.event == 'repository_dispatch' && format('{0} source-run-{1}',"
+require_contains 'github.event.workflow_run.display_title || format'
+require_contains 'github.event.client_payload.source_run_id'
 require_contains 'pr-merge-'
 require_contains 'pr-runtime-provenance.json'
 require_contains 'source run title does not contain exact PR/base/head/merge/mode metadata'

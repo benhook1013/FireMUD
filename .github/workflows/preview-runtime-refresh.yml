@@ -154,7 +154,9 @@ jobs:
             const {data: base} = await github.rest.git.getRef({
               ...context.repo, ref: `heads/${pr.base.ref}`,
             });
-            if (!sha.test(base.object?.sha) || (isIntegrationBase && recorded[2] === base.object.sha)) {
+            const eventBaseMatchesMerge = recorded[2] === recordedMerge.parents[0].sha;
+            if (!sha.test(base.object?.sha) ||
+                (isIntegrationBase && eventBaseMatchesMerge && recorded[2] === base.object.sha)) {
               core.info('No stale source base to repair; no dispatch.');
               return;
             }
@@ -167,14 +169,8 @@ jobs:
               core.info('Current merge is not the exact current base/head tuple; no dispatch.');
               return;
             }
-            const resolvedMatchesRecorded = resolved[4] === recordedMerge.sha &&
-              resolved[2] === recordedMerge.parents[0].sha;
-            // A stale event base can accompany a newer historical merge. Its
-            // plan must independently resolve that merge and its actual parent.
-            if (recordedMerge.parents[0].sha !== recorded[2] && !resolvedMatchesRecorded) {
-              core.info('Recorded merge and event base disagree without exact resolved evidence; no dispatch.');
-              return;
-            }
+            // The event and the plan can observe different base advances. The
+            // resolved plan must independently prove its ordered parents.
             let resolvedMerge = resolved[4] === recordedMerge.sha ? recordedMerge : merge;
             if (resolved[4] !== resolvedMerge.sha) {
               ({data: resolvedMerge} = await github.rest.repos.getCommit({...context.repo, ref: resolved[4]}));

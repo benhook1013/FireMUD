@@ -121,7 +121,10 @@ function group(run) {
   return outputs["pull-number"] ? `static-analysis-summary-pr-${outputs["pull-number"]}` : null;
 }
 const a = group(source()), b = group(source(99));
-assert.notEqual(a, b, "same source branch must not couple different PR queues");
+assert.equal(a, "static-analysis-summary-pr-42");
+assert.equal(b, "static-analysis-summary-pr-99");
+assert.equal(group({...source(), display_title: source().display_title + " mode-metadata"}), null);
+
 assert.equal(a, group(source(42, "License Gate")), "producer channels must serialize per PR");
 assert.equal(a, group(source(42, "CodeQL Analysis", "c".repeat(40))), "head advance must keep the PR queue");
 for (const pull_requests of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
@@ -258,6 +261,16 @@ const github = {
             run_attempt: 1,
             status: "completed",
             conclusion: "skipped",
+          },
+          {
+            id: 280,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha} mode-metadata`,
+            created_at: "2026-09-20T18:00:00Z",
+            run_attempt: 1,
+            status: "completed",
+            conclusion: "cancelled",
           },
           {
             id: 250,
@@ -479,7 +492,8 @@ async function assertCompletionOrders() {
           });
           calls.paginate.length = 0;
           await run(github, context, core);
-          if (calls.paginate.length !== 3) throw new Error("each callback must take exactly one snapshot of both producers and comments");
+          const reads = comments[0]?.body.includes("checks passed") ? 5 : 3;
+          if (calls.paginate.length !== reads) throw new Error("producer selection should repeat only before publishing a pass");
         };
         await callback(first);
         if (creates !== 1 || updates !== 0 || comments.length !== 1 || !comments[0].body.includes("still running")) {
@@ -577,6 +591,41 @@ async function assertAssociationSelection() {
   }
   source.head_repository = {id: 123}; source.head_branch = "feature";
 }
+async function assertProducerSelectionRace() {
+  const originalPaginate = github.paginate;
+  const comments = [{id: 42, user: {login: "github-actions[bot]"},
+    body: "### Static Analysis Summary\nchecks are still running"}];
+  for (const movedWorkflow of ["codeql.yml", "license-scan.yml"]) {
+    let readComments = false;
+    currentHeadSha = headSha; currentBaseSha = baseSha;
+    currentBaseRef = "develop"; pullRequestReads = 0;
+    Object.assign(context.payload.workflow_run, {
+      name: "CodeQL Analysis", path: ".github/workflows/codeql.yml", head_sha: headSha,
+      display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+      head_repository: {id: 123}, head_branch: "feature", pull_requests: [{number: 42}],
+    });
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method === commentsList) {
+        readComments = true;
+        return comments;
+      }
+      if (method === checksListForRef) {
+        return rows.map(row => ({...row, status: "completed", conclusion: "success"}));
+      }
+      if (method !== codeqlListWorkflowRuns) return rows;
+      const selected = rows.filter(row => row.id === (input.workflow_id === "codeql.yml" ? 200 : 300));
+      if (!readComments || input.workflow_id !== movedWorkflow) return selected;
+      return [...selected, {...selected[0], id: 999, created_at: "2026-09-24T00:00:00Z",
+        status: "in_progress", conclusion: null}];
+    };
+    const before = mutationCounts();
+    try { await run(github, context, core); } finally { github.paginate = originalPaginate; }
+    if (!readComments || mutationsChanged(before)) throw new Error("a new selected producer must preserve the pending comment");
+    if (!jobRequests.some(({run_id}) => run_id === 999)) throw new Error("the newer producer was not checked");
+    jobRequests.length = 0;
+  }
+}
 async function assertInterruptedRecovery() {
   const originalPaginate = github.paginate;
   const reset = () => {
@@ -620,6 +669,7 @@ async function assertInterruptedRecovery() {
 }
 run(github, context, core).then(async () => {
   if (calls.paginate.length !== 3) throw new Error(`expected three paginated calls, got ${calls.paginate.length}`);
+  if (jobRequests.some(({run_id}) => run_id === 280)) throw new Error("cancelled metadata with no job evidence must not enter selection");
   if (!calls.paginate.every(({ input }) => input.per_page === 100)) throw new Error("all API listings must request page size 100");
   if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 2) throw new Error("oldest bot summary was not updated");
   if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) throw new Error("only the later duplicate should be deleted");
@@ -694,6 +744,7 @@ run(github, context, core).then(async () => {
                 if (error?.status !== 500) throw error;
                 deleteStatus = null;
                 await assertCompletionOrders();
+                await assertProducerSelectionRace();
                 await assertInterruptedRecovery();
                 await assertAssociationSelection();
                 if (!jobRequests.some(input => input.run_id === 270)) throw new Error("metadata race was not classified from candidate jobs");
