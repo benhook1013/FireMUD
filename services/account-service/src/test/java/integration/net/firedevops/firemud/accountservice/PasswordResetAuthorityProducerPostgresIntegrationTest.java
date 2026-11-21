@@ -253,6 +253,93 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   }
 
   @Test
+  void mixedOwnerOutcomesKeepExactResetPendingWithoutCredentialOrAuthorityMutation() {
+    for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
+      Fixture fixture = newFixture();
+      Seed seed = seedAccountAndToken(fixture, "initial-password");
+      DraftAuthorizationFenceBinding binding = draftBinding(seed);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().reserve(binding);
+            fixture.fences().claimCommitOrder(binding);
+            return null;
+          });
+      StoredState before = snapshot(fixture, seed);
+      assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "waiting-password"))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      var original =
+          Objects.requireNonNull(
+              fixture
+                  .setupDsl()
+                  .fetchOne(
+                      "SELECT request_payload, source_change_binding, password_verifier, password_verifier_digest "
+                          + "FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                      HexFormat.of().parseHex(tokenHash(seed.rawToken()))));
+      Outcome designOutcome =
+          worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED;
+      transaction(
+          fixture.transaction(),
+          () -> {
+            for (Owner owner : binding.requiredOwners()) {
+              fixture
+                  .fences()
+                  .recordOwnerReadback(
+                      binding,
+                      new OwnerReadback(
+                          owner,
+                          owner == Owner.WORLD ? worldOutcome : designOutcome,
+                          binding.operationId(),
+                          binding.commitId(),
+                          binding.fenceId(),
+                          binding.inputDigest(),
+                          binding.canonicalBytes(),
+                          new byte[] {7}));
+            }
+            return null;
+          });
+      assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "waiting-password"))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      assertThat(snapshot(fixture, seed)).isEqualTo(before);
+      assertThat(transaction(fixture.transaction(), () -> fixture.fences().readSettlement(binding)))
+          .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+      var retained =
+          Objects.requireNonNull(
+              fixture
+                  .setupDsl()
+                  .fetchOne(
+                      "SELECT status, request_payload, source_change_binding, password_verifier, password_verifier_digest "
+                          + "FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                      HexFormat.of().parseHex(tokenHash(seed.rawToken()))));
+      assertThat(retained.get("status", String.class)).isEqualTo("WAITING");
+      assertThat(retained.get("password_verifier", String.class))
+          .isEqualTo(original.get("password_verifier", String.class));
+      for (String column :
+          List.of("request_payload", "source_change_binding", "password_verifier_digest")) {
+        assertThat(retained.get(column, byte[].class))
+            .containsExactly(original.get(column, byte[].class));
+      }
+      transaction(
+          fixture.transaction(),
+          () -> {
+            assertThat(
+                    fixture.fences().readOwnerResult(binding, Owner.WORLD).orElseThrow().outcome())
+                .isEqualTo(worldOutcome);
+            assertThat(
+                    fixture
+                        .fences()
+                        .readOwnerResult(binding, Owner.GAME_DESIGN)
+                        .orElseThrow()
+                        .outcome())
+                .isEqualTo(designOutcome);
+            return null;
+          });
+    }
+  }
+
+  @Test
   void waitingResetRetainsExactIntentAndSettlesOnlyAfterOriginalOwnersDeny() {
     Fixture fixture = newFixture();
     Seed seed = seedAccountAndToken(fixture, "initial-password");

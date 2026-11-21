@@ -78,6 +78,80 @@ class GameDesignSourcePostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void originalReviewedGenesisRemainsExactAfterDisjointCommandAdvance() {
+    Fixture local = fixture();
+    var reviewed = new GameDesignReviewedBaseRepository(local.dsl());
+    String base =
+        "genesis:" + local.sources().readGenesis(local.target()).orElseThrow().policy().receiptId();
+    var reference = net.firedevops.firemud.common.authoring.DraftBaseReference.parse(base);
+    var original = local.tx(() -> reviewed.resolve(local.target(), reference));
+    var command = binding(local.target(), base, null, "0", null, false);
+    synchronize(local, command, apply(local, command));
+    var policy = binding(local.target(), base, "0", null, "main", true);
+    local.tx(() -> local.sources().claimReviewed(policy, original));
+    var retained = reviewed.requireCurrentRetained(policy);
+    assertThat(retained.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(retained.schema()).isEqualTo(GameDesignReviewedBaseEvidence.SCHEMA);
+    synchronize(local, policy, apply(local, policy));
+    assertOriginalReviewedHistoryAfterAdvance(local, reviewed, policy, original, reference);
+    assertThat(
+            local
+                .sources()
+                .readSynchronized(local.target(), policy.commitId())
+                .orElseThrow()
+                .command()
+                .definitions())
+        .hasSize(1);
+  }
+
+  @Test
+  void originalReviewedAuthoredBaseRemainsExactAfterDisjointCommandAdvance() {
+    Fixture local = fixture();
+    String genesis =
+        "genesis:" + local.sources().readGenesis(local.target()).orElseThrow().policy().receiptId();
+    var first = binding(local.target(), genesis, "0", null, "main", true);
+    synchronize(local, first, apply(local, first));
+    var reviewed = new GameDesignReviewedBaseRepository(local.dsl());
+    var reference =
+        net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+            first.commitId().toString());
+    var original = local.tx(() -> reviewed.resolve(local.target(), reference));
+    var command = binding(local.target(), first.commitId().toString(), null, "0", null, false);
+    synchronize(local, command, apply(local, command));
+    var policy = binding(local.target(), first.commitId().toString(), "1", null, "second", true);
+    local.tx(() -> local.sources().claimReviewed(policy, original));
+    var retained = reviewed.requireCurrentRetained(policy);
+    assertThat(retained.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(retained.schema()).isEqualTo(GameDesignReviewedBaseEvidence.SCHEMA);
+    synchronize(local, policy, apply(local, policy));
+    assertOriginalReviewedHistoryAfterAdvance(local, reviewed, policy, original, reference);
+    assertThat(
+            local
+                .sources()
+                .readSynchronized(local.target(), policy.commitId())
+                .orElseThrow()
+                .command()
+                .definitions())
+        .hasSize(1);
+  }
+
+  // This is genuine local source/coordinator history, not Account or publication authorization.
+  private static void assertOriginalReviewedHistoryAfterAdvance(
+      Fixture local,
+      GameDesignReviewedBaseRepository reviewed,
+      DraftCommitBinding binding,
+      GameDesignReviewedBaseEvidence original,
+      net.firedevops.firemud.common.authoring.DraftBaseReference reference) {
+    var before = reviewedClaimRows(local);
+    assertThat(local.tx(() -> reviewed.resolve(local.target(), reference))).isEqualTo(original);
+    assertThat(local.tx(() -> local.sources().claimReviewed(binding, original)).binding())
+        .isEqualTo(binding);
+    assertThat(reviewed.requireCurrentRetained(binding).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(reviewedClaimRows(local)).isEqualTo(before);
+  }
+
+  @Test
   void exactReviewedClaimReplayPreservesAllRetainedRowsAndChangedInputCannotRewriteThem() {
     var local = fixture();
     var original = storageBinding(local, "reviewed-claim");

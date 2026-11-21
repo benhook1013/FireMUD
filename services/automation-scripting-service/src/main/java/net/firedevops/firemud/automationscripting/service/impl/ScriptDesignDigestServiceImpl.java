@@ -6,10 +6,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
@@ -111,9 +113,54 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     if (retainedBaseVersionId.longValue() != requestedBaseVersionId) {
       throw new IllegalArgumentException("script_patch_base_version_mismatch");
     }
+    return digestSnapshot(
+        tenantId,
+        retainedBaseVersionId,
+        scriptPatchVersion,
+        repository.findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion),
+        bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                tenantKey, scriptPatchVersion));
+  }
+
+  @Override
+  public ScriptDraftDesignDigest getDraftDesignDigestForScriptPatchSnapshot(
+      String tenantId,
+      long baseVersionId,
+      String scriptPatchVersion,
+      List<ScriptDefinition> definitions,
+      List<ScriptEventBinding> bindings) {
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    if (baseVersionId <= 0 || scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("script_patch_snapshot_identity_invalid");
+    }
+    var names = new HashSet<String>();
+    for (var definition : definitions) {
+      if (!Objects.equals(definition.getTenantId(), tenantKey)
+          || !scriptPatchVersion.equals(definition.getScriptVersion())
+          || definition.getName() == null
+          || definition.getName().isBlank()
+          || !names.add(definition.getName())) {
+        throw new IllegalArgumentException("script_patch_snapshot_definition_identity_invalid");
+      }
+    }
+    for (var binding : bindings) {
+      if (!Objects.equals(binding.getTenantId(), tenantKey)
+          || !scriptPatchVersion.equals(binding.getScriptPatchVersion())) {
+        throw new IllegalArgumentException("script_patch_snapshot_binding_identity_invalid");
+      }
+    }
+    return digestSnapshot(tenantId, baseVersionId, scriptPatchVersion, definitions, bindings);
+  }
+
+  private ScriptDraftDesignDigest digestSnapshot(
+      String tenantId,
+      long retainedBaseVersionId,
+      String scriptPatchVersion,
+      List<ScriptDefinition> definitions,
+      List<ScriptEventBinding> storedBindings) {
     List<Map<String, Object>> scripts = new ArrayList<>();
-    for (var script :
-        repository.findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion)) {
+    for (var script : definitions) {
       requireStoredBase(script.getBaseVersionId(), retainedBaseVersionId, "script");
       scripts.add(
           canonicalMap(
@@ -123,10 +170,6 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
                   "baseVersionId", retainedBaseVersionId,
                   "definition", normalize(script.getDefinition()))));
     }
-    List<ScriptEventBinding> storedBindings =
-        bindingRepository
-            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                tenantKey, scriptPatchVersion);
     for (ScriptEventBinding binding : storedBindings) {
       requireStoredBase(binding.getBaseVersionId(), retainedBaseVersionId, "binding");
     }

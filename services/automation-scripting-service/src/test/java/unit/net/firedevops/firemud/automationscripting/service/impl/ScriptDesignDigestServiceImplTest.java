@@ -32,6 +32,115 @@ class ScriptDesignDigestServiceImplTest {
   }
 
   @Test
+  void capturedSnapshotMatchesLiveDigestWithoutReadingMutableRowsAgain() {
+    var definition = snapshotDefinition("alpha", 1L, "patch-1");
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(definition));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of());
+    var live = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
+    org.mockito.Mockito.clearInvocations(repository, bindingRepository);
+    assertEquals(
+        live,
+        service.getDraftDesignDigestForScriptPatchSnapshot(
+            "1", 1L, "patch-1", List.of(definition), List.of()));
+    verifyNoInteractions(repository, bindingRepository);
+  }
+
+  @Test
+  void capturedSnapshotRejectsForeignOrDuplicateRows() {
+    var alpha = snapshotDefinition("alpha", 1L, "patch-1");
+    for (var invalid :
+        List.of(
+            snapshotDefinition("alpha", 2L, "patch-1"),
+            snapshotDefinition("alpha", 1L, "other"),
+            alpha)) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.getDraftDesignDigestForScriptPatchSnapshot(
+                  "1", 1L, "patch-1", List.of(alpha, invalid), List.of()));
+    }
+    alpha.setBaseVersionId(2L);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.getDraftDesignDigestForScriptPatchSnapshot(
+                "1", 1L, "patch-1", List.of(alpha), List.of()));
+    verifyNoInteractions(repository, bindingRepository);
+  }
+
+  @Test
+  void capturedSnapshotRejectsForeignBindingsAndMissingPatch() {
+    var definition = snapshotDefinition("alpha", 1L, "patch-1");
+    var binding = new ScriptEventBinding();
+    binding.setTenantId(2L);
+    binding.setScriptPatchVersion("patch-1");
+    binding.setBaseVersionId(1L);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.getDraftDesignDigestForScriptPatchSnapshot(
+                "1", 1L, "patch-1", List.of(definition), List.of(binding)));
+    binding.setTenantId(1L);
+    binding.setScriptPatchVersion("other");
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.getDraftDesignDigestForScriptPatchSnapshot(
+                "1", 1L, "patch-1", List.of(definition), List.of(binding)));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.getDraftDesignDigestForScriptPatchSnapshot(
+                "1", 1L, "patch-1", List.of(), List.of()));
+    verifyNoInteractions(repository, bindingRepository);
+  }
+
+  @Test
+  void capturedSnapshotRetainsOwnerDefinitionOrderAndCanonicalBindingOrder() {
+    var definitions =
+        List.of(
+            snapshotDefinition("éclair", 1L, "patch-1"),
+            snapshotDefinition("zebra", 1L, "patch-1"));
+    var first = binding("binding-a");
+    var second = binding("binding-b");
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(definitions);
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(first, second));
+    var live = service.getDraftDesignDigestForScriptPatch("1", 1L, "patch-1");
+    assertEquals(
+        "92e4200157ea21a575680e67798570863d1a6539e6a7889ef214935bf4d1b83e", live.contentDigest());
+    org.mockito.Mockito.clearInvocations(repository, bindingRepository);
+    assertEquals(
+        live,
+        service.getDraftDesignDigestForScriptPatchSnapshot(
+            "1", 1L, "patch-1", definitions, List.of(second, first)));
+    first.setBaseVersionId(2L);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.getDraftDesignDigestForScriptPatchSnapshot(
+                "1", 1L, "patch-1", definitions, List.of(first)));
+    verifyNoInteractions(repository, bindingRepository);
+  }
+
+  private static ScriptDefinition snapshotDefinition(String name, long tenantId, String patch) {
+    var definition = new ScriptDefinition();
+    definition.setTenantId(tenantId);
+    definition.setName(name);
+    definition.setScriptVersion(patch);
+    definition.setBaseVersionId(1L);
+    definition.setDefinition("return 1");
+    return definition;
+  }
+
+  @Test
   void getDraftDesignDigestReturnsStablePatchDigest() {
     ScriptDefinition one = new ScriptDefinition();
     one.setTenantId(1L);
