@@ -6,6 +6,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.protobuf.ByteString;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ClientInterceptors;
+import io.grpc.ForwardingClientCall.SimpleForwardingClientCall;
+import io.grpc.ForwardingClientCallListener.SimpleForwardingClientCallListener;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -30,6 +40,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.account.v1.GameplayLoginSourceContext;
 import net.firedevops.firemud.account.v1.GameplayLoginTransportClass;
 import net.firedevops.firemud.accountservice.client.AccountOriginalNewFinalAdmissionGrpcReadClient;
@@ -49,11 +60,14 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -583,6 +597,175 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void lostCommittedQuotaResponseKeepsReserveUntilExactRetry() throws Exception {
+    try (Session session = session(CLOCK, 1, 2);
+        OriginalNewCredential credential = session.issue()) {
+      session.provisionCapacityRefusalBudget();
+      var request = session.retainControlledEvaluation(true, "0");
+      var fault = new DropFirstQuotaResponse(request);
+      // Preserve the real TLS server and channel setup; inject caller-side transport loss only.
+      session.startCapacityClient(fault.channels());
+      byte[] candidate = session.gs.physicalSession();
+      String capacityBefore = session.capacityImage();
+      String transitionsBefore = session.gsReceiptImage();
+
+      var uncertain = assertThrows(IllegalStateException.class, () -> session.complete(request));
+      assertThat(uncertain).isNotInstanceOf(CapacityRefusedException.class);
+      assertThat(uncertain.getCause()).isInstanceOfSatisfying(
+          StatusRuntimeException.class, status -> {
+            assertThat(status.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+            assertThat(status.getTrailers()).isNotNull();
+            assertThat(status.getTrailers().keys()).isEmpty();
+          });
+      assertThat(fault.successfullyDropped.get()).isTrue();
+      assertThat(fault.calls.get()).isEqualTo(1);
+      UUID committedId = fault.observedDenial.get();
+      assertThat(committedId).isNotNull();
+      String decision = session.capacityDecisionImage();
+      var accountDenial = session.dsl.fetchSingle(
+          "SELECT * FROM account_capacity_origin_decisions WHERE admission_attempt_id=?",
+          request.admissionAttemptId());
+      assertThat(accountDenial.get("decision_id", UUID.class)).isEqualTo(committedId);
+      assertThat(accountDenial.get("decision", String.class)).isEqualTo("NO_ACCEPT");
+      assertThat(accountDenial.get("refusal_code", String.class))
+          .isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+      assertThat(accountDenial.get("canonical_payload", byte[].class))
+          .containsExactly(CapacityAdmissionDigest.preimage(request));
+      var active = session.gs.dsl().fetchSingle(
+          "SELECT account_denial_id, tenant_id, admission_id, mutation_digest"
+              + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+          request.admissionAttemptId());
+      assertThat(active.get("tenant_id", UUID.class)).isEqualTo(request.identity().tenantId());
+      assertThat(active.get("admission_id", UUID.class)).isEqualTo(request.identity().admissionId());
+      assertThat(active.get("account_denial_id", UUID.class)).isNull();
+      assertThat(active.get("mutation_digest", String.class)).isEqualTo(request.mutationDigest());
+      assertThat(session.gs.dsl().fetchSingle(
+              "SELECT count(*) FROM game_session_original_new_capacity_execution")
+          .get(0, Long.class)).isZero();
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
+      assertProvisionalUnchanged(session, candidate);
+
+      var exactRetry = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(assertExactAccountQuotaDenial(session, request, exactRetry)).isEqualTo(committedId);
+      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(session.capacityDecisionImage()).isEqualTo(decision);
+      assertThat(session.gs.dsl().fetchSingle(
+          "SELECT account_denial_id FROM game_session_capacity_evidence_charge"
+              + " WHERE admission_attempt_id=?", request.admissionAttemptId()).get(0, UUID.class))
+          .isEqualTo(committedId);
+      assertThat(session.gs.dsl().fetchSingle(
+              "SELECT count(*) FROM game_session_capacity_evidence_charge"
+                  + " WHERE tenant_id=? AND account_denial_id IS NULL",
+              request.identity().tenantId()).get(0, Long.class)).isZero();
+
+      session.stopCapacityServer();
+      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(replay.durableDenialId()).isEqualTo(committedId);
+      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(session.capacityDecisionImage()).isEqualTo(decision);
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
+      assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
+      assertThat(session.genesis().confirmedAdmissionAtMillis()).isNull();
+      assertProvisionalUnchanged(session, candidate);
+    }
+  }
+
+  /** Changes one completed, exact authenticated response into plain caller-facing UNAVAILABLE. */
+  private static final class DropFirstQuotaResponse implements ClientInterceptor {
+    private final TenantCapacityAdmission.Request exact;
+    final java.util.concurrent.atomic.AtomicInteger calls =
+        new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicReference<UUID> observedDenial =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    final java.util.concurrent.atomic.AtomicBoolean successfullyDropped =
+        new java.util.concurrent.atomic.AtomicBoolean();
+
+    DropFirstQuotaResponse(TenantCapacityAdmission.Request exact) {
+      this.exact = exact;
+    }
+
+    @Override
+    public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
+        MethodDescriptor<ReqT, RespT> method, CallOptions options, Channel next) {
+      var delegate = next.newCall(method, options);
+      if (!net.firedevops.firemud.account.v1.AccountServiceGrpc
+          .getCommitTenantCapacityAdmissionMethod().getFullMethodName()
+          .equals(method.getFullMethodName()) || calls.incrementAndGet() != 1) {
+        return delegate;
+      }
+      return new SimpleForwardingClientCall<ReqT, RespT>(delegate) {
+        @Override
+        public void start(Listener<RespT> listener, Metadata headers) {
+          super.start(new SimpleForwardingClientCallListener<RespT>(listener) {
+            private UUID withheld;
+
+            @Override
+            public void onMessage(RespT message) {
+              if (message instanceof CommitTenantCapacityAdmissionResponse response) {
+                var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(exact, response);
+                if (refusal.isPresent()
+                    && refusal.orElseThrow().code() == Failure.CAPACITY_QUOTA_EXCEEDED
+                    && refusal.orElseThrow().durableDenialId() != null) {
+                  withheld = refusal.orElseThrow().durableDenialId();
+                  return;
+                }
+              }
+              super.onMessage(message);
+            }
+
+            @Override
+            public void onClose(Status status, Metadata trailers) {
+              if (status.isOk() && withheld != null) {
+                observedDenial.set(withheld);
+                successfullyDropped.set(true);
+                super.onClose(Status.UNAVAILABLE, new Metadata());
+                return;
+              }
+              super.onClose(status, trailers);
+            }
+          }, headers);
+        }
+      };
+    }
+
+    GrpcChannelFactory channels() {
+      return new GrpcChannelFactory() {
+        @Override
+        public ManagedChannel buildChannel(
+            String target, int defaultPort, CommonGrpcClientProperties properties,
+            boolean keepAlive, ResolvedGrpcTlsMaterial tlsMaterial) throws javax.net.ssl.SSLException {
+          var channel = super.buildChannel(target, defaultPort, properties, keepAlive, tlsMaterial);
+          var intercepted = ClientInterceptors.intercept(channel, DropFirstQuotaResponse.this);
+          return new ManagedChannel() {
+            @Override
+            public ManagedChannel shutdown() { channel.shutdown(); return this; }
+            @Override
+            public ManagedChannel shutdownNow() { channel.shutdownNow(); return this; }
+            @Override
+            public boolean isShutdown() { return channel.isShutdown(); }
+            @Override
+            public boolean isTerminated() { return channel.isTerminated(); }
+            @Override
+            public boolean awaitTermination(long timeout, TimeUnit unit)
+                throws InterruptedException {
+              return channel.awaitTermination(timeout, unit);
+            }
+            @Override
+            public String authority() { return intercepted.authority(); }
+            @Override
+            public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+                MethodDescriptor<ReqT, RespT> method, CallOptions options) {
+              return intercepted.newCall(method, options);
+            }
+          };
+        }
+      };
+    }
+  }
+
+  @Test
   void authenticatedQuotaDenialFreesTheLastActiveSlotForADistinctAdmission() throws Exception {
     try (Session session = new Session(CLOCK, 1, 2, true)) {
       session.provisionCapacityRefusalBudget();
@@ -994,7 +1177,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private void startCapacityServer() throws Exception {
-      if (capacityClient != null) capacityClient.close();
       capacityServer =
           new net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService(
                   capacityOwner, "test")
@@ -1003,13 +1185,18 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   pki.keyManagerFactory(pki.identity("account")),
                   pki.trustManagerFactory());
       capacityServer.start();
+      startCapacityClient(new GrpcChannelFactory());
+    }
+
+    private void startCapacityClient(GrpcChannelFactory channels) throws Exception {
+      if (capacityClient != null) capacityClient.close();
       var capacityEndpoints = new ServiceEndpointsProperties();
       capacityEndpoints.setAccountService("localhost:" + capacityServer.getPort());
       capacityClient =
           new AccountTenantCapacityClient(
               capacityEndpoints,
               pki.clientProperties(pkiDirectory, pki.identity("gs-client")),
-              new GrpcChannelFactory(),
+              channels,
               "test",
               CLOCK);
       capacityClient.init();
