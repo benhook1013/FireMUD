@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import java.time.Clock;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -14,11 +16,18 @@ final class CanonicalGameplayCapacityEvidenceBudget {
       Request request,
       String candidateDigest,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
-      String tag) {
+      String tag,
+      Clock clock) {
     var identity = request.identity();
     lockBudget(tx, request, tag);
     var prior = exactCharge(tx, request, candidateDigest, selected, tag);
     if (prior != null) return prior.get("account_denial_id", UUID.class);
+    // Match Account's durable timestamp precision. Historical exact charges above don't use
+    // current evidence, and a stale uncharged request cannot consume a new slot.
+    var now = clock.instant();
+    if (now.isBefore(request.evidence().evaluatedAt())
+        || !now.isBefore(request.evidence().expiresAt().truncatedTo(ChronoUnit.MICROS)))
+      throw unavailable();
     try {
       int inserted =
           tx.execute(

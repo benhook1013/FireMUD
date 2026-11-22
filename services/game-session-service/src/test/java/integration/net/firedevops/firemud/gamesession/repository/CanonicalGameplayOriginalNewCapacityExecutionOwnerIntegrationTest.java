@@ -339,6 +339,90 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void concurrentRetainedClosureReplaysAfterServingRetirementOnlyWithPermanentProof(
+      boolean keepTombstone) throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var initialReadDone = new java.util.concurrent.CountDownLatch(1);
+    var continueFirstClose = new java.util.concurrent.CountDownLatch(1);
+    var executionReads = new java.util.concurrent.atomic.AtomicInteger();
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    byte[] tombstoneKey = ascii(capacityKey(assignment));
+    var listener =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void resultEnd(org.jooq.ExecuteContext ctx) {
+            String sql = ctx.sql();
+            if (sql == null
+                || !sql.startsWith("SELECT * FROM game_session_original_new_capacity_execution"))
+              return;
+            int read = executionReads.incrementAndGet();
+            if (read == 2 && !keepTombstone) {
+              assertThat(admin.del(tombstoneKey)).isEqualTo(1L);
+            }
+            if (read != 1) return;
+            initialReadDone.countDown();
+            try {
+              if (!continueFirstClose.await(4, java.util.concurrent.TimeUnit.SECONDS))
+                throw new AssertionError("Exact close race gate was not released");
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new AssertionError(interrupted);
+            }
+          }
+        };
+    var waitingDsl =
+        org.jooq.impl.DSL.using(
+            fixture
+                .dsl()
+                .configuration()
+                .derive(new org.jooq.impl.DefaultExecuteListenerProvider(listener)));
+    var waitingOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            waitingDsl, ownerClient, catalog, CLOCK, tags);
+    byte[] sessionKey =
+        ascii(
+            CanonicalGameplaySessionRedisKeys.session(
+                assignment, source.candidate().bindingIdentity().bindingRef()));
+    try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+      var first =
+          workers.submit(() ->
+              waitingOwner.closeOriginalAttempt(
+                  controlledCapacity.request(), controlledCapacity.reservation()));
+      try {
+        assertThat(initialReadDone.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(first.isDone()).isFalse();
+        capacityOwner()
+            .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+        var retained =
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation());
+        assertThat(retained.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+        assertThat(admin.del(sessionKey)).isEqualTo(1L);
+        assertThat(admin.type(sessionKey)).isEqualTo("none");
+      } finally {
+        continueFirstClose.countDown();
+      }
+      if (keepTombstone) {
+        first.get(6, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                    .disposition())
+            .isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+      } else {
+        assertThatThrownBy(() -> first.get(6, java.util.concurrent.TimeUnit.SECONDS))
+            .isInstanceOf(java.util.concurrent.ExecutionException.class)
+            .hasCauseInstanceOf(IllegalStateException.class);
+        assertThat(admin.type(tombstoneKey)).isEqualTo("none");
+      }
+      assertThat(executionReads.get()).isGreaterThanOrEqualTo(2);
+    }
+  }
+
   @Test
   void recreatedCapacityOwnerClosesExactAttemptAndRejectsDelayedFinalCas() throws Exception {
     repairAccountMember();

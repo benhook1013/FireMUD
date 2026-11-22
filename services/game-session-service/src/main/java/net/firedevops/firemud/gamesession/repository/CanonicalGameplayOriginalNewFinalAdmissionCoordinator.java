@@ -15,6 +15,8 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransi
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.CapacityRefusedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -25,6 +27,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * creating credentials, leases, barriers, or cleanup receipts of its own.
  */
 final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(CanonicalGameplayOriginalNewFinalAdmissionCoordinator.class);
   private static final long MAX_SESSION_DURATION_MILLIS =
       CanonicalGameplayOriginalNewAuthenticatedSession.MAX_CANONICAL_SESSION_DURATION_MILLIS;
 
@@ -119,6 +123,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         // Account confirmation must recover a committed-but-unconfirmed result before issue can
         // return the unchanged ACTIVE credential and handle.
         requireDeadline(absoluteDeadlineMillis);
+        capacityExecution.requireCommittedRequest(source, capacityRequest, absoluteDeadlineMillis);
         recoveredConfirmation =
             accountClient.confirmOriginalNewGameplayAdmission(originalLoginJwt, originalLeaseBytes);
         requireConfirmation(source, recoveredConfirmation, null, originalDecision);
@@ -166,12 +171,19 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
             reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
           } catch (CapacityRefusedException refusal) {
             if (precharge && refusal.durableDenialId() != null) {
-              capacityExecution.settleDeniedCharge(
-                  source,
-                  capacityRequest,
-                  selectedOwner,
-                  refusal.durableDenialId(),
-                  absoluteDeadlineMillis);
+              try {
+                capacityExecution.settleDeniedCharge(
+                    source,
+                    capacityRequest,
+                    selectedOwner,
+                    refusal.durableDenialId(),
+                    absoluteDeadlineMillis);
+              } catch (RuntimeException settlementFailure) {
+                // This remains local and indeterminate; the authenticated Account denial has
+                // already completed, and settlement failure must not rewrite that outcome.
+                LOG.warn(
+                    "Original NEW quota denial received; local evidence settlement unconfirmed");
+              }
             }
             throw refusal;
           }
