@@ -92,38 +92,34 @@ class AccountTenantAuthorityHostingEventTest {
     Record version = mock(Record.class);
     when(version.get("next_version", Long.class)).thenReturn(8L);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM subscription_lifecycle_operations")) {
-                return operation;
-              }
-              if (sql.contains("FROM subscription_lifecycle_attempts")) {
-                return attempt;
-              }
-              if (sql.equals(
-                  "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?")) {
-                assertThat((Object[]) invocation.getRawArguments()[1])
-                    .containsExactly(subscriptionId);
-                return paidCompletion;
-              }
-              if (sql.equals(
-                  "SELECT * FROM subscription_lifecycle_receipts WHERE request_id = ?")) {
-                assertThat((Object[]) invocation.getRawArguments()[1])
-                    .containsExactly(paidReceiptId);
-                return paidReceipt;
-              }
-              if (sql.contains("FROM subscription WHERE")) {
-                return links;
-              }
-              if (sql.contains("FROM account_tenant_authority_source_records")) {
-                return sourceHead;
-              }
-              if (sql.startsWith("SELECT greatest(")) {
-                return version;
-              }
-              throw new AssertionError("Unexpected producer read: " + sql);
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM subscription_lifecycle_operations")) {
+            return operation;
+          }
+          if (sql.contains("FROM subscription_lifecycle_attempts")) {
+            return attempt;
+          }
+          if (sql.equals(
+              "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?")) {
+            assertThat((Object[]) invocation.getRawArguments()[1]).containsExactly(subscriptionId);
+            return paidCompletion;
+          }
+          if (sql.equals("SELECT * FROM subscription_lifecycle_receipts WHERE request_id = ?")) {
+            assertThat((Object[]) invocation.getRawArguments()[1]).containsExactly(paidReceiptId);
+            return paidReceipt;
+          }
+          if (sql.contains("FROM subscription WHERE")) {
+            return links;
+          }
+          if (sql.contains("FROM account_tenant_authority_source_records")) {
+            return sourceHead;
+          }
+          if (sql.startsWith("SELECT greatest(")) {
+            return version;
+          }
+          throw new AssertionError("Unexpected producer read: " + sql);
+        });
     var receiptBindings = new AtomicReference<Object[]>();
     var reachedReceipt = new IllegalStateException("Stop after both actual event producers");
     when(dsl.execute(anyString(), any(Object[].class)))

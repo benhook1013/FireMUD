@@ -98,17 +98,16 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
             invoice.expiresAt().plusNanos(900));
     assertThat(subMicrosecond).isEqualTo(invoice);
     assertThat(subMicrosecond.digest()).isEqualTo(invoice.digest());
-    assertThatThrownBy(
-            () ->
-                invoice(
-                    invoice.invoiceId(),
-                    invoice.paymentIntentId(),
-                    invoice.amount(),
-                    invoice.currency(),
-                    invoice.paymentInstrumentId(),
-                    invoice.billingPolicyDigest(),
-                    invoice.capturedAt(),
-                    invoice.capturedAt().plusNanos(900)))
+    assertThatThrownBy(() ->
+            invoice(
+                invoice.invoiceId(),
+                invoice.paymentIntentId(),
+                invoice.amount(),
+                invoice.currency(),
+                invoice.paymentInstrumentId(),
+                invoice.billingPolicyDigest(),
+                invoice.capturedAt(),
+                invoice.capturedAt().plusNanos(900)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -200,46 +199,43 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
     when(f.evidence.evidenceId()).thenReturn(UUID.randomUUID());
     assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
     when(f.evidence.evidenceId()).thenReturn(f.evidenceId);
-    assertThatThrownBy(
-            () ->
-                f.repository.renewAuthorization(
-                    f.invoice.ownerAccountId(),
-                    f.originalId,
-                    f.authorizationId,
-                    f.invoice.subscriptionId(),
-                    3,
-                    2,
-                    f.invoice.digest(),
-                    f.evidence))
+    assertThatThrownBy(() ->
+            f.repository.renewAuthorization(
+                f.invoice.ownerAccountId(),
+                f.originalId,
+                f.authorizationId,
+                f.invoice.subscriptionId(),
+                3,
+                2,
+                f.invoice.digest(),
+                f.evidence))
         .isInstanceOf(IllegalStateException.class);
   }
 
   @Test
   void changedConsentOriginalIdentityOrWrongPurposeCannotRenew() {
     var f = new RenewalFixture();
-    assertThatThrownBy(
-            () ->
-                f.repository.renewAuthorization(
-                    f.invoice.ownerAccountId(),
-                    UUID.randomUUID(),
-                    f.authorizationId,
-                    f.invoice.subscriptionId(),
-                    3,
-                    1,
-                    f.invoice.digest(),
-                    f.evidence))
+    assertThatThrownBy(() ->
+            f.repository.renewAuthorization(
+                f.invoice.ownerAccountId(),
+                UUID.randomUUID(),
+                f.authorizationId,
+                f.invoice.subscriptionId(),
+                3,
+                1,
+                f.invoice.digest(),
+                f.evidence))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                f.repository.renewAuthorization(
-                    f.invoice.ownerAccountId(),
-                    f.originalId,
-                    f.authorizationId,
-                    f.invoice.subscriptionId(),
-                    3,
-                    1,
-                    "sha256:" + "c".repeat(64),
-                    f.evidence))
+    assertThatThrownBy(() ->
+            f.repository.renewAuthorization(
+                f.invoice.ownerAccountId(),
+                f.originalId,
+                f.authorizationId,
+                f.invoice.subscriptionId(),
+                3,
+                1,
+                "sha256:" + "c".repeat(64),
+                f.evidence))
         .isInstanceOf(IllegalStateException.class);
     when(f.evidence.purpose()).thenReturn(AccountRecentReauthenticationPolicy.PURPOSE);
     assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
@@ -258,17 +254,16 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
     when(f.evidence.issuedAt()).thenReturn(RenewalFixture.NOW.minusSeconds(115));
     assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
     when(f.evidence.issuedAt()).thenReturn(RenewalFixture.NOW);
-    assertThatThrownBy(
-            () ->
-                f.repository.renewAuthorization(
-                    f.invoice.ownerAccountId(),
-                    f.originalId,
-                    f.authorizationId,
-                    f.invoice.subscriptionId(),
-                    4,
-                    1,
-                    f.invoice.digest(),
-                    f.evidence))
+    assertThatThrownBy(() ->
+            f.repository.renewAuthorization(
+                f.invoice.ownerAccountId(),
+                f.originalId,
+                f.authorizationId,
+                f.invoice.subscriptionId(),
+                4,
+                1,
+                f.invoice.digest(),
+                f.evidence))
         .isInstanceOf(IllegalStateException.class);
     f.latestVersion = 2;
     assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
@@ -413,18 +408,17 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
                   "currency",
                   "usd"));
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              call -> {
-                String sql = call.getArgument(0);
-                Object[] values = (Object[]) call.getRawArguments()[1];
-                if (sql.contains("account_hosting_billing_policy_current")) return commercial;
-                if (sql.contains("FROM subscription_first_invoice_confirmations")) return original;
-                if (sql.contains("subscription_first_invoice_operation_fences")) return null;
-                if (sql.contains("COALESCE(MAX")) return row(Map.of("version", latestVersion));
-                if (sql.contains("FROM subscription_first_invoice_authorizations"))
-                  return authorizations.get(values[0]);
-                throw new AssertionError(sql);
-              });
+          .thenAnswer(call -> {
+            String sql = call.getArgument(0);
+            Object[] values = (Object[]) call.getRawArguments()[1];
+            if (sql.contains("account_hosting_billing_policy_current")) return commercial;
+            if (sql.contains("FROM subscription_first_invoice_confirmations")) return original;
+            if (sql.contains("subscription_first_invoice_operation_fences")) return null;
+            if (sql.contains("COALESCE(MAX")) return row(Map.of("version", latestVersion));
+            if (sql.contains("FROM subscription_first_invoice_authorizations"))
+              return authorizations.get(values[0]);
+            throw new AssertionError(sql);
+          });
       Record transaction = row(Map.of("id", 100L));
       when(dsl.fetchOne("SELECT txid_current() AS id")).thenReturn(transaction);
       doAnswer(

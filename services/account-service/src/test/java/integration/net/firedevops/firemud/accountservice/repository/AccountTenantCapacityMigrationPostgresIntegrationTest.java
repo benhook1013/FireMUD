@@ -1363,15 +1363,14 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   static CapacityFixture populateCapacity(DSLContext dsl, TransactionTemplate transaction) {
     UUID accountUuid =
         Objects.requireNonNull(
-            transaction.execute(
-                status ->
-                    dsl.fetchSingle(
-                            "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) "
-                                + "RETURNING account_uuid",
-                            "capacity-" + UUID.randomUUID(),
-                            "capacity-" + UUID.randomUUID() + "@example.test",
-                            "test-password")
-                        .get(0, UUID.class)));
+            transaction.execute(status ->
+                dsl.fetchSingle(
+                        "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) "
+                            + "RETURNING account_uuid",
+                        "capacity-" + UUID.randomUUID(),
+                        "capacity-" + UUID.randomUUID() + "@example.test",
+                        "test-password")
+                    .get(0, UUID.class)));
     FreshTenantCreationEvidence tenant = source();
     UUID bootstrapRequest = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();
@@ -1379,102 +1378,98 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     String evaluationIdentity = digest('a');
     String callerWorkload = "spiffe://firemud.test/account/game-session-service";
 
-    transaction.executeWithoutResult(
-        status -> {
-          new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
-          UUID attemptId = UUID.randomUUID();
-          String mutationDigest = hex('c');
-          byte[] canonicalPayload = new byte[] {8};
-          insertOriginDecisionIfPresent(
-              dsl,
-              tenant.canonicalTenantId(),
-              requestId,
-              admissionId,
-              1,
-              attemptId,
-              mutationDigest,
-              canonicalPayload);
-          dsl.execute(
-              "INSERT INTO account_tenant_creation_bootstrap_operations "
-                  + "(request_id, schema_version, initiating_account_uuid, tenant_uuid, "
-                  + "creation_request_id, creation_operation_id, account_authorization_operation_id, "
-                  + "account_authorization_digest, creator_evidence_digest, creator_evidence_payload, "
-                  + "source_snapshot_payload, source_snapshot_digest, request_payload, request_digest, "
-                  + "baseline_membership_version, baseline_membership_authority_generation, "
-                  + "baseline_event_sequence, status) "
-                  + "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0, 'IN_PROGRESS')",
-              bootstrapRequest,
-              accountUuid,
-              tenant.canonicalTenantId(),
-              tenant.creationRequestId(),
-              tenant.operationId(),
-              bootstrapRequest,
-              digest('d'),
-              tenant.evidenceDigest(),
-              new byte[] {1},
-              new byte[] {2},
-              digest('e'),
-              new byte[] {3},
-              digest('f'));
-          dsl.execute(
-              "UPDATE account_tenant_creation_bootstrap_operations SET "
-                  + "membership_id = 1, membership_version = 2, membership_authority_generation = 1, "
-                  + "membership_lifecycle_state = 'ACTIVE', gameplay_admission_allowed = FALSE, "
-                  + "membership_roles_payload = convert_to('[\"tenantAdmin\"]', 'UTF8'), "
-                  + "event_stream_key = ?, event_request_id = ?, event_sequence = 1, event_id = ?, "
-                  + "event_digest = ?, caller_bound_authority_invalidated = FALSE, event_payload = ?, "
-                  + "audit_event_id = ?, audit_event_type = 'ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED', "
-                  + "audit_occurred_at = CURRENT_TIMESTAMP, audit_payload_digest = ?, audit_payload = ?, "
-                  + "result_payload = ?, result_digest = ?, status = 'COMMITTED' WHERE request_id = ?",
-              "account:auth-authority:v1:membership/"
-                  + accountUuid
-                  + "/"
-                  + tenant.canonicalTenantId(),
-              bootstrapRequest.toString(),
-              "capacity-bootstrap-" + bootstrapRequest,
-              digest('1'),
-              new byte[] {4},
-              UUID.randomUUID(),
-              digest('2'),
-              new byte[] {5},
-              new byte[] {6},
-              digest('3'),
-              bootstrapRequest);
+    transaction.executeWithoutResult(status -> {
+      new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+      UUID attemptId = UUID.randomUUID();
+      String mutationDigest = hex('c');
+      byte[] canonicalPayload = new byte[] {8};
+      insertOriginDecisionIfPresent(
+          dsl,
+          tenant.canonicalTenantId(),
+          requestId,
+          admissionId,
+          1,
+          attemptId,
+          mutationDigest,
+          canonicalPayload);
+      dsl.execute(
+          "INSERT INTO account_tenant_creation_bootstrap_operations "
+              + "(request_id, schema_version, initiating_account_uuid, tenant_uuid, "
+              + "creation_request_id, creation_operation_id, account_authorization_operation_id, "
+              + "account_authorization_digest, creator_evidence_digest, creator_evidence_payload, "
+              + "source_snapshot_payload, source_snapshot_digest, request_payload, request_digest, "
+              + "baseline_membership_version, baseline_membership_authority_generation, "
+              + "baseline_event_sequence, status) "
+              + "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0, 'IN_PROGRESS')",
+          bootstrapRequest,
+          accountUuid,
+          tenant.canonicalTenantId(),
+          tenant.creationRequestId(),
+          tenant.operationId(),
+          bootstrapRequest,
+          digest('d'),
+          tenant.evidenceDigest(),
+          new byte[] {1},
+          new byte[] {2},
+          digest('e'),
+          new byte[] {3},
+          digest('f'));
+      dsl.execute(
+          "UPDATE account_tenant_creation_bootstrap_operations SET "
+              + "membership_id = 1, membership_version = 2, membership_authority_generation = 1, "
+              + "membership_lifecycle_state = 'ACTIVE', gameplay_admission_allowed = FALSE, "
+              + "membership_roles_payload = convert_to('[\"tenantAdmin\"]', 'UTF8'), "
+              + "event_stream_key = ?, event_request_id = ?, event_sequence = 1, event_id = ?, "
+              + "event_digest = ?, caller_bound_authority_invalidated = FALSE, event_payload = ?, "
+              + "audit_event_id = ?, audit_event_type = 'ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED', "
+              + "audit_occurred_at = CURRENT_TIMESTAMP, audit_payload_digest = ?, audit_payload = ?, "
+              + "result_payload = ?, result_digest = ?, status = 'COMMITTED' WHERE request_id = ?",
+          "account:auth-authority:v1:membership/" + accountUuid + "/" + tenant.canonicalTenantId(),
+          bootstrapRequest.toString(),
+          "capacity-bootstrap-" + bootstrapRequest,
+          digest('1'),
+          new byte[] {4},
+          UUID.randomUUID(),
+          digest('2'),
+          new byte[] {5},
+          new byte[] {6},
+          digest('3'),
+          bootstrapRequest);
 
-          dsl.execute(
-              "INSERT INTO account_tenant_capacity_evaluations "
-                  + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, "
-                  + "owner_service, canonical_evidence, evaluated_at, expires_at) "
-                  + "VALUES (?, ?, ?, ?, 'game-session-service', ?, CURRENT_TIMESTAMP, "
-                  + "CURRENT_TIMESTAMP + INTERVAL '5 minutes')",
-              evaluationIdentity,
-              digest('b'),
-              tenant.canonicalTenantId(),
-              callerWorkload,
-              new byte[] {7});
-          dsl.execute(
-              "INSERT INTO account_tenant_capacity_reservations "
-                  + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, "
-                  + "caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, "
-                  + "mutation_digest, canonical_payload, evaluation_identity, capacity_delta, expires_at, "
-                  + "state, execution_status, reconcile_deadline) "
-                  + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 3, "
-                  + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', "
-                  + "'OWNER_EXECUTION_PENDING', CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
-              tenant.canonicalTenantId(),
-              requestId,
-              admissionId,
-              UUID.randomUUID(),
-              callerWorkload,
-              attemptId,
-              mutationDigest,
-              canonicalPayload,
-              evaluationIdentity);
-          dsl.execute(
-              "UPDATE account_tenant_capacity_usage SET held_units = 3, usage_revision = 2 "
-                  + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-              tenant.canonicalTenantId());
-        });
+      dsl.execute(
+          "INSERT INTO account_tenant_capacity_evaluations "
+              + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, "
+              + "owner_service, canonical_evidence, evaluated_at, expires_at) "
+              + "VALUES (?, ?, ?, ?, 'game-session-service', ?, CURRENT_TIMESTAMP, "
+              + "CURRENT_TIMESTAMP + INTERVAL '5 minutes')",
+          evaluationIdentity,
+          digest('b'),
+          tenant.canonicalTenantId(),
+          callerWorkload,
+          new byte[] {7});
+      dsl.execute(
+          "INSERT INTO account_tenant_capacity_reservations "
+              + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, "
+              + "caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, "
+              + "mutation_digest, canonical_payload, evaluation_identity, capacity_delta, expires_at, "
+              + "state, execution_status, reconcile_deadline) "
+              + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 3, "
+              + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', "
+              + "'OWNER_EXECUTION_PENDING', CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
+          tenant.canonicalTenantId(),
+          requestId,
+          admissionId,
+          UUID.randomUUID(),
+          callerWorkload,
+          attemptId,
+          mutationDigest,
+          canonicalPayload,
+          evaluationIdentity);
+      dsl.execute(
+          "UPDATE account_tenant_capacity_usage SET held_units = 3, usage_revision = 2 "
+              + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+          tenant.canonicalTenantId());
+    });
     return new CapacityFixture(
         tenant.canonicalTenantId(), requestId, admissionId, evaluationIdentity, callerWorkload);
   }
@@ -1483,17 +1478,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       DSLContext dsl, TransactionTemplate transaction, CapacityFixture capacity) {
     List<String> before = capacityTableImages(dsl);
 
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "UPDATE account_tenant_capacity_reservations SET "
-                                + "capacity_delta = capacity_delta + 1 "
-                                + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                            capacity.tenantUuid(),
-                            capacity.requestId(),
-                            capacity.admissionId())))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status ->
+                dsl.execute(
+                    "UPDATE account_tenant_capacity_reservations SET "
+                        + "capacity_delta = capacity_delta + 1 "
+                        + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                    capacity.tenantUuid(),
+                    capacity.requestId(),
+                    capacity.admissionId())))
         .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
 
     assertReservationInsertMismatchRefused(dsl, transaction, capacity);
@@ -1501,30 +1494,28 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     assertUsageWriteMismatchRefused(dsl, transaction, capacity);
     assertThat(capacityTableImages(dsl)).isEqualTo(before);
 
-    transaction.executeWithoutResult(
-        status -> {
-          dsl.execute(
-              "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
-                  + "usage_revision = usage_revision + 1 "
-                  + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-              capacity.tenantUuid());
-          dsl.execute(
-              "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, "
-                  + "recovery_claim_fence = recovery_claim_fence + 1, "
-                  + "recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute' "
-                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-              UUID.randomUUID(),
-              capacity.tenantUuid(),
-              capacity.requestId(),
-              capacity.admissionId());
-          dsl.execute(
-              "SET CONSTRAINTS account_tenant_capacity_reservation_complete_update IMMEDIATE");
-          dsl.execute(
-              "UPDATE account_tenant_capacity_usage SET held_units = held_units - 1, "
-                  + "usage_revision = usage_revision + 1 "
-                  + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-              capacity.tenantUuid());
-        });
+    transaction.executeWithoutResult(status -> {
+      dsl.execute(
+          "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
+              + "usage_revision = usage_revision + 1 "
+              + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+          capacity.tenantUuid());
+      dsl.execute(
+          "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, "
+              + "recovery_claim_fence = recovery_claim_fence + 1, "
+              + "recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute' "
+              + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+          UUID.randomUUID(),
+          capacity.tenantUuid(),
+          capacity.requestId(),
+          capacity.admissionId());
+      dsl.execute("SET CONSTRAINTS account_tenant_capacity_reservation_complete_update IMMEDIATE");
+      dsl.execute(
+          "UPDATE account_tenant_capacity_usage SET held_units = held_units - 1, "
+              + "usage_revision = usage_revision + 1 "
+              + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+          capacity.tenantUuid());
+    });
     Record reservation =
         Objects.requireNonNull(
             dsl.fetchSingle(
@@ -1547,50 +1538,48 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
 
   private static void assertReservationInsertMismatchRefused(
       DSLContext dsl, TransactionTemplate transaction, CapacityFixture capacity) {
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      UUID requestId = UUID.randomUUID();
-                      UUID admissionId = UUID.randomUUID();
-                      UUID attemptId = UUID.randomUUID();
-                      String mutationDigest = hex('4');
-                      byte[] canonicalPayload = new byte[] {9};
-                      insertOriginDecisionIfPresent(
-                          dsl,
-                          capacity.tenantUuid(),
-                          requestId,
-                          admissionId,
-                          1,
-                          attemptId,
-                          mutationDigest,
-                          canonicalPayload);
-                      dsl.execute(
-                          "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
-                              + "usage_revision = usage_revision + 1 "
-                              + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-                          capacity.tenantUuid());
-                      dsl.execute(
-                          "INSERT INTO account_tenant_capacity_reservations "
-                              + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, "
-                              + "caller_workload, admission_attempt_id, capacity_rearm_fence, "
-                              + "reservation_fence, mutation_digest, canonical_payload, evaluation_identity, "
-                              + "capacity_delta, expires_at, state, execution_status, reconcile_deadline) "
-                              + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 0, "
-                              + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', "
-                              + "'OWNER_EXECUTION_PENDING', CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
-                          capacity.tenantUuid(),
-                          requestId,
-                          admissionId,
-                          UUID.randomUUID(),
-                          capacity.callerWorkload(),
-                          attemptId,
-                          mutationDigest,
-                          canonicalPayload,
-                          capacity.evaluationIdentity());
-                      dsl.execute(
-                          "SET CONSTRAINTS account_tenant_capacity_reservation_complete_insert IMMEDIATE");
-                    }))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status -> {
+              UUID requestId = UUID.randomUUID();
+              UUID admissionId = UUID.randomUUID();
+              UUID attemptId = UUID.randomUUID();
+              String mutationDigest = hex('4');
+              byte[] canonicalPayload = new byte[] {9};
+              insertOriginDecisionIfPresent(
+                  dsl,
+                  capacity.tenantUuid(),
+                  requestId,
+                  admissionId,
+                  1,
+                  attemptId,
+                  mutationDigest,
+                  canonicalPayload);
+              dsl.execute(
+                  "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
+                      + "usage_revision = usage_revision + 1 "
+                      + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+                  capacity.tenantUuid());
+              dsl.execute(
+                  "INSERT INTO account_tenant_capacity_reservations "
+                      + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, "
+                      + "caller_workload, admission_attempt_id, capacity_rearm_fence, "
+                      + "reservation_fence, mutation_digest, canonical_payload, evaluation_identity, "
+                      + "capacity_delta, expires_at, state, execution_status, reconcile_deadline) "
+                      + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 0, "
+                      + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', "
+                      + "'OWNER_EXECUTION_PENDING', CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
+                  capacity.tenantUuid(),
+                  requestId,
+                  admissionId,
+                  UUID.randomUUID(),
+                  capacity.callerWorkload(),
+                  attemptId,
+                  mutationDigest,
+                  canonicalPayload,
+                  capacity.evaluationIdentity());
+              dsl.execute(
+                  "SET CONSTRAINTS account_tenant_capacity_reservation_complete_insert IMMEDIATE");
+            }))
         .satisfies(AccountTenantCapacityMigrationPostgresIntegrationTest::assertInventoryRefusal);
   }
 
@@ -1623,49 +1612,44 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
 
   private static void assertReservationStateChangeMismatchRefused(
       DSLContext dsl, TransactionTemplate transaction, CapacityFixture capacity) {
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      dsl.execute(
-                          "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
-                              + "usage_revision = usage_revision + 1 "
-                              + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-                          capacity.tenantUuid());
-                      dsl.execute(
-                          "UPDATE account_tenant_capacity_reservations SET state = 'RELEASED', "
-                              + "execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION', "
-                              + "recovery_owner = ?, recovery_claim_fence = 1, "
-                              + "recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute', "
-                              + "reservation_fence = reservation_fence + 1, owner_readback = ?, "
-                              + "owner_readback_digest = ? "
-                              + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                          UUID.randomUUID(),
-                          new byte[] {10},
-                          hex('5'),
-                          capacity.tenantUuid(),
-                          capacity.requestId(),
-                          capacity.admissionId());
-                      dsl.execute(
-                          "SET CONSTRAINTS account_tenant_capacity_reservation_complete_update IMMEDIATE");
-                    }))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status -> {
+              dsl.execute(
+                  "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
+                      + "usage_revision = usage_revision + 1 "
+                      + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+                  capacity.tenantUuid());
+              dsl.execute(
+                  "UPDATE account_tenant_capacity_reservations SET state = 'RELEASED', "
+                      + "execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION', "
+                      + "recovery_owner = ?, recovery_claim_fence = 1, "
+                      + "recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute', "
+                      + "reservation_fence = reservation_fence + 1, owner_readback = ?, "
+                      + "owner_readback_digest = ? "
+                      + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                  UUID.randomUUID(),
+                  new byte[] {10},
+                  hex('5'),
+                  capacity.tenantUuid(),
+                  capacity.requestId(),
+                  capacity.admissionId());
+              dsl.execute(
+                  "SET CONSTRAINTS account_tenant_capacity_reservation_complete_update IMMEDIATE");
+            }))
         .satisfies(AccountTenantCapacityMigrationPostgresIntegrationTest::assertInventoryRefusal);
   }
 
   private static void assertUsageWriteMismatchRefused(
       DSLContext dsl, TransactionTemplate transaction, CapacityFixture capacity) {
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      dsl.execute(
-                          "UPDATE account_tenant_capacity_usage SET used_units = used_units + 1, "
-                              + "usage_revision = usage_revision + 1 "
-                              + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-                          capacity.tenantUuid());
-                      dsl.execute(
-                          "SET CONSTRAINTS account_tenant_capacity_usage_complete IMMEDIATE");
-                    }))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status -> {
+              dsl.execute(
+                  "UPDATE account_tenant_capacity_usage SET used_units = used_units + 1, "
+                      + "usage_revision = usage_revision + 1 "
+                      + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+                  capacity.tenantUuid());
+              dsl.execute("SET CONSTRAINTS account_tenant_capacity_usage_complete IMMEDIATE");
+            }))
         .satisfies(AccountTenantCapacityMigrationPostgresIntegrationTest::assertInventoryRefusal);
   }
 

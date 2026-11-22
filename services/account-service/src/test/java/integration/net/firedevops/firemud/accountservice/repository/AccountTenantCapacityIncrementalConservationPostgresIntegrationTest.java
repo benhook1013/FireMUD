@@ -54,17 +54,16 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
           addFinalizedHistory(database, capacity, 16);
           database
               .transaction()
-              .executeWithoutResult(
-                  status -> {
-                    CapacityFixture released = insertReservation(dsl, capacity, 2);
-                    changeUsage(dsl, capacity, 2, 0);
-                    settle(dsl, released, "RELEASED");
-                    changeUsage(dsl, capacity, -2, 0);
-                    CapacityFixture quarantined = insertReservation(dsl, capacity, 4);
-                    changeUsage(dsl, capacity, 4, 0);
-                    quarantine(dsl, quarantined);
-                    insertReservation(dsl, capacity, 0);
-                  });
+              .executeWithoutResult(status -> {
+                CapacityFixture released = insertReservation(dsl, capacity, 2);
+                changeUsage(dsl, capacity, 2, 0);
+                settle(dsl, released, "RELEASED");
+                changeUsage(dsl, capacity, -2, 0);
+                CapacityFixture quarantined = insertReservation(dsl, capacity, 4);
+                changeUsage(dsl, capacity, 4, 0);
+                quarantine(dsl, quarantined);
+                insertReservation(dsl, capacity, 0);
+              });
         }
         List<String> rows = capacityTableImages(dsl);
         List<String> history = historyImages(dsl);
@@ -97,20 +96,19 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
         // silently trust usage, repair history, or bless a guessed conservation baseline.
         database
             .transaction()
-            .executeWithoutResult(
-                status -> {
-                  dsl.execute(
-                      "ALTER TABLE account_tenant_capacity_usage DISABLE TRIGGER account_tenant_capacity_usage_complete");
-                  dsl.execute(
-                      "UPDATE account_tenant_capacity_usage SET "
-                          + column
-                          + " = "
-                          + column
-                          + " + 1, usage_revision = usage_revision + 1 WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-                      capacity.tenantUuid());
-                  dsl.execute(
-                      "ALTER TABLE account_tenant_capacity_usage ENABLE TRIGGER account_tenant_capacity_usage_complete");
-                });
+            .executeWithoutResult(status -> {
+              dsl.execute(
+                  "ALTER TABLE account_tenant_capacity_usage DISABLE TRIGGER account_tenant_capacity_usage_complete");
+              dsl.execute(
+                  "UPDATE account_tenant_capacity_usage SET "
+                      + column
+                      + " = "
+                      + column
+                      + " + 1, usage_revision = usage_revision + 1 WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+                  capacity.tenantUuid());
+              dsl.execute(
+                  "ALTER TABLE account_tenant_capacity_usage ENABLE TRIGGER account_tenant_capacity_usage_complete");
+            });
         List<String> rows = capacityTableImages(dsl);
         List<String> history = historyImages(dsl);
         assertThatThrownBy(
@@ -143,74 +141,72 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
       CapacityFixture capacity = populateCapacity(dsl, database.transaction());
       database
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                CapacityFixture finalized = insertReservation(dsl, capacity, 2);
-                changeUsage(dsl, capacity, 2, 0);
-                settle(dsl, finalized, "FINALIZED");
-                changeUsage(dsl, capacity, -2, 2);
-                CapacityFixture released = insertReservation(dsl, capacity, 4);
-                changeUsage(dsl, capacity, 4, 0);
-                settle(dsl, released, "RELEASED");
-                changeUsage(dsl, capacity, -4, 0);
-                settle(dsl, insertReservation(dsl, capacity, 0), "FINALIZED");
-                settle(dsl, insertReservation(dsl, capacity, 0), "RELEASED");
-                quarantine(dsl, insertReservation(dsl, capacity, 0));
-                CapacityFixture quarantined = insertReservation(dsl, capacity, 5);
-                changeUsage(dsl, capacity, 5, 0);
-                quarantine(dsl, quarantined);
-              });
+          .executeWithoutResult(status -> {
+            CapacityFixture finalized = insertReservation(dsl, capacity, 2);
+            changeUsage(dsl, capacity, 2, 0);
+            settle(dsl, finalized, "FINALIZED");
+            changeUsage(dsl, capacity, -2, 2);
+            CapacityFixture released = insertReservation(dsl, capacity, 4);
+            changeUsage(dsl, capacity, 4, 0);
+            settle(dsl, released, "RELEASED");
+            changeUsage(dsl, capacity, -4, 0);
+            settle(dsl, insertReservation(dsl, capacity, 0), "FINALIZED");
+            settle(dsl, insertReservation(dsl, capacity, 0), "RELEASED");
+            quarantine(dsl, insertReservation(dsl, capacity, 0));
+            CapacityFixture quarantined = insertReservation(dsl, capacity, 5);
+            changeUsage(dsl, capacity, 5, 0);
+            quarantine(dsl, quarantined);
+          });
       assertConserved(dsl);
       assertUsage(dsl, capacity, 8, 2);
 
       List<String> aggregate = conservationImages(dsl);
       database
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                dsl.execute(
-                    "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, "
-                        + "recovery_claim_fence = 1, recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute', "
-                        + "execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION', owner_readback = ?, owner_readback_digest = ? "
-                        + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                    UUID.randomUUID(),
-                    new byte[] {1},
-                    hex('5'),
-                    capacity.tenantUuid(),
-                    capacity.requestId(),
-                    capacity.admissionId());
-                UUID rearmedAttempt = UUID.randomUUID();
-                String rearmedDigest = hex('6');
-                byte[] rearmedPayload = new byte[] {2};
-                insertOriginDecision(
-                    dsl,
-                    capacity.tenantUuid(),
-                    capacity.requestId(),
-                    capacity.admissionId(),
-                    2,
-                    rearmedAttempt,
-                    rearmedDigest,
-                    rearmedPayload);
-                dsl.execute(
-                    "INSERT INTO account_tenant_capacity_attempt_history "
-                        + "(tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback) "
-                        + "SELECT tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback "
-                        + "FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                    capacity.tenantUuid(),
-                    capacity.requestId(),
-                    capacity.admissionId());
-                dsl.execute(
-                    "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, "
-                        + "capacity_rearm_fence = capacity_rearm_fence + 1, reservation_fence = reservation_fence + 1, "
-                        + "mutation_digest = ?, canonical_payload = ?, execution_status = 'OWNER_EXECUTION_PENDING', "
-                        + "owner_readback = NULL, owner_readback_digest = NULL WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                    rearmedAttempt,
-                    rearmedDigest,
-                    rearmedPayload,
-                    capacity.tenantUuid(),
-                    capacity.requestId(),
-                    capacity.admissionId());
-              });
+          .executeWithoutResult(status -> {
+            dsl.execute(
+                "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, "
+                    + "recovery_claim_fence = 1, recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute', "
+                    + "execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION', owner_readback = ?, owner_readback_digest = ? "
+                    + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                UUID.randomUUID(),
+                new byte[] {1},
+                hex('5'),
+                capacity.tenantUuid(),
+                capacity.requestId(),
+                capacity.admissionId());
+            UUID rearmedAttempt = UUID.randomUUID();
+            String rearmedDigest = hex('6');
+            byte[] rearmedPayload = new byte[] {2};
+            insertOriginDecision(
+                dsl,
+                capacity.tenantUuid(),
+                capacity.requestId(),
+                capacity.admissionId(),
+                2,
+                rearmedAttempt,
+                rearmedDigest,
+                rearmedPayload);
+            dsl.execute(
+                "INSERT INTO account_tenant_capacity_attempt_history "
+                    + "(tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback) "
+                    + "SELECT tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback "
+                    + "FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                capacity.tenantUuid(),
+                capacity.requestId(),
+                capacity.admissionId());
+            dsl.execute(
+                "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, "
+                    + "capacity_rearm_fence = capacity_rearm_fence + 1, reservation_fence = reservation_fence + 1, "
+                    + "mutation_digest = ?, canonical_payload = ?, execution_status = 'OWNER_EXECUTION_PENDING', "
+                    + "owner_readback = NULL, owner_readback_digest = NULL WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                rearmedAttempt,
+                rearmedDigest,
+                rearmedPayload,
+                capacity.tenantUuid(),
+                capacity.requestId(),
+                capacity.admissionId());
+          });
       assertThat(conservationImages(dsl)).isEqualTo(aggregate);
       assertUsage(dsl, capacity, 8, 2);
       assertConserved(dsl);
@@ -230,56 +226,48 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
               "UPDATE account_tenant_capacity_conservation SET held_units = held_units WHERE tenant_uuid = ?",
               "DELETE FROM account_tenant_capacity_conservation WHERE tenant_uuid = ?",
               "INSERT INTO account_tenant_capacity_conservation VALUES (?, 'game-session-service', 0, 0)")) {
-        assertThatThrownBy(
-                () ->
-                    database
-                        .transaction()
-                        .executeWithoutResult(
-                            status -> dsl.execute(statement, capacity.tenantUuid())))
+        assertThatThrownBy(() ->
+                database
+                    .transaction()
+                    .executeWithoutResult(status -> dsl.execute(statement, capacity.tenantUuid())))
             .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       }
-      assertThatThrownBy(
-              () ->
-                  database
-                      .transaction()
-                      .executeWithoutResult(
-                          status -> dsl.execute("TRUNCATE account_tenant_capacity_conservation")))
+      assertThatThrownBy(() ->
+              database
+                  .transaction()
+                  .executeWithoutResult(
+                      status -> dsl.execute("TRUNCATE account_tenant_capacity_conservation")))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
-      assertThatThrownBy(
-              () ->
-                  database
-                      .transaction()
-                      .executeWithoutResult(status -> changeUsage(dsl, capacity, 1, 0)))
+      assertThatThrownBy(() ->
+              database
+                  .transaction()
+                  .executeWithoutResult(status -> changeUsage(dsl, capacity, 1, 0)))
           .satisfies(
               AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
                   ::assertConservationRefusal);
-      assertThatThrownBy(
-              () ->
-                  database
-                      .transaction()
-                      .executeWithoutResult(status -> insertReservation(dsl, capacity, 1)))
+      assertThatThrownBy(() ->
+              database
+                  .transaction()
+                  .executeWithoutResult(status -> insertReservation(dsl, capacity, 1)))
           .satisfies(
               AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
                   ::assertConservationRefusal);
-      assertThatThrownBy(
-              () ->
-                  database
-                      .transaction()
-                      .executeWithoutResult(status -> settle(dsl, capacity, "FINALIZED")))
+      assertThatThrownBy(() ->
+              database
+                  .transaction()
+                  .executeWithoutResult(status -> settle(dsl, capacity, "FINALIZED")))
           .satisfies(
               AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
                   ::assertConservationRefusal);
-      assertThatThrownBy(
-              () ->
-                  database
-                      .transaction()
-                      .executeWithoutResult(
-                          status -> {
-                            changeUsage(dsl, capacity, 1, 0);
-                            insertReservation(dsl, capacity, 1);
-                            dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
-                            throw new IllegalStateException("deliberate owner rollback");
-                          }))
+      assertThatThrownBy(() ->
+              database
+                  .transaction()
+                  .executeWithoutResult(status -> {
+                    changeUsage(dsl, capacity, 1, 0);
+                    insertReservation(dsl, capacity, 1);
+                    dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
+                    throw new IllegalStateException("deliberate owner rollback");
+                  }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("deliberate owner rollback");
       assertThat(capacityTableImages(dsl)).isEqualTo(rows);
@@ -314,42 +302,40 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
       assertBoundedFunctions(dsl);
       database
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                long before = reservationRowsRead(dsl);
-                changeUsage(dsl, capacity, 1, 0);
-                CapacityFixture next = insertReservation(dsl, capacity, 1);
-                dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
-                assertThat(reservationRowsRead(dsl) - before).isLessThanOrEqualTo(8L);
-                // Restore deferred scheduling so the unchanged application may write usage first.
-                dsl.execute("SET CONSTRAINTS ALL DEFERRED");
-                before = reservationRowsRead(dsl);
-                changeUsage(dsl, capacity, -1, 1);
-                settle(dsl, next, "FINALIZED");
-                dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
-                assertThat(reservationRowsRead(dsl) - before).isLessThanOrEqualTo(8L);
-              });
+          .executeWithoutResult(status -> {
+            long before = reservationRowsRead(dsl);
+            changeUsage(dsl, capacity, 1, 0);
+            CapacityFixture next = insertReservation(dsl, capacity, 1);
+            dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
+            assertThat(reservationRowsRead(dsl) - before).isLessThanOrEqualTo(8L);
+            // Restore deferred scheduling so the unchanged application may write usage first.
+            dsl.execute("SET CONSTRAINTS ALL DEFERRED");
+            before = reservationRowsRead(dsl);
+            changeUsage(dsl, capacity, -1, 1);
+            settle(dsl, next, "FINALIZED");
+            dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
+            assertThat(reservationRowsRead(dsl) - before).isLessThanOrEqualTo(8L);
+          });
       List<String> aggregate = conservationImages(dsl);
       database
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                long before = reservationRowsRead(dsl);
-                changeUsage(dsl, capacity, 1, 0);
-                dsl.execute(
-                    "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = 1, "
-                        + "recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute' "
-                        + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                    UUID.randomUUID(),
-                    capacity.tenantUuid(),
-                    capacity.requestId(),
-                    capacity.admissionId());
-                dsl.execute(
-                    "SET CONSTRAINTS account_tenant_capacity_reservation_complete_update IMMEDIATE");
-                changeUsage(dsl, capacity, -1, 0);
-                dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
-                assertThat(reservationRowsRead(dsl) - before).isLessThanOrEqualTo(8L);
-              });
+          .executeWithoutResult(status -> {
+            long before = reservationRowsRead(dsl);
+            changeUsage(dsl, capacity, 1, 0);
+            dsl.execute(
+                "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = 1, "
+                    + "recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute' "
+                    + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                UUID.randomUUID(),
+                capacity.tenantUuid(),
+                capacity.requestId(),
+                capacity.admissionId());
+            dsl.execute(
+                "SET CONSTRAINTS account_tenant_capacity_reservation_complete_update IMMEDIATE");
+            changeUsage(dsl, capacity, -1, 0);
+            dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
+            assertThat(reservationRowsRead(dsl) - before).isLessThanOrEqualTo(8L);
+          });
       assertThat(conservationImages(dsl)).isEqualTo(aggregate);
       assertUsage(dsl, capacity, 3, 4097);
       assertConserved(dsl);
@@ -360,55 +346,54 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
     DSLContext dsl = database.dsl();
     database
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              changeUsage(dsl, capacity, count, 0);
-              for (int index = 0; index < count; index++) {
-                UUID requestId = UUID.randomUUID();
-                UUID admissionId = UUID.randomUUID();
-                UUID attemptId = UUID.randomUUID();
-                String mutationDigest = hex('9');
-                byte[] canonicalPayload = new byte[] {9};
-                insertOriginDecision(
-                    dsl,
-                    capacity.tenantUuid(),
-                    requestId,
-                    admissionId,
-                    1,
-                    attemptId,
-                    mutationDigest,
-                    canonicalPayload);
-                dsl.execute(
-                    "INSERT INTO account_tenant_capacity_reservations "
-                        + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, "
-                        + "capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, "
-                        + "expires_at, state, execution_status, reconcile_deadline) "
-                        + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, "
-                        + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', 'OWNER_EXECUTION_PENDING', "
-                        + "CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
-                    capacity.tenantUuid(),
-                    requestId,
-                    admissionId,
-                    UUID.randomUUID(),
-                    capacity.callerWorkload(),
-                    attemptId,
-                    mutationDigest,
-                    canonicalPayload,
-                    capacity.evaluationIdentity());
-              }
-              changeUsage(dsl, capacity, -count, count);
-              assertThat(
-                      dsl.execute(
-                          "UPDATE account_tenant_capacity_reservations SET state = 'FINALIZED', execution_status = 'COMMITTED', "
-                              + "recovery_owner = ?, recovery_claim_fence = 1, recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute', "
-                              + "owner_readback = ?, owner_readback_digest = ? WHERE tenant_uuid = ? AND mutation_digest = ? AND state = 'RESERVED'",
-                          UUID.randomUUID(),
-                          new byte[] {9},
-                          hex('9'),
-                          capacity.tenantUuid(),
-                          hex('9')))
-                  .isEqualTo(count);
-            });
+        .executeWithoutResult(status -> {
+          changeUsage(dsl, capacity, count, 0);
+          for (int index = 0; index < count; index++) {
+            UUID requestId = UUID.randomUUID();
+            UUID admissionId = UUID.randomUUID();
+            UUID attemptId = UUID.randomUUID();
+            String mutationDigest = hex('9');
+            byte[] canonicalPayload = new byte[] {9};
+            insertOriginDecision(
+                dsl,
+                capacity.tenantUuid(),
+                requestId,
+                admissionId,
+                1,
+                attemptId,
+                mutationDigest,
+                canonicalPayload);
+            dsl.execute(
+                "INSERT INTO account_tenant_capacity_reservations "
+                    + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, "
+                    + "capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, "
+                    + "expires_at, state, execution_status, reconcile_deadline) "
+                    + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, "
+                    + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', 'OWNER_EXECUTION_PENDING', "
+                    + "CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
+                capacity.tenantUuid(),
+                requestId,
+                admissionId,
+                UUID.randomUUID(),
+                capacity.callerWorkload(),
+                attemptId,
+                mutationDigest,
+                canonicalPayload,
+                capacity.evaluationIdentity());
+          }
+          changeUsage(dsl, capacity, -count, count);
+          assertThat(
+                  dsl.execute(
+                      "UPDATE account_tenant_capacity_reservations SET state = 'FINALIZED', execution_status = 'COMMITTED', "
+                          + "recovery_owner = ?, recovery_claim_fence = 1, recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute', "
+                          + "owner_readback = ?, owner_readback_digest = ? WHERE tenant_uuid = ? AND mutation_digest = ? AND state = 'RESERVED'",
+                      UUID.randomUUID(),
+                      new byte[] {9},
+                      hex('9'),
+                      capacity.tenantUuid(),
+                      hex('9')))
+              .isEqualTo(count);
+        });
   }
 
   private static CapacityFixture insertReservation(
@@ -620,46 +605,42 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
     var contenderPid = new AtomicInteger();
     DSLContext dsl = database.dsl();
     var first =
-        workers.submit(
-            () ->
-                database
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          firstPid.set(backendPid(dsl));
-                          changeUsage(dsl, capacity, 1, 0);
-                          insertReservation(dsl, capacity, 1);
-                          firstHoldsUsage.countDown();
-                          await(releaseFirst);
-                        }));
+        workers.submit(() ->
+            database
+                .transaction()
+                .executeWithoutResult(status -> {
+                  firstPid.set(backendPid(dsl));
+                  changeUsage(dsl, capacity, 1, 0);
+                  insertReservation(dsl, capacity, 1);
+                  firstHoldsUsage.countDown();
+                  await(releaseFirst);
+                }));
     try {
       await(firstHoldsUsage);
       Runnable contend =
           () ->
               database
                   .transaction()
-                  .executeWithoutResult(
-                      status -> {
-                        contenderPid.set(backendPid(dsl));
-                        contenderConnected.countDown();
-                        if (balanced) {
-                          changeUsage(dsl, capacity, contenderAmount, 0);
-                        }
-                        insertReservation(dsl, capacity, contenderAmount);
-                        dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
-                      });
+                  .executeWithoutResult(status -> {
+                    contenderPid.set(backendPid(dsl));
+                    contenderConnected.countDown();
+                    if (balanced) {
+                      changeUsage(dsl, capacity, contenderAmount, 0);
+                    }
+                    insertReservation(dsl, capacity, contenderAmount);
+                    dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
+                  });
       var second =
-          workers.submit(
-              () -> {
-                if (balanced) {
-                  contend.run();
-                } else {
-                  assertThatThrownBy(contend::run)
-                      .satisfies(
-                          AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
-                              ::assertConservationRefusal);
-                }
-              });
+          workers.submit(() -> {
+            if (balanced) {
+              contend.run();
+            } else {
+              assertThatThrownBy(contend::run)
+                  .satisfies(
+                      AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
+                          ::assertConservationRefusal);
+            }
+          });
       try {
         await(contenderConnected);
         assertThat(contenderPid.get()).isNotEqualTo(firstPid.get());
@@ -689,7 +670,8 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
 
   private static boolean blocks(DSLContext dsl, int holder, int contender) {
     return Boolean.TRUE.equals(
-        Objects.requireNonNull(dsl.fetchOne("SELECT ? = ANY(pg_blocking_pids(?))", holder, contender))
+        Objects.requireNonNull(
+                dsl.fetchOne("SELECT ? = ANY(pg_blocking_pids(?))", holder, contender))
             .get(0, Boolean.class));
   }
 

@@ -179,15 +179,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
     assertThat(count(c, "account_tenant_entitlement_outbox_events")).isOne();
     assertThat(count(c, "account_authority_outbox_events")).isOne();
-    assertThatThrownBy(
-            () ->
-                f.service()
-                    .reconcile(
-                        request,
-                        f.creation().requestId(),
-                        claim.expectedRowVersion(),
-                        "sub_other",
-                        null))
+    assertThatThrownBy(() ->
+            f.service()
+                .reconcile(
+                    request,
+                    f.creation().requestId(),
+                    claim.expectedRowVersion(),
+                    "sub_other",
+                    null))
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
     assertThat(f.transport().reads).isEqualTo(reads);
   }
@@ -302,15 +301,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       Fixture f = fixture(c);
       f.transport().json = response(f, status);
       var claim = claim(f);
-      assertThatThrownBy(
-              () ->
-                  f.service()
-                      .reconcile(
-                          UUID.randomUUID(),
-                          f.creation().requestId(),
-                          claim.subscriptionRowVersion(),
-                          f.providerId(),
-                          claim.attemptId()))
+      assertThatThrownBy(() ->
+              f.service()
+                  .reconcile(
+                      UUID.randomUUID(),
+                      f.creation().requestId(),
+                      claim.subscriptionRowVersion(),
+                      f.providerId(),
+                      claim.attemptId()))
           .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
           .hasMessageContaining("first-invoice");
       for (String table :
@@ -398,16 +396,15 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                         .completed(f.creation().subscriptionId(), success.lifecycleRequestId())))
         .isTrue();
     assertThat(checkout.confirmations()).isOne();
-    assertThatThrownBy(
-            () ->
-                checkout
-                    .provider()
-                    .confirm(
-                        authorized,
-                        () -> {
-                          throw new AssertionError(
-                              "Expired consent must not request a provider command claim");
-                        }))
+    assertThatThrownBy(() ->
+            checkout
+                .provider()
+                .confirm(
+                    authorized,
+                    () -> {
+                      throw new AssertionError(
+                          "Expired consent must not request a provider command claim");
+                    }))
         .hasMessageContaining("consent");
     assertThat(checkout.confirmations()).isOne();
     assertThat(count(c, "subscription_first_invoice_dispatches")).isOne();
@@ -691,28 +688,27 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   private static void retainUnqualifiedPositive(Fixture f, String status) {
     Context c = f.context();
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.dsl()
-                  .execute(
-                      "INSERT INTO subscription_provider_history (provider_subscription_id,"
-                          + " subscription_id, operation_kind, request_id, provider_operation_id,"
-                          + " role, effective_at, evidence_digest) VALUES (?, ?,"
-                          + " 'SUBSCRIPTION_PROVISIONING', ?, ?, 'canonical', ?::timestamptz, ?)",
-                      f.providerId(),
-                      f.creation().subscriptionId(),
-                      f.creation().requestId(),
-                      f.creation().subscriptionProvisioningRequestId(),
-                      f.clock().instant().atOffset(ZoneOffset.UTC),
-                      DIGEST);
-              c.dsl()
-                  .execute(
-                      "UPDATE subscription SET status = ?, provider_subscription_id = ?,"
-                          + " row_version = row_version + 1 WHERE subscription_id = ?",
-                      status,
-                      f.providerId(),
-                      f.creation().subscriptionId());
-            });
+        .executeWithoutResult(s -> {
+          c.dsl()
+              .execute(
+                  "INSERT INTO subscription_provider_history (provider_subscription_id,"
+                      + " subscription_id, operation_kind, request_id, provider_operation_id,"
+                      + " role, effective_at, evidence_digest) VALUES (?, ?,"
+                      + " 'SUBSCRIPTION_PROVISIONING', ?, ?, 'canonical', ?::timestamptz, ?)",
+                  f.providerId(),
+                  f.creation().subscriptionId(),
+                  f.creation().requestId(),
+                  f.creation().subscriptionProvisioningRequestId(),
+                  f.clock().instant().atOffset(ZoneOffset.UTC),
+                  DIGEST);
+          c.dsl()
+              .execute(
+                  "UPDATE subscription SET status = ?, provider_subscription_id = ?,"
+                      + " row_version = row_version + 1 WHERE subscription_id = ?",
+                  status,
+                  f.providerId(),
+                  f.creation().subscriptionId());
+        });
   }
 
   @ParameterizedTest
@@ -766,34 +762,31 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         sql.execute(new String(resource.readAllBytes(), StandardCharsets.UTF_8));
       }
       var update =
-          workers.submit(
-              () -> {
-                assertSqlState(
-                    "23514",
-                    "Current positive hosting subscription",
-                    () ->
-                        c.tx()
-                            .executeWithoutResult(
-                                ignored -> {
-                                  c.dsl()
-                                      .execute(
-                                          "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
-                                          writerName + "_update");
-                                  retainUnqualifiedPositive(existing, "active");
-                                }));
-              });
+          workers.submit(() -> {
+            assertSqlState(
+                "23514",
+                "Current positive hosting subscription",
+                () ->
+                    c.tx()
+                        .executeWithoutResult(ignored -> {
+                          c.dsl()
+                              .execute(
+                                  "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
+                                  writerName + "_update");
+                          retainUnqualifiedPositive(existing, "active");
+                        }));
+          });
       var insert =
-          workers.submit(
-              () ->
-                  in(
-                      c,
-                      () -> {
-                        c.dsl()
-                            .execute(
-                                "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
-                                writerName + "_insert");
-                        return fixture(c);
-                      }));
+          workers.submit(() ->
+              in(
+                  c,
+                  () -> {
+                    c.dsl()
+                        .execute(
+                            "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
+                            writerName + "_insert");
+                    return fixture(c);
+                  }));
       awaitSubscriptionWriterLock(c, writerName + "_update");
       awaitSubscriptionWriterLock(c, writerName + "_insert");
       migration.commit();
@@ -838,12 +831,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     var readOnly = new TransactionTemplate(Objects.requireNonNull(c.tx().getTransactionManager()));
     readOnly.setReadOnly(true);
     readOnly.setTimeout(5);
-    readOnly.executeWithoutResult(
-        ignored -> {
-          assertThat(c.dsl().fetchSingle("SHOW transaction_read_only").get(0, String.class))
-              .isEqualTo("on");
-          f.owner().requireNoRetainedPositiveCompletionGaps(2);
-        });
+    readOnly.executeWithoutResult(ignored -> {
+      assertThat(c.dsl().fetchSingle("SHOW transaction_read_only").get(0, String.class))
+          .isEqualTo("on");
+      f.owner().requireNoRetainedPositiveCompletionGaps(2);
+    });
   }
 
   @Test
@@ -943,15 +935,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     var executor = Executors.newSingleThreadExecutor();
     try {
       var winner =
-          executor.submit(
-              () ->
-                  f.service()
-                      .reconcile(
-                          request,
-                          f.creation().requestId(),
-                          claim.expectedRowVersion(),
-                          f.providerId(),
-                          null));
+          executor.submit(() ->
+              f.service()
+                  .reconcile(
+                      request,
+                      f.creation().requestId(),
+                      claim.expectedRowVersion(),
+                      f.providerId(),
+                      null));
       assertThat(reading.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(
               f.service()
@@ -1083,11 +1074,9 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Context c = context("latest");
     Fixture f = fixture(c);
     var claim = paidClaim(f);
-    assertThatThrownBy(
-            () ->
-                f.service()
-                    .reconcile(
-                        UUID.randomUUID(), f.creation().requestId(), 1, f.providerId(), null))
+    assertThatThrownBy(() ->
+            f.service()
+                .reconcile(UUID.randomUUID(), f.creation().requestId(), 1, f.providerId(), null))
         .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
     assertThat(f.transport().reads).isZero();
     var wrongOwner =
@@ -1377,12 +1366,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         "Canceled first-invoice provisioning requires exact unclaimed terminal release",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    ignored ->
-                        c.dsl()
-                            .execute(
-                                "UPDATE subscription_provisioning_work SET phase = 'CANCELED', row_version = row_version + 1 WHERE request_id = ?",
-                                creationId)));
+                .executeWithoutResult(ignored ->
+                    c.dsl()
+                        .execute(
+                            "UPDATE subscription_provisioning_work SET phase = 'CANCELED', row_version = row_version + 1 WHERE request_id = ?",
+                            creationId)));
     configuration(c).load().migrate();
     for (String providerState : List.of("active", "incomplete")) {
       f.transport().json = response(f, providerState);
@@ -1761,14 +1749,13 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
     f.transport().json = response(f, "canceled");
-    assertThatThrownBy(
-            () ->
-                f.service()
-                    .reconcileUnpaidFirstInvoiceCancellation(
-                        UUID.randomUUID(),
-                        f.creation().requestId(),
-                        claimed.expectedRowVersion(),
-                        f.providerId()))
+    assertThatThrownBy(() ->
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    UUID.randomUUID(),
+                    f.creation().requestId(),
+                    claimed.expectedRowVersion(),
+                    f.providerId()))
         .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
         .hasMessageContaining("unclaimed unpaid");
     assertThat(f.transport().reads).isZero();
@@ -1941,20 +1928,18 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                         instrument.display(),
                         "sha256:" + "e".repeat(64))));
 
-    assertThatThrownBy(
-            () ->
-                checkout
-                    .provider()
-                    .confirm(
-                        dispatch,
-                        () ->
-                            in(
-                                c,
-                                () ->
-                                    checkout
-                                        .payments()
-                                        .claimCommand(
-                                            dispatch, checkout.invoice().ownerAccountId()))))
+    assertThatThrownBy(() ->
+            checkout
+                .provider()
+                .confirm(
+                    dispatch,
+                    () ->
+                        in(
+                            c,
+                            () ->
+                                checkout
+                                    .payments()
+                                    .claimCommand(dispatch, checkout.invoice().ownerAccountId()))))
         .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
     assertThat(checkout.confirmations()).isZero();
     assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
@@ -3367,19 +3352,18 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   private static void assertSqlState(String state, String diagnostic, Runnable body) {
     assertThatThrownBy(body::run)
-        .satisfies(
-            failure -> {
-              for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-                if (cause instanceof SQLException sql) {
-                  assertThat(sql.getSQLState()).isEqualTo(state);
-                  if (diagnostic != null) {
-                    assertThat(sql.getMessage()).contains(diagnostic);
-                  }
-                  return;
-                }
+        .satisfies(failure -> {
+          for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql) {
+              assertThat(sql.getSQLState()).isEqualTo(state);
+              if (diagnostic != null) {
+                assertThat(sql.getMessage()).contains(diagnostic);
               }
-              throw new AssertionError("Expected actual PostgreSQL constraint refusal", failure);
-            });
+              return;
+            }
+          }
+          throw new AssertionError("Expected actual PostgreSQL constraint refusal", failure);
+        });
   }
 
   private record Context(

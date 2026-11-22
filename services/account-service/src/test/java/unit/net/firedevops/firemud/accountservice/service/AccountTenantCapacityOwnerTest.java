@@ -116,10 +116,9 @@ class AccountTenantCapacityOwnerTest {
     var repository = new AccountTenantCapacityRepository(dsl);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                repository.createIfQuotaAvailable(
-                    request, repository.usage(request), request.evidence().expiresAt()))
+    assertThatThrownBy(() ->
+            repository.createIfQuotaAvailable(
+                request, repository.usage(request), request.evidence().expiresAt()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
@@ -1029,14 +1028,7 @@ class AccountTenantCapacityOwnerTest {
       when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
       owner =
           new AccountTenantCapacityOwner(
-              dsl,
-              accounts,
-              memberships,
-              issuances,
-              scopes,
-              transactions,
-              clock,
-              namespace);
+              dsl, accounts, memberships, issuances, scopes, transactions, clock, namespace);
     }
   }
 
@@ -1046,6 +1038,7 @@ class AccountTenantCapacityOwnerTest {
     private ControlledTransactions(Fixture fixture) {
       this.fixture = fixture;
     }
+
     private RuntimeException commitFailure;
 
     @Override

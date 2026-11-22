@@ -304,19 +304,17 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
           return fence;
         });
     when(f.observer.observe(fence.binding()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(f.accountLocks).isEmpty();
-              return observed;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(f.accountLocks).isEmpty();
+          return observed;
+        });
     when(f.hosting.readCurrent(fence, observed))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(f.accountLocks).containsExactly(BILLING_OWNER, ACCOUNT);
-              return f.receipt(status);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(f.accountLocks).containsExactly(BILLING_OWNER, ACCOUNT);
+          return f.receipt(status);
+        });
     var value = f.owner.evaluate(f.request, "controlled-token");
     assertThat(value.fields())
         .containsEntry("sourceKind", "PAID_HOSTING")
@@ -1172,28 +1170,26 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
             return 1;
           });
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0, String.class);
-                if (sql.startsWith(
-                    "SELECT owner_account_uuid FROM account_tenant_billing_owners ")) {
-                  var owner = mock(org.jooq.Record.class);
-                  when(owner.get("owner_account_uuid", UUID.class)).thenReturn(BILLING_OWNER);
-                  return owner;
-                }
-                if (sql.startsWith("SELECT account_uuid FROM accounts WHERE account_uuid = ?")) {
-                  Object[] values = (Object[]) invocation.getRawArguments()[1];
-                  UUID accountId = (UUID) values[0];
-                  accountLocks.add(accountId);
-                  var accountLock = mock(org.jooq.Record.class);
-                  when(accountLock.get("account_uuid", UUID.class)).thenReturn(accountId);
-                  return accountLock;
-                }
-                if (!sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
-                  throw new AssertionError(sql);
-                Object[] values = (Object[]) invocation.getRawArguments()[1];
-                return retainedCapacity.get((String) values[0]);
-              });
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0, String.class);
+            if (sql.startsWith("SELECT owner_account_uuid FROM account_tenant_billing_owners ")) {
+              var owner = mock(org.jooq.Record.class);
+              when(owner.get("owner_account_uuid", UUID.class)).thenReturn(BILLING_OWNER);
+              return owner;
+            }
+            if (sql.startsWith("SELECT account_uuid FROM accounts WHERE account_uuid = ?")) {
+              Object[] values = (Object[]) invocation.getRawArguments()[1];
+              UUID accountId = (UUID) values[0];
+              accountLocks.add(accountId);
+              var accountLock = mock(org.jooq.Record.class);
+              when(accountLock.get("account_uuid", UUID.class)).thenReturn(accountId);
+              return accountLock;
+            }
+            if (!sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
+              throw new AssertionError(sql);
+            Object[] values = (Object[]) invocation.getRawArguments()[1];
+            return retainedCapacity.get((String) values[0]);
+          });
       var evaluationTime = mock(org.jooq.Record.class);
       when(evaluationTime.get("observed_at", java.time.OffsetDateTime.class))
           .thenAnswer(invocation -> AccountTenantCapacityRepository.at(databaseTime.get()));

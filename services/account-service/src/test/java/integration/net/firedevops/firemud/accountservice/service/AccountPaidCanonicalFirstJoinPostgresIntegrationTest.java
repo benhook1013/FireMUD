@@ -313,16 +313,15 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       observed = hosting.observer().observe(fence.binding());
       hosting
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                var receipt = hosting.lifecycleRepository().readCurrent(fence, observed);
-                operations.bindCanonicalPolicyEvidence(
-                    requestId,
-                    scope,
-                    CALLER,
-                    receipt.allowPublicJoin(),
-                    receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
-              });
+          .executeWithoutResult(status -> {
+            var receipt = hosting.lifecycleRepository().readCurrent(fence, observed);
+            operations.bindCanonicalPolicyEvidence(
+                requestId,
+                scope,
+                CALLER,
+                receipt.allowPublicJoin(),
+                receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
+          });
       paidAuditRows = auditRows();
       assertThat(paidAuditRows).isNotEmpty();
     }
@@ -392,11 +391,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
           Objects.requireNonNull(
               hosting
                   .transaction()
-                  .execute(
-                      status ->
-                          new AccountAuditOutboxRepository(hosting.dsl())
-                              .findCanonicalTenantEnvelopeForUpdate(proof.auditEventId())
-                              .orElseThrow()));
+                  .execute(status ->
+                      new AccountAuditOutboxRepository(hosting.dsl())
+                          .findCanonicalTenantEnvelopeForUpdate(proof.auditEventId())
+                          .orElseThrow()));
       assertThat(joined.auditEventId()).isEqualTo(proof.auditEventId());
       assertThat(joined.eventType()).isEqualTo("ACCOUNT_JOINED_PUBLIC_PRODUCTION");
       assertThat(joined.tenantUuid()).isEqualTo(scope.tenantId());

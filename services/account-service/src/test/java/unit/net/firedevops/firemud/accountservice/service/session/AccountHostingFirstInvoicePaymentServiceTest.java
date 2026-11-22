@@ -76,11 +76,10 @@ class AccountHostingFirstInvoicePaymentServiceTest {
         .thenReturn(false, true, true, true);
     var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
     when(provider.observe(invoice))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return observed;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return observed;
+        });
     when(payments.retainSignedOutcome(event, observed))
         .thenReturn(
             new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
@@ -219,13 +218,12 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
     when(actor.accountId()).thenReturn(account);
     when(actors.withCurrentAccount(eq("bearer"), any()))
-        .thenAnswer(
-            call -> {
-              java.util.function.Function<
-                      AccountControlUiActorService.AccountAuthenticatedActor, Object>
-                  action = call.getArgument(1);
-              return action.apply(actor);
-            });
+        .thenAnswer(call -> {
+          java.util.function.Function<
+                  AccountControlUiActorService.AccountAuthenticatedActor, Object>
+              action = call.getArgument(1);
+          return action.apply(actor);
+        });
     var proof = mock(AccountRecentReauthenticationEvidence.class);
     when(proof.billingContext())
         .thenReturn(mock(AccountRecentReauthenticationEvidence.BillingContext.class));
@@ -245,15 +243,14 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     var noHandoff = mock(StripeHostingFirstInvoicePaymentClient.Handoff.class);
     when(noHandoff.clientSecret()).thenReturn(null);
     when(provider.confirm(eq(dispatch), any()))
-        .thenAnswer(
-            call -> {
-              java.util.function.Supplier<
-                      net.firedevops.firemud.accountservice.repository
-                          .AccountHostingFirstInvoicePaymentRepository.CommandClaim>
-                  claim = call.getArgument(1);
-              assertThat(claim.get()).isNull();
-              return noHandoff;
-            });
+        .thenAnswer(call -> {
+          java.util.function.Supplier<
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountHostingFirstInvoicePaymentRepository.CommandClaim>
+              claim = call.getArgument(1);
+          assertThat(claim.get()).isNull();
+          return noHandoff;
+        });
     service.renew("bearer", subscription, original, authorization, 3, 1, evidenceId, "tuple");
     verify(reauthentication)
         .validateAndConsumeLocked(
@@ -273,13 +270,12 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
     when(actor.accountId()).thenReturn(account);
     when(actors.withCurrentAccount(eq("bearer"), any()))
-        .thenAnswer(
-            call -> {
-              java.util.function.Function<
-                      AccountControlUiActorService.AccountAuthenticatedActor, Object>
-                  action = call.getArgument(1);
-              return action.apply(actor);
-            });
+        .thenAnswer(call -> {
+          java.util.function.Function<
+                  AccountControlUiActorService.AccountAuthenticatedActor, Object>
+              action = call.getArgument(1);
+          return action.apply(actor);
+        });
     var proof = mock(AccountRecentReauthenticationEvidence.class);
     when(proof.evidenceId()).thenReturn(evidenceId);
     when(proof.billingContext())

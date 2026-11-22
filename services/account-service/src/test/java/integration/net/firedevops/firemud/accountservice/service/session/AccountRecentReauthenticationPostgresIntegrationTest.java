@@ -858,10 +858,9 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     UUID evidenceId = insertEvidenceWithoutMac(c, account, UUID.randomUUID(), UUID.randomUUID());
     var evidence = readHistoricalEvidence(c, evidenceId);
     // This predecessor schema has the original consumption contract, without billing columns.
-    c.tx(
-        () ->
-            new AccountRecentReauthenticationRepository(c.dsl)
-                .insertConsumption(evidence, c.clock.instant()));
+    c.tx(() ->
+        new AccountRecentReauthenticationRepository(c.dsl)
+            .insertConsumption(evidence, c.clock.instant()));
     Record originalEvidence = c.evidenceRow(evidence.evidenceId());
     Record originalConsumption =
         Objects.requireNonNull(
@@ -1239,21 +1238,20 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     UUID operationId = UUID.randomUUID();
     String purpose = AccountRecentReauthenticationPolicy.BILLING_PURPOSE;
     UUID evidenceId =
-        c.tx(
-            () -> {
-              UUID id = insertEvidenceWithoutMac(c, account, requestId, operationId, purpose);
-              c.dsl.execute(
-                  "INSERT INTO account_recent_reauthentication_replay_credentials"
-                      + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
-                      + " VALUES (?, ?, ?, ?, ?, 'mac1', ?)",
-                  id,
-                  requestId,
-                  account.getAccountUuid(),
-                  purpose,
-                  operationId,
-                  "a".repeat(64));
-              return id;
-            });
+        c.tx(() -> {
+          UUID id = insertEvidenceWithoutMac(c, account, requestId, operationId, purpose);
+          c.dsl.execute(
+              "INSERT INTO account_recent_reauthentication_replay_credentials"
+                  + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                  + " VALUES (?, ?, ?, ?, ?, 'mac1', ?)",
+              id,
+              requestId,
+              account.getAccountUuid(),
+              purpose,
+              operationId,
+              "a".repeat(64));
+          return id;
+        });
     Record original = c.evidenceRow(evidenceId);
     String xmin = c.evidenceXmin(evidenceId);
     c.migrateToLatest();
@@ -2014,16 +2012,15 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   }
 
   private static void installBillingPolicy(Context c) {
-    c.tx(
-        () -> {
-          c.dsl.execute(
-              "INSERT INTO account_billing_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
-          return c.dsl.execute(
-              "INSERT INTO account_billing_reauthentication_policy_current "
-                  + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
-        });
+    c.tx(() -> {
+      c.dsl.execute(
+          "INSERT INTO account_billing_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
+      return c.dsl.execute(
+          "INSERT INTO account_billing_reauthentication_policy_current "
+              + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
+    });
   }
 
   private static void assertHistoricalEvidence(Context c, UUID id, Record original) {
@@ -2073,34 +2070,33 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             purpose,
             new AccountRecentReauthenticationPolicy.PlatformValue(1, 300, 30),
             new AccountRecentReauthenticationPolicy.DeploymentValue(1, 300, 30));
-    c.tx(
-        () -> {
-          var authority = c.generations.read(AuthorityScope.account(account.getAccountUuid()));
-          var fence = authority.issuanceFence();
-          return c.dsl.execute(
-              "INSERT INTO account_recent_reauthentication_evidence"
-                  + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, request_payload, request_digest,"
-                  + " identity_provenance, account_uuid_source_numeric_id, account_lifecycle_state, account_authority_generation,"
-                  + " account_authority_source_version, issuance_fence, issuance_fence_source_version, platform_policy_version,"
-                  + " deployment_policy_version, effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at)"
-                  + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
-              evidenceId,
-              requestId,
-              account.getAccountUuid(),
-              purpose,
-              operationId,
-              bytes,
-              digest,
-              account.getAccountUuidProvenance().name(),
-              account.getAccountUuidSourceNumericId(),
-              account.getLifecycleState().name(),
-              authority.generation(),
-              authority.sourceVersion(),
-              fence.value(),
-              fence.sourceVersion(),
-              policy.effectivePolicyVersion(),
-              java.time.OffsetDateTime.ofInstant(c.clock.instant(), ZoneOffset.UTC));
-        });
+    c.tx(() -> {
+      var authority = c.generations.read(AuthorityScope.account(account.getAccountUuid()));
+      var fence = authority.issuanceFence();
+      return c.dsl.execute(
+          "INSERT INTO account_recent_reauthentication_evidence"
+              + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, request_payload, request_digest,"
+              + " identity_provenance, account_uuid_source_numeric_id, account_lifecycle_state, account_authority_generation,"
+              + " account_authority_source_version, issuance_fence, issuance_fence_source_version, platform_policy_version,"
+              + " deployment_policy_version, effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at)"
+              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
+          evidenceId,
+          requestId,
+          account.getAccountUuid(),
+          purpose,
+          operationId,
+          bytes,
+          digest,
+          account.getAccountUuidProvenance().name(),
+          account.getAccountUuidSourceNumericId(),
+          account.getLifecycleState().name(),
+          authority.generation(),
+          authority.sourceVersion(),
+          fence.value(),
+          fence.sourceVersion(),
+          policy.effectivePolicyVersion(),
+          java.time.OffsetDateTime.ofInstant(c.clock.instant(), ZoneOffset.UTC));
+    });
     return evidenceId;
   }
 

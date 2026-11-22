@@ -123,10 +123,9 @@ class StripeHostingFirstInvoicePaymentClientTest {
           default -> "sub_exact";
         };
     var transport = new Transport(response.replace(needle, replacement));
-    assertThatThrownBy(
-            () ->
-                client(transport)
-                    .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
         .isInstanceOf(IllegalStateException.class);
     assertThat(transport.methods).containsExactly(RequestMethod.GET);
   }
@@ -176,10 +175,9 @@ class StripeHostingFirstInvoicePaymentClientTest {
         new Transport(
             invoice("requires_confirmation"),
             intent("requires_confirmation").replace("\"amount\":2400", "\"amount\":2500"));
-    assertThatThrownBy(
-            () ->
-                client(transport)
-                    .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
         .isInstanceOf(IllegalStateException.class);
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
   }
@@ -190,14 +188,13 @@ class StripeHostingFirstInvoicePaymentClientTest {
         new Transport(invoice("requires_confirmation"), intent("requires_confirmation"));
     var dispatch = dispatch();
     when(dispatch.validUntil()).thenReturn(NOW.plusSeconds(1));
-    assertThatThrownBy(
-            () ->
-                client(transport)
-                    .confirm(
-                        dispatch,
-                        () -> {
-                          throw new AssertionError("Expired dispatch budget reached the claim");
-                        }))
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(
+                    dispatch,
+                    () -> {
+                      throw new AssertionError("Expired dispatch budget reached the claim");
+                    }))
         .isInstanceOf(IllegalStateException.class);
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
   }
@@ -258,10 +255,8 @@ class StripeHostingFirstInvoicePaymentClientTest {
     var original = dispatch();
     when(original.validUntil()).thenReturn(NOW);
     when(original.takeInitialCommandPermission()).thenReturn(false);
-    assertThatThrownBy(
-            () ->
-                client(transport)
-                    .confirm(original, StripeHostingFirstInvoicePaymentClientTest::claim))
+    assertThatThrownBy(() ->
+            client(transport).confirm(original, StripeHostingFirstInvoicePaymentClientTest::claim))
         .isInstanceOf(IllegalStateException.class);
     assertThat(transport.methods).isEmpty();
   }
@@ -371,12 +366,11 @@ class StripeHostingFirstInvoicePaymentClientTest {
   @Test
   void forgedUncommittedDispatchAndAmbientSqlRefuseBeforeProviderIo() {
     var transport = new Transport();
-    assertThatThrownBy(
-            () ->
-                client(transport)
-                    .confirm(
-                        mock(ConfirmationDispatch.class),
-                        StripeHostingFirstInvoicePaymentClientTest::claim))
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(
+                    mock(ConfirmationDispatch.class),
+                    StripeHostingFirstInvoicePaymentClientTest::claim))
         .isInstanceOf(IllegalStateException.class);
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertThatThrownBy(() -> client(transport).observe(INVOICE))
@@ -435,14 +429,13 @@ class StripeHostingFirstInvoicePaymentClientTest {
   void failedOrUncertainDurableClaimNeverSendsProviderCommand() {
     var transport =
         new Transport(invoice("requires_confirmation"), intent("requires_confirmation"));
-    assertThatThrownBy(
-            () ->
-                client(transport)
-                    .confirm(
-                        dispatch(),
-                        () -> {
-                          throw new IllegalStateException("claim commit unknown");
-                        }))
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(
+                    dispatch(),
+                    () -> {
+                      throw new IllegalStateException("claim commit unknown");
+                    }))
         .hasMessageContaining("claim commit unknown");
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
   }

@@ -863,11 +863,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
           .when(scopes)
           .insertCanonical(anyLong(), any(), any());
       when(scopes.canonicalIssuanceTime())
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                return Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            return Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+          });
       when(scopes.findCanonical(any()))
           .thenAnswer(invocation -> {
             assertInsideSql();

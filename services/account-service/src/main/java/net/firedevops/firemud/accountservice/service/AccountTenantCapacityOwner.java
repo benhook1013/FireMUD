@@ -102,35 +102,34 @@ public final class AccountTenantCapacityOwner {
     request.requireStructurallyValid();
     if (!(request.context() instanceof PlayerContext)) throw unavailable();
     CommitDecision decision =
-        commitWithFreshSnapshot(
-            () -> {
-              // Replay precedes current sources and quota. A lost refusal response retains its
-              // original decision even if capacity becomes available before the caller retries.
-              Record existing = capacity.findForReplay(request.identity());
-              if (existing != null) {
-                return new CommitDecision(capacity.exact(request, existing), null);
-              }
-              if (request.capacityRearmFence() != 1) throw conflict();
-              UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
-              if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
-              originDecisions.requireFreshAttemptBinding(request);
-              lockPlayerAccount(request);
-              capacity.requireRetained(request.evidence());
-              // Acquire the usage lock before qualifying the remaining lifetime.
-              Record usage = capacity.usage(request);
-              current(request);
-              requireSupportedShape(request);
-              if (!request.evidence().permitsCreation())
-                throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-              var reservation =
-                  capacity.createIfQuotaAvailable(request, usage, request.evidence().expiresAt());
-              if (reservation.isPresent()) {
-                return new CommitDecision(reservation.orElseThrow(), null);
-              }
-              UUID denialId = originDecisions.refuseQuota(request);
-              capacity.requireFresh(request.evidence());
-              return new CommitDecision(null, denialId);
-            });
+        commitWithFreshSnapshot(() -> {
+          // Replay precedes current sources and quota. A lost refusal response retains its
+          // original decision even if capacity becomes available before the caller retries.
+          Record existing = capacity.findForReplay(request.identity());
+          if (existing != null) {
+            return new CommitDecision(capacity.exact(request, existing), null);
+          }
+          if (request.capacityRearmFence() != 1) throw conflict();
+          UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
+          if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
+          originDecisions.requireFreshAttemptBinding(request);
+          lockPlayerAccount(request);
+          capacity.requireRetained(request.evidence());
+          // Acquire the usage lock before qualifying the remaining lifetime.
+          Record usage = capacity.usage(request);
+          current(request);
+          requireSupportedShape(request);
+          if (!request.evidence().permitsCreation())
+            throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
+          var reservation =
+              capacity.createIfQuotaAvailable(request, usage, request.evidence().expiresAt());
+          if (reservation.isPresent()) {
+            return new CommitDecision(reservation.orElseThrow(), null);
+          }
+          UUID denialId = originDecisions.refuseQuota(request);
+          capacity.requireFresh(request.evidence());
+          return new CommitDecision(null, denialId);
+        });
     // Throw only after the transaction has committed the exact denial.
     if (decision.denialId() != null)
       throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decision.denialId());
@@ -381,18 +380,16 @@ public final class AccountTenantCapacityOwner {
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
     try {
       return Objects.requireNonNull(
-          transaction.execute(
-              status -> {
-                AccountTenantCapacityRepository.transaction();
-                dsl.connection(
-                    connection -> {
-                      if (connection.getAutoCommit()
-                          || connection.isReadOnly()
-                          || connection.getTransactionIsolation()
-                              != Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
-                    });
-                return action.get();
-              }));
+          transaction.execute(status -> {
+            AccountTenantCapacityRepository.transaction();
+            dsl.connection(connection -> {
+              if (connection.getAutoCommit()
+                  || connection.isReadOnly()
+                  || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE)
+                throw unavailable();
+            });
+            return action.get();
+          }));
     } catch (RuntimeException failure) {
       if (capacityAttemptFreshnessFailure(failure))
         throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);

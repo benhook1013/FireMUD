@@ -86,10 +86,9 @@ public final class AccountHostingSubscriptionProvisioningService {
       var observed = firstInvoiceProvider.capture(dispatch, actual.providerSubscriptionId());
       var retained =
           Objects.requireNonNull(
-              transaction.execute(
-                  status ->
-                      firstInvoices.retainAwaitingPayment(
-                          dispatch, actual.providerSubscriptionId(), observed)));
+              transaction.execute(status ->
+                  firstInvoices.retainAwaitingPayment(
+                      dispatch, actual.providerSubscriptionId(), observed)));
       var readback =
           Objects.requireNonNull(
               transaction.execute(status -> firstInvoices.find(retained.subscriptionId())));

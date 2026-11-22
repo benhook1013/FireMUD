@@ -100,10 +100,9 @@ public final class AccountHostingSubscriptionLifecycleService {
     requireNoAmbientTransaction();
     var captured =
         Objects.requireNonNull(
-            transaction.execute(
-                s ->
-                    repository.captureUnpaidFirstInvoiceCancellation(
-                        requestId, creationRequestId, expectedRowVersion, providerSubscriptionId)));
+            transaction.execute(s ->
+                repository.captureUnpaidFirstInvoiceCancellation(
+                    requestId, creationRequestId, expectedRowVersion, providerSubscriptionId)));
     if (captured.replayResult() != null) return captured.replayResult();
     var observed = observer.observe(captured.binding());
     var invoice = captured.invoiceRequiringTerminalRead();
@@ -121,10 +120,9 @@ public final class AccountHostingSubscriptionLifecycleService {
     }
     TerminalUnpaidObservation retainedObservation = unpaid;
     return Objects.requireNonNull(
-        unpaidCancellationTransaction.execute(
-            s ->
-                repository.applyUnpaidFirstInvoiceCancellation(
-                    captured, observed, retainedObservation)));
+        unpaidCancellationTransaction.execute(s ->
+            repository.applyUnpaidFirstInvoiceCancellation(
+                captured, observed, retainedObservation)));
   }
 
   /**

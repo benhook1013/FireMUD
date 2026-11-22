@@ -883,27 +883,26 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var repository =
         new net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository(c.dsl);
     var initial =
-        c.transaction.execute(
-            status -> {
-              // Controlled fixture evidence deliberately bypasses the absent World producer.
-              // Production
-              // has no route to perform this insertion and World admission remains unavailable.
-              c.dsl.execute(
-                  "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
-                  evidence.evaluationIdentity(),
-                  evidence.snapshotIdentity(),
-                  tenant,
-                  evidence.callerWorkload(),
-                  evidence.owner().service(),
-                  evidence.canonicalBytes(),
-                  net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
-                      .at(evidence.evaluatedAt()),
-                  net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
-                      .at(evidence.expiresAt()));
-              return repository
-                  .createIfQuotaAvailable(request, repository.usage(request), evidence.expiresAt())
-                  .orElseThrow();
-            });
+        c.transaction.execute(status -> {
+          // Controlled fixture evidence deliberately bypasses the absent World producer.
+          // Production
+          // has no route to perform this insertion and World admission remains unavailable.
+          c.dsl.execute(
+              "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
+              evidence.evaluationIdentity(),
+              evidence.snapshotIdentity(),
+              tenant,
+              evidence.callerWorkload(),
+              evidence.owner().service(),
+              evidence.canonicalBytes(),
+              net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at(
+                  evidence.evaluatedAt()),
+              net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at(
+                  evidence.expiresAt()));
+          return repository
+              .createIfQuotaAvailable(request, repository.usage(request), evidence.expiresAt())
+              .orElseThrow();
+        });
     var owner =
         new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
             c.dsl,

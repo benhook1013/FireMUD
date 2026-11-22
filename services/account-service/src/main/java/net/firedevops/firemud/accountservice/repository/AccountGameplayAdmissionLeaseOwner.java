@@ -771,17 +771,16 @@ public final class AccountGameplayAdmissionLeaseOwner {
     Objects.requireNonNull(tenantId);
     try {
       var observed = prepareCurrentSources(caller, tenantId);
-      return inWritableSerializableTransaction(
-          dsl -> {
-            AccountGameplayAdmissionCurrentSources currentSources =
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
-            var current =
-                currentSources.readCurrentPublicProductionNew(
-                    tenantId, caller.identity().tokenJti(), caller.currentCandidate(), observed);
-            return operation.apply(
-                new CurrentAccountOperation(
-                    dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
-          });
+      return inWritableSerializableTransaction(dsl -> {
+        AccountGameplayAdmissionCurrentSources currentSources =
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
+        var current =
+            currentSources.readCurrentPublicProductionNew(
+                tenantId, caller.identity().tokenJti(), caller.currentCandidate(), observed);
+        return operation.apply(
+            new CurrentAccountOperation(
+                dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (RuntimeException unavailable) {
@@ -792,14 +791,10 @@ public final class AccountGameplayAdmissionLeaseOwner {
   private AccountGameplayAdmissionCurrentSources.Observed prepareCurrentSources(
       VerifiedCaller caller, UUID tenantId) {
     var prepared =
-        inWritableSerializableTransaction(
-            dsl ->
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
-                    .prepareCurrentPublicProductionNew(
-                        tenantId,
-                        caller.identity().tokenJti(),
-                        caller.currentCandidate(),
-                        paidSource));
+        inWritableSerializableTransaction(dsl ->
+            AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
+                .prepareCurrentPublicProductionNew(
+                    tenantId, caller.identity().tokenJti(), caller.currentCandidate(), paidSource));
     requireNoAmbientSql();
     return prepared.observeOutsideSql();
   }

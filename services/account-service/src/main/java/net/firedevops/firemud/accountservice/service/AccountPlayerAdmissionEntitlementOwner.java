@@ -224,7 +224,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
                   "billingEventId", receipt.billingEventId().toString(),
                   "billingEventDigest", receipt.billingEventDigest(),
                   "tenantAuthorityEventDigest", event.eventDigest())),
-          evaluatedAt,
           receipt.validUntil());
     });
   }
@@ -279,7 +278,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
               demo.tenantBillingSequence(),
               demo.tenantAuthorityGeneration()),
           demo.snapshotIdentity(),
-          capturedAt,
           null);
     });
   }

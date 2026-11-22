@@ -129,17 +129,15 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var independent = new TransactionTemplate(new DataSourceTransactionManager(source));
     independent.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
-    assertThatThrownBy(
-            () ->
-                repeatableRead.executeWithoutResult(
-                    status -> {
-                      assertThat(f.dsl().fetchCount(DSL.table("stripe_event_inbox"))).isZero();
-                      in(
-                          independent,
-                          () -> new StripeEventInboxRepository(f.dsl()).retainOrReplay(verified));
-                      assertThat(f.dsl().fetchCount(DSL.table("stripe_event_inbox"))).isZero();
-                      rawUnpaidCancellation(f);
-                    }))
+    assertThatThrownBy(() ->
+            repeatableRead.executeWithoutResult(status -> {
+              assertThat(f.dsl().fetchCount(DSL.table("stripe_event_inbox"))).isZero();
+              in(
+                  independent,
+                  () -> new StripeEventInboxRepository(f.dsl()).retainOrReplay(verified));
+              assertThat(f.dsl().fetchCount(DSL.table("stripe_event_inbox"))).isZero();
+              rawUnpaidCancellation(f);
+            }))
         .hasMessageContaining("Unpaid first-invoice cancellation requires READ COMMITTED");
 
     assertThatThrownBy(
@@ -186,23 +184,22 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
     another
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              Long currentTransaction =
-                  another.dsl().fetchSingle("SELECT txid_current()").get(0, Long.class);
-              assertThat(
-                      another
-                          .dsl()
-                          .fetchSingle(
-                              "INSERT INTO subscription_first_invoice_expired_before_post (request_id, observed_at, created_transaction_id) "
-                                  + "VALUES (?, ?::timestamptz, ?) RETURNING created_transaction_id",
-                              dispatch.requestId(),
-                              dispatch.validUntil().atOffset(ZoneOffset.UTC),
-                              claimTransaction)
-                          .get(0, Long.class))
-                  .isEqualTo(currentTransaction)
-                  .isNotEqualTo(claimTransaction);
-            });
+        .executeWithoutResult(status -> {
+          Long currentTransaction =
+              another.dsl().fetchSingle("SELECT txid_current()").get(0, Long.class);
+          assertThat(
+                  another
+                      .dsl()
+                      .fetchSingle(
+                          "INSERT INTO subscription_first_invoice_expired_before_post (request_id, observed_at, created_transaction_id) "
+                              + "VALUES (?, ?::timestamptz, ?) RETURNING created_transaction_id",
+                          dispatch.requestId(),
+                          dispatch.validUntil().atOffset(ZoneOffset.UTC),
+                          claimTransaction)
+                      .get(0, Long.class))
+              .isEqualTo(currentTransaction)
+              .isNotEqualTo(claimTransaction);
+        });
   }
 
   private static DriverManagerDataSource unpaidCancellationDataSource(String target) {

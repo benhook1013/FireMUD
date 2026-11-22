@@ -94,20 +94,18 @@ class AccountHostingSubscriptionProvisioningServiceTest {
           return prepared;
         });
     when(repository.readProviderDispatch(prepared))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(transactions.commits).isEqualTo(2);
-              return readback;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(transactions.commits).isEqualTo(2);
+          return readback;
+        });
     when(provider.provision(readback))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              assertThat(transactions.commits).isEqualTo(3);
-              return new StripeHostingSubscriptionProvisioner.Pending("UNKNOWN", null);
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          assertThat(transactions.commits).isEqualTo(3);
+          return new StripeHostingSubscriptionProvisioner.Pending("UNKNOWN", null);
+        });
     when(repository.deferUnresolved(claim))
         .thenAnswer(call -> {
           assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();

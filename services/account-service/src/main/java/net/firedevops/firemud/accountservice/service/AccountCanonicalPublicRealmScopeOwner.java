@@ -264,51 +264,48 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     requireSameCaller(original, authenticate.get());
     requireFresh(entitlement);
     RealmScope retained =
-        inTransaction(
-            () -> {
-              Prepared current = readSources(original, target, entitlement);
-              if (!prepared.tenant().equals(current.tenant())
-                  || !prepared.membership().equals(current.membership())) {
-                throw authUnavailable("Account discovery sources changed", null);
-              }
-              if (prepared.head().kind() != current.head().kind()
-                  || !prepared.head().matches(current.head().checkpoint())) {
-                throw entitlementUnavailable(null);
-              }
-              requireFresh(entitlement);
-              Instant applicationTime = now();
-              Instant databaseTime = scopes.canonicalIssuanceTime();
-              Instant evaluatedAt =
-                  databaseTime.isBefore(applicationTime) ? databaseTime : applicationTime;
-              Instant expiresAt = evaluatedAt.plusMillis(scopeLifetimeMillis);
-              if (original.expiresAt().isBefore(expiresAt)) expiresAt = original.expiresAt();
-              // JWT NumericDate has second precision. The persisted preimage uses that exact
-              // expiry.
-              expiresAt = expiresAt.truncatedTo(ChronoUnit.SECONDS);
-              if (!evaluatedAt.isBefore(expiresAt)) {
-                throw new AuthenticationException(
-                    "CONNECT_CONTEXT_INVALID", "Bootstrap credential expired");
-              }
-              CanonicalJoinScopeV2 scope = mintScope(original, target, evaluatedAt, expiresAt);
-              VerifiedTenantProvenance provenance =
-                  new VerifiedTenantProvenance(
-                      null,
-                      TenantProvenanceKind.FRESH_GAME_DESIGN,
-                      current.tenant().operationId(),
-                      current.tenant().evidenceDigest());
-              scopes.insertCanonical(original.accountId(), scope, provenance);
-              if (!scope.equals(scopes.findCanonical(scope.connectScopeId()).orElse(null))) {
-                throw authUnavailable("Canonical scope readback differs", null);
-              }
-              CanonicalConnectScopeEvidence expected = evidence(original, scope, provenance);
-              if (!expected.equals(
-                  scopes
-                      .findCanonicalEvidenceByTokenHash(expected.scopeTokenHash())
-                      .orElse(null))) {
-                throw authUnavailable("Canonical scope evidence readback differs", null);
-              }
-              return new RealmScope(target, scope, current.membership(), entitlement);
-            });
+        inTransaction(() -> {
+          Prepared current = readSources(original, target, entitlement);
+          if (!prepared.tenant().equals(current.tenant())
+              || !prepared.membership().equals(current.membership())) {
+            throw authUnavailable("Account discovery sources changed", null);
+          }
+          if (prepared.head().kind() != current.head().kind()
+              || !prepared.head().matches(current.head().checkpoint())) {
+            throw entitlementUnavailable(null);
+          }
+          requireFresh(entitlement);
+          Instant applicationTime = now();
+          Instant databaseTime = scopes.canonicalIssuanceTime();
+          Instant evaluatedAt =
+              databaseTime.isBefore(applicationTime) ? databaseTime : applicationTime;
+          Instant expiresAt = evaluatedAt.plusMillis(scopeLifetimeMillis);
+          if (original.expiresAt().isBefore(expiresAt)) expiresAt = original.expiresAt();
+          // JWT NumericDate has second precision. The persisted preimage uses that exact
+          // expiry.
+          expiresAt = expiresAt.truncatedTo(ChronoUnit.SECONDS);
+          if (!evaluatedAt.isBefore(expiresAt)) {
+            throw new AuthenticationException(
+                "CONNECT_CONTEXT_INVALID", "Bootstrap credential expired");
+          }
+          CanonicalJoinScopeV2 scope = mintScope(original, target, evaluatedAt, expiresAt);
+          VerifiedTenantProvenance provenance =
+              new VerifiedTenantProvenance(
+                  null,
+                  TenantProvenanceKind.FRESH_GAME_DESIGN,
+                  current.tenant().operationId(),
+                  current.tenant().evidenceDigest());
+          scopes.insertCanonical(original.accountId(), scope, provenance);
+          if (!scope.equals(scopes.findCanonical(scope.connectScopeId()).orElse(null))) {
+            throw authUnavailable("Canonical scope readback differs", null);
+          }
+          CanonicalConnectScopeEvidence expected = evidence(original, scope, provenance);
+          if (!expected.equals(
+              scopes.findCanonicalEvidenceByTokenHash(expected.scopeTokenHash()).orElse(null))) {
+            throw authUnavailable("Canonical scope evidence readback differs", null);
+          }
+          return new RealmScope(target, scope, current.membership(), entitlement);
+        });
     // No value escapes a failed commit or a caller/source observation that expired during commit.
     requireSameCaller(original, authenticate.get());
     requireFresh(entitlement);

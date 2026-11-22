@@ -96,40 +96,39 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setReadOnly(false);
-    transaction.executeWithoutResult(
-        ignored -> {
-          if (!ignored.isNewTransaction()) throw denied();
-          Connection connection = manager.enlistedConnection();
-          // Every source and lease repository uses this exact enlisted connection. The concrete
-          // source graph locks Account first, before authority, token and lease-operation rows, and
-          // retains those locks through the original physical COMMIT below.
-          var exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
-          if (currentSources != null) {
-            var scope = (java.util.Map<?, ?>) evidence.carrier().get("bindingScope");
-            var token = (java.util.Map<?, ?>) evidence.carrier().get("tokenIdentityEvidence");
-            var current =
-                AccountGameplayAdmissionCurrentSources.bind(
-                        exactDsl, currentSources.configuredNamespace())
-                    .readCurrentPublicProductionNew(
-                        UUID.fromString((String) scope.get("tenantId")),
-                        UUID.fromString((String) token.get("tokenJti")),
-                        currentSources.authenticatedCandidate(),
-                        currentSources.observed());
-            current.requireMatchesOriginalLease(evidence);
-          }
-          var repository = new AccountGameplayAdmissionLeaseRepository(exactDsl);
-          var prior =
-              repository
-                  .readExact(evidence)
-                  .orElseThrow(AccountGameplayAdmissionOriginalCommitExecutor::denied);
-          if (prior.state() != State.PENDING) throw denied();
-          var committed = repository.recordCommitted(evidence, decisionId);
-          if (committed.state() != State.COMMITTED
-              || !decisionId.equals(committed.bindingDecisionId())
-              || !evidence.canonicalJson().equals(committed.evidence().canonicalJson())
-              || !evidence.sha256().equals(committed.evidence().sha256())) throw denied();
-          manager.bindOriginal(connection, evidence, decisionId);
-        });
+    transaction.executeWithoutResult(ignored -> {
+      if (!ignored.isNewTransaction()) throw denied();
+      Connection connection = manager.enlistedConnection();
+      // Every source and lease repository uses this exact enlisted connection. The concrete
+      // source graph locks Account first, before authority, token and lease-operation rows, and
+      // retains those locks through the original physical COMMIT below.
+      var exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
+      if (currentSources != null) {
+        var scope = (java.util.Map<?, ?>) evidence.carrier().get("bindingScope");
+        var token = (java.util.Map<?, ?>) evidence.carrier().get("tokenIdentityEvidence");
+        var current =
+            AccountGameplayAdmissionCurrentSources.bind(
+                    exactDsl, currentSources.configuredNamespace())
+                .readCurrentPublicProductionNew(
+                    UUID.fromString((String) scope.get("tenantId")),
+                    UUID.fromString((String) token.get("tokenJti")),
+                    currentSources.authenticatedCandidate(),
+                    currentSources.observed());
+        current.requireMatchesOriginalLease(evidence);
+      }
+      var repository = new AccountGameplayAdmissionLeaseRepository(exactDsl);
+      var prior =
+          repository
+              .readExact(evidence)
+              .orElseThrow(AccountGameplayAdmissionOriginalCommitExecutor::denied);
+      if (prior.state() != State.PENDING) throw denied();
+      var committed = repository.recordCommitted(evidence, decisionId);
+      if (committed.state() != State.COMMITTED
+          || !decisionId.equals(committed.bindingDecisionId())
+          || !evidence.canonicalJson().equals(committed.evidence().canonicalJson())
+          || !evidence.sha256().equals(committed.evidence().sha256())) throw denied();
+      manager.bindOriginal(connection, evidence, decisionId);
+    });
     return Objects.requireNonNull(manager.acknowledgement);
   }
 

@@ -281,11 +281,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
 
     if (changePaidSourceDuringObservation) {
       paidFixture.hosting().transport().duringRead(paidFixture::refresh);
-      assertThatThrownBy(
-              () ->
-                  Context.current()
-                      .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-                      .call(() -> owner.issue(loginJwt, originalLease)))
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                  .call(() -> owner.issue(loginJwt, originalLease)))
           .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
       assertThat(dsl.fetchCount(DSL.table("account_original_new_bound_gameplay_issuances")))
           .isZero();
@@ -593,16 +592,15 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
         throw new IllegalStateException("Current-source fixture tenant is absent");
 
       evidence =
-          serializable.execute(
-              status -> {
-                var current =
-                    AccountGameplayAdmissionCurrentSources.bind(dsl, NAMESPACE)
-                        .readCurrentPublicProductionNew(
-                            tenantId,
-                            sourceFixture.committedCandidate.identity().tokenJti(),
-                            sourceFixture.committedCandidate);
-                return beginPendingLease(dsl, accountId, tenantId, current);
-              });
+          serializable.execute(status -> {
+            var current =
+                AccountGameplayAdmissionCurrentSources.bind(dsl, NAMESPACE)
+                    .readCurrentPublicProductionNew(
+                        tenantId,
+                        sourceFixture.committedCandidate.identity().tokenJti(),
+                        sourceFixture.committedCandidate);
+            return beginPendingLease(dsl, accountId, tenantId, current);
+          });
     } else {
       var observed = paidFixture.prepare().observeOutsideSql();
       var current = paidFixture.read(observed);

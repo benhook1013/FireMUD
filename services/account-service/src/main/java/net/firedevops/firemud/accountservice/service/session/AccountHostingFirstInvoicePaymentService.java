@@ -284,10 +284,9 @@ public final class AccountHostingFirstInvoicePaymentService {
     }
     boolean alreadyCompleted =
         Boolean.TRUE.equals(
-            transaction.execute(
-                status ->
-                    payments.completed(
-                        candidate.invoice().subscriptionId(), candidate.lifecycleRequestId())));
+            transaction.execute(status ->
+                payments.completed(
+                    candidate.invoice().subscriptionId(), candidate.lifecycleRequestId())));
     if (!alreadyCompleted) {
       var observed = provider.observe(candidate.invoice());
       var signed =
@@ -318,10 +317,9 @@ public final class AccountHostingFirstInvoicePaymentService {
       }
     }
     if (!Boolean.TRUE.equals(
-        transaction.execute(
-            status ->
-                payments.completed(
-                    candidate.invoice().subscriptionId(), candidate.lifecycleRequestId())))) {
+        transaction.execute(status ->
+            payments.completed(
+                candidate.invoice().subscriptionId(), candidate.lifecycleRequestId())))) {
       throw new IllegalStateException("Independent first-invoice fulfillment readback refused");
     }
     return new Completion("COMMITTED", candidate.requestId());
