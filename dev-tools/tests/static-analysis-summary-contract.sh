@@ -835,6 +835,24 @@ run(github, context, core).then(async () => {
                   }
                 }
                 github.paginate = savedPaginate;
+                github.request = async (route, input) => {
+                  const response = await savedRequest(route, input);
+                  if (input.run_id === 200) {
+                    const gate = response.data.jobs.find(job => job.name === "CodeQL Gate");
+                    gate.status = "requested";
+                    gate.conclusion = null;
+                  }
+                  return response;
+                };
+                const requestedStart = calls.updated.length;
+                await run(github, context, core);
+                if (!calls.updated.slice(requestedStart).some(row =>
+                    row.body.includes("Static analysis checks are still running") &&
+                    row.body.includes("⏳ CodeQL gate: `requested`")) ||
+                    calls.updated.slice(requestedStart).some(row => row.body.includes("checks passed"))) {
+                  throw new Error("a requested exact gate must display as pending");
+                }
+                github.request = savedRequest;
                 const savedActions = github.rest.actions;
                 const staleBefore = mutationCounts();
                 github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
@@ -863,13 +881,14 @@ run(github, context, core).then(async () => {
                   const {data} = await savedActions.getWorkflowRun(input);
                   return {data: input.run_id === 200 ? {...data, run_attempt: currentAttempt} : data};
                 }};
-                for (const duplicate of [false, true]) {
+                for (const fault of ["attempt", "duplicate", "head"]) {
                   github.request = async (route, input) => {
                     const response = await savedRequest(route, input);
                     if (input.run_id !== 200) return response;
                     const jobs = response.data.jobs;
                     const gate = jobs.find(job => job.name === "CodeQL Gate");
-                    if (duplicate) jobs.push({...gate, id: gate.id + 50000});
+                    if (fault === "duplicate") jobs.push({...gate, id: gate.id + 50000});
+                    else if (fault === "head") gate.head_sha = "e".repeat(40);
                     else gate.run_attempt = input.attempt_number + 1;
                     return {data: {jobs, total_count: jobs.length}};
                   };

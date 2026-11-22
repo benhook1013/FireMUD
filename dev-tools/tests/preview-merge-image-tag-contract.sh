@@ -208,14 +208,17 @@ GH_FIXTURE=branch_runs \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$head_sha" >/dev/null
 
-if branch_obsolete_output="$(
+branch_obsolete_status=0
+branch_obsolete_output="$(
   GH_FIXTURE=branch_obsolete HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     timeout 15s bash "$WAITER" "$head_sha" 2>&1
-)"; then
-  echo "branch waiter accepted a successful obsolete run without promotion" >&2
+)" || branch_obsolete_status=$?
+if [[ "$branch_obsolete_status" != 1 ]]; then
+  printf 'obsolete branch waiter must exit with its own status 1, got %s\n' "$branch_obsolete_status" >&2
   exit 1
 fi
 grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_obsolete_output"
+grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha} after" <<<"$branch_obsolete_output"
 
 if branch_timeout_output="$(
   GH_FIXTURE=branch_wrong \

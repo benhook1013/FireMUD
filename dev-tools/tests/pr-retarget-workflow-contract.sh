@@ -780,7 +780,7 @@ for branch in ("main", "develop"):
                               selector=runtime["concurrency"]["cancel-in-progress"]) == "False"
 assert callback_group("feature/parent", 7101, 1, "push") != callback_group("feature/parent", 7102, 1, "push")
 assert callback_group("feature/parent", 7101, 1, "push", selector=runtime["concurrency"]["cancel-in-progress"]) == "False"
-assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7102, 1, "push"), "protected publication branches must remain separate"
+assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7101, 1, "push"), "protected publication branches must remain separate when only the branch differs"
 
 PY
 
