@@ -59,12 +59,13 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     String retained = sqlImage();
     Map<String, String> physical = physicalImage();
 
+    var noRedis = org.mockito.Mockito.mock(io.lettuce.core.RedisClient.class);
     assertThatThrownBy(() ->
-            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                    ownerClient, catalog, CLOCK, tags)
+            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(noRedis, catalog, CLOCK, tags)
                 .fenceCapacityExecutionOnce(
                     changed, source.candidate(), assignment, UUID.randomUUID(), deadline()))
         .isInstanceOf(IllegalStateException.class);
+    org.mockito.Mockito.verifyNoInteractions(noRedis);
     assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(retained);
     assertThat(physicalImage()).isEqualTo(physical);

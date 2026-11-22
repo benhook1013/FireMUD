@@ -841,6 +841,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         long deadline) {
       return CanonicalGameplayProtectedIncarnationReceiver.forRegionOwnerTransfer(
               (transferId, ordinal) -> {
+                assertThat(transferId).isEqualTo(original.transferId());
+                assertThat(ordinal).isEqualTo(original.targetOrdinal());
                 sourceReads.incrementAndGet();
                 onSourceRead.run();
                 if (sourceUnavailable) {

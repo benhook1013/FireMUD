@@ -1016,11 +1016,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         var recoveredClaim =
             new AtomicReference<
                 CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>();
+        Thread caller = null;
         try (var context = io.grpc.Context.current().withCancellation();
             var session =
                 deadlineBoundRedisOwner.prepareTimelineInitialization(
                     preparation, Duration.ofSeconds(30), identity)) {
-          Thread caller =
+          caller =
               Thread.ofVirtual()
                   .start(() ->
                       context.run(() -> {
@@ -1119,6 +1120,15 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               });
         } finally {
           release.countDown();
+          if (caller != null) {
+            caller.join(5000);
+            assertThat(caller.isAlive())
+                .as("retained caller exited before fixture teardown")
+                .isFalse();
+          }
+          if (entered.getCount() == 0L) {
+            lifetime.get(5, TimeUnit.SECONDS);
+          }
         }
       }
     } finally {
@@ -1341,11 +1351,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         method.setAccessible(true);
         var lifetime = new java.util.concurrent.CompletableFuture<Void>();
         var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
+        Thread caller = null;
         try (var context = io.grpc.Context.current().withCancellation();
             var session =
                 deadlineBoundRedisOwner.prepareTimelineInitialization(
                     preparation, Duration.ofSeconds(30), identity)) {
-          Thread caller =
+          caller =
               Thread.ofVirtual()
                   .start(() ->
                       context.run(() -> {
@@ -1399,6 +1410,15 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           assertThat(releasedConnection.await(5, TimeUnit.SECONDS)).isTrue();
         } finally {
           release.countDown();
+          if (caller != null) {
+            caller.join(5000);
+            assertThat(caller.isAlive())
+                .as("retained caller exited before fixture teardown")
+                .isFalse();
+          }
+          if (entered.getCount() == 0L) {
+            lifetime.get(5, TimeUnit.SECONDS);
+          }
         }
       }
     } finally {

@@ -87,6 +87,48 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
   }
 
   @Test
+  void forwardUpgradeOrdersReservationDeltasBeforeImmediateChecksWithoutChangingDeferral() {
+    try (Database database = database("1046.9")) {
+      DSLContext dsl = database.dsl();
+      CapacityFixture capacity = populateCapacity(dsl, database.transaction());
+      List<String> capacityBefore = capacityTableImages(dsl);
+      List<String> conservationBefore = conservationImages(dsl);
+      List<String> triggersBefore = triggerImages(dsl);
+      List<String> historyBefore = historyImages(dsl);
+
+      var flyway = configureFlyway(database.data(), database.schema(), "1046.9.0.1");
+      assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+      assertThat(flyway.validateWithResult().validationSuccessful).isTrue();
+      assertThat(capacityTableImages(dsl)).isEqualTo(capacityBefore);
+      assertThat(conservationImages(dsl)).isEqualTo(conservationBefore);
+      assertThat(historyImages(dsl)).startsWith(historyBefore.toArray(String[]::new));
+      assertThat(triggerImages(dsl))
+          .containsExactlyInAnyOrderElementsOf(
+              triggersBefore.stream()
+                  .map(definition ->
+                      definition.replace(
+                          "account_tenant_capacity_reservation_conservation_",
+                          "account_tenant_capacity_reservation_aggregate_"))
+                  .toList());
+
+      database
+          .transaction()
+          .executeWithoutResult(status -> {
+            dsl.execute(
+                "SET CONSTRAINTS account_tenant_capacity_reservation_complete_insert, "
+                    + "account_tenant_capacity_reservation_complete_update IMMEDIATE");
+            changeUsage(dsl, capacity, 2, 0);
+            CapacityFixture held = insertReservation(dsl, capacity, 2);
+            assertConserved(dsl);
+            changeUsage(dsl, capacity, -2, 2);
+            settle(dsl, held, "FINALIZED");
+            assertConserved(dsl);
+          });
+      assertConserved(dsl);
+    }
+  }
+
+  @Test
   void lockedUpgradeRefusesHeldOrUsedDriftWithoutRepairingRowsOrHistory() {
     for (String column : List.of("held_units", "used_units")) {
       try (Database database = database("1043")) {
