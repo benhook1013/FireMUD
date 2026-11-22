@@ -64,9 +64,8 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.findByTenantIdAndIdInForUpdateOrderByIdAsc("tenant-1", List.of(17L, 18L)))
         .isEmpty();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement).contains("tenant_id", "id", "order by", "for update"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement).contains("tenant_id", "id", "order by", "for update"));
   }
 
   @Test
@@ -86,11 +85,10 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.findByTenantIdAndIdInOrderByIdAsc("tenant-1", List.of(17L, 18L)))
         .isEmpty();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement -> {
-              assertThat(statement).contains("tenant_id", "id", "order by");
-              assertThat(statement).doesNotContain("for update");
-            });
+        .hasValueSatisfying(statement -> {
+          assertThat(statement).contains("tenant_id", "id", "order by");
+          assertThat(statement).doesNotContain("for update");
+        });
   }
 
   @Test
@@ -242,17 +240,16 @@ class ScriptWorkItemRepositoryTest {
     assertThat(saved.getAuthorityUnavailableRetryCount()).isEqualTo(2);
     assertThat(saved.getNextEligibleAt()).isEqualTo(Instant.parse("2026-08-01T00:00:03Z"));
     assertThat(insertSql)
-        .hasValueSatisfying(
-            sql ->
-                assertThat(sql)
-                    .contains(
-                        "plugin_activation_epoch",
-                        "lifecycle_revision",
-                        "failure_generation",
-                        "authority_unavailable_since",
-                        "authority_unavailable_count",
-                        "authority_unavailable_retry_count",
-                        "next_eligible_at"));
+        .hasValueSatisfying(sql ->
+            assertThat(sql)
+                .contains(
+                    "plugin_activation_epoch",
+                    "lifecycle_revision",
+                    "failure_generation",
+                    "authority_unavailable_since",
+                    "authority_unavailable_count",
+                    "authority_unavailable_retry_count",
+                    "next_eligible_at"));
   }
 
   @Test
@@ -273,11 +270,9 @@ class ScriptWorkItemRepositoryTest {
         "PENDING_EVALUATION", Instant.parse("2026-08-01T00:00:00Z"), PageRequest.of(0, 10));
 
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "status", "next_eligible_at", "is null", "<=", "order by", "created_at"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains("status", "next_eligible_at", "is null", "<=", "order by", "created_at"));
   }
 
   @Test
@@ -301,11 +296,9 @@ class ScriptWorkItemRepositoryTest {
         PageRequest.of(0, 10));
 
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "\"id\" in", "status", "next_eligible_at", "is null", "<=", "order by"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains("\"id\" in", "status", "next_eligible_at", "is null", "<=", "order by"));
   }
 
   @Test
@@ -326,10 +319,9 @@ class ScriptWorkItemRepositoryTest {
         "EVALUATING", Instant.parse("2026-08-01T00:00:00Z"), PageRequest.of(0, 10));
 
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains("status", "next_eligible_at", "is null", " or ", "<=", "order by"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains("status", "next_eligible_at", "is null", " or ", "<=", "order by"));
   }
 
   @Test
@@ -353,17 +345,16 @@ class ScriptWorkItemRepositoryTest {
         PageRequest.of(0, 10));
 
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "\"id\" in",
-                        "status",
-                        "next_eligible_at",
-                        "is null",
-                        " or ",
-                        "<=",
-                        "order by"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains(
+                    "\"id\" in",
+                    "status",
+                    "next_eligible_at",
+                    "is null",
+                    " or ",
+                    "<=",
+                    "order by"));
   }
 
   @Test
@@ -398,11 +389,9 @@ class ScriptWorkItemRepositoryTest {
                 "PENDING_EVALUATION", PageRequest.of(0, 10)))
         .isEmpty();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "next_eligible_at", "current_timestamp", "for update", "skip locked"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains("next_eligible_at", "current_timestamp", "for update", "skip locked"));
   }
 
   @Test
@@ -429,16 +418,15 @@ class ScriptWorkItemRepositoryTest {
                     List.of("PENDING_EVALUATION", "EVALUATING")))
         .isEmpty();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "tenant_id",
-                        "script_patch_version",
-                        "game_instance_id",
-                        "region_id",
-                        "for update",
-                        "fetch next"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains(
+                    "tenant_id",
+                    "script_patch_version",
+                    "game_instance_id",
+                    "region_id",
+                    "for update",
+                    "fetch next"));
   }
 
   @Test
@@ -468,35 +456,32 @@ class ScriptWorkItemRepositoryTest {
                     List.of("PENDING_EVALUATION", "EVALUATING")))
         .isEmpty();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains("id", "for update", "fetch next")
-                    .satisfies(
-                        scopedSql -> {
-                          int whereIndex = scopedSql.indexOf(" where ");
-                          int fetchIndex = scopedSql.indexOf("fetch next");
-                          assertThat(scopedSql.substring(whereIndex, fetchIndex))
-                              .contains(
-                                  "tenant_id",
-                                  "plugin_id",
-                                  "plugin_version_id",
-                                  "game_instance_id",
-                                  "region_id",
-                                  "status");
-                        }));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains("id", "for update", "fetch next")
+                .satisfies(scopedSql -> {
+                  int whereIndex = scopedSql.indexOf(" where ");
+                  int fetchIndex = scopedSql.indexOf("fetch next");
+                  assertThat(scopedSql.substring(whereIndex, fetchIndex))
+                      .contains(
+                          "tenant_id",
+                          "plugin_id",
+                          "plugin_version_id",
+                          "game_instance_id",
+                          "region_id",
+                          "status");
+                }));
     assertThat(bindings)
-        .hasValueSatisfying(
-            values ->
-                assertThat(values)
-                    .contains(
-                        "tenant-1",
-                        "plugin-1",
-                        "plugin-v1",
-                        "game-1",
-                        "region-1",
-                        "PENDING_EVALUATION",
-                        "EVALUATING"));
+        .hasValueSatisfying(values ->
+            assertThat(values)
+                .contains(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "game-1",
+                    "region-1",
+                    "PENDING_EVALUATION",
+                    "EVALUATING"));
   }
 
   @Test
@@ -520,22 +505,20 @@ class ScriptWorkItemRepositoryTest {
                 11L, "tenant-1", 4, 3L, Instant.parse("2026-08-01T00:00:04Z")))
         .isEmpty();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "update",
-                        "status",
-                        "cancel_reason",
-                        "authority_unavailable_since",
-                        "authority_unavailable_count",
-                        "next_eligible_at",
-                        "row_version",
-                        "failure_generation")
-                    .satisfies(
-                        sqlText ->
-                            assertThat(sqlText.substring(0, sqlText.indexOf(" returning ")))
-                                .contains("cancel_reason")));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains(
+                    "update",
+                    "status",
+                    "cancel_reason",
+                    "authority_unavailable_since",
+                    "authority_unavailable_count",
+                    "next_eligible_at",
+                    "row_version",
+                    "failure_generation")
+                .satisfies(sqlText ->
+                    assertThat(sqlText.substring(0, sqlText.indexOf(" returning ")))
+                        .contains("cancel_reason")));
     assertThat(bindings.get())
         .containsSubsequence("PENDING_EVALUATION", null, null, 0, 0, null)
         .containsSubsequence(11L, "tenant-1", "DEAD_LETTERED", 4, 3L);
@@ -593,18 +576,17 @@ class ScriptWorkItemRepositoryTest {
         .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
 
     assertThat(insertSql)
-        .hasValueSatisfying(
-            sql ->
-                assertThat(conflictClause(sql))
-                    .contains(
-                        "where",
-                        "script_pin_epoch",
-                        "> 0",
-                        "plugin_id",
-                        "plugin_version_id",
-                        "binding_id",
-                        "source_service")
-                    .doesNotContain("script_pin_control_plane_request_id"));
+        .hasValueSatisfying(sql ->
+            assertThat(conflictClause(sql))
+                .contains(
+                    "where",
+                    "script_pin_epoch",
+                    "> 0",
+                    "plugin_id",
+                    "plugin_version_id",
+                    "binding_id",
+                    "source_service")
+                .doesNotContain("script_pin_control_plane_request_id"));
   }
 
   @Test
@@ -757,11 +739,10 @@ class ScriptWorkItemRepositoryTest {
                 .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
                     "tenant-1", null, null, List.of("PENDING_EVALUATION")))
         .singleElement()
-        .satisfies(
-            item -> {
-              assertThat(item.getPluginId()).isEmpty();
-              assertThat(item.getPluginVersionId()).isEmpty();
-            });
+        .satisfies(item -> {
+          assertThat(item.getPluginId()).isEmpty();
+          assertThat(item.getPluginVersionId()).isEmpty();
+        });
     assertThat(bindings.get()).contains("tenant-1", "", "");
   }
 
@@ -946,18 +927,17 @@ class ScriptWorkItemRepositoryTest {
 
     assertThat(repository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.EPOCH)).isZero();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "script_work_items",
-                        "script_dead_letter_replay_results",
-                        "script_handoff_events",
-                        "retention_hold_until",
-                        "handoff_outcome",
-                        "regexp_replace",
-                        "observed_at",
-                        "current_timestamp"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains(
+                    "script_work_items",
+                    "script_dead_letter_replay_results",
+                    "script_handoff_events",
+                    "retention_hold_until",
+                    "handoff_outcome",
+                    "regexp_replace",
+                    "observed_at",
+                    "current_timestamp"));
     assertThat(sql.get())
         .contains("script_handoff_events\".\"tenant_id\" = \"script_work_items\".\"tenant_id\"")
         .contains("script_handoff_events\".\"work_item_id\" = \"script_work_items\".\"id\"");
@@ -983,11 +963,10 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.countTerminalRowsBlockedByEvidence("DEAD_LETTERED", Instant.EPOCH))
         .isZero();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains("script_work_items", "status", "updated_at")
-                    .doesNotContain("script_event_audit", "script_handoff_events"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains("script_work_items", "status", "updated_at")
+                .doesNotContain("script_event_audit", "script_handoff_events"));
   }
 
   @Test
@@ -1010,16 +989,15 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.countTerminalRowsBlockedByReplayReceipts("HANDED_OFF", Instant.EPOCH))
         .isZero();
     assertThat(sql)
-        .hasValueSatisfying(
-            statement ->
-                assertThat(statement)
-                    .contains(
-                        "script_work_items",
-                        "status",
-                        "updated_at",
-                        "script_dead_letter_replay_results")
-                    .contains("work_item_id")
-                    .doesNotContain("script_handoff_events"));
+        .hasValueSatisfying(statement ->
+            assertThat(statement)
+                .contains(
+                    "script_work_items",
+                    "status",
+                    "updated_at",
+                    "script_dead_letter_replay_results")
+                .contains("work_item_id")
+                .doesNotContain("script_handoff_events"));
   }
 
   @Test
@@ -1040,28 +1018,27 @@ class ScriptWorkItemRepositoryTest {
         "tenant-1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
 
     assertThat(sql)
-        .hasValueSatisfying(
-            statement -> {
-              assertThat(statement)
-                  .contains(
-                      "where",
-                      "tenant_id",
-                      "game_instance_id",
-                      "script_patch_version",
-                      "status",
-                      "fetch next");
-              int whereIndex = statement.indexOf(" where ");
-              int fetchIndex = statement.indexOf("fetch next");
-              assertThat(statement.indexOf("game_instance_id", whereIndex))
-                  .isGreaterThan(whereIndex)
-                  .isLessThan(fetchIndex);
-              assertThat(statement.indexOf("script_patch_version", whereIndex))
-                  .isGreaterThan(whereIndex)
-                  .isLessThan(fetchIndex);
-              assertThat(statement.indexOf("status", whereIndex))
-                  .isGreaterThan(whereIndex)
-                  .isLessThan(fetchIndex);
-            });
+        .hasValueSatisfying(statement -> {
+          assertThat(statement)
+              .contains(
+                  "where",
+                  "tenant_id",
+                  "game_instance_id",
+                  "script_patch_version",
+                  "status",
+                  "fetch next");
+          int whereIndex = statement.indexOf(" where ");
+          int fetchIndex = statement.indexOf("fetch next");
+          assertThat(statement.indexOf("game_instance_id", whereIndex))
+              .isGreaterThan(whereIndex)
+              .isLessThan(fetchIndex);
+          assertThat(statement.indexOf("script_patch_version", whereIndex))
+              .isGreaterThan(whereIndex)
+              .isLessThan(fetchIndex);
+          assertThat(statement.indexOf("status", whereIndex))
+              .isGreaterThan(whereIndex)
+              .isLessThan(fetchIndex);
+        });
   }
 
   private static ScriptWorkItemsRecord workItemRecord(long id, int rowVersion, long pinEpoch) {

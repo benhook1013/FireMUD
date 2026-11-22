@@ -70,11 +70,10 @@ class AccountStartSessionActivationProtectionSettlementGrpcMtlsTest {
         var client =
             ActivationProtectionGrpcMtlsTestSupport.clientWithoutIdentity(
                 pki, temporaryDirectory, server.getPort())) {
-      assertThatThrownBy(
-              () ->
-                  settle(
-                      client.channel(),
-                      SettleOriginalStartSessionActivationProtectionRequest.getDefaultInstance()))
+      assertThatThrownBy(() ->
+              settle(
+                  client.channel(),
+                  SettleOriginalStartSessionActivationProtectionRequest.getDefaultInstance()))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());

@@ -57,11 +57,10 @@ public final class GameLogicPublicationSourceReadService {
     GameLogicGameplayRuleIntakeTerminal terminal =
         repository
             .findTerminal(authorization.operationId())
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Exact retained Game Logic source is unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Exact retained Game Logic source is unavailable")
+                    .asRuntimeException());
 
     requireExactRetainedTerminal(terminal, requestedOperation, authorization);
     GameplayRuleSelectedSource retainedSource =

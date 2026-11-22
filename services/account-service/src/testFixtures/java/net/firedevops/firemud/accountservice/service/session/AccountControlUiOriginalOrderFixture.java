@@ -550,12 +550,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   }
 
   public byte[] originalDraftOwnerReadback(DraftAuthorizationFenceBinding original, Owner owner) {
-    return f.tx(
-            () ->
-                f.fences
-                    .readOwnerResult(original, owner)
-                    .orElseThrow(() -> new AssertionError("Original Draft owner readback absent"))
-                    .readback())
+    return f.tx(() ->
+            f.fences
+                .readOwnerResult(original, owner)
+                .orElseThrow(() -> new AssertionError("Original Draft owner readback absent"))
+                .readback())
         .clone();
   }
 

@@ -399,13 +399,12 @@ public final class AccountGameplayAdmissionCurrentSources {
             "membershipAuthorityGeneration", snapshot.membershipAuthorityGeneration());
     List<Map<String, String>> outboxCheckpoints =
         snapshot.checkpoints().stream()
-            .map(
-                checkpoint ->
-                    Map.of(
-                        "outboxStreamKey",
-                        checkpoint.outboxStreamKey(),
-                        "outboxSequence",
-                        checkpoint.outboxSequence()))
+            .map(checkpoint ->
+                Map.of(
+                    "outboxStreamKey",
+                    checkpoint.outboxStreamKey(),
+                    "outboxSequence",
+                    checkpoint.outboxSequence()))
             .toList();
 
     return Map.of(
@@ -421,12 +420,11 @@ public final class AccountGameplayAdmissionCurrentSources {
     Optional<AccountSecurityCutoff> accountCutoff =
         current
             .accountSecurityCutoff()
-            .map(
-                cutoff ->
-                    new AccountSecurityCutoff(
-                        cutoff.accountAuthorityGeneration(),
-                        cutoff.outboxStreamKey(),
-                        cutoff.outboxSequence()));
+            .map(cutoff ->
+                new AccountSecurityCutoff(
+                    cutoff.accountAuthorityGeneration(),
+                    cutoff.outboxStreamKey(),
+                    cutoff.outboxSequence()));
     Map<String, Object> authorityTuple =
         new LinkedHashMap<>(
             GameSessionAccountDelegationProfile.authorityTuple(
@@ -438,24 +436,22 @@ public final class AccountGameplayAdmissionCurrentSources {
     authorityTuple.put("privateRealmGrantVersions", current.privateRealmGrantVersions());
     current
         .tenantBillingCutoff()
-        .ifPresent(
-            cutoffs ->
-                authorityTuple.put("tenantBillingCutoff", currentTenantBillingCutoff(cutoffs)));
+        .ifPresent(cutoffs ->
+            authorityTuple.put("tenantBillingCutoff", currentTenantBillingCutoff(cutoffs)));
     return Map.copyOf(authorityTuple);
   }
 
   private static Map<String, Object> currentTenantBillingCutoff(
       Map<String, TenantBillingCutoff> currentCutoffs) {
     Map<String, Object> cutoffs = new LinkedHashMap<>();
-    currentCutoffs.forEach(
-        (tenantId, cutoff) ->
-            cutoffs.put(
-                tenantId,
-                Map.of(
-                    "tenantAuthorityGeneration", cutoff.tenantAuthorityGeneration(),
-                    "tenantBillingSequence", cutoff.tenantBillingSequence(),
-                    "outboxStreamKey", cutoff.outboxStreamKey(),
-                    "outboxSequence", cutoff.outboxSequence())));
+    currentCutoffs.forEach((tenantId, cutoff) ->
+        cutoffs.put(
+            tenantId,
+            Map.of(
+                "tenantAuthorityGeneration", cutoff.tenantAuthorityGeneration(),
+                "tenantBillingSequence", cutoff.tenantBillingSequence(),
+                "outboxStreamKey", cutoff.outboxStreamKey(),
+                "outboxSequence", cutoff.outboxSequence())));
     return Map.copyOf(cutoffs);
   }
 
@@ -501,20 +497,18 @@ public final class AccountGameplayAdmissionCurrentSources {
 
     boolean tenantCheckpointPresent =
         snapshot.checkpoints().stream()
-            .anyMatch(
-                checkpoint ->
-                    authorityEvent.outboxStreamKey().equals(checkpoint.outboxStreamKey())
-                        && Long.toString(authorityEvent.outboxSequence())
-                            .equals(checkpoint.outboxSequence()));
+            .anyMatch(checkpoint ->
+                authorityEvent.outboxStreamKey().equals(checkpoint.outboxStreamKey())
+                    && Long.toString(authorityEvent.outboxSequence())
+                        .equals(checkpoint.outboxSequence()));
     boolean tenantSourceEventPresent =
         snapshot.sourceEvidence().stream()
-            .anyMatch(
-                evidence ->
-                    authorityEvent.outboxStreamKey().equals(evidence.outboxStreamKey())
-                        && Long.toString(authorityEvent.outboxSequence())
-                            .equals(evidence.outboxSequence())
-                        && authorityEvent.eventId().toString().equals(evidence.eventId())
-                        && authorityEvent.eventDigest().equals(evidence.eventDigest()));
+            .anyMatch(evidence ->
+                authorityEvent.outboxStreamKey().equals(evidence.outboxStreamKey())
+                    && Long.toString(authorityEvent.outboxSequence())
+                        .equals(evidence.outboxSequence())
+                    && authorityEvent.eventId().toString().equals(evidence.eventId())
+                    && authorityEvent.eventDigest().equals(evidence.eventDigest()));
 
     if (snapshot.membershipVersion().size() != 1
         || !snapshot.membershipVersion().keySet().equals(Set.of(tenantKey))
@@ -575,14 +569,13 @@ public final class AccountGameplayAdmissionCurrentSources {
     if (!Integer.valueOf(Connection.TRANSACTION_SERIALIZABLE).equals(declaredIsolation)) {
       throw unavailable();
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE) {
-            throw unavailable();
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE) {
+        throw unavailable();
+      }
+    });
   }
 
   private void lockExactAccountFirst(UUID accountId) {

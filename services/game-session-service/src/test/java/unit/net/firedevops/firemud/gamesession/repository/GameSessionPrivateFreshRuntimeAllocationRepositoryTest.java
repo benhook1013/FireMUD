@@ -26,33 +26,19 @@ class GameSessionPrivateFreshRuntimeAllocationRepositoryTest {
             new Request(request, preparation, lifecycle, realm, 1, catalog, digest, selection, 1)
                 .requestId())
         .isEqualTo(request);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    new UUID(0, 0),
-                    preparation,
-                    lifecycle,
-                    realm,
-                    1,
-                    catalog,
-                    digest,
-                    selection,
-                    1))
+    assertThatThrownBy(() ->
+            new Request(
+                new UUID(0, 0), preparation, lifecycle, realm, 1, catalog, digest, selection, 1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    request, preparation, lifecycle, realm, 0, catalog, digest, selection, 1))
+    assertThatThrownBy(() ->
+            new Request(request, preparation, lifecycle, realm, 0, catalog, digest, selection, 1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    request, preparation, lifecycle, realm, 1, catalog, digest, selection, 0))
+    assertThatThrownBy(() ->
+            new Request(request, preparation, lifecycle, realm, 1, catalog, digest, selection, 0))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    request, preparation, lifecycle, realm, 1, catalog, "unbound", selection, 1))
+    assertThatThrownBy(() ->
+            new Request(
+                request, preparation, lifecycle, realm, 1, catalog, "unbound", selection, 1))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -73,10 +59,9 @@ class GameSessionPrivateFreshRuntimeAllocationRepositoryTest {
             1);
     assertThatThrownBy(() -> owner.allocate(request))
         .hasMessageContaining("writable owner transaction");
-    assertThatThrownBy(
-            () ->
-                owner.readForWorldPreparation(
-                    request.preparationRequestId(), request.playtestLifecycleId()))
+    assertThatThrownBy(() ->
+            owner.readForWorldPreparation(
+                request.preparationRequestId(), request.playtestLifecycleId()))
         .hasMessageContaining("writable owner read");
     verifyNoInteractions(dsl);
   }

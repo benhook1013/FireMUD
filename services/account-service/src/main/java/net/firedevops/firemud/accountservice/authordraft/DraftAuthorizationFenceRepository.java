@@ -718,14 +718,13 @@ public final class DraftAuthorizationFenceRepository {
     }
     sql += " ORDER BY f.reserved_at, f.operation_id LIMIT ?";
     return dsl.fetch(sql, parameters).stream()
-        .map(
-            row ->
-                new UnresolvedOperation(
-                    originalBinding(row),
-                    Ordering.valueOf(row.get("ordering", String.class)),
-                    new RecoveryCursor(
-                        row.get("reserved_at", OffsetDateTime.class),
-                        row.get("operation_id", UUID.class))))
+        .map(row ->
+            new UnresolvedOperation(
+                originalBinding(row),
+                Ordering.valueOf(row.get("ordering", String.class)),
+                new RecoveryCursor(
+                    row.get("reserved_at", OffsetDateTime.class),
+                    row.get("operation_id", UUID.class))))
         .toList();
   }
 
@@ -773,16 +772,15 @@ public final class DraftAuthorizationFenceRepository {
     return dsl
         .fetch("SELECT * FROM " + CHANGES + " WHERE status = 'WAITING' ORDER BY change_id")
         .stream()
-        .map(
-            row ->
-                new SourceChangeSnapshot(
-                    row.get("change_id", UUID.class),
-                    row.get("binding", byte[].class),
-                    row.get("status", String.class),
-                    row.get("requested_at", OffsetDateTime.class),
-                    row.get("committed_at", OffsetDateTime.class),
-                    row.get("aborted_at", OffsetDateTime.class),
-                    abortReason(row.get("abort_reason", String.class))))
+        .map(row ->
+            new SourceChangeSnapshot(
+                row.get("change_id", UUID.class),
+                row.get("binding", byte[].class),
+                row.get("status", String.class),
+                row.get("requested_at", OffsetDateTime.class),
+                row.get("committed_at", OffsetDateTime.class),
+                row.get("aborted_at", OffsetDateTime.class),
+                abortReason(row.get("abort_reason", String.class))))
         .toList();
   }
 
@@ -899,14 +897,12 @@ public final class DraftAuthorizationFenceRepository {
 
   private List<UUID> affectedOperations(List<SourceEvidence> sources) {
     return sources.stream()
-        .flatMap(
-            source ->
-                dsl
-                    .fetch(
-                        "SELECT operation_id FROM " + SOURCES + " WHERE source_key = ?",
-                        source.key())
-                    .getValues("operation_id", UUID.class)
-                    .stream())
+        .flatMap(source ->
+            dsl
+                .fetch(
+                    "SELECT operation_id FROM " + SOURCES + " WHERE source_key = ?", source.key())
+                .getValues("operation_id", UUID.class)
+                .stream())
         .distinct()
         .sorted(Comparator.comparing(UUID::toString))
         .toList();
@@ -1047,14 +1043,13 @@ public final class DraftAuthorizationFenceRepository {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable caller Account transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Transaction-bound writable READ_COMMITTED connection required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Transaction-bound writable READ_COMMITTED connection required");
+      }
+    });
   }
 }

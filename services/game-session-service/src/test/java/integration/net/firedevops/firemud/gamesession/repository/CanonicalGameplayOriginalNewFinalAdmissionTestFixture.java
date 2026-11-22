@@ -9,6 +9,7 @@ import java.security.Signature;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -359,19 +360,18 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
       var worldSelector = publishedRelease.worldStartLocationEvidence();
       var participants =
           publishedRelease.participantDigests().stream()
-              .map(
-                  participant ->
-                      new net.firedevops.firemud.common.gamedesign
-                          .AuthoredWorldReleaseAttestationEvidence.Participant(
-                          participant.participantKey(),
-                          participant.scopeValue(),
-                          false,
-                          null,
-                          participant.appliedCommitId(),
-                          participant.contentDigest(),
-                          participant.digestSchemaVersion(),
-                          participant.abilitySchemaDigest() != null,
-                          participant.abilitySchemaDigest()))
+              .map(participant ->
+                  new net.firedevops.firemud.common.gamedesign
+                      .AuthoredWorldReleaseAttestationEvidence.Participant(
+                      participant.participantKey(),
+                      participant.scopeValue(),
+                      false,
+                      null,
+                      participant.appliedCommitId(),
+                      participant.contentDigest(),
+                      participant.digestSchemaVersion(),
+                      participant.abilitySchemaDigest() != null,
+                      participant.abilitySchemaDigest()))
               .toList();
       var release =
           net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.create(
@@ -541,12 +541,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                     response) {
               var placement =
                   placements.values().stream()
-                      .filter(
-                          entry ->
-                              entry
-                                  .request()
-                                  .getAssignmentUuid()
-                                  .equals(incoming.getAssignmentUuid()))
+                      .filter(entry ->
+                          entry.request().getAssignmentUuid().equals(incoming.getAssignmentUuid()))
                       .findFirst()
                       .orElse(null);
               if (!isPeer(caller)
@@ -587,31 +583,44 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               response.onCompleted();
             }
           };
-      worldServer = server(pki, "world", worldPlacementService, worldLifecycleService);
-      entityServer = server(pki, "entity", entityService);
-      var endpoints = new net.firedevops.firemud.common.config.ServiceEndpointsProperties();
-      endpoints.setWorldManagementService("localhost:" + worldServer.getPort());
-      endpoints.setEntityManagementService("localhost:" + entityServer.getPort());
-      var tls = pki.clientProperties(directory, pki.identity("client"));
-      var channels = new net.firedevops.firemud.common.grpc.GrpcChannelFactory();
-      placement =
-          new net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient(
-              endpoints, tls, channels, namespace);
-      lifecycle =
-          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient(
-              endpoints, tls, channels, namespace);
-      entity =
-          new net.firedevops.firemud.gamesession.client
-              .CanonicalPreseededActorRuntimeReferenceClient(endpoints, tls, channels, namespace);
-      placement.init();
-      lifecycle.init();
-      entity.init();
-      resolver =
-          new net.firedevops.firemud.gamesession.service
-              .CanonicalInitialPlayerLocationRegionResolver(
-              placement,
-              new net.firedevops.firemud.gamesession.service
-                  .CanonicalRegionBootstrapAssignmentResolver(lifecycle));
+      var acquired = new ArrayDeque<AutoCloseable>();
+      try {
+        worldServer = server(pki, "world", worldPlacementService, worldLifecycleService);
+        acquired.push(() -> stopSetupServer(worldServer));
+        entityServer = server(pki, "entity", entityService);
+        acquired.push(() -> stopSetupServer(entityServer));
+        var endpoints = new net.firedevops.firemud.common.config.ServiceEndpointsProperties();
+        endpoints.setWorldManagementService("localhost:" + worldServer.getPort());
+        endpoints.setEntityManagementService("localhost:" + entityServer.getPort());
+        var tls = pki.clientProperties(directory, pki.identity("client"));
+        var channels = new net.firedevops.firemud.common.grpc.GrpcChannelFactory();
+        placement =
+            new net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient(
+                endpoints, tls, channels, namespace);
+        acquired.push(placement);
+        lifecycle =
+            new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient(
+                endpoints, tls, channels, namespace);
+        acquired.push(lifecycle);
+        entity =
+            new net.firedevops.firemud.gamesession.client
+                .CanonicalPreseededActorRuntimeReferenceClient(endpoints, tls, channels, namespace);
+        acquired.push(entity);
+        placement.init();
+        lifecycle.init();
+        entity.init();
+        resolver =
+            new net.firedevops.firemud.gamesession.service
+                .CanonicalInitialPlayerLocationRegionResolver(
+                placement,
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalRegionBootstrapAssignmentResolver(lifecycle));
+      } catch (Exception | Error setupFailure) {
+        for (var resource : acquired) {
+          closeAfterSetupFailure(setupFailure, resource);
+        }
+        throw setupFailure;
+      }
     }
 
     CanonicalInitialPlayerLocationRequest registerSecondPlacement(UUID characterId) {
@@ -737,7 +746,30 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
         factory.addService(
             io.grpc.ServerInterceptors.intercept(
                 service, new net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor()));
-      return factory.createServer().start();
+      var server = factory.createServer();
+      try {
+        return server.start();
+      } catch (Exception | Error setupFailure) {
+        closeAfterSetupFailure(setupFailure, () -> stopSetupServer(server));
+        throw setupFailure;
+      }
+    }
+
+    private static void stopSetupServer(io.grpc.Server server) throws InterruptedException {
+      server.shutdownNow();
+      if (!server.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Controlled source server did not terminate during setup");
+      }
+    }
+
+    private static void closeAfterSetupFailure(Throwable failure, AutoCloseable resource) {
+      try {
+        resource.close();
+      } catch (Exception | Error cleanupFailure) {
+        if (failure != cleanupFailure) {
+          failure.addSuppressed(cleanupFailure);
+        }
+      }
     }
 
     @Override

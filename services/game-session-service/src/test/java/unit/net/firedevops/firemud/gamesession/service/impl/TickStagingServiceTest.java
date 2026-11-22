@@ -71,14 +71,13 @@ class TickStagingServiceTest {
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     AtomicLong commandIds = new AtomicLong();
     when(gameplayCommandRepository.save(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              if (command.getId() == null) {
-                command.setId(commandIds.incrementAndGet());
-              }
-              return command;
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          if (command.getId() == null) {
+            command.setId(commandIds.incrementAndGet());
+          }
+          return command;
+        });
     remoteFollowupRepository = mock(RemoteFollowupRepository.class);
     tickBatchRepository = mock(TickBatchRepository.class);
     when(tickBatchRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -168,18 +167,16 @@ class TickStagingServiceTest {
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              RuntimeRegionStatus expected = invocation.getArgument(0);
-              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
-              return Optional.of(expected);
-            });
+        .thenAnswer(invocation -> {
+          RuntimeRegionStatus expected = invocation.getArgument(0);
+          expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+          return Optional.of(expected);
+        });
     when(tickEffectRepository.findByTickBatchId(anyString()))
-        .thenAnswer(
-            invocation ->
-                savedEffects.stream()
-                    .filter(effect -> invocation.getArgument(0).equals(effect.getTickBatchId()))
-                    .toList());
+        .thenAnswer(invocation ->
+            savedEffects.stream()
+                .filter(effect -> invocation.getArgument(0).equals(effect.getTickBatchId()))
+                .toList());
   }
 
   @Test
@@ -1936,11 +1933,10 @@ class TickStagingServiceTest {
     assertTrue(events.indexOf("redis-reconcile") > finalTransactionCommit);
     org.junit.jupiter.api.Assertions.assertTrue(
         savedSnapshots.stream()
-            .anyMatch(
-                saved ->
-                    "cmd-2".equals(saved.getCommandId())
-                        && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
-                        && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())));
+            .anyMatch(saved ->
+                "cmd-2".equals(saved.getCommandId())
+                    && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
+                    && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())));
   }
 
   @Test
@@ -2161,32 +2157,27 @@ class TickStagingServiceTest {
         .save(any());
     when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             1L, 2L, "DRAINED"))
-        .thenAnswer(
-            invocation ->
-                savedBatches.isEmpty()
-                    ? List.of()
-                    : List.of(savedBatches.get(savedBatches.size() - 1)));
+        .thenAnswer(invocation ->
+            savedBatches.isEmpty()
+                ? List.of()
+                : List.of(savedBatches.get(savedBatches.size() - 1)));
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(anyString(), eq("DRAINED")))
-        .thenAnswer(
-            invocation ->
-                savedEffects.stream()
-                    .filter(
-                        effect ->
-                            invocation.getArgument(0, String.class).equals(effect.getTickBatchId()))
-                    .filter(
-                        effect ->
-                            invocation.getArgument(1, String.class).equals(effect.getStatus()))
-                    .toList());
+        .thenAnswer(invocation ->
+            savedEffects.stream()
+                .filter(effect ->
+                    invocation.getArgument(0, String.class).equals(effect.getTickBatchId()))
+                .filter(
+                    effect -> invocation.getArgument(1, String.class).equals(effect.getStatus()))
+                .toList());
     when(durableRemoteFollowupExecutionService.execute(any()))
-        .thenAnswer(
-            invocation -> {
-              TickEffect effect = invocation.getArgument(0);
-              if ("followup-1".equals(effect.getEffectKey())) {
-                return new DurableRemoteFollowupExecutionService
-                    .DurableRemoteFollowupExecutionResult("APPLIED", null, null);
-              }
-              throw new IllegalStateException("remote effect failed");
-            });
+        .thenAnswer(invocation -> {
+          TickEffect effect = invocation.getArgument(0);
+          if ("followup-1".equals(effect.getEffectKey())) {
+            return new DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult(
+                "APPLIED", null, null);
+          }
+          throw new IllegalStateException("remote effect failed");
+        });
 
     assertThrows(
         IllegalStateException.class,

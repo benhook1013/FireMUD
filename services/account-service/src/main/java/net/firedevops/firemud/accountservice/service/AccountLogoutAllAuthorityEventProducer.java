@@ -109,26 +109,22 @@ public final class AccountLogoutAllAuthorityEventProducer {
     requireNoAmbientTransaction();
 
     CommitAttempt transactionResult =
-        ownerTransaction.execute(
-            status ->
-                commitInOwnerTransaction(
-                    requestId,
-                    requestDigestVersion,
-                    requestDigest,
-                    tokenProfile,
-                    presentedTokenHash,
-                    verifiedAccountAssociation,
-                    expectedAccountState));
+        ownerTransaction.execute(status ->
+            commitInOwnerTransaction(
+                requestId,
+                requestDigestVersion,
+                requestDigest,
+                tokenProfile,
+                presentedTokenHash,
+                verifiedAccountAssociation,
+                expectedAccountState));
     if (transactionResult == null) {
       throw new IllegalStateException("Logout-all source transaction returned no result");
     }
     if (transactionResult.pendingChange() != null) {
-      ownerTransaction.executeWithoutResult(
-          status ->
-              draftSourceChanges.verifyWaiting(
-                  requestId,
-                  transactionResult.requestPayload(),
-                  transactionResult.pendingChange()));
+      ownerTransaction.executeWithoutResult(status ->
+          draftSourceChanges.verifyWaiting(
+              requestId, transactionResult.requestPayload(), transactionResult.pendingChange()));
       throw new AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException(
           transactionResult.pendingChange().changeId());
     }
@@ -373,42 +369,39 @@ public final class AccountLogoutAllAuthorityEventProducer {
       Account requestedAccount) {
     requireNoAmbientTransaction();
     LogoutAllReceipt receipt =
-        ownerTransaction.execute(
-            status -> {
-              Account account = lockVerifiedAccount(requestedAccount);
-              LogoutAllReceipt committed =
-                  operationRepository
-                      .findByRequestId(requestId)
-                      .orElseThrow(
-                          () ->
-                              new IllegalStateException(
-                                  "Post-commit logout-all request receipt is missing"));
-              requireExactRetryBinding(
-                  committed,
+        ownerTransaction.execute(status -> {
+          Account account = lockVerifiedAccount(requestedAccount);
+          LogoutAllReceipt committed =
+              operationRepository
+                  .findByRequestId(requestId)
+                  .orElseThrow(() ->
+                      new IllegalStateException(
+                          "Post-commit logout-all request receipt is missing"));
+          requireExactRetryBinding(
+              committed,
+              requestId,
+              requestDigestVersion,
+              requestDigest,
+              tokenProfile,
+              presentedTokenHash,
+              account);
+          Event event =
+              outboxRepository
+                  .findEvent(committed.outboxStreamKey(), committed.outboxSequence())
+                  .orElseThrow(
+                      () -> new IllegalStateException("Logout-all historical event is missing"));
+          draftSourceChanges.verifyCommittedIfPresent(
+              requestId,
+              draftSourceChanges.requestBinding(
                   requestId,
                   requestDigestVersion,
                   requestDigest,
                   tokenProfile,
                   presentedTokenHash,
-                  account);
-              Event event =
-                  outboxRepository
-                      .findEvent(committed.outboxStreamKey(), committed.outboxSequence())
-                      .orElseThrow(
-                          () ->
-                              new IllegalStateException("Logout-all historical event is missing"));
-              draftSourceChanges.verifyCommittedIfPresent(
-                  requestId,
-                  draftSourceChanges.requestBinding(
-                      requestId,
-                      requestDigestVersion,
-                      requestDigest,
-                      tokenProfile,
-                      presentedTokenHash,
-                      account),
-                  event);
-              return recoverReceipt(account, committed);
-            });
+                  account),
+              event);
+          return recoverReceipt(account, committed);
+        });
     if (receipt == null) {
       throw new IllegalStateException("Post-commit logout-all receipt readback returned no result");
     }
@@ -484,10 +477,9 @@ public final class AccountLogoutAllAuthorityEventProducer {
     Account locked =
         accountRepository
             .findByIdForUpdate(requestedAccount.getId())
-            .orElseThrow(
-                () ->
-                    new OperationConflictException(
-                        "Logout-all Account identity binding is absent from persisted Account state"));
+            .orElseThrow(() ->
+                new OperationConflictException(
+                    "Logout-all Account identity binding is absent from persisted Account state"));
     if (!Objects.equals(requestedAccount.getId(), locked.getId())
         || !Objects.equals(requestedAccount.getAccountUuid(), locked.getAccountUuid())
         || !Objects.equals(

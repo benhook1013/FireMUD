@@ -220,16 +220,15 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       return false;
     }
     return currentRuntimePointer(tenantId, presence.gameInstanceId(), currentRuntimePointers)
-        .map(
-            pointer ->
-                GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-                    List.of(pointer),
-                    tenantId,
-                    presence.gameInstanceId(),
-                    routingBundle.worldSlug(),
-                    routingBundle.realmSlug(),
-                    routingBundle.pointerVersion(),
-                    presence.playableStateScope()))
+        .map(pointer ->
+            GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                List.of(pointer),
+                tenantId,
+                presence.gameInstanceId(),
+                routingBundle.worldSlug(),
+                routingBundle.realmSlug(),
+                routingBundle.pointerVersion(),
+                presence.playableStateScope()))
         .orElse(false);
   }
 
@@ -293,16 +292,15 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     }
     return currentRuntimePointer(
             recentState.tenantId(), recentState.gameInstanceId(), currentRuntimePointers)
-        .filter(
-            pointer ->
-                GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-                    List.of(pointer),
-                    recentState.tenantId(),
-                    recentState.gameInstanceId(),
-                    routingBundle.worldSlug(),
-                    routingBundle.realmSlug(),
-                    routingBundle.pointerVersion(),
-                    recentState.playableStateScope()))
+        .filter(pointer ->
+            GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                List.of(pointer),
+                recentState.tenantId(),
+                recentState.gameInstanceId(),
+                routingBundle.worldSlug(),
+                routingBundle.realmSlug(),
+                routingBundle.pointerVersion(),
+                recentState.playableStateScope()))
         .orElse(null);
   }
 

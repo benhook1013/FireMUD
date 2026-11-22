@@ -118,19 +118,17 @@ final class CanonicalGameplayMigrationDriverProtocol implements AutoCloseable {
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     reader =
-        Executors.newSingleThreadExecutor(
-            task -> {
-              Thread thread = new Thread(task, "gs-migration-driver-stdin");
-              thread.setDaemon(true);
-              return thread;
-            });
+        Executors.newSingleThreadExecutor(task -> {
+          Thread thread = new Thread(task, "gs-migration-driver-stdin");
+          thread.setDaemon(true);
+          return thread;
+        });
     writer =
-        Executors.newSingleThreadExecutor(
-            task -> {
-              Thread thread = new Thread(task, "gs-migration-driver-stdout");
-              thread.setDaemon(true);
-              return thread;
-            });
+        Executors.newSingleThreadExecutor(task -> {
+          Thread thread = new Thread(task, "gs-migration-driver-stdout");
+          thread.setDaemon(true);
+          return thread;
+        });
   }
 
   Initialization readInitialization() {
@@ -293,15 +291,14 @@ final class CanonicalGameplayMigrationDriverProtocol implements AutoCloseable {
       throw reject("migration driver protocol output could not be encoded");
     }
     Future<?> writing =
-        writer.submit(
-            () -> {
-              try {
-                output.write(frame);
-                output.flush();
-              } catch (IOException failed) {
-                throw new java.io.UncheckedIOException(failed);
-              }
-            });
+        writer.submit(() -> {
+          try {
+            output.write(frame);
+            output.flush();
+          } catch (IOException failed) {
+            throw new java.io.UncheckedIOException(failed);
+          }
+        });
     try {
       writing.get(outputFrameTimeout.toNanos(), TimeUnit.NANOSECONDS);
     } catch (TimeoutException timedOut) {

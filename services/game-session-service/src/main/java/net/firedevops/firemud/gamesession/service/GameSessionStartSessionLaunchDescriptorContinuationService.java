@@ -81,20 +81,17 @@ public final class GameSessionStartSessionLaunchDescriptorContinuationService {
     }
 
     ContinuationPlan plan =
-        ownerTransaction.execute(
-            status -> {
-              EvidenceContinuation continuation =
-                  attemptRepository.beginEvidenceContinuation(tuple);
-              PinnedAssociationSnapshot association =
-                  associationRepository
-                      .findPinned(continuation)
-                      .orElseThrow(
-                          () ->
-                              new EvidenceContinuationUnavailableException(
-                                  "Original selection is missing; this attempt remains reconciliation-only"));
-              return new ContinuationPlan(
-                  continuation, association, exactReplayRequest(association.result()));
-            });
+        ownerTransaction.execute(status -> {
+          EvidenceContinuation continuation = attemptRepository.beginEvidenceContinuation(tuple);
+          PinnedAssociationSnapshot association =
+              associationRepository
+                  .findPinned(continuation)
+                  .orElseThrow(() ->
+                      new EvidenceContinuationUnavailableException(
+                          "Original selection is missing; this attempt remains reconciliation-only"));
+          return new ContinuationPlan(
+              continuation, association, exactReplayRequest(association.result()));
+        });
     if (plan == null) {
       throw new IllegalStateException("StartSession continuation transaction returned no plan");
     }
@@ -118,18 +115,16 @@ public final class GameSessionStartSessionLaunchDescriptorContinuationService {
     requireSameAccountProjection(originalProjection, currentProjection);
 
     PinnedLaunchDescriptorSnapshot pinned =
-        ownerTransaction.execute(
-            status -> {
-              PinnedAssociationSnapshot current =
-                  associationRepository
-                      .findPinned(plan.continuation())
-                      .orElseThrow(
-                          () ->
-                              new EvidenceContinuationUnavailableException(
-                                  "Original selection disappeared during descriptor resolution"));
-              requireSameSelection(plan.association(), current);
-              return descriptorRepository.pin(plan.continuation(), resolved);
-            });
+        ownerTransaction.execute(status -> {
+          PinnedAssociationSnapshot current =
+              associationRepository
+                  .findPinned(plan.continuation())
+                  .orElseThrow(() ->
+                      new EvidenceContinuationUnavailableException(
+                          "Original selection disappeared during descriptor resolution"));
+          requireSameSelection(plan.association(), current);
+          return descriptorRepository.pin(plan.continuation(), resolved);
+        });
     if (pinned == null) {
       throw new IllegalStateException("StartSession descriptor pin transaction returned no result");
     }

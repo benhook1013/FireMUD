@@ -203,10 +203,8 @@ class AccountGameSessionNeverAdmittedAbortCompositionIntegrationTest
       session.gs.prepareIssuerRetirement(session.gs.transitionId());
       assertThatThrownBy(() -> session.gs.projectOtherControllerNew("pending-bootstrap-cleanup"))
           .isInstanceOf(RuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  session.gs.retireIssuerCapacityAndLoseReplyForTransition(
-                      session.gs.transitionId()))
+      assertThatThrownBy(() ->
+              session.gs.retireIssuerCapacityAndLoseReplyForTransition(session.gs.transitionId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("controlled lost retirement reply");
       assertThat(
@@ -279,10 +277,8 @@ class AccountGameSessionNeverAdmittedAbortCompositionIntegrationTest
       session.gs.restoreIssuerState();
       var release = session.gs.prepareIssuerRelease();
       session.gs.completeIssuerRelease(release, session.gs.projectIssuerRelease(release));
-      assertThatThrownBy(
-              () ->
-                  session.gs.retireIssuerCapacityAndLoseReplyForTransition(
-                      session.gs.transitionId()))
+      assertThatThrownBy(() ->
+              session.gs.retireIssuerCapacityAndLoseReplyForTransition(session.gs.transitionId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("controlled lost retirement reply");
       String history = session.issuerCleanupHistoryImage();
@@ -308,18 +304,16 @@ class AccountGameSessionNeverAdmittedAbortCompositionIntegrationTest
       throws Exception {
     try (var session = openNeverAdmitted()) {
       String accountPending = session.accountOperationImage();
-      assertThatThrownBy(
-              () ->
-                  session.client.abortNeverAdmitted(
-                      session.jwt, session.lease, session.gs.transitionId(), UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              session.client.abortNeverAdmitted(
+                  session.jwt, session.lease, session.gs.transitionId(), UUID.randomUUID()))
           .isInstanceOf(RuntimeException.class);
       assertThat(session.accountOperationImage()).isEqualTo(accountPending);
-      assertThatThrownBy(
-              () ->
-                  session
-                      .gs
-                      .neverAdmittedOwner(session.client)
-                      .abort(session.gs.transitionId(), "invalid-current-caller-token"))
+      assertThatThrownBy(() ->
+              session
+                  .gs
+                  .neverAdmittedOwner(session.client)
+                  .abort(session.gs.transitionId(), "invalid-current-caller-token"))
           .isInstanceOf(RuntimeException.class);
       assertThat(session.accountOperationImage()).isEqualTo(accountPending);
       assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
@@ -352,13 +346,9 @@ class AccountGameSessionNeverAdmittedAbortCompositionIntegrationTest
 
       session.restartAccountAfterPresentedCallerExpiry();
       // The actual receiving verifier now rejects the unchanged original signed JWT.
-      assertThatThrownBy(
-              () ->
-                  session.client.abortNeverAdmitted(
-                      session.jwt,
-                      session.lease,
-                      session.gs.transitionId(),
-                      retained.abandonmentId()))
+      assertThatThrownBy(() ->
+              session.client.abortNeverAdmitted(
+                  session.jwt, session.lease, session.gs.transitionId(), retained.abandonmentId()))
           .isInstanceOf(IllegalStateException.class);
       var expiredAccount = spy(session.client);
       var recreatedOwner = session.gs.neverAdmittedOwner(expiredAccount);

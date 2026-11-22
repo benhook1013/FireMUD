@@ -25,15 +25,13 @@ class CanonicalGameplayRegionLeaseInstallDeadlineTest {
 
   @Test
   void rejectsSubmillisecondGrantAndOverflowInsteadOfExtendingAuthority() {
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionLeaseOwner.renewedGrantDeadline(
-                    1000L, Duration.ofNanos(1), 6000L))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionLeaseOwner.renewedGrantDeadline(
+                1000L, Duration.ofNanos(1), 6000L))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionLeaseOwner.renewedGrantDeadline(
-                    Long.MAX_VALUE - 1, Duration.ofMillis(2), Long.MAX_VALUE))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionLeaseOwner.renewedGrantDeadline(
+                Long.MAX_VALUE - 1, Duration.ofMillis(2), Long.MAX_VALUE))
         .isInstanceOf(IllegalStateException.class);
   }
 }

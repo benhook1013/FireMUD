@@ -34,14 +34,11 @@ class RealmGrantMutationTest {
         .isInstanceOf(IllegalArgumentException.class);
     for (Operation operation :
         new Operation[] {Operation.EXTEND, Operation.REVOKE, Operation.REGRANT}) {
-      assertThatThrownBy(
-              () ->
-                  mutation(
-                      operation, null, operation == Operation.REVOKE ? null : EXPIRY, "change"))
+      assertThatThrownBy(() ->
+              mutation(operation, null, operation == Operation.REVOKE ? null : EXPIRY, "change"))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  mutation(operation, 0L, operation == Operation.REVOKE ? null : EXPIRY, "change"))
+      assertThatThrownBy(() ->
+              mutation(operation, 0L, operation == Operation.REVOKE ? null : EXPIRY, "change"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThatThrownBy(() -> mutation(Operation.REVOKE, 1L, EXPIRY, "revoke"))

@@ -89,11 +89,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     ProviderDispatch readback = mock(ProviderDispatch.class);
     when(readback.claim()).thenReturn(claim);
     when(repository.prepareProviderDispatch(any(), any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              return prepared;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          return prepared;
+        });
     when(repository.readProviderDispatch(prepared))
         .thenAnswer(
             call -> {
@@ -110,11 +109,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
               return new StripeHostingSubscriptionProvisioner.Pending("UNKNOWN", null);
             });
     when(repository.deferUnresolved(claim))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              return Disposition.WAITING;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          return Disposition.WAITING;
+        });
     var result =
         (AccountHostingSubscriptionProvisioningService.Pending)
             service.provision(claim, UUID.randomUUID(), UUID.randomUUID());
@@ -136,11 +134,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     var providerResult = new StripeHostingSubscriptionProvisioner.Pending(providerReason, null);
     when(provider.provision(readback)).thenReturn(providerResult);
     when(repository.deferUnresolved(claim))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              return Disposition.ATTEMPT_EXPIRED;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          return Disposition.ATTEMPT_EXPIRED;
+        });
 
     assertThat(service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
         .isEqualTo(
@@ -165,11 +162,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
           .thenThrow(new FenceRejectedException("wallet observation advanced"));
     }
     when(repository.deferUnresolved(claim))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              return Disposition.TERMINAL_FAILURE;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          return Disposition.TERMINAL_FAILURE;
+        });
 
     assertThat(service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
         .isEqualTo(

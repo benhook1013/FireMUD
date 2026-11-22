@@ -99,68 +99,65 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
 
     UUID publicationFence =
         ownerTransaction()
-            .execute(
-                status -> {
-                  var frozen =
-                      childTransaction.execute(
-                          nestedStatus ->
-                              fenceRepository.claimFreeze(
-                                  request,
-                                  () ->
-                                      new WorldDesignPublicationFenceEvidence.Checkpoint(
-                                          "savepoint-commit", "c".repeat(64), 3)));
-                  assertThat(frozen).isNotNull();
-                  var insertedAttempt =
-                      dsl.fetchSingle(
-                          "SELECT attempt_created_full_xid::text AS created_full_xid, "
-                              + "attempt_inserted_full_xid::text AS inserted_full_xid, "
-                              + "xmin::text AS tuple_xid, "
-                              + "(attempt_created_full_xid = pg_current_xact_id()) AS top_created_stamp, "
-                              + "(attempt_inserted_full_xid = pg_current_xact_id()) AS top_inserted_stamp, "
-                              + "(xmin::text = (txid_current() % 4294967296)::text) AS top_xmin "
-                              + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
-                          frozen.publicationFence());
-                  assertThat(insertedAttempt.get("top_created_stamp", Boolean.class)).isTrue();
-                  assertThat(insertedAttempt.get("top_inserted_stamp", Boolean.class)).isTrue();
-                  assertThat(insertedAttempt.get("top_xmin", Boolean.class))
-                      .as("the tuple was inserted by the committed child transaction")
-                      .isFalse();
+            .execute(status -> {
+              var frozen =
+                  childTransaction.execute(nestedStatus ->
+                      fenceRepository.claimFreeze(
+                          request,
+                          () ->
+                              new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                  "savepoint-commit", "c".repeat(64), 3)));
+              assertThat(frozen).isNotNull();
+              var insertedAttempt =
+                  dsl.fetchSingle(
+                      "SELECT attempt_created_full_xid::text AS created_full_xid, "
+                          + "attempt_inserted_full_xid::text AS inserted_full_xid, "
+                          + "xmin::text AS tuple_xid, "
+                          + "(attempt_created_full_xid = pg_current_xact_id()) AS top_created_stamp, "
+                          + "(attempt_inserted_full_xid = pg_current_xact_id()) AS top_inserted_stamp, "
+                          + "(xmin::text = (txid_current() % 4294967296)::text) AS top_xmin "
+                          + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
+                      frozen.publicationFence());
+              assertThat(insertedAttempt.get("top_created_stamp", Boolean.class)).isTrue();
+              assertThat(insertedAttempt.get("top_inserted_stamp", Boolean.class)).isTrue();
+              assertThat(insertedAttempt.get("top_xmin", Boolean.class))
+                  .as("the tuple was inserted by the committed child transaction")
+                  .isFalse();
 
-                  UUID accountOperationId = UUID.randomUUID();
-                  UUID accountFenceId = UUID.randomUUID();
-                  byte[] accountBytes =
-                      "controlled account binding".getBytes(StandardCharsets.UTF_8);
-                  dsl.execute(
-                      "INSERT INTO world_design_publication_account_binding "
-                          + "(publication_fence, account_operation_id, account_fence_id, "
-                          + "account_binding_bytes, account_binding_digest) VALUES (?, ?, ?, ?, ?)",
-                      frozen.publicationFence(),
-                      accountOperationId,
-                      accountFenceId,
-                      accountBytes,
-                      "sha256:" + sha256(accountBytes));
+              UUID accountOperationId = UUID.randomUUID();
+              UUID accountFenceId = UUID.randomUUID();
+              byte[] accountBytes = "controlled account binding".getBytes(StandardCharsets.UTF_8);
+              dsl.execute(
+                  "INSERT INTO world_design_publication_account_binding "
+                      + "(publication_fence, account_operation_id, account_fence_id, "
+                      + "account_binding_bytes, account_binding_digest) VALUES (?, ?, ?, ?, ?)",
+                  frozen.publicationFence(),
+                  accountOperationId,
+                  accountFenceId,
+                  accountBytes,
+                  "sha256:" + sha256(accountBytes));
 
-                  byte[] inventoryBytes =
-                      "controlled selected inventory".getBytes(StandardCharsets.UTF_8);
-                  dsl.execute(
-                      "INSERT INTO world_selected_publication_artifact_inventory "
-                          + "(publication_fence, target_namespace, canonical_tenant_id, canonical_version_id, "
-                          + "local_tenant_key, local_version_key, applied_commit_id, account_operation_id, "
-                          + "account_fence_id, inventory_schema_version, inventory_bytes, inventory_digest) "
-                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-                      frozen.publicationFence(),
-                      request.targetNamespace(),
-                      request.canonicalTenantId(),
-                      request.canonicalVersionId(),
-                      receipt.localTenantKey(),
-                      identity.localVersionKey(),
-                      frozen.checkpoint().appliedCommitId(),
-                      accountOperationId,
-                      accountFenceId,
-                      inventoryBytes,
-                      "sha256:" + sha256(inventoryBytes));
-                  return frozen.publicationFence();
-                });
+              byte[] inventoryBytes =
+                  "controlled selected inventory".getBytes(StandardCharsets.UTF_8);
+              dsl.execute(
+                  "INSERT INTO world_selected_publication_artifact_inventory "
+                      + "(publication_fence, target_namespace, canonical_tenant_id, canonical_version_id, "
+                      + "local_tenant_key, local_version_key, applied_commit_id, account_operation_id, "
+                      + "account_fence_id, inventory_schema_version, inventory_bytes, inventory_digest) "
+                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                  frozen.publicationFence(),
+                  request.targetNamespace(),
+                  request.canonicalTenantId(),
+                  request.canonicalVersionId(),
+                  receipt.localTenantKey(),
+                  identity.localVersionKey(),
+                  frozen.checkpoint().appliedCommitId(),
+                  accountOperationId,
+                  accountFenceId,
+                  inventoryBytes,
+                  "sha256:" + sha256(inventoryBytes));
+              return frozen.publicationFence();
+            });
 
     assertThat(
             dsl.fetchSingle(
@@ -174,11 +171,10 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
                     publicationFence)
                 .get(0, Long.class))
         .isEqualTo(1L);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
-                    publicationFence))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
+                publicationFence))
         .hasMessageContaining("World publication-fence attempt history is immutable");
     assertThat(
             dsl.fetchSingle(
@@ -198,66 +194,65 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
         .executeWithoutResult(status -> fenceRepository.lockOpen(request.ownerBinding()));
 
     ownerTransaction()
-        .executeWithoutResult(
-            status -> {
-              dsl.execute(
-                  "INSERT INTO world_design_publication_fence_attempt "
-                      + "(publication_fence, target_namespace, canonical_tenant_id, local_tenant_key, "
-                      + "version_id, intake_operation_id, intake_request_id, source_operation_id, "
-                      + "source_evidence_digest, intake_receipt_digest, publication_request_id, "
-                      + "request_digest, version_state_epoch, publish_workflow_id, applied_commit_id, "
-                      + "content_digest, digest_schema_version, owner_binding_schema_version, "
-                      + "canonical_version_id, version_identity_operation_id, game_design_version_id, "
-                      + "intake_request_digest, attempt_created_full_xid, attempt_inserted_full_xid) "
-                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 1, ?, ?, ?, ?, ?::xid8, ?::xid8)",
-                  publicationFence,
-                  request.targetNamespace(),
-                  request.canonicalTenantId(),
-                  receipt.localTenantKey(),
-                  identity.localVersionKey(),
-                  receipt.operationId(),
-                  receipt.intakeRequestId(),
-                  receipt.sourceOperationId(),
-                  receipt.sourceEvidenceDigest(),
-                  receipt.receiptDigest(),
-                  request.publicationRequestId(),
-                  request.requestDigest(),
-                  request.versionStateEpoch(),
-                  request.publishWorkflowId(),
-                  "caller-stamp-probe",
-                  "d".repeat(64),
-                  request.canonicalVersionId(),
-                  request.versionIdentityOperationId(),
-                  request.gameDesignVersionId(),
-                  receipt.requestDigest(),
-                  FUTURE_FULL_XID,
-                  FUTURE_FULL_XID);
-              assertThat(
-                      dsl.execute(
-                          "UPDATE world_design_publication_fence_owner "
-                              + "SET owner_freeze_phase = 'FROZEN', current_publication_fence = ? "
-                              + "WHERE target_namespace = ? AND canonical_tenant_id = ? "
-                              + "AND local_tenant_key = ? AND version_id = ?",
-                          publicationFence,
-                          request.targetNamespace(),
-                          request.canonicalTenantId(),
-                          receipt.localTenantKey(),
-                          identity.localVersionKey()))
-                  .isEqualTo(1);
-              var stored =
-                  dsl.fetchSingle(
-                      "SELECT attempt_created_full_xid::text AS created_full_xid, "
-                          + "attempt_inserted_full_xid::text AS inserted_full_xid, "
-                          + "pg_current_xact_id()::text AS current_full_xid "
-                          + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
-                      publicationFence);
-              assertThat(stored.get("created_full_xid", String.class))
-                  .isEqualTo(stored.get("current_full_xid", String.class))
-                  .isNotEqualTo(FUTURE_FULL_XID);
-              assertThat(stored.get("inserted_full_xid", String.class))
-                  .isEqualTo(stored.get("current_full_xid", String.class))
-                  .isNotEqualTo(FUTURE_FULL_XID);
-            });
+        .executeWithoutResult(status -> {
+          dsl.execute(
+              "INSERT INTO world_design_publication_fence_attempt "
+                  + "(publication_fence, target_namespace, canonical_tenant_id, local_tenant_key, "
+                  + "version_id, intake_operation_id, intake_request_id, source_operation_id, "
+                  + "source_evidence_digest, intake_receipt_digest, publication_request_id, "
+                  + "request_digest, version_state_epoch, publish_workflow_id, applied_commit_id, "
+                  + "content_digest, digest_schema_version, owner_binding_schema_version, "
+                  + "canonical_version_id, version_identity_operation_id, game_design_version_id, "
+                  + "intake_request_digest, attempt_created_full_xid, attempt_inserted_full_xid) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 1, ?, ?, ?, ?, ?::xid8, ?::xid8)",
+              publicationFence,
+              request.targetNamespace(),
+              request.canonicalTenantId(),
+              receipt.localTenantKey(),
+              identity.localVersionKey(),
+              receipt.operationId(),
+              receipt.intakeRequestId(),
+              receipt.sourceOperationId(),
+              receipt.sourceEvidenceDigest(),
+              receipt.receiptDigest(),
+              request.publicationRequestId(),
+              request.requestDigest(),
+              request.versionStateEpoch(),
+              request.publishWorkflowId(),
+              "caller-stamp-probe",
+              "d".repeat(64),
+              request.canonicalVersionId(),
+              request.versionIdentityOperationId(),
+              request.gameDesignVersionId(),
+              receipt.requestDigest(),
+              FUTURE_FULL_XID,
+              FUTURE_FULL_XID);
+          assertThat(
+                  dsl.execute(
+                      "UPDATE world_design_publication_fence_owner "
+                          + "SET owner_freeze_phase = 'FROZEN', current_publication_fence = ? "
+                          + "WHERE target_namespace = ? AND canonical_tenant_id = ? "
+                          + "AND local_tenant_key = ? AND version_id = ?",
+                      publicationFence,
+                      request.targetNamespace(),
+                      request.canonicalTenantId(),
+                      receipt.localTenantKey(),
+                      identity.localVersionKey()))
+              .isEqualTo(1);
+          var stored =
+              dsl.fetchSingle(
+                  "SELECT attempt_created_full_xid::text AS created_full_xid, "
+                      + "attempt_inserted_full_xid::text AS inserted_full_xid, "
+                      + "pg_current_xact_id()::text AS current_full_xid "
+                      + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
+                  publicationFence);
+          assertThat(stored.get("created_full_xid", String.class))
+              .isEqualTo(stored.get("current_full_xid", String.class))
+              .isNotEqualTo(FUTURE_FULL_XID);
+          assertThat(stored.get("inserted_full_xid", String.class))
+              .isEqualTo(stored.get("current_full_xid", String.class))
+              .isNotEqualTo(FUTURE_FULL_XID);
+        });
 
     var ownerBeforeLateAttachment =
         dsl.fetchSingle(
@@ -272,17 +267,16 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "INSERT INTO world_design_publication_account_binding "
-                                + "(publication_fence, account_operation_id, account_fence_id, "
-                                + "account_binding_bytes, account_binding_digest) VALUES (?, ?, ?, ?, ?)",
-                            publicationFence,
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            accountBytes,
-                            "sha256:" + sha256(accountBytes))),
+                .executeWithoutResult(status ->
+                    dsl.execute(
+                        "INSERT INTO world_design_publication_account_binding "
+                            + "(publication_fence, account_operation_id, account_fence_id, "
+                            + "account_binding_bytes, account_binding_digest) VALUES (?, ?, ?, ?, ?)",
+                        publicationFence,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        accountBytes,
+                        "sha256:" + sha256(accountBytes))),
         "P0002",
         "query returned no rows");
     assertThat(
@@ -421,15 +415,14 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
   private static void assertSqlState(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String state, String message) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (cause.getCause() != null) cause = cause.getCause();
-              assertThat(cause).isInstanceOf(PSQLException.class);
-              PSQLException postgresFailure = (PSQLException) cause;
-              assertThat(postgresFailure.getSQLState()).isEqualTo(state);
-              assertThat(postgresFailure.getMessage()).contains(message);
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (cause.getCause() != null) cause = cause.getCause();
+          assertThat(cause).isInstanceOf(PSQLException.class);
+          PSQLException postgresFailure = (PSQLException) cause;
+          assertThat(postgresFailure.getSQLState()).isEqualTo(state);
+          assertThat(postgresFailure.getMessage()).contains(message);
+        });
   }
 
   private static String sha256(byte[] value) {

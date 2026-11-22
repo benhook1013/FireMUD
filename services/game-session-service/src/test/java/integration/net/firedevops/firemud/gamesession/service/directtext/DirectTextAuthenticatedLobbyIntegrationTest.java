@@ -160,11 +160,10 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     journal = new InitialGameplayLoginCoordinationJournalRepository(dsl);
     original = new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 7);
     verified = verified(original, ACCOUNT, UUID.randomUUID(), "5");
-    tx.executeWithoutResult(
-        status -> {
-          journal.reserve(original);
-          journal.recordVerifiedResult(original, verified);
-        });
+    tx.executeWithoutResult(status -> {
+      journal.reserve(original);
+      journal.recordVerifiedResult(original, verified);
+    });
     parentBeforeMigration = parentJson();
     migrate(null);
     repository = new DirectTextAuthenticatedLobbyRepository(dsl);
@@ -199,13 +198,12 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
         new ControlledCustody(
             original, verified, new ObservedDirectTextTransport("00042", UUID.randomUUID()));
     when(account.issueDirectTextConnectScope(any(), any()))
-        .thenAnswer(
-            call ->
-                IssueDirectTextConnectScopeResponse.newBuilder()
-                    .setConnectScopeId("opaque-" + UUID.randomUUID())
-                    .setEvaluatedAt(NOW.minusSeconds(1).toString())
-                    .setConnectScopeExpiresAt(NOW.plusSeconds(60).toString())
-                    .build());
+        .thenAnswer(call ->
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("opaque-" + UUID.randomUUID())
+                .setEvaluatedAt(NOW.minusSeconds(1).toString())
+                .setConnectScopeExpiresAt(NOW.plusSeconds(60).toString())
+                .build());
     owner = owner(repository, manager);
   }
 
@@ -251,30 +249,29 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
   void actualOwnerReadsCommittedExactRequestBeforeAccountAndRetainsPositiveReply() {
     var scope = realms();
     when(account.joinPublicProductionMembership(any(), any(), any(), any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var row =
-                  dsl.fetchSingle(
-                      "SELECT * FROM " + JOIN + " WHERE scope_record_id = ?", scope.recordId());
-              assertThat(row.get("state", String.class)).isEqualTo("DISPATCH_POSSIBLE");
-              var request =
-                  DirectTextAuthenticatedLobbyJoin.decodeRequest(
-                      row.get("request_bytes", byte[].class));
-              assertThat(request.getPlayerContext())
-                  .isEqualTo(
-                      call.getArgument(
-                          0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
-              assertThat(request.getPlayerContext().getAccountId()).isEqualTo(ACCOUNT.toString());
-              assertThat(request.getPlayerContext().getSessionId())
-                  .isEqualTo(custody.transport.transportSessionId());
-              assertThat(request.getConnectScopeId()).isEqualTo(scope.issued().connectScopeId());
-              assertThat(request.getConnectScopeId()).isEqualTo(call.getArgument(1, String.class));
-              assertThat(request.getRequestId()).isEqualTo(call.getArgument(2, String.class));
-              assertThat(call.getArgument(3, Instant.class))
-                  .isEqualTo(scope.issued().connectScopeExpiresAtInstant());
-              return positive();
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var row =
+              dsl.fetchSingle(
+                  "SELECT * FROM " + JOIN + " WHERE scope_record_id = ?", scope.recordId());
+          assertThat(row.get("state", String.class)).isEqualTo("DISPATCH_POSSIBLE");
+          var request =
+              DirectTextAuthenticatedLobbyJoin.decodeRequest(
+                  row.get("request_bytes", byte[].class));
+          assertThat(request.getPlayerContext())
+              .isEqualTo(
+                  call.getArgument(
+                      0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
+          assertThat(request.getPlayerContext().getAccountId()).isEqualTo(ACCOUNT.toString());
+          assertThat(request.getPlayerContext().getSessionId())
+              .isEqualTo(custody.transport.transportSessionId());
+          assertThat(request.getConnectScopeId()).isEqualTo(scope.issued().connectScopeId());
+          assertThat(request.getConnectScopeId()).isEqualTo(call.getArgument(1, String.class));
+          assertThat(request.getRequestId()).isEqualTo(call.getArgument(2, String.class));
+          assertThat(call.getArgument(3, Instant.class))
+              .isEqualTo(scope.issued().connectScopeExpiresAtInstant());
+          return positive();
+        });
     var completed = owner.join(original, verified, custody);
     assertThat(completed.status())
         .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING);
@@ -320,17 +317,15 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var one =
-          executor.submit(
-              () -> {
-                await(gate);
-                return freeze();
-              });
+          executor.submit(() -> {
+            await(gate);
+            return freeze();
+          });
       var two =
-          executor.submit(
-              () -> {
-                await(gate);
-                return freeze();
-              });
+          executor.submit(() -> {
+            await(gate);
+            return freeze();
+          });
       gate.countDown();
       var first = one.get(10, TimeUnit.SECONDS);
       var second = two.get(10, TimeUnit.SECONDS);
@@ -368,42 +363,34 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var winner =
-          executor.submit(
-              () ->
-                  tx.execute(
-                      status -> {
-                        repository.verifyOriginal(original, verified);
-                        if (abandonmentFirst) journal.abandon(original);
-                        else
-                          assertThat(
-                                  repository.claimDispatch(
-                                      frozen, verified, custody.transport, clock))
-                              .isTrue();
-                        locked.countDown();
-                        await(release);
-                        return true;
-                      }));
+          executor.submit(() ->
+              tx.execute(status -> {
+                repository.verifyOriginal(original, verified);
+                if (abandonmentFirst) journal.abandon(original);
+                else
+                  assertThat(repository.claimDispatch(frozen, verified, custody.transport, clock))
+                      .isTrue();
+                locked.countDown();
+                await(release);
+                return true;
+              }));
       assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
       var follower =
-          executor.submit(
-              () -> {
-                try {
-                  return tx.execute(
-                      status -> {
-                        followerPid.set(
-                            dsl.fetchSingle("SELECT pg_backend_pid() AS pid")
-                                .get("pid", Integer.class));
-                        followerStarted.countDown();
-                        if (abandonmentFirst)
-                          return repository.claimDispatch(
-                              frozen, verified, custody.transport, clock);
-                        journal.abandon(original);
-                        return true;
-                      });
-                } catch (IllegalStateException denied) {
-                  return false;
-                }
+          executor.submit(() -> {
+            try {
+              return tx.execute(status -> {
+                followerPid.set(
+                    dsl.fetchSingle("SELECT pg_backend_pid() AS pid").get("pid", Integer.class));
+                followerStarted.countDown();
+                if (abandonmentFirst)
+                  return repository.claimDispatch(frozen, verified, custody.transport, clock);
+                journal.abandon(original);
+                return true;
               });
+            } catch (IllegalStateException denied) {
+              return false;
+            }
+          });
       assertThat(followerStarted.await(5, TimeUnit.SECONDS)).isTrue();
       awaitActualLockWait(followerPid.get());
       assertThat(follower.isDone()).isFalse();
@@ -598,12 +585,11 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
   void positiveInflightResultAfterAbandonmentAndTransportResetIsHistoricalOnly() {
     var scope = realms();
     when(account.joinPublicProductionMembership(any(), any(), any(), any()))
-        .thenAnswer(
-            call -> {
-              tx.executeWithoutResult(status -> journal.abandon(original));
-              custody.resetAfterCurrentCallback();
-              return positive();
-            });
+        .thenAnswer(call -> {
+          tx.executeWithoutResult(status -> journal.abandon(original));
+          custody.resetAfterCurrentCallback();
+          return positive();
+        });
     var observed = owner.join(original, verified, custody);
     assertThat(observed.status())
         .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.HISTORICAL_ONLY);
@@ -619,12 +605,11 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
   void delayedPositiveResultDoesNotMoveANewerCurrentScope() {
     var old = realms();
     when(account.joinPublicProductionMembership(any(), any(), any(), any()))
-        .thenAnswer(
-            call -> {
-              var newer = realms();
-              assertThat(newer.recordId()).isNotEqualTo(old.recordId());
-              return positive();
-            });
+        .thenAnswer(call -> {
+          var newer = realms();
+          assertThat(newer.recordId()).isNotEqualTo(old.recordId());
+          return positive();
+        });
     var observed = owner.join(original, verified, custody);
     assertThat(observed.status())
         .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.HISTORICAL_ONLY);
@@ -647,25 +632,20 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     try (var differentAccount =
             verified(original, UUID.randomUUID(), verified.evidence().tokenJti(), "5");
         var differentWitness = verified(original, ACCOUNT, UUID.randomUUID(), "6")) {
-      assertThatThrownBy(
-              () ->
-                  tx.execute(
-                      status ->
-                          repository.current(original, differentAccount, custody.transport, clock)))
+      assertThatThrownBy(() ->
+              tx.execute(status ->
+                  repository.current(original, differentAccount, custody.transport, clock)))
           .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  tx.execute(
-                      status ->
-                          repository.current(original, differentWitness, custody.transport, clock)))
+      assertThatThrownBy(() ->
+              tx.execute(status ->
+                  repository.current(original, differentWitness, custody.transport, clock)))
           .isInstanceOf(IllegalStateException.class);
     }
     var wrongFence =
         new InitialGameplayLoginAttemptCoordinates(
             original.requestId(), original.callerContextId(), 8);
-    assertThatThrownBy(
-            () ->
-                tx.executeWithoutResult(status -> repository.verifyOriginal(wrongFence, verified)))
+    assertThatThrownBy(() ->
+            tx.executeWithoutResult(status -> repository.verifyOriginal(wrongFence, verified)))
         .isInstanceOf(IllegalStateException.class);
     var missing =
         new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 1);
@@ -728,20 +708,17 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     var frozen = freeze();
     assertThatThrownBy(() -> tx.execute(status -> repository.readCommittedJoin(frozen)))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                tx.execute(
-                    status -> {
-                      dsl.execute("SET LOCAL synchronous_commit = 'off'");
-                      return repository.claimDispatch(frozen, verified, custody.transport, clock);
-                    }))
+    assertThatThrownBy(() ->
+            tx.execute(status -> {
+              dsl.execute("SET LOCAL synchronous_commit = 'off'");
+              return repository.claimDispatch(frozen, verified, custody.transport, clock);
+            }))
         .isInstanceOf(IllegalStateException.class);
     var unjoined =
         new DirectTextAuthenticatedLobbyRepository(DSL.using(source, SQLDialect.POSTGRES));
-    assertThatThrownBy(
-            () ->
-                tx.execute(
-                    status -> unjoined.claimDispatch(frozen, verified, custody.transport, clock)))
+    assertThatThrownBy(() ->
+            tx.execute(
+                status -> unjoined.claimDispatch(frozen, verified, custody.transport, clock)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.readCommittedJoin(frozen).state()).isEqualTo(State.NEVER_DISPATCHED);
   }

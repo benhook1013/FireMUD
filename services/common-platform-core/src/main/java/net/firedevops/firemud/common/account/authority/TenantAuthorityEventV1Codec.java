@@ -326,14 +326,12 @@ public final class TenantAuthorityEventV1Codec {
       throw new IllegalArgumentException("Tenant authority event " + field + " is not an object");
     }
     Map<String, Object> result = new LinkedHashMap<>();
-    raw.forEach(
-        (key, fieldValue) -> {
-          if (!(key instanceof String textKey)) {
-            throw new IllegalArgumentException(
-                "Tenant authority event " + field + " has a bad key");
-          }
-          result.put(textKey, fieldValue);
-        });
+    raw.forEach((key, fieldValue) -> {
+      if (!(key instanceof String textKey)) {
+        throw new IllegalArgumentException("Tenant authority event " + field + " has a bad key");
+      }
+      result.put(textKey, fieldValue);
+    });
     return result;
   }
 

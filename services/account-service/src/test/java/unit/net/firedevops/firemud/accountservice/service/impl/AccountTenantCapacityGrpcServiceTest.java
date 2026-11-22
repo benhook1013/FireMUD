@@ -2,14 +2,17 @@ package net.firedevops.firemud.accountservice.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.util.UUID;
@@ -25,7 +28,6 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
@@ -82,12 +84,49 @@ class AccountTenantCapacityGrpcServiceTest {
   }
 
   @Test
-  void typedOwnerEvidenceUnavailableKeepsItsPublicFailure() {
-    var request = CapacityAdmissionTestFixture.playerRequest();
+  void quotaExceptionRequiresDurableDecisionIdentity() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> {
+              throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED);
+            })
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void invalidDomainRefusalIsSanitizedInternal() {
+    // Noncreating evidence cannot authorize a quota refusal, even with a decision UUID.
+    var request = CapacityAdmissionTestFixture.playerRequest(false);
     try (var guards = authenticatedCaller()) {
       AccountTenantCapacityOwner owner = mock();
       when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
-          .thenThrow(new CapacityException(Failure.ENTITLEMENT_UNAVAILABLE));
+          .thenThrow(
+              new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, java.util.UUID.randomUUID()));
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .commitTenantCapacityAdmission(
+              TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
+      var error = ArgumentCaptor.forClass(Throwable.class);
+      verify(observer).onError(error.capture());
+      Throwable thrown = error.getValue();
+      assertThat(thrown).isInstanceOf(StatusRuntimeException.class);
+      assertThat(thrown.getCause()).isNull();
+      Status status = ((StatusRuntimeException) thrown).getStatus();
+      assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
+      assertThat(status.getDescription()).isNull();
+      assertThat(status.getCause()).isNull();
+      verify(observer, never()).onNext(any());
+      verify(observer, never()).onCompleted();
+      verify(owner).commit(request, CapacityAdmissionTestFixture.PEER);
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("ownerUnavailableFailures")
+  void unavailableOwnerFailureKeepsItsPublicNonOkStatus(RuntimeException failure) {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    try (var guards = authenticatedCaller()) {
+      AccountTenantCapacityOwner owner = mock();
+      when(owner.commit(request, CapacityAdmissionTestFixture.PEER)).thenThrow(failure);
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
           .commitTenantCapacityAdmission(
@@ -96,12 +135,10 @@ class AccountTenantCapacityGrpcServiceTest {
     }
   }
 
-  @ParameterizedTest
-  @EnumSource(
-      value = Failure.class,
-      names = {"TENANT_BILLING_BLOCKED", "CAPACITY_QUOTA_EXCEEDED"})
-  void producedBillingAndQuotaDenialsReturnAnExactTypedResponse(Failure code) {
-    var request = CapacityAdmissionTestFixture.playerRequest();
+  @Test
+  void producedBillingDenialReturnsAnExactTypedResponse() {
+    Failure code = Failure.TENANT_BILLING_BLOCKED;
+    var request = CapacityAdmissionTestFixture.playerRequest(false);
     try (var guards = authenticatedCaller()) {
       AccountTenantCapacityOwner owner = mock();
       when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
@@ -111,11 +148,13 @@ class AccountTenantCapacityGrpcServiceTest {
           .commitTenantCapacityAdmission(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
-      verify(observer).onNext(response.capture());
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
       assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
           .contains(new Refusal(code, null));
-      verify(observer).onCompleted();
+      ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
+      verifyNoMoreInteractions(observer);
     }
   }
 
@@ -132,12 +171,26 @@ class AccountTenantCapacityGrpcServiceTest {
           .commitTenantCapacityAdmission(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
-      verify(observer).onNext(response.capture());
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
       assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
           .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
-      verify(observer).onCompleted();
+      ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
+      verifyNoMoreInteractions(observer);
     }
+  }
+
+  private static Stream<RuntimeException> ownerUnavailableFailures() {
+    return Stream.of(
+        new CapacityException(Failure.ENTITLEMENT_UNAVAILABLE),
+        new org.jooq.exception.DataAccessException(
+            "Controlled retained refusal failure",
+            new java.sql.SQLException("constraint", "23514")),
+        new org.springframework.dao.DataAccessResourceFailureException(
+            "Controlled storage failure"),
+        new org.springframework.transaction.TransactionSystemException(
+            "Controlled transaction failure"));
   }
 
   private static Stream<RuntimeException> ownerEvidenceFailures() {

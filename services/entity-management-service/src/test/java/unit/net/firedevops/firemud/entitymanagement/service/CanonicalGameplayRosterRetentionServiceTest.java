@@ -51,11 +51,10 @@ class CanonicalGameplayRosterRetentionServiceTest {
   @BeforeEach
   void currentRetiredFixturesAlreadyHaveQualifiedSeals() {
     when(repository.initializeRetainedRetirement(any()))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
   }
 
   @Test
@@ -121,17 +120,15 @@ class CanonicalGameplayRosterRetentionServiceTest {
     when(repository.candidates(null, 2)).thenReturn(List.of(failing, advancing));
     when(repository.health()).thenReturn(new Health(0, 0));
     when(repository.prepareRetirement(failing, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              throw new IllegalStateException("original page unavailable");
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          throw new IllegalStateException("original page unavailable");
+        });
     when(repository.prepareRetirement(advancing, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return 2;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return 2;
+        });
     service.sweep();
     verify(repository).prepareRetirement(failing, 2);
     verify(repository).prepareRetirement(advancing, 2);
@@ -148,66 +145,54 @@ class CanonicalGameplayRosterRetentionServiceTest {
     var eligible = candidate(3, "RETIRED");
     var held = candidate(4, "RETIRED");
     when(repository.candidates(null, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of(unavailable, unknown);
-            })
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of();
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of(unavailable, unknown);
+        })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of();
+        });
     when(repository.candidates(unknown.binding().snapshot().snapshotUuid(), 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of(eligible, held);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of(eligible, held);
+        });
     when(repository.candidates(held.binding().snapshot().snapshotUuid(), 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of();
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of();
+        });
     when(ownerClient.getCanonicalGameplayRosterReference(unavailable.ownerRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              throw new IllegalStateException("Owner unavailable");
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          throw new IllegalStateException("Owner unavailable");
+        });
     when(ownerClient.getCanonicalGameplayRosterReference(unknown.ownerRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return GetCanonicalGameplayRosterReferenceResponse.newBuilder()
-                  .setStateValue(77)
-                  .build();
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return GetCanonicalGameplayRosterReferenceResponse.newBuilder().setStateValue(77).build();
+        });
     when(repository.dispose(eligible))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
     when(repository.dispose(held))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return false;
+        });
     when(repository.purgeDisposedTombstones(2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return 1;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return 1;
+        });
     when(repository.health())
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new Health(91, 17);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new Health(91, 17);
+        });
 
     service.sweep();
     verify(repository, never()).dispose(any());
@@ -262,35 +247,30 @@ class CanonicalGameplayRosterRetentionServiceTest {
     when(repository.candidates(refusedSnapshot.binding().snapshot().snapshotUuid(), 2))
         .thenReturn(List.of(retiredSnapshot));
     when(ownerClient.getCanonicalGameplayRosterReference(protectedSnapshot.ownerRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return proof;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return proof;
+        });
     when(ownerClient.getCanonicalGameplayRosterReference(refusedSnapshot.ownerRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return refusedProof;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return refusedProof;
+        });
     when(repository.observeRetirement(protectedSnapshot, proof, policy))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
     when(repository.observeRetirement(refusedSnapshot, refusedProof, policy))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return false;
+        });
     when(repository.dispose(retiredSnapshot))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
 
     service.sweep();
@@ -382,23 +362,20 @@ class CanonicalGameplayRosterRetentionServiceTest {
     when(repository.closedAdmissionCandidates(null, 2)).thenReturn(List.of(closure));
     when(repository.closedAdmissionCandidates(closure.operationUuid(), 2)).thenReturn(List.of());
     when(ownerClient.getCanonicalGameplayRosterReference(original))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return owner;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return owner;
+        });
     when(repository.purgeClosedAdmission(closure, owner))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return false;
+        });
     when(repository.purgeOrphanOpenAdmissions(policy, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return 0;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return 0;
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
     service.sweep();
     service.sweep();
@@ -420,11 +397,10 @@ class CanonicalGameplayRosterRetentionServiceTest {
         .thenThrow(new org.jooq.exception.DataAccessException("snapshot mapping failed"));
     when(repository.closedAdmissionCandidates(null, 2)).thenReturn(List.of(closure));
     when(ownerClient.getCanonicalGameplayRosterReference(owner.getRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return owner;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return owner;
+        });
     when(repository.purgeClosedAdmission(closure, owner)).thenReturn(true);
     when(repository.health()).thenReturn(new Health(11, 3));
 
@@ -460,11 +436,10 @@ class CanonicalGameplayRosterRetentionServiceTest {
   @Test
   void failedOrphanPurgeStillRunsDisposedPurgeAndHealth() {
     when(repository.purgeOrphanOpenAdmissions(policy, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              throw new org.jooq.exception.DataAccessException("orphan purge unavailable");
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          throw new org.jooq.exception.DataAccessException("orphan purge unavailable");
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
 
     service.sweep();
@@ -476,11 +451,10 @@ class CanonicalGameplayRosterRetentionServiceTest {
   @Test
   void failedDisposedPurgeStillRefreshesHealth() {
     when(repository.purgeDisposedTombstones(2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              throw new org.jooq.exception.DataAccessException("disposed purge unavailable");
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          throw new org.jooq.exception.DataAccessException("disposed purge unavailable");
+        });
     when(repository.health()).thenReturn(new Health(4, 2));
 
     service.sweep();
@@ -592,27 +566,23 @@ class CanonicalGameplayRosterRetentionServiceTest {
         CanonicalGameplayRosterReferenceEvidence.response(
             candidate.ownerRequest(), 1, new UUID(3, 1), null);
     when(ownerClient.getCanonicalGameplayRosterReference(candidate.ownerRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return nonterminal;
-            })
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              throw new IllegalStateException("unavailable");
-            })
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return retirement(candidate);
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return nonterminal;
+        })
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          throw new IllegalStateException("unavailable");
+        })
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return retirement(candidate);
+        });
     when(repository.observeWaitingRetirement(waiting, retirement(candidate)))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
 
     service.sweep();
@@ -650,49 +620,42 @@ class CanonicalGameplayRosterRetentionServiceTest {
     when(repository.retirementTransfers(null, 2)).thenReturn(List.of(pending));
     when(repository.retirementTransfers(pending.observationUuid(), 2))
         .thenReturn(List.of(pending))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              assertThat(committed.get()).isTrue();
-              return List.of(acknowledged);
-            })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          assertThat(committed.get()).isTrue();
+          return List.of(acknowledged);
+        })
         .thenReturn(List.of(acknowledged));
     when(ownerClient.acknowledgeCanonicalGameplayRosterRetirement(request))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              throw new IllegalStateException("ACK reply lost");
-            })
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return acknowledgement;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          throw new IllegalStateException("ACK reply lost");
+        })
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return acknowledgement;
+        });
     when(repository.recordRetirementAcknowledgement(pending, acknowledgement))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              committed.set(true);
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          committed.set(true);
+          return true;
+        });
     when(ownerClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              assertThat(committed.get()).isTrue();
-              throw new IllegalStateException("confirmation reply lost");
-            })
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return confirmationResponse;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          assertThat(committed.get()).isTrue();
+          throw new IllegalStateException("confirmation reply lost");
+        })
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return confirmationResponse;
+        });
     when(repository.recordRetirementConfirmation(acknowledged, confirmationResponse))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
 
     service.sweep();
@@ -748,29 +711,25 @@ class CanonicalGameplayRosterRetentionServiceTest {
         CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
     when(repository.retirementTransfers(null, 2)).thenReturn(List.of(pending, acknowledged));
     when(ownerClient.acknowledgeCanonicalGameplayRosterRetirement(pending.acknowledgementRequest()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return acknowledgement;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return acknowledgement;
+        });
     when(repository.recordRetirementAcknowledgement(pending, acknowledgement))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return false;
+        });
     when(ownerClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return confirmationResponse;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return confirmationResponse;
+        });
     when(repository.recordRetirementConfirmation(acknowledged, confirmationResponse))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return false;
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
 
     service.sweep();

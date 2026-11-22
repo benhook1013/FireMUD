@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
@@ -19,9 +21,11 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -599,6 +603,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     byte[] value = new byte[] {2, 0, (byte) 0xfe};
     admin.hset(hash, field, value);
     Map<String, byte[]> before = physicalImage(original);
+    verifyRawEnumerationOrderIsNotPartOfTheImage(hash, ascii(original.keys()[2]), field, value);
     admin.hdel(hash, field);
     admin.hset(hash, field, value);
     assertPhysicalImage(original, before, 7);
@@ -617,6 +622,42 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(physicalImage(original).get(original.keys()[2]))
         .isNotEqualTo(before.get(original.keys()[2]));
     for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
+  }
+
+  private static void verifyRawEnumerationOrderIsNotPartOfTheImage(
+      byte[] hash, byte[] set, byte[] field, byte[] value) {
+    byte[] otherField = {0, (byte) 0xff, 2};
+    byte[] otherValue = {2, 0, (byte) 0xff};
+    Map<byte[], byte[]> forwardFields = new LinkedHashMap<>();
+    forwardFields.put(field, value);
+    forwardFields.put(otherField, otherValue);
+    Map<byte[], byte[]> reverseFields = new LinkedHashMap<>();
+    reverseFields.put(otherField, otherValue);
+    reverseFields.put(field, value);
+    var forwardMembers = new LinkedHashSet<>(List.of(value, otherValue));
+    var reverseMembers = new LinkedHashSet<>(List.of(otherValue, value));
+    assertThat(forwardFields.keySet()).containsExactly(field, otherField);
+    assertThat(reverseFields.keySet()).containsExactly(otherField, field);
+    assertThat(forwardMembers).containsExactly(value, otherValue);
+    assertThat(reverseMembers).containsExactly(otherValue, value);
+
+    RedisCommands<byte[], byte[]> orderedRead = mock();
+    when(orderedRead.type(hash)).thenReturn("hash");
+    when(orderedRead.type(set)).thenReturn("set");
+    when(orderedRead.pexpiretime(hash)).thenReturn(-1L);
+    when(orderedRead.pexpiretime(set)).thenReturn(-1L);
+    when(orderedRead.hgetall(hash)).thenReturn(forwardFields).thenReturn(reverseFields);
+    when(orderedRead.smembers(set)).thenReturn(forwardMembers).thenReturn(reverseMembers);
+    byte[] firstHash =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, hash);
+    assertThat(
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, hash))
+        .containsExactly(firstHash);
+    byte[] firstSet =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, set);
+    assertThat(
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, set))
+        .containsExactly(firstSet);
   }
 
   private void assertPhysicalImage(
@@ -850,27 +891,25 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     ScriptCase original = seed();
     var start = new java.util.concurrent.CountDownLatch(1);
     var finalized =
-        java.util.concurrent.CompletableFuture.supplyAsync(
-            () -> {
-              try {
-                start.await();
-                return eval(original);
-              } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(interrupted);
-              }
-            });
+        java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+          try {
+            start.await();
+            return eval(original);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+          }
+        });
     var closed =
-        java.util.concurrent.CompletableFuture.supplyAsync(
-            () -> {
-              try {
-                start.await();
-                return eval(action(original, "CLOSE"));
-              } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(interrupted);
-              }
-            });
+        java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+          try {
+            start.await();
+            return eval(action(original, "CLOSE"));
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+          }
+        });
     start.countDown();
     long finalResult = finalized.get(5, java.util.concurrent.TimeUnit.SECONDS);
     long closeResult = closed.get(5, java.util.concurrent.TimeUnit.SECONDS);
@@ -916,8 +955,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     ScriptCase original = seed();
     // Replace only this controlled fixture's complete matching envelope before INSTALL.
     admin.del(new byte[][] {ascii(original.keys()[6])});
-    var capacity = new LinkedHashMap<>(capacity(System.currentTimeMillis() + 1000L));
+    long redisNow = redisTimeMillis();
+    long expiresAt = redisNow + 4000L;
+    long operationDeadline = redisNow + 20000L;
+    var capacity = new LinkedHashMap<>(capacity(expiresAt));
     byte[][] args = original.arguments().clone();
+    args[14] = ascii(Long.toString(operationDeadline));
     args[16] = canonicalBytes(capacity);
     String digest = "sha256:" + HexFormatHolder.sha256(args[16]);
     args[18] = ascii(digest);
@@ -925,15 +968,26 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     ((tools.jackson.databind.node.ObjectNode) template).put("capacityExecutionDigest", digest);
     args[10] = canonicalBytes(template);
     ScriptCase expiring = new ScriptCase(original.keys(), args);
+    assertThat(redisTimeMillis()).isLessThan(expiresAt);
     assertThat(eval(action(expiring, "INSTALL"))).isEqualTo(3L);
-    Thread.sleep(
-        Math.max(
-            1L,
-            Long.parseLong(capacity.get("expiresAtMillis")) - System.currentTimeMillis() + 20L));
+    long stopWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(12);
+    long observedTime = redisTimeMillis();
+    while (observedTime < expiresAt && System.nanoTime() < stopWaiting) {
+      Thread.sleep(25);
+      observedTime = redisTimeMillis();
+    }
+    assertThat(observedTime).isBetween(expiresAt, operationDeadline - 1000L);
     assertThat(eval(expiring)).isEqualTo(-1L);
     assertThat(admin.hget(ascii(original.keys()[6]), ascii("state")))
         .containsExactly(ascii("AUTHORIZED"));
     assertThat(eval(action(expiring, "CLOSE"))).isEqualTo(4L);
+  }
+
+  private long redisTimeMillis() {
+    List<byte[]> time = admin.time();
+    assertThat(time).hasSize(2);
+    return Long.parseLong(new String(time.get(0), StandardCharsets.US_ASCII)) * 1000L
+        + Long.parseLong(new String(time.get(1), StandardCharsets.US_ASCII)) / 1000L;
   }
 
   private static Map<String, Object> candidate(Map<String, Object> lease) {

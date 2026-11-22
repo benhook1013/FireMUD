@@ -61,24 +61,22 @@ public final class AccountStartSessionActivationProtectionSettlementService {
 
     Lookup lookup =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                ignored -> {
-                  StoredProtection protection =
-                      repository
-                          .findHistoricalExact(
-                              input.accountProtectionId(), input.accountProtectionFence())
-                          .orElseThrow(
-                              () ->
-                                  failedPrecondition(
-                                      "Exact historical Account activation protection is unavailable"));
-                  requireTargetBinding(protection, input.targetNamespace());
-                  StoredSettlement settled =
-                      repository
-                          .findSettlementExact(
-                              input.accountProtectionId(), input.accountProtectionFence())
-                          .orElse(null);
-                  return new Lookup(protection, settled);
-                }),
+            ownerTransaction.execute(ignored -> {
+              StoredProtection protection =
+                  repository
+                      .findHistoricalExact(
+                          input.accountProtectionId(), input.accountProtectionFence())
+                      .orElseThrow(() ->
+                          failedPrecondition(
+                              "Exact historical Account activation protection is unavailable"));
+              requireTargetBinding(protection, input.targetNamespace());
+              StoredSettlement settled =
+                  repository
+                      .findSettlementExact(
+                          input.accountProtectionId(), input.accountProtectionFence())
+                      .orElse(null);
+              return new Lookup(protection, settled);
+            }),
             "Account activation-protection lookup transaction returned no result");
 
     if (lookup.settlement() != null) {
@@ -124,15 +122,13 @@ public final class AccountStartSessionActivationProtectionSettlementService {
     requireNoAmbientTransaction();
     StoredSettlement readback =
         Objects.requireNonNull(
-            readbackTransaction.execute(
-                ignored ->
-                    repository
-                        .findSettlementExact(
-                            input.accountProtectionId(), input.accountProtectionFence())
-                        .orElseThrow(
-                            () ->
-                                failedPrecondition(
-                                    "Committed World activation settlement is not readable"))),
+            readbackTransaction.execute(ignored ->
+                repository
+                    .findSettlementExact(
+                        input.accountProtectionId(), input.accountProtectionFence())
+                    .orElseThrow(() ->
+                        failedPrecondition(
+                            "Committed World activation settlement is not readable"))),
             "Account activation settlement readback transaction returned no value");
     if (!sameSettlement(committed, readback)) {
       throw failedPrecondition("Committed World activation settlement readback differs");

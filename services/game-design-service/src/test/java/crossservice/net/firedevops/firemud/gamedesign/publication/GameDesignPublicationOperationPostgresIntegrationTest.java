@@ -174,10 +174,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
           // The real handler and owner read finish; the first outbound result is deliberately lost.
           assertThatThrownBy(() -> client.read(request))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  e ->
-                      assertThat(Status.fromThrowable(e).getCode())
-                          .isEqualTo(Status.Code.UNAVAILABLE));
+              .satisfies(e ->
+                  assertThat(Status.fromThrowable(e).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
           var recovered = client.read(request).terminalEvidence().orElseThrow();
           assertThat(recovered.canonicalBytes()).isEqualTo(retained);
           assertThat(recovered.operationBytes()).isEqualTo(fixture.operation().canonicalBytes());
@@ -205,12 +203,11 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             client.init();
             assertThatThrownBy(() -> client.read(request))
                 .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(
-                    e -> {
-                      assertThat(Status.fromThrowable(e).getCode())
-                          .isEqualTo(Status.Code.PERMISSION_DENIED);
-                      assertThat(TlsTestSupport.isTlsHandshakeRejection(e)).isFalse();
-                    });
+                .satisfies(e -> {
+                  assertThat(Status.fromThrowable(e).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED);
+                  assertThat(TlsTestSupport.isTlsHandshakeRejection(e)).isFalse();
+                });
           }
         }
         assertThat(headers).hasValue(5);
@@ -233,12 +230,11 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
           client.init();
           assertThatThrownBy(() -> client.read(request))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  e -> {
-                    assertThat(Status.fromThrowable(e).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED);
-                    assertThat(TlsTestSupport.isTlsHandshakeRejection(e)).isFalse();
-                  });
+              .satisfies(e -> {
+                assertThat(Status.fromThrowable(e).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED);
+                assertThat(TlsTestSupport.isTlsHandshakeRejection(e)).isFalse();
+              });
           assertThat(deniedHeaders).hasValue(0);
         } finally {
           deniedServer.shutdownNow();
@@ -316,37 +312,33 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                     pki.server(), pki.ca(), directory.resolve("producer-gds-" + ownerIndex)),
                 new GrpcChannelFactory(),
                 "test")) {
-          assertThatThrownBy(
-                  () ->
-                      fixture
-                          .write()
-                          .executeWithoutResult(
-                              status -> {
-                                producer.reconcile(
-                                    fixture.operation().tenantKey(),
-                                    fixture.operation().workflowId(),
-                                    fixture.operation().versionId(),
-                                    fixture.operation().selectionDigest(),
-                                    outcome);
-                              }))
+          assertThatThrownBy(() ->
+                  fixture
+                      .write()
+                      .executeWithoutResult(status -> {
+                        producer.reconcile(
+                            fixture.operation().tenantKey(),
+                            fixture.operation().workflowId(),
+                            fixture.operation().versionId(),
+                            fixture.operation().selectionDigest(),
+                            outcome);
+                      }))
               .isInstanceOf(IllegalStateException.class)
               .hasMessage("Independent World publication handoff required");
           assertThat(completionProbe.calls).isEmpty();
           assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
 
-          assertThatThrownBy(
-                  () ->
-                      producer.reconcile(
-                          fixture.operation().tenantKey(),
-                          fixture.operation().workflowId(),
-                          fixture.operation().versionId(),
-                          fixture.operation().selectionDigest(),
-                          outcome))
+          assertThatThrownBy(() ->
+                  producer.reconcile(
+                      fixture.operation().tenantKey(),
+                      fixture.operation().workflowId(),
+                      fixture.operation().versionId(),
+                      fixture.operation().selectionDigest(),
+                      outcome))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.UNAVAILABLE));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.UNAVAILABLE));
 
           assertThat(completionProbe.calls).hasSize(1);
           assertThat(completionStore.calls()).hasSize(1);
@@ -371,27 +363,25 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
           assertThat(completionProbe.calls.get(0).requestId())
               .isNotEqualTo(completionProbe.calls.get(1).requestId());
           assertThat(completionProbe.calls)
-              .allSatisfy(
-                  call -> {
-                    assertThat(call.targetNamespace()).isEqualTo("test");
-                    assertThat(call.operationBytes()).isEqualTo(originalOperationBytes);
-                    assertThat(call.terminalBytes()).isEqualTo(originalTerminalBytes);
-                    assertThat(call.ownerTransactionActive()).isFalse();
-                    assertThat(call.ownerSynchronizationActive()).isFalse();
-                  });
+              .allSatisfy(call -> {
+                assertThat(call.targetNamespace()).isEqualTo("test");
+                assertThat(call.operationBytes()).isEqualTo(originalOperationBytes);
+                assertThat(call.terminalBytes()).isEqualTo(originalTerminalBytes);
+                assertThat(call.ownerTransactionActive()).isFalse();
+                assertThat(call.ownerSynchronizationActive()).isFalse();
+              });
           assertThat(completionStore.calls())
-              .allSatisfy(
-                  call -> {
-                    assertThat(call.operationBytes()).isEqualTo(originalOperationBytes);
-                    assertThat(call.terminalBytes()).isEqualTo(originalTerminalBytes);
-                    assertThat(call.publicationFence()).isEqualTo(originalWorld.publicationFence());
-                    assertThat(call.publicationRequestId())
-                        .isEqualTo(originalWorld.publicationRequestId());
-                    assertThat(call.workflowId()).isEqualTo(fixture.operation().workflowId());
-                    assertThat(call.ownerTransactionActive()).isFalse();
-                    assertThat(call.ownerSynchronizationActive()).isFalse();
-                    assertThat(call.completedGdsReads()).isGreaterThan(0);
-                  });
+              .allSatisfy(call -> {
+                assertThat(call.operationBytes()).isEqualTo(originalOperationBytes);
+                assertThat(call.terminalBytes()).isEqualTo(originalTerminalBytes);
+                assertThat(call.publicationFence()).isEqualTo(originalWorld.publicationFence());
+                assertThat(call.publicationRequestId())
+                    .isEqualTo(originalWorld.publicationRequestId());
+                assertThat(call.workflowId()).isEqualTo(fixture.operation().workflowId());
+                assertThat(call.ownerTransactionActive()).isFalse();
+                assertThat(call.ownerSynchronizationActive()).isFalse();
+                assertThat(call.completedGdsReads()).isGreaterThan(0);
+              });
           assertThat(readHeaders).hasValue(2);
           assertThat(readResponses).hasValue(2);
           assertThat(completionProbe.responses).hasValue(1);
@@ -408,14 +398,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
                   ? GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION
                   : GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED;
-          assertThatThrownBy(
-                  () ->
-                      producer.reconcile(
-                          fixture.operation().tenantKey(),
-                          fixture.operation().workflowId(),
-                          fixture.operation().versionId(),
-                          fixture.operation().selectionDigest(),
-                          oppositeOutcome))
+          assertThatThrownBy(() ->
+                  producer.reconcile(
+                      fixture.operation().tenantKey(),
+                      fixture.operation().workflowId(),
+                      fixture.operation().versionId(),
+                      fixture.operation().selectionDigest(),
+                      oppositeOutcome))
               .isInstanceOf(IllegalStateException.class)
               .hasMessage("PUBLICATION_TERMINAL_UNRESOLVED");
           assertThat(completionProbe.calls).hasSize(2);
@@ -454,24 +443,22 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               publicationClientTls(pki.server(), pki.ca(), directory.resolve("pending-producer")),
               new GrpcChannelFactory(),
               "test")) {
-        assertThatThrownBy(
-                () ->
-                    producer.reconcile(
-                        pendingFixture.operation().tenantKey(),
-                        pendingFixture.operation().workflowId() + "-absent",
-                        pendingFixture.operation().versionId(),
-                        pendingFixture.operation().selectionDigest(),
-                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+        assertThatThrownBy(() ->
+                producer.reconcile(
+                    pendingFixture.operation().tenantKey(),
+                    pendingFixture.operation().workflowId() + "-absent",
+                    pendingFixture.operation().versionId(),
+                    pendingFixture.operation().selectionDigest(),
+                    GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("PUBLICATION_TERMINAL_PENDING");
-        assertThatThrownBy(
-                () ->
-                    producer.reconcile(
-                        pendingFixture.operation().tenantKey(),
-                        pendingFixture.operation().workflowId(),
-                        pendingFixture.operation().versionId(),
-                        pendingFixture.operation().selectionDigest(),
-                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+        assertThatThrownBy(() ->
+                producer.reconcile(
+                    pendingFixture.operation().tenantKey(),
+                    pendingFixture.operation().workflowId(),
+                    pendingFixture.operation().versionId(),
+                    pendingFixture.operation().selectionDigest(),
+                    GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("PUBLICATION_TERMINAL_UNRESOLVED");
         assertThat(terminalOwnerSnapshot(pendingFixture)).isEqualTo(pendingBefore);
@@ -488,14 +475,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                   pki.server(), pki.ca(), directory.resolve("historical-producer")),
               new GrpcChannelFactory(),
               "test")) {
-        assertThatThrownBy(
-                () ->
-                    producer.reconcile(
-                        historical.operation().tenantKey(),
-                        historical.operation().workflowId(),
-                        historical.operation().versionId(),
-                        historical.operation().selectionDigest(),
-                        GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION))
+        assertThatThrownBy(() ->
+                producer.reconcile(
+                    historical.operation().tenantKey(),
+                    historical.operation().workflowId(),
+                    historical.operation().versionId(),
+                    historical.operation().selectionDigest(),
+                    GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("PUBLICATION_TERMINAL_UNRESOLVED");
         assertThat(terminalOwnerSnapshot(historical)).isEqualTo(historicalBefore);
@@ -544,19 +530,17 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                     directory.resolve("wrong-gds-" + invalidIdentity.label())),
                 new GrpcChannelFactory(),
                 "test")) {
-          assertThatThrownBy(
-                  () ->
-                      producer.reconcile(
-                          fixture.operation().tenantKey(),
-                          fixture.operation().workflowId(),
-                          fixture.operation().versionId(),
-                          fixture.operation().selectionDigest(),
-                          GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+          assertThatThrownBy(() ->
+                  producer.reconcile(
+                      fixture.operation().tenantKey(),
+                      fixture.operation().workflowId(),
+                      fixture.operation().versionId(),
+                      fixture.operation().selectionDigest(),
+                      GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
         }
       }
       probe.injectCallerContext.set(true);
@@ -568,19 +552,17 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                   pki.server(), pki.ca(), directory.resolve("caller-context-producer")),
               new GrpcChannelFactory(),
               "test")) {
-        assertThatThrownBy(
-                () ->
-                    producer.reconcile(
-                        fixture.operation().tenantKey(),
-                        fixture.operation().workflowId(),
-                        fixture.operation().versionId(),
-                        fixture.operation().selectionDigest(),
-                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+        assertThatThrownBy(() ->
+                producer.reconcile(
+                    fixture.operation().tenantKey(),
+                    fixture.operation().workflowId(),
+                    fixture.operation().versionId(),
+                    fixture.operation().selectionDigest(),
+                    GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       }
       probe.injectCallerContext.set(false);
       assertThat(probe.calls).hasSize(3);
@@ -630,19 +612,17 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                   pki.server(), pki.ca(), directory.resolve("wrong-world-verifier-producer")),
               new GrpcChannelFactory(),
               "test")) {
-        assertThatThrownBy(
-                () ->
-                    producer.reconcile(
-                        fixture.operation().tenantKey(),
-                        fixture.operation().workflowId(),
-                        fixture.operation().versionId(),
-                        fixture.operation().selectionDigest(),
-                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+        assertThatThrownBy(() ->
+                producer.reconcile(
+                    fixture.operation().tenantKey(),
+                    fixture.operation().workflowId(),
+                    fixture.operation().versionId(),
+                    fixture.operation().selectionDigest(),
+                    GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
         assertThat(wrongWorldProbe.calls).hasSize(1);
         assertThat(wrongWorldReadHeaders).hasValue(1);
         assertThat(wrongWorldReadResponses).hasValue(0);
@@ -1174,10 +1154,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               GameDesignPublicationTerminalReadGrpcCodec.class,
               org.mockito.Mockito.CALLS_REAL_METHODS)) {
         codec
-            .when(
-                () ->
-                    GameDesignPublicationTerminalReadGrpcCodec.toResponse(
-                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .when(() ->
+                GameDesignPublicationTerminalReadGrpcCodec.toResponse(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
             .thenThrow(encodingFailure);
 
         var result = readThroughHandler(fixture, request, "account-service");
@@ -1237,22 +1216,18 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     DraftAuthorizationFenceBinding.frame(old, new byte[0]);
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              var attempt =
-                  fixture
-                      .attempts()
-                      .findByPublishWorkflowIdForUpdate(op.workflowId())
-                      .orElseThrow();
-              attempt.setStatus(PublishAttemptStatus.FAILED);
-              fixture.attempts().save(attempt);
-              fixture
-                  .dsl()
-                  .execute(
-                      "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
-                      old.toByteArray(),
-                      op.workflowId());
-            });
+        .executeWithoutResult(status -> {
+          var attempt =
+              fixture.attempts().findByPublishWorkflowIdForUpdate(op.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          fixture.attempts().save(attempt);
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
+                  old.toByteArray(),
+                  op.workflowId());
+        });
     fixture.completeMigration().run();
     var request =
         GameDesignPublicationTerminalReadEvidence.ReadRequest.create("test", op.canonicalBytes());
@@ -1298,47 +1273,44 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     assertThat(retained.operation().canonicalBytes()).isEqualTo(originalRequest);
     assertThat(retained.outcome()).isEqualTo("PENDING");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO game_design_publication_operation "
-                            + "(publish_workflow_id, tenant_id, version_id, selection_digest, request_bytes) "
-                            + "VALUES (?, ?, ?, ?, ?)",
-                        operation.workflowId(),
-                        operation.tenantKey(),
-                        operation.versionId(),
-                        operation.selectionDigest(),
-                        originalRequest))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO game_design_publication_operation "
+                        + "(publish_workflow_id, tenant_id, version_id, selection_digest, request_bytes) "
+                        + "VALUES (?, ?, ?, ?, ?)",
+                    operation.workflowId(),
+                    operation.tenantKey(),
+                    operation.versionId(),
+                    operation.selectionDigest(),
+                    originalRequest))
         .hasMessageContaining("Truncated publication inventory frame");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
-                            + "revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
-                        new byte[] {1},
-                        operation.workflowId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
+                        + "revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
+                    new byte[] {1},
+                    operation.workflowId()))
         .hasMessageContaining("Truncated publication inventory frame");
 
     var selection = operation.account().input().selection();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO game_design_realm_policy_capture "
-                            + "(canonical_tenant_id, canonical_version_id, publish_workflow_id, "
-                            + "commit_id, operation_bytes, capture_bytes) VALUES (?, ?, ?, ?, ?, ?)",
-                        operation.account().tenantId(),
-                        operation.world().request().canonicalVersionId(),
-                        operation.workflowId(),
-                        selection.selectedCommit().commitId(),
-                        originalRequest,
-                        new byte[] {1}))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO game_design_realm_policy_capture "
+                        + "(canonical_tenant_id, canonical_version_id, publish_workflow_id, "
+                        + "commit_id, operation_bytes, capture_bytes) VALUES (?, ?, ?, ?, ?, ?)",
+                    operation.account().tenantId(),
+                    operation.world().request().canonicalVersionId(),
+                    operation.workflowId(),
+                    selection.selectedCommit().commitId(),
+                    originalRequest,
+                    new byte[] {1}))
         .hasMessageContaining("Truncated publication inventory frame");
 
     assertThat(
@@ -1387,12 +1359,11 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     retained.completeMigration().run();
     retained
         .write()
-        .executeWithoutResult(
-            status ->
-                retained
-                    .dsl()
-                    .execute(
-                        "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT"));
+        .executeWithoutResult(status ->
+            retained
+                .dsl()
+                .execute(
+                    "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT"));
     String expandedWholeRow =
         java.util.Objects.requireNonNull(
                 retained
@@ -1407,18 +1378,16 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     var replay = retained.service().readExact(retained.operation()).orElseThrow();
     assertThat(replay.receiptBytes()).isEqualTo(original.receiptBytes());
     assertThat(replay.terminalEvidenceBytes()).isEqualTo(original.terminalEvidenceBytes());
-    assertThatThrownBy(
-            () ->
-                retained
-                    .write()
-                    .executeWithoutResult(
-                        status ->
-                            retained
-                                .dsl()
-                                .execute(
-                                    "UPDATE published_release_bundle SET generation_config_revision = 'changed' WHERE tenant_id = ? AND version_id = ?",
-                                    retained.operation().tenantKey(),
-                                    retained.operation().versionId())))
+    assertThatThrownBy(() ->
+            retained
+                .write()
+                .executeWithoutResult(status ->
+                    retained
+                        .dsl()
+                        .execute(
+                            "UPDATE published_release_bundle SET generation_config_revision = 'changed' WHERE tenant_id = ? AND version_id = ?",
+                            retained.operation().tenantKey(),
+                            retained.operation().versionId())))
         .isInstanceOf(RuntimeException.class);
     assertThat(retained.service().readExact(retained.operation()).orElseThrow().receiptBytes())
         .isEqualTo(original.receiptBytes());
@@ -1426,15 +1395,14 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     var retainedPending = historicalFixture("50.7");
     var originalOperationBytes = retainedPending.operation().canonicalBytes();
     retainedPending.completeMigration().run();
-    assertThatThrownBy(
-            () ->
-                retainedPending
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
-                            + "revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
-                        new byte[] {1},
-                        retainedPending.operation().workflowId()))
+    assertThatThrownBy(() ->
+            retainedPending
+                .dsl()
+                .execute(
+                    "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
+                        + "revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
+                    new byte[] {1},
+                    retainedPending.operation().workflowId()))
         .hasMessageContaining("Truncated publication inventory frame");
     var stillPending =
         retainedPending.service().readExact(retainedPending.operation()).orElseThrow();
@@ -1445,12 +1413,11 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     fresh.completeMigration().run();
     fresh
         .write()
-        .executeWithoutResult(
-            status ->
-                fresh
-                    .dsl()
-                    .execute(
-                        "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT"));
+        .executeWithoutResult(status ->
+            fresh
+                .dsl()
+                .execute(
+                    "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT"));
     publish(fresh);
     var freshRead = fresh.service().readExact(fresh.operation()).orElseThrow();
     assertThat(freshRead.outcome()).isEqualTo("PUBLISHED");
@@ -1549,19 +1516,17 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     assertThat(fixture.service().retainVerifiedOperation(fixture.operation()).receiptBytes())
         .isEqualTo(original.receiptBytes());
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .write()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .operations()
-                                .requirePending(
-                                    fixture.operation().tenantKey(),
-                                    fixture.operation().workflowId(),
-                                    fixture.operation().versionId(),
-                                    fixture.operation().selectionDigest())))
+    assertThatThrownBy(() ->
+            fixture
+                .write()
+                .executeWithoutResult(status ->
+                    fixture
+                        .operations()
+                        .requirePending(
+                            fixture.operation().tenantKey(),
+                            fixture.operation().workflowId(),
+                            fixture.operation().versionId(),
+                            fixture.operation().selectionDigest())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SEALED_OR_CHANGED");
     assertThatThrownBy(
@@ -1589,18 +1554,17 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     assertThat(terminal.operationBytes()).isEqualTo(fixture.operation().canonicalBytes());
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              var version =
-                  fixture
-                      .versions()
-                      .findByTenantIdAndIdForUpdate(
-                          fixture.operation().tenantKey(), fixture.operation().versionId())
-                      .orElseThrow();
-              version.setVersionState(VersionLifecycleState.RETIRED);
-              version.setVersionStateEpoch(captured + 1);
-              fixture.versions().save(version);
-            });
+        .executeWithoutResult(status -> {
+          var version =
+              fixture
+                  .versions()
+                  .findByTenantIdAndIdForUpdate(
+                      fixture.operation().tenantKey(), fixture.operation().versionId())
+                  .orElseThrow();
+          version.setVersionState(VersionLifecycleState.RETIRED);
+          version.setVersionStateEpoch(captured + 1);
+          fixture.versions().save(version);
+        });
     var replay = fixture.service().readExact(fixture.operation()).orElseThrow();
     assertThat(replay.terminalEvidenceBytes()).isEqualTo(original.terminalEvidenceBytes());
     assertThat(
@@ -1620,33 +1584,29 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             "published_release_bundle_digest = 'sha256:' || repeat('f', 64)",
             "terminal_evidence_bytes = terminal_evidence_bytes || decode('00', 'hex')",
             "release_content_bytes = release_content_bytes || decode('00', 'hex')")) {
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .write()
-                      .executeWithoutResult(
-                          status ->
-                              fixture
-                                  .dsl()
-                                  .execute(
-                                      "UPDATE game_design_publication_operation SET "
-                                          + assignment
-                                          + " WHERE publish_workflow_id = ?",
-                                      fixture.operation().workflowId())))
+      assertThatThrownBy(() ->
+              fixture
+                  .write()
+                  .executeWithoutResult(status ->
+                      fixture
+                          .dsl()
+                          .execute(
+                              "UPDATE game_design_publication_operation SET "
+                                  + assignment
+                                  + " WHERE publish_workflow_id = ?",
+                              fixture.operation().workflowId())))
           .hasMessageContaining("publication operation identity or terminal outcome is immutable");
     }
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .write()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "UPDATE published_release_bundle SET generation_config_revision = 'changed' WHERE tenant_id = ? AND version_id = ?",
-                                    fixture.operation().tenantKey(),
-                                    fixture.operation().versionId())))
+    assertThatThrownBy(() ->
+            fixture
+                .write()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "UPDATE published_release_bundle SET generation_config_revision = 'changed' WHERE tenant_id = ? AND version_id = ?",
+                            fixture.operation().tenantKey(),
+                            fixture.operation().versionId())))
         .isInstanceOf(RuntimeException.class);
     assertThat(
             fixture.service().readExact(fixture.operation()).orElseThrow().terminalEvidenceBytes())
@@ -1661,15 +1621,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               ? "publication terminal bytes differ from original owner result"
               : "publication terminal content or committed epoch differs from owner seal";
       var fixture = fixture();
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .write()
-                      .executeWithoutResult(
-                          status -> {
-                            publishInTransaction(fixture, false);
-                            rawTerminalSeal(fixture, forgedField);
-                          }))
+      assertThatThrownBy(() ->
+              fixture
+                  .write()
+                  .executeWithoutResult(status -> {
+                    publishInTransaction(fixture, false);
+                    rawTerminalSeal(fixture, forgedField);
+                  }))
           .hasMessageContaining(expectedGuardMessage);
       var pending = fixture.service().readExact(fixture.operation()).orElseThrow();
       assertThat(pending.outcome()).isEqualTo("PENDING");
@@ -1688,20 +1646,18 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   @Test
   void publicationSealEpochMustRemainTheActualVersionEpochThroughCommit() throws Exception {
     var fixture = fixture();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .write()
-                    .executeWithoutResult(
-                        status -> {
-                          publishInTransaction(fixture);
-                          fixture
-                              .dsl()
-                              .execute(
-                                  "UPDATE version SET version_state_epoch = version_state_epoch + 1 WHERE tenant_id = ? AND id = ?",
-                                  fixture.operation().tenantKey(),
-                                  fixture.operation().versionId());
-                        }))
+    assertThatThrownBy(() ->
+            fixture
+                .write()
+                .executeWithoutResult(status -> {
+                  publishInTransaction(fixture);
+                  fixture
+                      .dsl()
+                      .execute(
+                          "UPDATE version SET version_state_epoch = version_state_epoch + 1 WHERE tenant_id = ? AND id = ?",
+                          fixture.operation().tenantKey(),
+                          fixture.operation().versionId());
+                }))
         .isInstanceOf(RuntimeException.class);
     assertThat(fixture.service().readExact(fixture.operation()).orElseThrow().outcome())
         .isEqualTo("PENDING");
@@ -1727,11 +1683,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                 .getVersionStateEpoch())
         .isEqualTo(fixture.operation().world().request().versionStateEpoch() + 1);
     staleFailure.setStatus(PublishAttemptStatus.FAILED);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .write()
-                    .executeWithoutResult(status -> fixture.attempts().save(staleFailure)))
+    assertThatThrownBy(() ->
+            fixture.write().executeWithoutResult(status -> fixture.attempts().save(staleFailure)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("CAS_CONFLICT");
     assertThatThrownBy(() -> noPublication(fixture)).isInstanceOf(IllegalStateException.class);
@@ -1743,16 +1696,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   void failedAtomicCommitLeavesAttemptOperationVersionAndReleasePendingForExactRetry()
       throws Exception {
     var fixture = fixture();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .write()
-                    .executeWithoutResult(
-                        status -> {
-                          publishInTransaction(fixture);
-                          throw new IllegalStateException(
-                              "ISOLATED rollback after all owner writes");
-                        }))
+    assertThatThrownBy(() ->
+            fixture
+                .write()
+                .executeWithoutResult(status -> {
+                  publishInTransaction(fixture);
+                  throw new IllegalStateException("ISOLATED rollback after all owner writes");
+                }))
         .hasMessageContaining("rollback after all owner writes");
     assertThat(fixture.service().readExact(fixture.operation()).orElseThrow().outcome())
         .isEqualTo("PENDING");
@@ -1792,39 +1742,35 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     var loserPid = new AtomicInteger();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var winner =
-          executor.submit(
-              () ->
-                  fixture
-                      .write()
-                      .executeWithoutResult(
-                          status -> {
-                            noPublicationInTransaction(fixture);
-                            winnerPid.set(
-                                java.util.Objects.requireNonNull(
-                                        fixture.dsl().fetchOne("SELECT pg_backend_pid()"),
-                                        "no-publication transaction must expose its PostgreSQL backend")
-                                    .get(0, Integer.class));
-                            sealed.countDown();
-                            await(releaseSeal);
-                          }));
+          executor.submit(() ->
+              fixture
+                  .write()
+                  .executeWithoutResult(status -> {
+                    noPublicationInTransaction(fixture);
+                    winnerPid.set(
+                        java.util.Objects.requireNonNull(
+                                fixture.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                "no-publication transaction must expose its PostgreSQL backend")
+                            .get(0, Integer.class));
+                    sealed.countDown();
+                    await(releaseSeal);
+                  }));
       assertThat(sealed.await(10, TimeUnit.SECONDS)).isTrue();
       var loser =
-          executor.submit(
-              () -> {
-                fixture
-                    .write()
-                    .executeWithoutResult(
-                        status -> {
-                          loserPid.set(
-                              java.util.Objects.requireNonNull(
-                                      fixture.dsl().fetchOne("SELECT pg_backend_pid()"),
-                                      "late publisher transaction must expose its PostgreSQL backend")
-                                  .get(0, Integer.class));
-                          attempting.countDown();
-                          assertThatThrownBy(() -> publishInTransaction(fixture))
-                              .isInstanceOf(IllegalStateException.class);
-                        });
-              });
+          executor.submit(() -> {
+            fixture
+                .write()
+                .executeWithoutResult(status -> {
+                  loserPid.set(
+                      java.util.Objects.requireNonNull(
+                              fixture.dsl().fetchOne("SELECT pg_backend_pid()"),
+                              "late publisher transaction must expose its PostgreSQL backend")
+                          .get(0, Integer.class));
+                  attempting.countDown();
+                  assertThatThrownBy(() -> publishInTransaction(fixture))
+                      .isInstanceOf(IllegalStateException.class);
+                });
+          });
       assertThat(attempting.await(10, TimeUnit.SECONDS)).isTrue();
       boolean observedBlock = false;
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
@@ -1871,24 +1817,23 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     DraftAuthorizationFenceBinding.frame(historicalReceipt, new byte[0]);
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              var attempt =
-                  fixture
-                      .attempts()
-                      .findByPublishWorkflowIdForUpdate(operation.workflowId())
-                      .orElseThrow();
-              attempt.setStatus(PublishAttemptStatus.FAILED);
-              fixture.attempts().save(attempt);
+        .executeWithoutResult(status -> {
+          var attempt =
               fixture
-                  .dsl()
-                  .execute(
-                      "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
-                          + "revision = revision + 1, result_bytes = ? "
-                          + "WHERE publish_workflow_id = ?",
-                      historicalReceipt.toByteArray(),
-                      operation.workflowId());
-            });
+                  .attempts()
+                  .findByPublishWorkflowIdForUpdate(operation.workflowId())
+                  .orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          fixture.attempts().save(attempt);
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
+                      + "revision = revision + 1, result_bytes = ? "
+                      + "WHERE publish_workflow_id = ?",
+                  historicalReceipt.toByteArray(),
+                  operation.workflowId());
+        });
     fixture.completeMigration().run();
     var retained = fixture.service().readExact(operation).orElseThrow();
     assertThat(retained.outcome()).isEqualTo("NO_PUBLICATION");
@@ -2141,13 +2086,12 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     properties.setSchema(schema);
     var versions = new VersionRepository(dsl);
     Game game =
-        write.execute(
-            status -> {
-              var requested = new Game();
-              requested.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
-              requested.setName("ISOLATED publication owner");
-              return games.save(requested);
-            });
+        write.execute(status -> {
+          var requested = new Game();
+          requested.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
+          requested.setName("ISOLATED publication owner");
+          return games.save(requested);
+        });
     Version version;
     if (historicalV1) {
       // Retained pre-V56 rows use the original Version shape and operation framing.
@@ -2171,36 +2115,34 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     if (includeAssetCandidate && !"50.6".equals(migrationTarget)) {
       var gameAssets = new GameAssetRepository(dsl);
       asset =
-          write.execute(
-              status -> {
-                var requested = new GameAsset();
-                requested.setTenantId(game.getTenantId());
-                requested.setFileName(ASSET_FILE_NAME);
-                requested.setContentType(ASSET_CONTENT_TYPE);
-                requested.setData(ASSET_BYTES);
-                return gameAssets.save(requested);
-              });
+          write.execute(status -> {
+            var requested = new GameAsset();
+            requested.setTenantId(game.getTenantId());
+            requested.setFileName(ASSET_FILE_NAME);
+            requested.setContentType(ASSET_CONTENT_TYPE);
+            requested.setData(ASSET_BYTES);
+            return gameAssets.save(requested);
+          });
     }
     GameAsset fixtureAsset = asset;
     var operation =
-        write.execute(
-            status -> {
-              try {
-                return historicalV1
-                    ? IsolatedPublicationOwnerSetup.retainHistoricalV1PreV56(
-                        dsl, target, version.getVersionStateEpoch())
-                    : IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
-                        dsl,
-                        target,
-                        version.getVersionStateEpoch(),
-                        "ISOLATED selected source and publication fixture",
-                        List.of(
-                            new IsolatedPublicationOwnerSetup.OrdinaryAsset(
-                                Objects.requireNonNull(fixtureAsset).getId(), ASSET_FILE_NAME)));
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        write.execute(status -> {
+          try {
+            return historicalV1
+                ? IsolatedPublicationOwnerSetup.retainHistoricalV1PreV56(
+                    dsl, target, version.getVersionStateEpoch())
+                : IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                    dsl,
+                    target,
+                    version.getVersionStateEpoch(),
+                    "ISOLATED selected source and publication fixture",
+                    List.of(
+                        new IsolatedPublicationOwnerSetup.OrdinaryAsset(
+                            Objects.requireNonNull(fixtureAsset).getId(), ASSET_FILE_NAME)));
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
     var operations = new GameDesignPublicationOperationRepository(dsl);
     var artifacts = new VersionAssetArtifactRepository(dsl);
     FrozenAssetExportCandidate readCandidate = null;
@@ -2214,20 +2156,18 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       } else {
         var publicationRepository = new VersionAssetPublicationRepository(dsl);
         var snapshot =
-            write.execute(
-                status ->
-                    publicationRepository.freezeOrReadSnapshot(
-                        game.getTenantId(), version.getVersionNumber()));
+            write.execute(status ->
+                publicationRepository.freezeOrReadSnapshot(
+                    game.getTenantId(), version.getVersionNumber()));
         var artifactService =
             new VersionAssetArtifactServiceImpl(
                 artifacts, null, versions, null, null, null, null, null, new ObjectMapper());
-        write.execute(
-            status ->
-                artifactService.stageExport(
-                    game.getTenantId(),
-                    version.getId(),
-                    version.getVersionNumber(),
-                    operation.workflowId()));
+        write.execute(status ->
+            artifactService.stageExport(
+                game.getTenantId(),
+                version.getId(),
+                version.getVersionNumber(),
+                operation.workflowId()));
         var candidateService =
             new VersionAssetExportCandidateServiceImpl(
                 versions,
@@ -2315,39 +2255,38 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   private VersionAssetPublicationRepository.ExportSnapshot seedHistoricalAssetSnapshot(
       DSLContext dsl, TransactionTemplate write, Game game, Version version, GameAsset asset) {
     String contentDigest = sha256(ASSET_BYTES);
-    write.executeWithoutResult(
-        status -> {
-          dsl.execute(
-              "INSERT INTO version_asset (tenant_id, version_id, asset_id, usage_key, usage_type) "
-                  + "VALUES (?, ?, ?, ?, ?)",
-              game.getTenantId(),
-              version.getId(),
-              asset.getId(),
-              ASSET_FILE_NAME,
-              "logo");
-          dsl.execute(
-              "INSERT INTO version_asset_export_item "
-                  + "(tenant_id, version_id, usage_key, asset_id, content_type, content_hash, byte_size) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, ?)",
-              game.getTenantId(),
-              version.getId(),
-              ASSET_FILE_NAME,
-              asset.getId(),
-              ASSET_CONTENT_TYPE,
-              contentDigest,
-              (long) ASSET_BYTES.length);
-          dsl.execute(
-              "INSERT INTO version_asset_export_snapshot "
-                  + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, "
-                  + "version_number, captured_version_state_epoch, item_count) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, 1)",
-              game.getTenantId(),
-              version.getId(),
-              version.getCanonicalTenantId(),
-              version.getCanonicalVersionId(),
-              version.getVersionNumber(),
-              version.getVersionStateEpoch());
-        });
+    write.executeWithoutResult(status -> {
+      dsl.execute(
+          "INSERT INTO version_asset (tenant_id, version_id, asset_id, usage_key, usage_type) "
+              + "VALUES (?, ?, ?, ?, ?)",
+          game.getTenantId(),
+          version.getId(),
+          asset.getId(),
+          ASSET_FILE_NAME,
+          "logo");
+      dsl.execute(
+          "INSERT INTO version_asset_export_item "
+              + "(tenant_id, version_id, usage_key, asset_id, content_type, content_hash, byte_size) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+          game.getTenantId(),
+          version.getId(),
+          ASSET_FILE_NAME,
+          asset.getId(),
+          ASSET_CONTENT_TYPE,
+          contentDigest,
+          (long) ASSET_BYTES.length);
+      dsl.execute(
+          "INSERT INTO version_asset_export_snapshot "
+              + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, "
+              + "version_number, captured_version_state_epoch, item_count) "
+              + "VALUES (?, ?, ?, ?, ?, ?, 1)",
+          game.getTenantId(),
+          version.getId(),
+          version.getCanonicalTenantId(),
+          version.getCanonicalVersionId(),
+          version.getVersionNumber(),
+          version.getVersionStateEpoch());
+    });
     return new VersionAssetPublicationRepository(dsl)
         .readFrozenSnapshot(game.getTenantId(), version.getVersionNumber());
   }
@@ -2367,39 +2306,37 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     String objectProofsJson = historicalObjectProofsJson(requested, mapper);
     String assetKeysJson =
         mapper.writeValueAsString(requested.manifest().requiredManifestAssetKeys());
-    write.executeWithoutResult(
-        status ->
+    write.executeWithoutResult(status ->
+        dsl.execute(
+            "INSERT INTO version_asset_artifact "
+                + "(tenant_id, version_id, exported_version_number, artifact_state, state_epoch, "
+                + "last_workflow_id, exported_manifest_asset_keys_json) "
+                + "VALUES (?, ?, ?, 'STAGED', 1, ?, '[]')",
+            game.getTenantId(),
+            version.getId(),
+            version.getVersionNumber(),
+            operation.workflowId()));
+    var updated =
+        write.execute(status ->
             dsl.execute(
-                "INSERT INTO version_asset_artifact "
-                    + "(tenant_id, version_id, exported_version_number, artifact_state, state_epoch, "
-                    + "last_workflow_id, exported_manifest_asset_keys_json) "
-                    + "VALUES (?, ?, ?, 'STAGED', 1, ?, '[]')",
+                "UPDATE version_asset_artifact SET manifest_hash = ?, manifest_schema_version = ?, "
+                    + "artifact_digests_json = ?, published_object_proofs_json = ?, "
+                    + "candidate_snapshot_version_id = ?, candidate_public_base_url = ?, "
+                    + "exported_manifest_asset_keys_json = ?, state_epoch = state_epoch + 1, "
+                    + "updated_at = CURRENT_TIMESTAMP "
+                    + "WHERE tenant_id = ? AND version_id = ? AND artifact_state = 'STAGED' "
+                    + "AND state_epoch = 1 AND manifest_schema_version IS NULL "
+                    + "AND last_workflow_id = ?",
+                requested.manifest().manifestHash(),
+                requested.manifest().manifestSchemaVersion(),
+                artifactDigestsJson,
+                objectProofsJson,
+                version.getId(),
+                requested.publicBaseUrl(),
+                assetKeysJson,
                 game.getTenantId(),
                 version.getId(),
-                version.getVersionNumber(),
                 operation.workflowId()));
-    var updated =
-        write.execute(
-            status ->
-                dsl.execute(
-                    "UPDATE version_asset_artifact SET manifest_hash = ?, manifest_schema_version = ?, "
-                        + "artifact_digests_json = ?, published_object_proofs_json = ?, "
-                        + "candidate_snapshot_version_id = ?, candidate_public_base_url = ?, "
-                        + "exported_manifest_asset_keys_json = ?, state_epoch = state_epoch + 1, "
-                        + "updated_at = CURRENT_TIMESTAMP "
-                        + "WHERE tenant_id = ? AND version_id = ? AND artifact_state = 'STAGED' "
-                        + "AND state_epoch = 1 AND manifest_schema_version IS NULL "
-                        + "AND last_workflow_id = ?",
-                    requested.manifest().manifestHash(),
-                    requested.manifest().manifestSchemaVersion(),
-                    artifactDigestsJson,
-                    objectProofsJson,
-                    version.getId(),
-                    requested.publicBaseUrl(),
-                    assetKeysJson,
-                    game.getTenantId(),
-                    version.getId(),
-                    operation.workflowId()));
     if (updated == null || updated != 1) {
       throw new IllegalStateException("HISTORICAL_ASSET_CANDIDATE_WRITE_CONFLICT");
     }

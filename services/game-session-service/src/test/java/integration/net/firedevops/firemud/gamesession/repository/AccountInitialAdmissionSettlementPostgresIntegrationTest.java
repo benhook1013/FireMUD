@@ -180,30 +180,27 @@ class AccountInitialAdmissionSettlementPostgresIntegrationTest {
               presented.originalSourceCaptureReferenceBytes(),
               presented.originalSourceCaptureReferenceSha256(),
               presented.sourceEvidenceVector());
-      assertThatThrownBy(
-              () ->
-                  owner.read(
-                      new AccountInitialAdmissionSettlementReadInput(
-                          input.readRequestId(), changed)))
+      assertThatThrownBy(() ->
+              owner.read(
+                  new AccountInitialAdmissionSettlementReadInput(input.readRequestId(), changed)))
           .isInstanceOf(
               AccountInitialAdmissionSettlementReadService.SettlementUnavailableException.class);
 
       // Installed terminal immutability must reject historical adoption, even with complete bytes.
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE game_session_canonical_initial_admission_attempt SET account_protection_evidence_version = 1, "
-                          + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
-                          + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
-                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                      presented.accountProtectionId(),
-                      presented.accountProtectionFence(),
-                      original.ownerAttemptId(),
-                      original.ownerMutationId(),
-                      original.ownerFence(),
-                      presented.canonicalBytes(),
-                      namespace,
-                      legacy.initialAdmissionRequestId()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE game_session_canonical_initial_admission_attempt SET account_protection_evidence_version = 1, "
+                      + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
+                      + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
+                      + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                  presented.accountProtectionId(),
+                  presented.accountProtectionFence(),
+                  original.ownerAttemptId(),
+                  original.ownerMutationId(),
+                  original.ownerFence(),
+                  presented.canonicalBytes(),
+                  namespace,
+                  legacy.initialAdmissionRequestId()))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));

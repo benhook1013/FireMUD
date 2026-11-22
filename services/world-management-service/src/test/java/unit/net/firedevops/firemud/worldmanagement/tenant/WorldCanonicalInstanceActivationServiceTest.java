@@ -113,16 +113,15 @@ class WorldCanonicalInstanceActivationServiceTest {
     var installation = mock(WorldRuntimeInstallationRegistry.class);
     var installationHeld = new AtomicBoolean();
     when(installation.withLaunchOwners(eq(gameInstanceId), any()))
-        .thenAnswer(
-            call -> {
-              Supplier<?> owner = call.getArgument(1);
-              installationHeld.set(true);
-              try {
-                return owner.get();
-              } finally {
-                installationHeld.set(false);
-              }
-            });
+        .thenAnswer(call -> {
+          Supplier<?> owner = call.getArgument(1);
+          installationHeld.set(true);
+          try {
+            return owner.get();
+          } finally {
+            installationHeld.set(false);
+          }
+        });
     var heldChecks = new AtomicInteger();
     var closed = new java.util.concurrent.atomic.AtomicBoolean();
     var held =
@@ -139,12 +138,11 @@ class WorldCanonicalInstanceActivationServiceTest {
         };
     when(repository.readTerminalEvidence(protection)).thenReturn(Optional.empty());
     when(repository.activateProtected(eq(protection), any()))
-        .thenAnswer(
-            call -> {
-              assertThat(installationHeld).isTrue();
-              assertThat(closed).isFalse();
-              return terminal;
-            });
+        .thenAnswer(call -> {
+          assertThat(installationHeld).isTrue();
+          assertThat(closed).isFalse();
+          return terminal;
+        });
     var service = new WorldCanonicalInstanceActivationService(repository, installation);
 
     assertThat(service.activateProtected(protection, held)).isSameAs(terminal);

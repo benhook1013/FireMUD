@@ -110,59 +110,56 @@ public final class WorldPublicationTerminalRepository {
     requireNoAmbientTransaction("World publication terminal");
     GameDesignPublicationTerminalEvidence committed =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                status -> {
-                  requireWritableReadCommittedTransaction();
-                  authority.requireHeld();
-                  Record owner = lockOriginalOwner(request);
-                  Optional<GameDesignPublicationTerminalEvidence> prior =
-                      readInOwnerTransaction(request);
-                  if (prior.isPresent()) return prior.orElseThrow();
-                  if (!"FROZEN".equals(required(owner, "owner_freeze_phase", String.class))) {
-                    throw new PublicationTerminalConflictException(
-                        "World publication fence is no longer open for its first terminal result");
-                  }
+            ownerTransaction.execute(status -> {
+              requireWritableReadCommittedTransaction();
+              authority.requireHeld();
+              Record owner = lockOriginalOwner(request);
+              Optional<GameDesignPublicationTerminalEvidence> prior =
+                  readInOwnerTransaction(request);
+              if (prior.isPresent()) return prior.orElseThrow();
+              if (!"FROZEN".equals(required(owner, "owner_freeze_phase", String.class))) {
+                throw new PublicationTerminalConflictException(
+                    "World publication fence is no longer open for its first terminal result");
+              }
 
-                  insertTerminal(request);
-                  String phase = request.ownerPhase();
-                  int updated =
-                      dsl.execute(
-                          "UPDATE world_design_publication_fence_owner SET owner_freeze_phase=? "
-                              + "WHERE target_namespace=? AND canonical_tenant_id=? "
-                              + "AND local_tenant_key=? AND version_id=? "
-                              + "AND owner_freeze_phase='FROZEN' AND current_publication_fence=?",
-                          phase,
-                          request.worldEvidence().request().targetNamespace(),
-                          request.worldEvidence().request().canonicalTenantId(),
-                          required(owner, "local_tenant_key", Long.class),
-                          required(owner, "version_id", Long.class),
-                          request.worldEvidence().request().publicationFence());
-                  if (updated != 1) {
-                    throw new PublicationTerminalConflictException(
-                        "World publication terminal lost the exact locked FROZEN owner row");
-                  }
-                  authority.requireHeld();
-                  GameDesignPublicationTerminalEvidence readback =
-                      readInOwnerTransaction(request)
-                          .orElseThrow(
-                              () ->
-                                  new PublicationTerminalConflictException(
-                                      "World publication terminal has no exact immutable readback"));
-                  if (!Arrays.equals(readback.canonicalBytes(), request.terminalBytes())) {
-                    throw new PublicationTerminalConflictException(
-                        "World publication terminal differs from exact inserted evidence");
-                  }
-                  return readback;
-                }),
+              insertTerminal(request);
+              String phase = request.ownerPhase();
+              int updated =
+                  dsl.execute(
+                      "UPDATE world_design_publication_fence_owner SET owner_freeze_phase=? "
+                          + "WHERE target_namespace=? AND canonical_tenant_id=? "
+                          + "AND local_tenant_key=? AND version_id=? "
+                          + "AND owner_freeze_phase='FROZEN' AND current_publication_fence=?",
+                      phase,
+                      request.worldEvidence().request().targetNamespace(),
+                      request.worldEvidence().request().canonicalTenantId(),
+                      required(owner, "local_tenant_key", Long.class),
+                      required(owner, "version_id", Long.class),
+                      request.worldEvidence().request().publicationFence());
+              if (updated != 1) {
+                throw new PublicationTerminalConflictException(
+                    "World publication terminal lost the exact locked FROZEN owner row");
+              }
+              authority.requireHeld();
+              GameDesignPublicationTerminalEvidence readback =
+                  readInOwnerTransaction(request)
+                      .orElseThrow(() ->
+                          new PublicationTerminalConflictException(
+                              "World publication terminal has no exact immutable readback"));
+              if (!Arrays.equals(readback.canonicalBytes(), request.terminalBytes())) {
+                throw new PublicationTerminalConflictException(
+                    "World publication terminal differs from exact inserted evidence");
+              }
+              return readback;
+            }),
             "World publication terminal transaction did not commit");
 
     // Confirm committed immutable readback after TransactionTemplate returns from commit.
     GameDesignPublicationTerminalEvidence readback =
         readCommitted(request)
-            .orElseThrow(
-                () ->
-                    new PublicationTerminalConflictException(
-                        "Committed World publication terminal has no independent readback"));
+            .orElseThrow(() ->
+                new PublicationTerminalConflictException(
+                    "Committed World publication terminal has no independent readback"));
     if (!Arrays.equals(committed.canonicalBytes(), readback.canonicalBytes())) {
       throw new PublicationTerminalConflictException(
           "Committed World publication terminal differs from its owner transaction readback");
@@ -176,15 +173,14 @@ public final class WorldPublicationTerminalRepository {
     Objects.requireNonNull(request, "request");
     requireNoAmbientTransaction("World publication terminal readback");
     Record row =
-        independentReadTransaction.execute(
-            status -> {
-              requireReadOnlyRepeatableReadTransaction();
-              Record terminal = readTerminalWithOwner(request, false);
-              if (terminal == null) {
-                requirePendingOwner(request);
-              }
-              return terminal;
-            });
+        independentReadTransaction.execute(status -> {
+          requireReadOnlyRepeatableReadTransaction();
+          Record terminal = readTerminalWithOwner(request, false);
+          if (terminal == null) {
+            requirePendingOwner(request);
+          }
+          return terminal;
+        });
     if (row == null) return Optional.empty();
     return Optional.of(exactReadback(request, row));
   }

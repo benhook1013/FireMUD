@@ -116,17 +116,15 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   void directProducerAcceptsPositiveSessionBytesWithinTheJoinBoundary(String sessionId) {
     Fixture f = new Fixture(300000L);
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () -> {
-              var scope =
-                  f.owner
-                      .issueDirectTextScope(
-                          directCaller(f.target, sessionId), directTarget(f.target))
-                      .scope();
-              assertThat(scope.accountId()).isEqualTo(ACCOUNT);
-              assertThat(f.retained.get()).isEqualTo(scope);
-              verify(f.scopes).insertCanonical(PRIVATE_ACCOUNT, scope, f.provenance());
-            });
+        .run(() -> {
+          var scope =
+              f.owner
+                  .issueDirectTextScope(directCaller(f.target, sessionId), directTarget(f.target))
+                  .scope();
+          assertThat(scope.accountId()).isEqualTo(ACCOUNT);
+          assertThat(f.retained.get()).isEqualTo(scope);
+          verify(f.scopes).insertCanonical(PRIVATE_ACCOUNT, scope, f.provenance());
+        });
   }
 
   @ParameterizedTest
@@ -135,13 +133,12 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     Fixture f = new Fixture(300000L);
     String sessionId = "0".repeat(length - 1) + "1";
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () ->
-                assertCode(
-                    "CONNECT_CONTEXT_INVALID",
-                    () ->
-                        f.owner.issueDirectTextScope(
-                            directCaller(f.target, sessionId), directTarget(f.target))));
+        .run(() ->
+            assertCode(
+                "CONNECT_CONTEXT_INVALID",
+                () ->
+                    f.owner.issueDirectTextScope(
+                        directCaller(f.target, sessionId), directTarget(f.target))));
     verifyNoInteractions(
         f.accounts,
         f.memberships,
@@ -172,16 +169,14 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
       String sessionId) {
     Fixture f = new Fixture(300000L);
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () ->
-                assertThatThrownBy(
-                        () ->
-                            f.owner.issueDirectTextScope(
-                                directCaller(f.target, sessionId), directTarget(f.target)))
-                    .isInstanceOf(AuthenticationException.class)
-                    .hasCauseInstanceOf(NumberFormatException.class)
-                    .extracting(failure -> ((AuthenticationException) failure).getCode())
-                    .isEqualTo("CONNECT_CONTEXT_INVALID"));
+        .run(() ->
+            assertThatThrownBy(() ->
+                    f.owner.issueDirectTextScope(
+                        directCaller(f.target, sessionId), directTarget(f.target)))
+                .isInstanceOf(AuthenticationException.class)
+                .hasCauseInstanceOf(NumberFormatException.class)
+                .extracting(failure -> ((AuthenticationException) failure).getCode())
+                .isEqualTo("CONNECT_CONTEXT_INVALID"));
     verifyNoInteractions(
         f.accounts,
         f.memberships,
@@ -201,12 +196,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
         directPeer(
             mismatch.equals("other-namespace") ? "other" : NAMESPACE,
             mismatch.equals("wrong-service") ? "world-management-service" : "game-session-service");
-    peer.run(
-        () ->
-            assertCode(
-                "AUTH_UNAVAILABLE",
-                () ->
-                    f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
+    peer.run(() ->
+        assertCode(
+            "AUTH_UNAVAILABLE",
+            () -> f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
     verifyNoInteractions(
         f.accounts,
         f.memberships,
@@ -224,13 +217,11 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     doReturn(Optional.empty()).when(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
 
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () ->
-                assertCode(
-                    "CONNECT_CONTEXT_INVALID",
-                    () ->
-                        f.owner.issueDirectTextScope(
-                            directCaller(f.target), directTarget(f.target))));
+        .run(() ->
+            assertCode(
+                "CONNECT_CONTEXT_INVALID",
+                () ->
+                    f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
 
     verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     verifyNoInteractions(
@@ -245,13 +236,11 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
         .findByAccountUuidForUpdate(ACCOUNT);
 
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () ->
-                assertCode(
-                    "AUTH_UNAVAILABLE",
-                    () ->
-                        f.owner.issueDirectTextScope(
-                            directCaller(f.target), directTarget(f.target))));
+        .run(() ->
+            assertCode(
+                "AUTH_UNAVAILABLE",
+                () ->
+                    f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
 
     verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     verifyNoInteractions(
@@ -264,13 +253,11 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     when(f.entitlements.evaluate(TENANT)).thenReturn(f.evaluation(false));
 
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () ->
-                assertCode(
-                    "ENTITLEMENT_UNAVAILABLE",
-                    () ->
-                        f.owner.issueDirectTextScope(
-                            directCaller(f.target), directTarget(f.target))));
+        .run(() ->
+            assertCode(
+                "ENTITLEMENT_UNAVAILABLE",
+                () ->
+                    f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
 
     assertThat(f.targetReads.get()).isEqualTo(2);
     verifyNoInteractions(f.scopes, f.sessions, f.memberships);
@@ -282,13 +269,11 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     f.onSecondTargetRead =
         () -> f.account.setLifecycleState(AccountLifecycleState.DEACTIVATED_PENDING_DELETE);
     directPeer(NAMESPACE, "game-session-service")
-        .run(
-            () ->
-                assertCode(
-                    "AUTH_UNAVAILABLE",
-                    () ->
-                        f.owner.issueDirectTextScope(
-                            directCaller(f.target), directTarget(f.target))));
+        .run(() ->
+            assertCode(
+                "AUTH_UNAVAILABLE",
+                () ->
+                    f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
     verifyNoInteractions(f.scopes, f.sessions);
   }
 
@@ -435,12 +420,11 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
 
     assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
         .isInstanceOf(AuthenticationException.class)
-        .satisfies(
-            failure -> {
-              assertThat(((AuthenticationException) failure).getCode())
-                  .isEqualTo("CONNECT_CONTEXT_INVALID");
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          assertThat(((AuthenticationException) failure).getCode())
+              .isEqualTo("CONNECT_CONTEXT_INVALID");
+          assertThat(failure.getCause()).isNull();
+        });
   }
 
   @Test
@@ -451,12 +435,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
 
     assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
         .isInstanceOf(AuthenticationException.class)
-        .satisfies(
-            wrapped -> {
-              assertThat(((AuthenticationException) wrapped).getCode())
-                  .isEqualTo("AUTH_UNAVAILABLE");
-              assertThat(wrapped.getCause()).isSameAs(failure);
-            });
+        .satisfies(wrapped -> {
+          assertThat(((AuthenticationException) wrapped).getCode()).isEqualTo("AUTH_UNAVAILABLE");
+          assertThat(wrapped.getCause()).isSameAs(failure);
+        });
   }
 
   @Test
@@ -467,12 +449,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
 
     assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
         .isInstanceOf(AuthenticationException.class)
-        .satisfies(
-            wrapped -> {
-              assertThat(((AuthenticationException) wrapped).getCode())
-                  .isEqualTo("AUTH_UNAVAILABLE");
-              assertThat(wrapped.getCause()).isSameAs(failure);
-            });
+        .satisfies(wrapped -> {
+          assertThat(((AuthenticationException) wrapped).getCode()).isEqualTo("AUTH_UNAVAILABLE");
+          assertThat(wrapped.getCause()).isSameAs(failure);
+        });
   }
 
   @Test
@@ -822,65 +802,56 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
                   "jti",
                   UUID.randomUUID().toString()));
       when(accounts.findByAccountUuid(ACCOUNT))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideSql();
-                return Optional.of(account);
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideSql();
+            return Optional.of(account);
+          });
       when(accounts.findByAccountUuidForUpdate(ACCOUNT))
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                return Optional.of(account);
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            return Optional.of(account);
+          });
       when(sessions.isAccountSessionActive(PRIVATE_ACCOUNT, token))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideSql();
-                registryChecks.incrementAndGet();
-                return active.get();
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideSql();
+            registryChecks.incrementAndGet();
+            return active.get();
+          });
       when(tenants.read(TENANT))
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                return Optional.of(source);
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            return Optional.of(source);
+          });
       when(heads.readCurrentSourceSelection(TENANT))
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                return head;
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            return head;
+          });
       when(memberships.findFreshMembershipForUpdate(ACCOUNT, TENANT))
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                return member.get();
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            return member.get();
+          });
       when(entitlements.evaluate(TENANT))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideSql();
-                return evaluation;
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideSql();
+            return evaluation;
+          });
       when(targets.listVisiblePublicProductionAdmissionTargets(any()))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideSql();
-                int count = targetReads.incrementAndGet();
-                if (count == 2) onSecondTargetRead.run();
-                var request =
-                    new DiscoveryRequest(invocation.getArgument(0, UUID.class), NAMESPACE);
-                List<Target> values =
-                    count == 1
-                        ? (firstCollection == null ? List.of(target) : firstCollection)
-                        : (secondCollection == null ? List.of(secondTarget) : secondCollection);
-                return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                    request,
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                        request, values));
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideSql();
+            int count = targetReads.incrementAndGet();
+            if (count == 2) onSecondTargetRead.run();
+            var request = new DiscoveryRequest(invocation.getArgument(0, UUID.class), NAMESPACE);
+            List<Target> values =
+                count == 1
+                    ? (firstCollection == null ? List.of(target) : firstCollection)
+                    : (secondCollection == null ? List.of(secondTarget) : secondCollection);
+            return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                request,
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                    request, values));
+          });
       doAnswer(
               invocation -> {
                 assertInsideSql();
@@ -898,58 +869,56 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
                 return Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
               });
       when(scopes.findCanonical(any()))
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                CanonicalJoinScopeV2 original = retained.get();
-                if (corruptReadback)
-                  return Optional.of(
-                      new CanonicalJoinScopeV2(
-                          original.connectScopeId(),
-                          original.accountId(),
-                          original.tenantId(),
-                          UUID.randomUUID(),
-                          original.tenantSlug(),
-                          original.worldSlug(),
-                          original.realmSlug(),
-                          original.playableStateNamespaceId(),
-                          original.playableStateScope(),
-                          original.gameInstanceId(),
-                          original.catalogRevision(),
-                          original.pointerVersion(),
-                          original.evaluatedAt(),
-                          original.connectScopeExpiresAt()));
-                return Optional.of(original);
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            CanonicalJoinScopeV2 original = retained.get();
+            if (corruptReadback)
+              return Optional.of(
+                  new CanonicalJoinScopeV2(
+                      original.connectScopeId(),
+                      original.accountId(),
+                      original.tenantId(),
+                      UUID.randomUUID(),
+                      original.tenantSlug(),
+                      original.worldSlug(),
+                      original.realmSlug(),
+                      original.playableStateNamespaceId(),
+                      original.playableStateScope(),
+                      original.gameInstanceId(),
+                      original.catalogRevision(),
+                      original.pointerVersion(),
+                      original.evaluatedAt(),
+                      original.connectScopeExpiresAt()));
+            return Optional.of(original);
+          });
       when(scopes.findCanonicalEvidenceByTokenHash(any()))
-          .thenAnswer(
-              invocation -> {
-                assertInsideSql();
-                CanonicalConnectScopeEvidence original = retainedEvidence.get();
-                if (corruptDigest)
-                  return Optional.of(
-                      new CanonicalConnectScopeEvidence(
-                          original.scopeTokenHash(),
-                          original.privateAccountId(),
-                          original.targetClass(),
-                          original.accountUuid(),
-                          original.tenantUuid(),
-                          original.realmId(),
-                          original.tenantSlug(),
-                          original.worldSlug(),
-                          original.realmSlug(),
-                          original.playableStateNamespaceUuid(),
-                          original.playableStateScope(),
-                          original.gameInstanceUuid(),
-                          original.catalogRevision(),
-                          original.pointerVersion(),
-                          original.evaluatedAt(),
-                          original.connectScopeExpiresAt(),
-                          2,
-                          "sha256:" + "b".repeat(64),
-                          original.tenantProvenance()));
-                return Optional.of(original);
-              });
+          .thenAnswer(invocation -> {
+            assertInsideSql();
+            CanonicalConnectScopeEvidence original = retainedEvidence.get();
+            if (corruptDigest)
+              return Optional.of(
+                  new CanonicalConnectScopeEvidence(
+                      original.scopeTokenHash(),
+                      original.privateAccountId(),
+                      original.targetClass(),
+                      original.accountUuid(),
+                      original.tenantUuid(),
+                      original.realmId(),
+                      original.tenantSlug(),
+                      original.worldSlug(),
+                      original.realmSlug(),
+                      original.playableStateNamespaceUuid(),
+                      original.playableStateScope(),
+                      original.gameInstanceUuid(),
+                      original.catalogRevision(),
+                      original.pointerVersion(),
+                      original.evaluatedAt(),
+                      original.connectScopeExpiresAt(),
+                      2,
+                      "sha256:" + "b".repeat(64),
+                      original.tenantProvenance()));
+            return Optional.of(original);
+          });
       var properties = new AccountTokenProperties();
       properties.setConnectScopeExpirationMs(120000L);
       var caller = new AccountPlayerBootstrapCallerVerifier(jwt, accounts, sessions);

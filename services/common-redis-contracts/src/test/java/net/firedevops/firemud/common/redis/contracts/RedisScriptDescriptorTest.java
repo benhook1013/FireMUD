@@ -44,13 +44,12 @@ class RedisScriptDescriptorTest {
             List.of(anchor, ordinary),
             List.of(ordinary, companion),
             List.of(anchor, companion, ordinary))) {
-      assertThatThrownBy(
-              () ->
-                  fullKeyDescriptor(
-                      "account-tenant-creation-admission.v1",
-                      "account-service",
-                      RedisScriptDescriptor.RedisRole.COORDINATION,
-                      invalid))
+      assertThatThrownBy(() ->
+              fullKeyDescriptor(
+                  "account-tenant-creation-admission.v1",
+                  "account-service",
+                  RedisScriptDescriptor.RedisRole.COORDINATION,
+                  invalid))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("full-key anchor slot binding");
     }
@@ -145,32 +144,30 @@ class RedisScriptDescriptorTest {
 
   @Test
   void rejectsMalformedAndDuplicateKeyIdentities() {
-    assertThatThrownBy(
-            () ->
-                descriptor(
-                    null,
-                    null,
-                    List.of(
-                        new RedisScriptDescriptor.KeySpec(
-                            "1record",
-                            "session:control:",
-                            RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
-                    null,
-                    null))
+    assertThatThrownBy(() ->
+            descriptor(
+                null,
+                null,
+                List.of(
+                    new RedisScriptDescriptor.KeySpec(
+                        "1record",
+                        "session:control:",
+                        RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
+                null,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("KEYS name");
-    assertThatThrownBy(
-            () ->
-                descriptor(
-                    null,
-                    null,
-                    List.of(
-                        new RedisScriptDescriptor.KeySpec(
-                            "record",
-                            "session/control",
-                            RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
-                    null,
-                    null))
+    assertThatThrownBy(() ->
+            descriptor(
+                null,
+                null,
+                List.of(
+                    new RedisScriptDescriptor.KeySpec(
+                        "record",
+                        "session/control",
+                        RedisScriptDescriptor.HashTagDeclaration.NOT_REQUIRED)),
+                null,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("ownedPrefix");
     var key =
@@ -190,14 +187,13 @@ class RedisScriptDescriptorTest {
 
   @Test
   void rejectsMalformedAndDuplicateArgumentAndOutcomeIdentities() {
-    assertThatThrownBy(
-            () ->
-                descriptor(
-                    null,
-                    null,
-                    null,
-                    List.of(new RedisScriptDescriptor.ArgumentSpec("request-id")),
-                    null))
+    assertThatThrownBy(() ->
+            descriptor(
+                null,
+                null,
+                null,
+                List.of(new RedisScriptDescriptor.ArgumentSpec("request-id")),
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("ARGV name");
     var argument = new RedisScriptDescriptor.ArgumentSpec("requestId");
@@ -205,18 +201,17 @@ class RedisScriptDescriptorTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate ARGV");
 
-    assertThatThrownBy(
-            () ->
-                descriptor(
-                    null,
-                    null,
-                    null,
-                    null,
-                    List.of(
-                        new RedisScriptDescriptor.OutcomeSpec(
-                            "created",
-                            RedisScriptDescriptor.OutcomeCategory.SUCCESS,
-                            RedisScriptDescriptor.MutationEffect.MUTATING))))
+    assertThatThrownBy(() ->
+            descriptor(
+                null,
+                null,
+                null,
+                null,
+                List.of(
+                    new RedisScriptDescriptor.OutcomeSpec(
+                        "created",
+                        RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+                        RedisScriptDescriptor.MutationEffect.MUTATING))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("outcome code");
     var outcome =
@@ -228,12 +223,11 @@ class RedisScriptDescriptorTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate outcome");
 
-    assertThatThrownBy(
-            () ->
-                new RedisScriptDescriptor.OutcomeSpec(
-                    "CONFLICT",
-                    RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
-                    RedisScriptDescriptor.MutationEffect.MUTATING))
+    assertThatThrownBy(() ->
+            new RedisScriptDescriptor.OutcomeSpec(
+                "CONFLICT",
+                RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+                RedisScriptDescriptor.MutationEffect.MUTATING))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must be non-mutating");
   }

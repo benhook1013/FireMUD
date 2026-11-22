@@ -54,11 +54,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     // completion as well, including after failed assertions in either timeout test.
     Awaitility.await()
         .atMost(2, TimeUnit.SECONDS)
-        .untilAsserted(
-            () -> {
-              assertThat(connectors.getActiveCount()).isZero();
-              assertThat(connectors.getCompletedTaskCount()).isEqualTo(connectors.getTaskCount());
-            });
+        .untilAsserted(() -> {
+          assertThat(connectors.getActiveCount()).isZero();
+          assertThat(connectors.getCompletedTaskCount()).isEqualTo(connectors.getTaskCount());
+        });
   }
 
   @Test
@@ -71,29 +70,27 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     when(late.closeAsync()).thenReturn(closeFinished);
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
     when(redis.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            invocation -> {
-              entered.countDown();
-              // Model an OS/DNS/TLS connect that cannot be interrupted. The owner must still
-              // return.
-              for (; ; ) {
-                try {
-                  release.await();
-                  break;
-                } catch (InterruptedException interrupted) {
-                  /* The controlled connect remains pending. */
-                }
-              }
-              return late;
-            });
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          // Model an OS/DNS/TLS connect that cannot be interrupted. The owner must still
+          // return.
+          for (; ; ) {
+            try {
+              release.await();
+              break;
+            } catch (InterruptedException interrupted) {
+              /* The controlled connect remains pending. */
+            }
+          }
+          return late;
+        });
     var owner = owner(dsl, redis, tags);
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     try {
-      assertThatThrownBy(
-              () ->
-                  Context.current()
-                      .withDeadlineAfter(100, TimeUnit.MILLISECONDS, scheduler)
-                      .call(owner::connectForRead))
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withDeadlineAfter(100, TimeUnit.MILLISECONDS, scheduler)
+                  .call(owner::connectForRead))
           .isInstanceOf(IllegalStateException.class);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
       verifyNoInteractions(late, dsl, tags);
@@ -136,18 +133,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     var owner = owner(mock(), redis, mock());
     try {
       for (int index = 0; index < maximum; index++)
-        connectors.execute(
-            () -> {
-              entered.countDown();
-              for (; ; ) {
-                try {
-                  release.await();
-                  break;
-                } catch (InterruptedException interrupted) {
-                  /* Model an unrelated connector worker that ignores cancellation. */
-                }
-              }
-            });
+        connectors.execute(() -> {
+          entered.countDown();
+          for (; ; ) {
+            try {
+              release.await();
+              break;
+            } catch (InterruptedException interrupted) {
+              /* Model an unrelated connector worker that ignores cancellation. */
+            }
+          }
+        });
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(connectors.getActiveCount()).isEqualTo(maximum);
       assertThat(connectors.getQueue()).isEmpty();
@@ -163,12 +159,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     }
     Awaitility.await()
         .atMost(2, TimeUnit.SECONDS)
-        .untilAsserted(
-            () -> {
-              assertThat(connectors.getActiveCount()).isZero();
-              assertThat(connectors.getQueue()).isEmpty();
-              assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
-            });
+        .untilAsserted(() -> {
+          assertThat(connectors.getActiveCount()).isZero();
+          assertThat(connectors.getQueue()).isEmpty();
+          assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
+        });
     assertThat(permits.availablePermits()).isEqualTo(operationMaximum);
   }
 
@@ -196,25 +191,30 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     var nextConnection = new java.util.concurrent.atomic.AtomicInteger();
     CountDownLatch ready = new CountDownLatch(backgroundMaximum), start = new CountDownLatch(1);
     CountDownLatch entered = new CountDownLatch(backgroundMaximum), release = new CountDownLatch(1);
+    CountDownLatch foregroundEntered = new CountDownLatch(2);
+    CountDownLatch foregroundRelease = new CountDownLatch(1);
     when(redis.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            invocation -> {
-              int index = nextConnection.getAndIncrement();
-              if (index < backgroundMaximum) {
-                var late = lateConnections.get(index);
-                entered.countDown();
-                for (; ; ) {
-                  try {
-                    release.await();
-                    break;
-                  } catch (InterruptedException interrupted) {
-                    /* Model a blocking connector that ignores cancellation interruption. */
-                  }
-                }
-                return late;
+        .thenAnswer(invocation -> {
+          int index = nextConnection.getAndIncrement();
+          if (index < backgroundMaximum) {
+            var late = lateConnections.get(index);
+            entered.countDown();
+            for (; ; ) {
+              try {
+                release.await();
+                break;
+              } catch (InterruptedException interrupted) {
+                /* Model a blocking connector that ignores cancellation interruption. */
               }
-              return foregroundConnections.get(index - backgroundMaximum);
-            });
+            }
+            return late;
+          }
+          foregroundEntered.countDown();
+          if (!foregroundRelease.await(2, TimeUnit.SECONDS)) {
+            throw new AssertionError("foreground connector was not released");
+          }
+          return foregroundConnections.get(index - backgroundMaximum);
+        });
 
     ThreadPoolExecutor connectors =
         (ThreadPoolExecutor)
@@ -247,27 +247,23 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     try {
       for (int index = 0; index < backgroundMaximum; index++)
         callers.add(
-            callerThreads.submit(
-                () -> {
-                  ready.countDown();
-                  start.await();
-                  try (var context =
-                      Context.current().withDeadlineAfter(600, TimeUnit.MILLISECONDS, scheduler)) {
-                    assertThatThrownBy(
-                            () ->
-                                context.call(
-                                    () ->
-                                        CanonicalGameplayOriginalNewCapacityExecutionBudget
-                                            .runBackground(
-                                                Clock.systemUTC(),
-                                                Long.MAX_VALUE,
-                                                budget ->
-                                                    budgetOwner(dsl, redis, scripts, tags, budget)
-                                                        .connectForRead())))
-                        .isInstanceOf(IllegalStateException.class);
-                  }
-                  return null;
-                }));
+            callerThreads.submit(() -> {
+              ready.countDown();
+              start.await();
+              try (var context =
+                  Context.current().withDeadlineAfter(600, TimeUnit.MILLISECONDS, scheduler)) {
+                assertThatThrownBy(() ->
+                        context.call(() ->
+                            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                                Clock.systemUTC(),
+                                Long.MAX_VALUE,
+                                budget ->
+                                    budgetOwner(dsl, redis, scripts, tags, budget)
+                                        .connectForRead())))
+                    .isInstanceOf(IllegalStateException.class);
+              }
+              return null;
+            }));
       assertThat(ready.await(2, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
@@ -280,10 +276,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
 
       // Background operation permits remain held by the blocked connectors, leaving two permits
       // for foreground calls that complete while both physical background connects remain active.
-      for (int index = 0; index < 2; index++) {
-        assertThat(foregroundOwner.connectForRead()).isSameAs(foregroundConnections.get(index));
-        foregroundConnections.get(index).closeAsync();
-      }
+      var firstForeground = callerThreads.submit(() -> foregroundOwner.connectForRead());
+      var secondForeground = callerThreads.submit(() -> foregroundOwner.connectForRead());
+      assertThat(foregroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(firstForeground.isDone()).isFalse();
+      assertThat(secondForeground.isDone()).isFalse();
+      assertThat(backgroundPermits.availablePermits()).isZero();
+      assertThat(connectors.getActiveCount()).isEqualTo(backgroundMaximum + 2);
+      foregroundRelease.countDown();
+      var firstResult = firstForeground.get(2, TimeUnit.SECONDS);
+      var secondResult = secondForeground.get(2, TimeUnit.SECONDS);
+      assertThat(List.of(firstResult, secondResult))
+          .containsExactlyInAnyOrderElementsOf(foregroundConnections);
+      firstResult.closeAsync();
+      secondResult.closeAsync();
       verify(redis, org.mockito.Mockito.times(backgroundMaximum + 2))
           .connect(ByteArrayCodec.INSTANCE);
       Awaitility.await()
@@ -298,6 +304,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       lateConnections.forEach(org.mockito.Mockito::verifyNoInteractions);
     } finally {
       start.countDown();
+      foregroundRelease.countDown();
       release.countDown();
       scheduler.shutdownNow();
       callerThreads.shutdownNow();
@@ -305,18 +312,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
 
     Awaitility.await()
         .atMost(2, TimeUnit.SECONDS)
-        .untilAsserted(
-            () -> {
-              assertThat(connectors.getActiveCount()).isZero();
-              assertThat(connectors.getQueue()).isEmpty();
-              assertThat(connectors.getCompletedTaskCount())
-                  .isEqualTo(completedBefore + backgroundMaximum + 2);
-              assertThat(operationPermits.availablePermits()).isEqualTo(operationMaximum);
-              assertThat(backgroundPermits.availablePermits())
-                  .isEqualTo(
-                      CanonicalGameplayOriginalNewCapacityExecutionBudget
-                          .MAX_BACKGROUND_OPERATIONS);
-            });
+        .untilAsserted(() -> {
+          assertThat(connectors.getActiveCount()).isZero();
+          assertThat(connectors.getQueue()).isEmpty();
+          assertThat(connectors.getCompletedTaskCount())
+              .isEqualTo(completedBefore + backgroundMaximum + 2);
+          assertThat(operationPermits.availablePermits()).isEqualTo(operationMaximum);
+          assertThat(backgroundPermits.availablePermits())
+              .isEqualTo(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS);
+        });
     lateConnections.forEach(late -> verify(late).closeAsync());
     foregroundConnections.forEach(foreground -> verify(foreground).closeAsync());
     assertThat(callerThreads.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
@@ -385,12 +390,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     StatefulRedisConnection<byte[], byte[]> connection = mock();
     var failedAttempts = new java.util.concurrent.atomic.AtomicInteger();
     when(redis.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            invocation -> {
-              if (failedAttempts.getAndIncrement() < maximum)
-                throw new IllegalStateException("Controlled connect failure");
-              return connection;
-            });
+        .thenAnswer(invocation -> {
+          if (failedAttempts.getAndIncrement() < maximum)
+            throw new IllegalStateException("Controlled connect failure");
+          return connection;
+        });
     when(connection.isOpen()).thenReturn(true);
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
     when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
@@ -406,11 +410,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
     Awaitility.await()
         .atMost(2, TimeUnit.SECONDS)
-        .untilAsserted(
-            () -> {
-              assertThat(connectors.getActiveCount()).isZero();
-              assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
-            });
+        .untilAsserted(() -> {
+          assertThat(connectors.getActiveCount()).isZero();
+          assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
+        });
     assertThat(owner.connectForRead()).isSameAs(connection);
     connection.closeAsync();
     verify(redis, org.mockito.Mockito.times(maximum + 1)).connect(ByteArrayCodec.INSTANCE);

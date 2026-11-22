@@ -176,10 +176,9 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
       wrongClient.init();
       assertThatThrownBy(() -> wrongClient.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              e ->
-                  assertThat(Status.fromThrowable(e).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(e ->
+              assertThat(Status.fromThrowable(e).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     } finally {
       wrongClient.close();
     }

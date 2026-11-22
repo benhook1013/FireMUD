@@ -57,15 +57,13 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     List<Map<String, Object>> scripts =
         repository.findByTenantIdOrderByNameAscScriptVersionAsc(tenantKey).stream()
-            .map(
-                script ->
-                    canonicalMap(
-                        Map.of(
-                            "name", normalize(script.getName()),
-                            "version", normalize(script.getScriptVersion()),
-                            "baseVersionId",
-                                Objects.requireNonNullElse(script.getBaseVersionId(), 0L),
-                            "definition", normalize(script.getDefinition()))))
+            .map(script ->
+                canonicalMap(
+                    Map.of(
+                        "name", normalize(script.getName()),
+                        "version", normalize(script.getScriptVersion()),
+                        "baseVersionId", Objects.requireNonNullElse(script.getBaseVersionId(), 0L),
+                        "definition", normalize(script.getDefinition()))))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository

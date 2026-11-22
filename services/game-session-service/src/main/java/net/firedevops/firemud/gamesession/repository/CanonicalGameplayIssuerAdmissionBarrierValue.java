@@ -143,32 +143,31 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
     }
 
     private byte[] encodeTarget() {
-      return encode(
-          out -> {
-            writeText(out, TARGET_ENCODING);
-            writeText(out, issuerId);
-            writeUuid(out, tenantId);
-            writeUuid(out, playableStateNamespaceId);
-            writeText(out, tenantGameplayTag);
-            writeUuid(out, operationId);
-            writeBigInteger(out, admissionEpoch);
-            writeUuid(out, transitionId);
-            writeUuid(out, accountId);
-            writeBytes(out, bindingRefBytes);
-            writeBytes(out, reservationBytes);
-            writeText(out, reservationDigest);
-            writeBytes(out, anchorBytes);
-            writeText(out, anchorDigest);
-            writeBigInteger(out, accountIssuerAuthGeneration);
-            writeBytes(out, accountCheckpointBytes);
-            writeText(out, accountCheckpointDigest);
-            writeNullableBytes(out, accountSourceEventBytes);
-            writeNullableText(out, accountSourceEventDigest);
-            writeBytes(out, incarnationBytes);
-            writeText(out, incarnationDigest);
-            writeBytes(out, registeredTargetBytes);
-            writeText(out, registeredTargetDigest);
-          });
+      return encode(out -> {
+        writeText(out, TARGET_ENCODING);
+        writeText(out, issuerId);
+        writeUuid(out, tenantId);
+        writeUuid(out, playableStateNamespaceId);
+        writeText(out, tenantGameplayTag);
+        writeUuid(out, operationId);
+        writeBigInteger(out, admissionEpoch);
+        writeUuid(out, transitionId);
+        writeUuid(out, accountId);
+        writeBytes(out, bindingRefBytes);
+        writeBytes(out, reservationBytes);
+        writeText(out, reservationDigest);
+        writeBytes(out, anchorBytes);
+        writeText(out, anchorDigest);
+        writeBigInteger(out, accountIssuerAuthGeneration);
+        writeBytes(out, accountCheckpointBytes);
+        writeText(out, accountCheckpointDigest);
+        writeNullableBytes(out, accountSourceEventBytes);
+        writeNullableText(out, accountSourceEventDigest);
+        writeBytes(out, incarnationBytes);
+        writeText(out, incarnationDigest);
+        writeBytes(out, registeredTargetBytes);
+        writeText(out, registeredTargetDigest);
+      });
     }
 
     private static Initializer decode(byte[] bytes) {
@@ -436,19 +435,18 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
   }
 
   private byte[] encodeValue() {
-    return encode(
-        out -> {
-          writeText(out, VALUE_ENCODING);
-          writeText(out, issuerId);
-          writeUuid(out, tenantId);
-          writeUuid(out, playableStateNamespaceId);
-          writeText(out, tenantGameplayTag);
-          writeText(out, state.name());
-          writeBigInteger(out, admissionEpoch);
-          writeUuid(out, ownerOperationId);
-          writeNullableBytes(out, initializer == null ? null : initializer.exactBytes());
-          writeNullableText(out, initializer == null ? null : initializer.exactDigest());
-        });
+    return encode(out -> {
+      writeText(out, VALUE_ENCODING);
+      writeText(out, issuerId);
+      writeUuid(out, tenantId);
+      writeUuid(out, playableStateNamespaceId);
+      writeText(out, tenantGameplayTag);
+      writeText(out, state.name());
+      writeBigInteger(out, admissionEpoch);
+      writeUuid(out, ownerOperationId);
+      writeNullableBytes(out, initializer == null ? null : initializer.exactBytes());
+      writeNullableText(out, initializer == null ? null : initializer.exactDigest());
+    });
   }
 
   String issuerId() {

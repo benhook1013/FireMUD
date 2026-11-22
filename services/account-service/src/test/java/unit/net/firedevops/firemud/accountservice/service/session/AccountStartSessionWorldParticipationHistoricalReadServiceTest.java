@@ -97,11 +97,10 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
       throws Exception {
     StoredParticipation expired = participation(true);
     when(repository.findHistoricalForOriginalTuple(request(true).originalPostAuthorizationTuple()))
-        .thenAnswer(
-            call -> {
-              assertWritableReadCommittedTransaction();
-              return Optional.of(expired);
-            });
+        .thenAnswer(call -> {
+          assertWritableReadCommittedTransaction();
+          return Optional.of(expired);
+        });
     // A prior terminal receipt is deliberately present; historical participation reads do not
     // require it, rewrite it, or treat its outcome as fresh execution permission.
     when(repository.findSettlementExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
@@ -151,13 +150,12 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
     assertCode(
         Status.Code.PERMISSION_DENIED,
         () ->
-            authorized(
-                () ->
-                    service.read(
-                        new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                            READ_ID,
-                            "other-runtime",
-                            originalTuple("other-runtime", false).canonicalBytes()))));
+            authorized(() ->
+                service.read(
+                    new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                        READ_ID,
+                        "other-runtime",
+                        originalTuple("other-runtime", false).canonicalBytes()))));
     verify(repository, org.mockito.Mockito.times(2))
         .findHistoricalForOriginalTuple(request(false).originalPostAuthorizationTuple());
   }

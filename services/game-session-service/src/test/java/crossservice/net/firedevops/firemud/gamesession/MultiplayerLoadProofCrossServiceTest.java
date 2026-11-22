@@ -70,28 +70,27 @@ class MultiplayerLoadProofCrossServiceTest {
         GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
     URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
     TimedResult<List<PlayerRunResult>> playerRuns =
-        timed(
-            () -> {
-              CountDownLatch start = new CountDownLatch(1);
-              ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
-              try {
-                List<Future<PlayerRunResult>> futures = new ArrayList<>();
-                for (GameplayLoadScenarios.PlayerSeed player : players) {
-                  futures.add(executor.submit(() -> runPlayerSequence(uri, player, start)));
-                }
+        timed(() -> {
+          CountDownLatch start = new CountDownLatch(1);
+          ExecutorService executor = Executors.newFixedThreadPool(CLIENT_COUNT);
+          try {
+            List<Future<PlayerRunResult>> futures = new ArrayList<>();
+            for (GameplayLoadScenarios.PlayerSeed player : players) {
+              futures.add(executor.submit(() -> runPlayerSequence(uri, player, start)));
+            }
 
-                start.countDown();
+            start.countDown();
 
-                List<PlayerRunResult> results = new ArrayList<>();
-                for (Future<PlayerRunResult> future : futures) {
-                  results.add(future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS));
-                }
-                return results;
-              } finally {
-                executor.shutdownNow();
-                executor.awaitTermination(5, TimeUnit.SECONDS);
-              }
-            });
+            List<PlayerRunResult> results = new ArrayList<>();
+            for (Future<PlayerRunResult> future : futures) {
+              results.add(future.get(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS));
+            }
+            return results;
+          } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+          }
+        });
 
     assertCompletesWithin(
         "concurrent LOGIN -> PLAY -> LOOK entry", playerRuns.duration(), ENTRY_PHASE_BUDGET);
@@ -99,28 +98,25 @@ class MultiplayerLoadProofCrossServiceTest {
     assertThat(results).hasSize(CLIENT_COUNT);
     assertThat(STACK.gameDesignStub().publishedReleaseBundleRequests()).isPositive();
     assertThat(results)
-        .allSatisfy(
-            result -> {
-              assertThat(result.responses())
-                  .anyMatch(payload -> payload.startsWith("OK LOGIN"))
-                  .anyMatch(payload -> payload.startsWith("OK PLAY"))
-                  .anyMatch(
-                      payload ->
-                          payload.startsWith("OK LOOK")
-                              && payload.contains("Room: Candle-lit Antechamber"));
-              assertThat(result.responses()).noneMatch(payload -> payload.startsWith("ERROR "));
-            });
+        .allSatisfy(result -> {
+          assertThat(result.responses())
+              .anyMatch(payload -> payload.startsWith("OK LOGIN"))
+              .anyMatch(payload -> payload.startsWith("OK PLAY"))
+              .anyMatch(payload ->
+                  payload.startsWith("OK LOOK")
+                      && payload.contains("Room: Candle-lit Antechamber"));
+          assertThat(result.responses()).noneMatch(payload -> payload.startsWith("ERROR "));
+        });
 
     SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
     for (GameplayLoadScenarios.PlayerSeed player : players) {
       assertThat(sessionContextService.findBySessionId(player.sessionId()))
-          .hasValueSatisfying(
-              context -> {
-                assertThat(context.tenantId()).isEqualTo(TENANT_ID);
-                assertThat(context.gameInstanceId()).isEqualTo(1L);
-                assertThat(context.characterId()).isEqualTo(player.accountId());
-                assertThat(context.roomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
-              });
+          .hasValueSatisfying(context -> {
+            assertThat(context.tenantId()).isEqualTo(TENANT_ID);
+            assertThat(context.gameInstanceId()).isEqualTo(1L);
+            assertThat(context.characterId()).isEqualTo(player.accountId());
+            assertThat(context.roomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
+          });
     }
 
     GameplayAsyncAssertions.assertMetricEventually(
@@ -144,12 +140,11 @@ class MultiplayerLoadProofCrossServiceTest {
     List<PlayerSessionDriver> connectedPlayers = readyPlayers.result();
     try {
       TimedResult<Void> followUp =
-          timed(
-              () -> {
-                runConcurrentNorthMovement(connectedPlayers);
-                runConcurrentDestinationLook(connectedPlayers);
-                return null;
-              });
+          timed(() -> {
+            runConcurrentNorthMovement(connectedPlayers);
+            runConcurrentDestinationLook(connectedPlayers);
+            return null;
+          });
       assertCompletesWithin(
           "concurrent north movement plus destination LOOK churn",
           followUp.duration(),
@@ -158,10 +153,9 @@ class MultiplayerLoadProofCrossServiceTest {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
         assertThat(sessionContextService.findBySessionId(connectedPlayer.player().sessionId()))
-            .hasValueSatisfying(
-                context ->
-                    assertThat(context.roomInstanceId())
-                        .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
+            .hasValueSatisfying(context ->
+                assertThat(context.roomInstanceId())
+                    .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
       }
 
       GameplayAsyncAssertions.assertMetricEventually(
@@ -190,28 +184,25 @@ class MultiplayerLoadProofCrossServiceTest {
     List<PlayerSessionDriver> connectedPlayers = readyPlayers.result();
     try {
       TimedResult<Void> followUp =
-          timed(
-              () -> {
-                runConcurrentSayBurst(connectedPlayers);
-                return null;
-              });
+          timed(() -> {
+            runConcurrentSayBurst(connectedPlayers);
+            return null;
+          });
       assertCompletesWithin(
           "concurrent SAY broadcast burst", followUp.duration(), FOLLOW_UP_PHASE_BUDGET);
 
-      connectedPlayers.forEach(
-          connectedPlayer ->
-              assertThat(connectedPlayer.driver().responses())
-                  .noneMatch(payload -> payload.startsWith("ERROR ")));
+      connectedPlayers.forEach(connectedPlayer ->
+          assertThat(connectedPlayer.driver().responses())
+              .noneMatch(payload -> payload.startsWith("ERROR ")));
 
       SocialGroupsStubServer socialStub = STACK.socialStub();
       assertThat(socialStub.messageRequests()).hasSize(CLIENT_COUNT);
       assertThat(socialStub.messageRequests())
-          .allSatisfy(
-              request -> {
-                assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
-                assertThat(request.getType())
-                    .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
-              });
+          .allSatisfy(request -> {
+            assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+            assertThat(request.getType())
+                .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+          });
       assertThat(
               socialStub.messageRequests().stream()
                   .map(request -> request.getContent())
@@ -324,11 +315,10 @@ class MultiplayerLoadProofCrossServiceTest {
       List<Future<R>> futures = new ArrayList<>();
       for (T item : items) {
         futures.add(
-            executor.submit(
-                () -> {
-                  assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
-                  return task.run(item);
-                }));
+            executor.submit(() -> {
+              assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+              return task.run(item);
+            }));
       }
 
       start.countDown();

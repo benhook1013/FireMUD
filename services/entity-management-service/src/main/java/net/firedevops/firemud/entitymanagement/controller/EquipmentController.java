@@ -31,20 +31,15 @@ public class EquipmentController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          Page<CharacterEquipmentEntryDto> list =
-              equipmentService.listEquipment(
-                  scope.tenantId(),
-                  scope.characterId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  pageable);
-          return ResponseEntity.ok(ApiResponse.success(list));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      Page<CharacterEquipmentEntryDto> list =
+          equipmentService.listEquipment(
+              scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, pageable);
+      return ResponseEntity.ok(ApiResponse.success(list));
+    });
   }
 
   @PostMapping
@@ -54,21 +49,20 @@ public class EquipmentController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       @Valid @RequestBody WearEquipmentItemRequest request) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          CharacterEquipmentEntryDto dto =
-              equipmentService.wearItem(
-                  scope.tenantId(),
-                  scope.characterId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  request.itemId(),
-                  null);
-          return ResponseEntity.ok(ApiResponse.success(dto));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      CharacterEquipmentEntryDto dto =
+          equipmentService.wearItem(
+              scope.tenantId(),
+              scope.characterId(),
+              gameInstanceId,
+              playableStateScope,
+              request.itemId(),
+              null);
+      return ResponseEntity.ok(ApiResponse.success(dto));
+    });
   }
 
   @DeleteMapping("/{slot}")
@@ -78,15 +72,14 @@ public class EquipmentController {
       @PathVariable String slot,
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.CharacterScope scope =
-              EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          CharacterEquipmentEntryDto dto =
-              equipmentService.removeWornItem(
-                  scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, slot);
-          return ResponseEntity.ok(ApiResponse.success(dto));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.CharacterScope scope =
+          EntityManagementRequestReaders.requireCharacterScope(tenantId, characterId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      CharacterEquipmentEntryDto dto =
+          equipmentService.removeWornItem(
+              scope.tenantId(), scope.characterId(), gameInstanceId, playableStateScope, slot);
+      return ResponseEntity.ok(ApiResponse.success(dto));
+    });
   }
 }

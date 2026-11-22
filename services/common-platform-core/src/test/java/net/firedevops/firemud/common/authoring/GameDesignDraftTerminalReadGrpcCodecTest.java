@@ -55,10 +55,9 @@ class GameDesignDraftTerminalReadGrpcCodecTest {
             binding.inputDigest(),
             request.originalAccountBinding(),
             new byte[DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES]);
-    assertThatThrownBy(
-            () ->
-                GameDesignDraftTerminalReadGrpcCodec.toResponse(
-                    request, Optional.of(oversizedReadback)))
+    assertThatThrownBy(() ->
+            GameDesignDraftTerminalReadGrpcCodec.toResponse(
+                request, Optional.of(oversizedReadback)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("owner readback");
 

@@ -227,14 +227,13 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
                     sourceFixture.committedCandidate.authoritySnapshot().issuanceFence());
             UUID revocationRequestId = UUID.randomUUID();
             var revocation =
-                serializable.execute(
-                    status ->
-                        new AccountGameplayTokenIdentityFenceRepository(dsl)
-                            .beginRevocationIntent(
-                                loginIdentity,
-                                revocationRequestId,
-                                AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                                    loginIdentity, revocationRequestId)));
+                serializable.execute(status ->
+                    new AccountGameplayTokenIdentityFenceRepository(dsl)
+                        .beginRevocationIntent(
+                            loginIdentity,
+                            revocationRequestId,
+                            AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                                loginIdentity, revocationRequestId)));
             assertThat(revocation).isNotNull();
             assertThat(revocation.tokenIdentityFence()).isEqualTo(2L);
             callerRevocations.incrementAndGet();
@@ -414,11 +413,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       }
       installOwnedConfirmationUpdateFailure(dsl);
       try {
-        assertThatThrownBy(
-                () ->
-                    Context.current()
-                        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-                        .call(() -> owner.confirmOriginalFinalAdmission(loginJwt, originalLease)))
+        assertThatThrownBy(() ->
+                Context.current()
+                    .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                    .call(() -> owner.confirmOriginalFinalAdmission(loginJwt, originalLease)))
             .isInstanceOf(RuntimeException.class)
             .hasMessageContaining("controlled owned original-new confirmation SQL fault");
       } finally {
@@ -688,10 +686,9 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       DSLContext dsl,
       TransactionTemplate transaction,
       AccountGameplayAdmissionLeaseEvidence originalLease) {
-    return transaction.execute(
-        status ->
-            new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
-                .readByLease(UUID.fromString((String) originalLease.carrier().get("leaseId"))));
+    return transaction.execute(status ->
+        new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
+            .readByLease(UUID.fromString((String) originalLease.carrier().get("leaseId"))));
   }
 
   private static AccountOriginalNewBoundGameplayCredentialOwner.OriginalAdmissionConfirmation

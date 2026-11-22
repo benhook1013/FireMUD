@@ -298,10 +298,9 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
             login.evidence().tokenJti(),
             login.evidence().tokenSha256(),
             later.requestId());
-        assertThatThrownBy(
-                () ->
-                    fixture.initialRepository.beginOrRead(
-                        later, login, fixture.tenantId, fixture.namespaceId))
+        assertThatThrownBy(() ->
+                fixture.initialRepository.beginOrRead(
+                    later, login, fixture.tenantId, fixture.namespaceId))
             .hasStackTraceContaining("uq_gs_initial_account_barrier_never_retarget");
       }
       assertThat(
@@ -552,10 +551,8 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       try (var executor = Executors.newSingleThreadExecutor()) {
         try {
           var acceptance =
-              executor.submit(
-                  () ->
-                      acceptanceRepository.acceptOpenReadback(
-                          fixture.original.requestId(), readback));
+              executor.submit(() ->
+                  acceptanceRepository.acceptOpenReadback(fixture.original.requestId(), readback));
           awaitInitialBackendBlockedBy(fixture.dsl, acceptancePid, holderPid);
           trustedMillis.set(
               Math.max(
@@ -729,37 +726,31 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
               Mutation.WRONG_KEY_ID,
               Mutation.BAD_SIGNATURE)) {
         ControlledSigner invalid = new ControlledSigner(fixture.keyPair(), mutation, null);
-        assertThatThrownBy(
-                () ->
-                    fixture
-                        .receiver(invalid)
-                        .observeForFenceTarget(fixture.intent().operationId(), 0L))
+        assertThatThrownBy(() ->
+                fixture.receiver(invalid).observeForFenceTarget(fixture.intent().operationId(), 0L))
             .isInstanceOf(
                 CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
       }
 
-      assertThatThrownBy(
-              () ->
-                  fixture.receiver(null).observeForFenceTarget(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture.receiver(null).observeForFenceTarget(fixture.intent().operationId(), 0L))
           .isInstanceOf(
               CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
 
       var missingPinnedKeys = fixture.configuration(Map.of(), fixture.expectedEvidence());
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .receiver(channel, missingPinnedKeys)
-                      .observeForFenceTarget(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .receiver(channel, missingPinnedKeys)
+                  .observeForFenceTarget(fixture.intent().operationId(), 0L))
           .isInstanceOf(
               CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
 
-      assertThatThrownBy(
-              () ->
-                  fixture.configuration(
-                      Map.of(
-                          KEY_ID,
-                          (java.security.interfaces.RSAPublicKey) fixture.keyPair().getPublic()),
-                      null))
+      assertThatThrownBy(() ->
+              fixture.configuration(
+                  Map.of(
+                      KEY_ID,
+                      (java.security.interfaces.RSAPublicKey) fixture.keyPair().getPublic()),
+                  null))
           .isInstanceOf(
               CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
     }
@@ -813,11 +804,8 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     try (Fixture fixture = Fixture.open()) {
       ControlledSigner channel =
           new ControlledSigner(fixture.keyPair(), Mutation.NONE, fixture.dsl());
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .receiver(channel)
-                      .observeForFenceTarget(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture.receiver(channel).observeForFenceTarget(fixture.intent().operationId(), 0L))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
       assertThat(channel.lastSigned()).isNotNull();
     }
@@ -852,11 +840,10 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
 
       for (Mutation mutation :
           List.of(Mutation.WRONG_INITIAL_SOURCE_EPOCH, Mutation.WRONG_INITIAL_ATTEMPT)) {
-        assertThatThrownBy(
-                () ->
-                    fixture
-                        .receiver(new ControlledSigner(fixture.keyPair(), mutation, null))
-                        .observeForInitialAccountBarrier(fixture.original().requestId()))
+        assertThatThrownBy(() ->
+                fixture
+                    .receiver(new ControlledSigner(fixture.keyPair(), mutation, null))
+                    .observeForInitialAccountBarrier(fixture.original().requestId()))
             .isInstanceOf(
                 CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
       }
@@ -869,11 +856,10 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       ControlledSigner channel =
           new ControlledSigner(fixture.keyPair(), Mutation.NONE, fixture.dsl());
 
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .receiver(channel)
-                      .observeForInitialAccountBarrier(fixture.original().requestId()))
+      assertThatThrownBy(() ->
+              fixture
+                  .receiver(channel)
+                  .observeForInitialAccountBarrier(fixture.original().requestId()))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
       assertThat(channel.lastSigned()).isNotNull();
     }

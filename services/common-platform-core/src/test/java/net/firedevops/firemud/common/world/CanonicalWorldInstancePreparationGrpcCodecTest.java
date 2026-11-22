@@ -61,20 +61,18 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
         response.toBuilder()
             .setRequest(response.getRequest().toBuilder().setWorldSlug("other-world"))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, evidence.request(), changedOuter))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, evidence.request(), changedOuter))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact canonical preparation request");
 
     var changedLifecycleRequest =
         copyLifecycleRequest(
             evidence.request(), uuid("99999999-9999-4999-8999-999999999999"), null, null);
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, changedLifecycleRequest, response))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, changedLifecycleRequest, response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("differs from the World lifecycle request");
 
@@ -90,9 +88,8 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
             request.expectedDescriptorRequestDigest(),
             request.expectedDescriptorResultDigest(),
             request.expectedReleaseAttestationEvidenceDigest());
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.toResponse(changedDescriptor, evidence))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.toResponse(changedDescriptor, evidence))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete launch descriptor");
 
@@ -124,10 +121,9 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
                 WorldCanonicalInstanceLifecycleGrpcCodec.toResponse(
                     changedInnerRequest, changedInnerEvidence))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, evidence.request(), responseWithChangedInner))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, evidence.request(), responseWithChangedInner))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed exact read request");
   }
@@ -138,21 +134,19 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
     Request request = request(evidence);
     var response = CanonicalWorldInstancePreparationGrpcCodec.toResponse(request, evidence);
 
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, evidence.request(), response.toBuilder().clearLifecycle().build()))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, evidence.request(), response.toBuilder().clearLifecycle().build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("lifecycle response is required");
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request,
-                    evidence.request(),
-                    PrepareCanonicalWorldInstanceResponse.newBuilder()
-                        .setRequest(CanonicalWorldInstancePreparationGrpcCodec.toRequest(request))
-                        .setError(ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION"))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request,
+                evidence.request(),
+                PrepareCanonicalWorldInstanceResponse.newBuilder()
+                    .setRequest(CanonicalWorldInstancePreparationGrpcCodec.toRequest(request))
+                    .setError(ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("rejected canonical instance preparation");
 
@@ -164,10 +158,9 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
         response.toBuilder()
             .setRequest(response.getRequest().toBuilder().setUnknownFields(unknown))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, evidence.request(), unknownOuterRequest))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, evidence.request(), unknownOuterRequest))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
 
@@ -175,10 +168,9 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
         response.toBuilder()
             .setLifecycle(response.getLifecycle().toBuilder().setUnknownFields(unknown))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, evidence.request(), unknownLifecycle))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, evidence.request(), unknownLifecycle))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }
@@ -186,24 +178,21 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
   @Test
   void requestDecoderUsesExistingCanonicalSelectorValidation() throws Exception {
     var valid = CanonicalWorldInstancePreparationGrpcCodec.toRequest(request(evidence()));
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromRequest(
-                    valid.toBuilder()
-                        .setReadRequestId("32345678-1234-4234-8234-123456789abc ")
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromRequest(
+                valid.toBuilder()
+                    .setReadRequestId("32345678-1234-4234-8234-123456789abc ")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil UUID");
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromRequest(
-                    valid.toBuilder().setTargetNamespace("Bad_Namespace").build()))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromRequest(
+                valid.toBuilder().setTargetNamespace("Bad_Namespace").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical DNS label");
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromRequest(
-                    valid.toBuilder().setExpectedDescriptorResultDigest("not-a-digest").build()))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromRequest(
+                valid.toBuilder().setExpectedDescriptorResultDigest("not-a-digest").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("expectedDescriptorResultDigest");
   }
@@ -214,10 +203,9 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
     Request request = request(lifecycle);
     var operation = originalOperation(request);
     var wire = CanonicalWorldInstancePreparationGrpcCodec.toRequest(request, operation);
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromOriginalOperationRequest(
-                    CanonicalWorldInstancePreparationGrpcCodec.toRequest(request)))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromOriginalOperationRequest(
+                CanonicalWorldInstancePreparationGrpcCodec.toRequest(request)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("original StartSession owner operation");
 
@@ -232,10 +220,9 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
             .toBuilder()
             .setRequest(changedOperation)
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
-                    request, operation, lifecycle.request(), changedResponse))
+    assertThatThrownBy(() ->
+            CanonicalWorldInstancePreparationGrpcCodec.fromResponse(
+                request, operation, lifecycle.request(), changedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("owner operation");
   }
@@ -245,29 +232,26 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
     var request = request(evidence());
     var operation = originalOperation(request);
     var nil = new UUID(0, 0);
-    assertThatThrownBy(
-            () ->
-                new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
-                    new byte[] {1, 2, 3},
-                    operation.gameSessionOwnerMutationId(),
-                    operation.gameSessionOwnerAttemptId(),
-                    1))
+    assertThatThrownBy(() ->
+            new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+                new byte[] {1, 2, 3},
+                operation.gameSessionOwnerMutationId(),
+                operation.gameSessionOwnerAttemptId(),
+                1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
-                    operation.originalPostAuthorizationTuple(),
-                    nil,
-                    operation.gameSessionOwnerAttemptId(),
-                    1))
+    assertThatThrownBy(() ->
+            new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+                operation.originalPostAuthorizationTuple(),
+                nil,
+                operation.gameSessionOwnerAttemptId(),
+                1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
-                    operation.originalPostAuthorizationTuple(),
-                    operation.gameSessionOwnerMutationId(),
-                    nil,
-                    1))
+    assertThatThrownBy(() ->
+            new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+                operation.originalPostAuthorizationTuple(),
+                operation.gameSessionOwnerMutationId(),
+                nil,
+                1))
         .isInstanceOf(IllegalArgumentException.class);
     var otherTenant =
         new Request(
@@ -446,19 +430,18 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
             null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selector.request().appliedCommitId(),
-                        selector.request().contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    selector.request().appliedCommitId(),
+                    selector.request().contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence release =
         AuthoredWorldReleaseAttestationEvidence.create(

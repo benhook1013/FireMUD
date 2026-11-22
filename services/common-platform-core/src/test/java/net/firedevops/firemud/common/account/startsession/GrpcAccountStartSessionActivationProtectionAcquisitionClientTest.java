@@ -134,11 +134,10 @@ class GrpcAccountStartSessionActivationProtectionAcquisitionClientTest {
           .isTrue();
 
       closeResult =
-          closeExecutor.submit(
-              () -> {
-                lifecycle.close().run();
-                return null;
-              });
+          closeExecutor.submit(() -> {
+            lifecycle.close().run();
+            return null;
+          });
       assertThat(awaitCondition(() -> !controlledWatcher.isRunning(), 5, TimeUnit.SECONDS))
           .as("close reaches watcher shutdown while the callback is active")
           .isTrue();

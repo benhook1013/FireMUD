@@ -86,16 +86,14 @@ public final class GameDesignReviewedBaseEvidence {
           || !binding.digest().equals(outcome.bindingDigest())
           || outcome.appliedEpochs().size() != binding.affectedUnits(owner).size()
           || binding.affectedUnits(owner).stream()
-              .anyMatch(
-                  unit ->
-                      outcome.appliedEpochs().stream()
-                          .noneMatch(
-                              epoch ->
-                                  epoch.aggregateType().equals(unit.aggregateType())
-                                      && epoch.aggregateId().equals(unit.aggregateId())
-                                      && epoch.scopeType().equals(unit.scopeType())
-                                      && epoch.scopeId().equals(unit.scopeId())
-                                      && epoch.expectedEpoch().equals(unit.expectedEpoch())))) {
+              .anyMatch(unit ->
+                  outcome.appliedEpochs().stream()
+                      .noneMatch(epoch ->
+                          epoch.aggregateType().equals(unit.aggregateType())
+                              && epoch.aggregateId().equals(unit.aggregateId())
+                              && epoch.scopeType().equals(unit.scopeType())
+                              && epoch.scopeId().equals(unit.scopeId())
+                              && epoch.expectedEpoch().equals(unit.expectedEpoch())))) {
         throw new IllegalArgumentException("Complete exact APPLIED base owner evidence required");
       }
       frame(out, owner.name());

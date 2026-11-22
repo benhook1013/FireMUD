@@ -131,10 +131,9 @@ public final class WorldCanonicalAuthoredGraphReader {
         throw invalid("Canonical graph content differs from exact typed original payload");
       }
       if (expected.properties().stream()
-          .anyMatch(
-              entry ->
-                  entry.getValue().isIntegralNumber()
-                      && !actual.get(entry.getKey()).isIntegralNumber())) {
+          .anyMatch(entry ->
+              entry.getValue().isIntegralNumber()
+                  && !actual.get(entry.getKey()).isIntegralNumber())) {
         throw invalid(
             "Canonical graph private selectors and integer content require integer representation");
       }

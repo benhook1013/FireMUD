@@ -44,17 +44,15 @@ class ScriptPatchVersionCommandServiceTest {
     when(readinessProjectionService.beginPatchReadiness(any(), anyLong(), any(), any()))
         .thenReturn(true);
     when(readinessProjectionService.applyIfCurrent(any(), any(), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              runDownstream(invocation, true);
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          runDownstream(invocation, true);
+          return true;
+        });
     when(readinessProjectionService.rebuildRegistryIfCurrent(any(), any(), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              runRegistryRebuild(invocation);
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          runRegistryRebuild(invocation);
+          return true;
+        });
     service =
         new ScriptPatchVersionCommandService(
             repository,
@@ -114,9 +112,8 @@ class ScriptPatchVersionCommandServiceTest {
 
   @Test
   void notifyUpdateRejectsDuplicateScriptNamesBeforeReadinessAdmission() {
-    assertThatThrownBy(
-            () ->
-                service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep", "npc-barkeep")))
+    assertThatThrownBy(() ->
+            service.notifyUpdate("1", 1L, "v1-script.1", List.of("npc-barkeep", "npc-barkeep")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly one definition per unique requested name");
 

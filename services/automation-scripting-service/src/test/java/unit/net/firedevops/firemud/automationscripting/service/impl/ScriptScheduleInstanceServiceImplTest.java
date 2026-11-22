@@ -91,44 +91,38 @@ class ScriptScheduleInstanceServiceImplTest {
     gameSessionControlPlaneClient = mock(GameSessionControlPlaneClient.class);
     readinessProjectionService = mock(ScriptPatchReadinessProjectionService.class);
     when(readinessProjectionService.getProjection(any(), any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(
-                    new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
-                        invocation.getArgument(0),
-                        invocation.getArgument(1),
-                        7L,
-                        ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
-                        "ready_for_tenant",
-                        "",
-                        1L)));
-    meterRegistry = new SimpleMeterRegistry();
-    when(automationAdmissionStateService.getState(any(), any(), any()))
-        .thenAnswer(
-            invocation ->
-                new AutomationAdmissionStateService.AdmissionStateSummary(
+        .thenAnswer(invocation ->
+            Optional.of(
+                new ScriptPatchReadinessProjectionService.ReadinessStatusSummary(
                     invocation.getArgument(0),
                     invocation.getArgument(1),
-                    invocation.getArgument(2),
-                    "NORMAL",
-                    4L,
+                    7L,
+                    ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY,
+                    "ready_for_tenant",
                     "",
-                    "",
-                    0L));
+                    1L)));
+    meterRegistry = new SimpleMeterRegistry();
+    when(automationAdmissionStateService.getState(any(), any(), any()))
+        .thenAnswer(invocation ->
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+                "NORMAL",
+                4L,
+                "",
+                "",
+                0L));
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
                 "1", "game-1", "region-1", "NORMAL", 4L, "", "", 0L));
     when(workItemRepository.insertIfAbsentByTriggerIdentity(org.mockito.Mockito.any()))
-        .thenAnswer(
-            invocation ->
-                new ScriptWorkItemRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new ScriptWorkItemRepository.IdempotentInsertResult(invocation.getArgument(0), true));
     when(eventAuditRepository.insertIfAbsentByHandlerIdentity(org.mockito.Mockito.any()))
-        .thenAnswer(
-            invocation ->
-                new ScriptEventAuditRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new ScriptEventAuditRepository.IdempotentInsertResult(invocation.getArgument(0), true));
     when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion(any(), anyLong(), any()))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
@@ -209,10 +203,9 @@ class ScriptScheduleInstanceServiceImplTest {
 
   @Test
   void reconcileObservedRuntimeStateRejectsNullTransitionPluginIdBeforeLookup() {
-    assertThatThrownBy(
-            () ->
-                service.reconcileObservedRuntimeState(
-                    "1", "game-1", GameInstanceRuntimeState.getDefaultInstance(), null, null))
+    assertThatThrownBy(() ->
+            service.reconcileObservedRuntimeState(
+                "1", "game-1", GameInstanceRuntimeState.getDefaultInstance(), null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("transition_plugin_id must not be null");
 
@@ -393,31 +386,29 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(saved)
         .filteredOn(instance -> instance.getScheduleDefinitionId().equals("guard.alert.expire.v1"))
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
-              assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
-              assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
-              assertThat(instance.getScriptPinEpoch()).isEqualTo(1L);
-              assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
-              assertThat(instance.getPlayableStateScope()).isEqualTo("SHARED");
-              assertThat(instance.getWorldSlug()).isEqualTo("demo");
-              assertThat(instance.getRealmSlug()).isEqualTo("production");
-              assertThat(instance.getPointerVersion()).isEqualTo("17");
-              assertThat(instance.getTargetScopeType()).isEqualTo("ENTITY");
-              assertThat(instance.getTargetScopeId()).isEqualTo("guard-1");
-              assertThat(instance.getBindingPriority()).isEqualTo(10);
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
+          assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
+          assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
+          assertThat(instance.getScriptPinEpoch()).isEqualTo(1L);
+          assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
+          assertThat(instance.getPlayableStateScope()).isEqualTo("SHARED");
+          assertThat(instance.getWorldSlug()).isEqualTo("demo");
+          assertThat(instance.getRealmSlug()).isEqualTo("production");
+          assertThat(instance.getPointerVersion()).isEqualTo("17");
+          assertThat(instance.getTargetScopeType()).isEqualTo("ENTITY");
+          assertThat(instance.getTargetScopeId()).isEqualTo("guard-1");
+          assertThat(instance.getBindingPriority()).isEqualTo(10);
+        });
     assertThat(saved)
         .filteredOn(instance -> instance.getScheduleDefinitionId().equals("guard.patrol.v1"))
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
-              assertThat(instance.getNextDueAt()).isNull();
-              assertThat(instance.getNextDueTickId()).isNull();
-              assertThat(instance.isRequiresExclusiveEvent()).isTrue();
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
+          assertThat(instance.getNextDueAt()).isNull();
+          assertThat(instance.getNextDueTickId()).isNull();
+          assertThat(instance.isRequiresExclusiveEvent()).isTrue();
+        });
   }
 
   @Test
@@ -1386,9 +1377,8 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(scheduleInstanceRepository).saveAll(captor.capture());
     assertThat(captor.getValue())
         .singleElement()
-        .satisfies(
-            instance ->
-                assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(15_000L)));
+        .satisfies(instance ->
+            assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(15_000L)));
   }
 
   @Test
@@ -1731,17 +1721,16 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(scheduleInstanceRepository).saveAll(captor.capture());
     assertThat(captor.getValue())
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
-              assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
-              assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
-              assertThat(instance.getLastObservedTickId()).isEqualTo(100L);
-              assertThat(instance.getLastRuntimeProgressObservedAt())
-                  .isEqualTo(Instant.ofEpochMilli(5_000L));
-              assertThat(instance.getNextDueTickId()).isEqualTo(130L);
-              assertThat(instance.getNextDueAt()).isNull();
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
+          assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
+          assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+          assertThat(instance.getLastObservedTickId()).isEqualTo(100L);
+          assertThat(instance.getLastRuntimeProgressObservedAt())
+              .isEqualTo(Instant.ofEpochMilli(5_000L));
+          assertThat(instance.getNextDueTickId()).isEqualTo(130L);
+          assertThat(instance.getNextDueAt()).isNull();
+        });
   }
 
   @Test
@@ -2124,24 +2113,21 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
     verify(scheduleInstanceRepository).saveAll(captor.capture());
     assertThat(captor.getValue())
-        .filteredOn(
-            instance ->
-                instance.getScheduleDefinitionId().equals(overflow.getScheduleDefinitionId()))
+        .filteredOn(instance ->
+            instance.getScheduleDefinitionId().equals(overflow.getScheduleDefinitionId()))
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getMaterializationStatus()).isEqualTo("FENCED");
-              assertThat(instance.getNextDueAt()).isNull();
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getMaterializationStatus()).isEqualTo("FENCED");
+          assertThat(instance.getNextDueAt()).isNull();
+        });
     assertThat(captor.getValue())
         .filteredOn(
             instance -> instance.getScheduleDefinitionId().equals(later.getScheduleDefinitionId()))
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
-              assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
+          assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
+        });
   }
 
   @Test
@@ -2277,11 +2263,10 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
     assertThat(scheduleCaptor.getValue())
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getNextDueTickId()).isEqualTo(160L);
-              assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getNextDueTickId()).isEqualTo(160L);
+          assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
+        });
   }
 
   @Test
@@ -2800,13 +2785,12 @@ class ScriptScheduleInstanceServiceImplTest {
       verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
       assertThat(scheduleCaptor.getValue())
           .singleElement()
-          .satisfies(
-              instance -> {
-                assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
-                assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
-                assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
-                assertThat(instance.getNextDueAt()).isNull();
-              });
+          .satisfies(instance -> {
+            assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
+            assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+            assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
+            assertThat(instance.getNextDueAt()).isNull();
+          });
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -2979,14 +2963,13 @@ class ScriptScheduleInstanceServiceImplTest {
             "1", "game-1", "plugin-2"))
         .thenReturn(Optional.of(displacedOwner));
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
-        .thenAnswer(
-            invocation -> {
-              timerInstance.setPluginId("plugin-2");
-              timerInstance.setPluginVersionId("plugin-v2");
-              timerInstance.setPluginActivationEpoch(2L);
-              timerInstance.setLifecycleRevision(2L);
-              return runtimeStateResponse("patch-1");
-            });
+        .thenAnswer(invocation -> {
+          timerInstance.setPluginId("plugin-2");
+          timerInstance.setPluginVersionId("plugin-v2");
+          timerInstance.setPluginActivationEpoch(2L);
+          timerInstance.setLifecycleRevision(2L);
+          return runtimeStateResponse("patch-1");
+        });
 
     ScriptScheduleInstanceService.RuntimeTickProgressResult result =
         service.observeRuntimeTickProgress(observation(131L, 6_000L));
@@ -3015,11 +2998,10 @@ class ScriptScheduleInstanceServiceImplTest {
             "1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(enabledPluginRuntimeState("plugin-1", "plugin-v1")));
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
-        .thenAnswer(
-            invocation -> {
-              timerInstance.setBindingId("binding-after");
-              return runtimeStateResponse("patch-1");
-            });
+        .thenAnswer(invocation -> {
+          timerInstance.setBindingId("binding-after");
+          return runtimeStateResponse("patch-1");
+        });
 
     ScriptScheduleInstanceService.RuntimeTickProgressResult result =
         service.observeRuntimeTickProgress(observation(131L, 6_000L));
@@ -3446,12 +3428,11 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
     assertThat(scheduleCaptor.getValue())
         .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getRuntimeRegionId()).isEqualTo("region-new");
-              assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
-              assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(11_000L));
-            });
+        .satisfies(instance -> {
+          assertThat(instance.getRuntimeRegionId()).isEqualTo("region-new");
+          assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+          assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(11_000L));
+        });
     assertThat(
             meterRegistry
                 .get("automation_script_timer_runtime_fence_dropped_total")
@@ -3591,12 +3572,11 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
     verify(eventAuditRepository).save(any());
     assertThat(auditCaptor.getAllValues())
-        .anySatisfy(
-            audit -> {
-              assertThat(audit.getFinalReason()).isEqualTo("catch_up_truncated");
-              assertThat(audit.getPluginId()).isEqualTo("plugin-1");
-              assertThat(audit.getPluginVersionId()).isEqualTo("plugin-v1");
-            });
+        .anySatisfy(audit -> {
+          assertThat(audit.getFinalReason()).isEqualTo("catch_up_truncated");
+          assertThat(audit.getPluginId()).isEqualTo("plugin-1");
+          assertThat(audit.getPluginVersionId()).isEqualTo("plugin-v1");
+        });
     assertThat(
             meterRegistry
                 .get("automation_script_timer_catchup_truncated_total")
@@ -3662,9 +3642,8 @@ class ScriptScheduleInstanceServiceImplTest {
           .isNull();
       assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(2);
       TransactionSynchronizationManager.getSynchronizations()
-          .forEach(
-              synchronization ->
-                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+          .forEach(synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
       assertThat(meterRegistry.find("automation_script_timer_catchup_truncated_total").counter())
           .isNull();
     } finally {
@@ -3889,17 +3868,16 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result)
         .singleElement()
-        .satisfies(
-            summary -> {
-              assertThat(summary.pluginId()).isEqualTo("plugin-1");
-              assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
-              assertThat(summary.bindingId()).isEqualTo("binding-timer");
-              assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
-              assertThat(summary.sourceDueTickId()).isEqualTo(130L);
-              assertThat(summary.scriptPatchBaseVersionId()).isEqualTo(7L);
-              assertThat(summary.publication().baseVersionId()).isEqualTo(7L);
-              assertThat(summary.publication().versionId()).isEqualTo(17L);
-            });
+        .satisfies(summary -> {
+          assertThat(summary.pluginId()).isEqualTo("plugin-1");
+          assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+          assertThat(summary.bindingId()).isEqualTo("binding-timer");
+          assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
+          assertThat(summary.sourceDueTickId()).isEqualTo(130L);
+          assertThat(summary.scriptPatchBaseVersionId()).isEqualTo(7L);
+          assertThat(summary.publication().baseVersionId()).isEqualTo(7L);
+          assertThat(summary.publication().versionId()).isEqualTo(17L);
+        });
     verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
   }
 
@@ -3932,13 +3910,12 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result)
         .singleElement()
-        .satisfies(
-            summary -> {
-              assertThat(summary.scriptPatchBaseVersionId()).isZero();
-              assertThat(summary.publication().baseVersionId()).isZero();
-              assertThat(summary.publication().lookupErrorCode())
-                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
-            });
+        .satisfies(summary -> {
+          assertThat(summary.scriptPatchBaseVersionId()).isZero();
+          assertThat(summary.publication().baseVersionId()).isZero();
+          assertThat(summary.publication().lookupErrorCode())
+              .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+        });
     verify(gameDesignControlPlaneClient, never())
         .getPublishedScriptPatchVersion(any(), anyLong(), any());
   }
@@ -3992,14 +3969,13 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result)
         .singleElement()
-        .satisfies(
-            summary -> {
-              assertThat(summary.scheduleDefinitionId()).isEqualTo("guard.alert.expire.v1");
-              assertThat(summary.pluginId()).isEqualTo("plugin-1");
-              assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
-              assertThat(summary.bindingId()).isEqualTo("binding-timer");
-              assertThat(summary.publication().versionId()).isEqualTo(17L);
-            });
+        .satisfies(summary -> {
+          assertThat(summary.scheduleDefinitionId()).isEqualTo("guard.alert.expire.v1");
+          assertThat(summary.pluginId()).isEqualTo("plugin-1");
+          assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+          assertThat(summary.bindingId()).isEqualTo("binding-timer");
+          assertThat(summary.publication().versionId()).isEqualTo(17L);
+        });
     verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
   }
 
@@ -4021,12 +3997,11 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result)
         .singleElement()
-        .satisfies(
-            summary -> {
-              assertThat(summary.publication().lookupErrorCode())
-                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
-              assertThat(summary.publication().lookupErrorMessage()).contains("base_version_id");
-            });
+        .satisfies(summary -> {
+          assertThat(summary.publication().lookupErrorCode())
+              .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+          assertThat(summary.publication().lookupErrorMessage()).contains("base_version_id");
+        });
     verify(gameDesignControlPlaneClient, never())
         .getPublishedScriptPatchVersion(any(), anyLong(), any());
   }
@@ -4053,13 +4028,11 @@ class ScriptScheduleInstanceServiceImplTest {
 
     assertThat(result)
         .singleElement()
-        .satisfies(
-            summary -> {
-              assertThat(summary.publication().lookupErrorCode())
-                  .isEqualTo("GAME_DESIGN_UNAVAILABLE");
-              assertThat(summary.pluginPublication().lookupErrorCode())
-                  .isEqualTo("GAME_DESIGN_UNAVAILABLE");
-            });
+        .satisfies(summary -> {
+          assertThat(summary.publication().lookupErrorCode()).isEqualTo("GAME_DESIGN_UNAVAILABLE");
+          assertThat(summary.pluginPublication().lookupErrorCode())
+              .isEqualTo("GAME_DESIGN_UNAVAILABLE");
+        });
   }
 
   @Test

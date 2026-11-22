@@ -135,21 +135,19 @@ class InitialAdmissionBindOwnerReadTest {
     InitialAdmissionBindOwnerProofReader reader = mock(InitialAdmissionBindOwnerProofReader.class);
     GameSessionControlPlaneGrpcService service = service(reader, NAMESPACE);
     AtomicReference<GetInitialAdmissionBindProofResponse> unspecified = new AtomicReference<>();
-    runAsWorldManagement(
-        () ->
-            unspecified.set(
-                invoke(
-                    service,
-                    request().toBuilder()
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
-                        .build())));
+    runAsWorldManagement(() ->
+        unspecified.set(
+            invoke(
+                service,
+                request().toBuilder()
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
+                    .build())));
     assertEquals("INVALID_ARGUMENT", unspecified.get().getError().getCode());
 
     AtomicReference<GetInitialAdmissionBindProofResponse> unrecognized = new AtomicReference<>();
-    runAsWorldManagement(
-        () ->
-            unrecognized.set(
-                invoke(service, request().toBuilder().setPlayableStateScopeValue(999).build())));
+    runAsWorldManagement(() ->
+        unrecognized.set(
+            invoke(service, request().toBuilder().setPlayableStateScopeValue(999).build())));
     assertEquals("INVALID_ARGUMENT", unrecognized.get().getError().getCode());
     verifyNoInteractions(reader);
   }

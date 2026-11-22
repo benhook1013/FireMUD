@@ -614,26 +614,24 @@ class InitialGameplayLoginContextRedisIntegrationTest {
             Disposition.RETIRED,
             ProofKind.PHYSICAL_TOKEN_DENIAL);
     when(account.retireInitialGameplayLogin(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(authority.active).isTrue();
-              assertThat(authority.current).isTrue();
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(admin.get(key(original)))
-                  .containsExactly(InitialGameplayLoginContextState.closed(original).encode());
-              assertThat(provider.traces).hasSize(2);
-              assertThat(provider.traces.get(0)).contains("WAITAOF");
-              assertThat(provider.traces.get(1)).contains("get");
-              assertThat(
-                      invocation
-                          .getArgument(
-                              0,
-                              net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest
-                                  .class)
-                          .getCallerContextId())
-                  .isEqualTo(original.callerContextId().toString());
-              return receipt;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(authority.active).isTrue();
+          assertThat(authority.current).isTrue();
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(admin.get(key(original)))
+              .containsExactly(InitialGameplayLoginContextState.closed(original).encode());
+          assertThat(provider.traces).hasSize(2);
+          assertThat(provider.traces.get(0)).contains("WAITAOF");
+          assertThat(provider.traces.get(1)).contains("get");
+          assertThat(
+                  invocation
+                      .getArgument(
+                          0,
+                          net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class)
+                      .getCallerContextId())
+              .isEqualTo(original.callerContextId().toString());
+          return receipt;
+        });
     // This positive closure proof allows replica fsync under shared-runner load.
     // Insufficient-acknowledgement cases retain their separate short failure deadline.
     var owner =
@@ -687,30 +685,29 @@ class InitialGameplayLoginContextRedisIntegrationTest {
           }
         };
     when(account.authenticate(any(AuthenticateRequest.class), any()))
-        .thenAnswer(
-            invocation -> {
-              var request = invocation.getArgument(0, AuthenticateRequest.class);
-              var original = coordinates(request);
-              requestRef.set(request);
-              assertThat(original).isEqualTo(reservationRef.get());
-              assertThat(original.expectedAttemptFence()).isEqualTo(1L);
-              assertThat(original.requestId().version()).isEqualTo(4);
-              assertThat(original.callerContextId().version()).isEqualTo(4);
-              assertThat(original.requestId()).isNotEqualTo(original.callerContextId());
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(provider.traces).hasSize(2);
-              assertThat(provider.traces.get(0)).containsSubsequence("evalsha", "WAITAOF", "close");
-              assertThat(provider.traces.get(1)).containsSubsequence("get", "close");
-              assertThat(admin.get(key(original)))
-                  .containsExactly(InitialGameplayLoginContextState.pending(original).encode());
-              var committed = journal.readCommitted(original).orElseThrow();
-              assertThat(committed.abandoned()).isFalse();
-              assertThat(committed.verifiedWitness()).isEmpty();
-              assertThat(committed.frozenRetirementRequest()).isEmpty();
-              var result = validatedResult(request, UUID.randomUUID());
-              resultRef.set(result);
-              return result;
-            });
+        .thenAnswer(invocation -> {
+          var request = invocation.getArgument(0, AuthenticateRequest.class);
+          var original = coordinates(request);
+          requestRef.set(request);
+          assertThat(original).isEqualTo(reservationRef.get());
+          assertThat(original.expectedAttemptFence()).isEqualTo(1L);
+          assertThat(original.requestId().version()).isEqualTo(4);
+          assertThat(original.callerContextId().version()).isEqualTo(4);
+          assertThat(original.requestId()).isNotEqualTo(original.callerContextId());
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(provider.traces).hasSize(2);
+          assertThat(provider.traces.get(0)).containsSubsequence("evalsha", "WAITAOF", "close");
+          assertThat(provider.traces.get(1)).containsSubsequence("get", "close");
+          assertThat(admin.get(key(original)))
+              .containsExactly(InitialGameplayLoginContextState.pending(original).encode());
+          var committed = journal.readCommitted(original).orElseThrow();
+          assertThat(committed.abandoned()).isFalse();
+          assertThat(committed.verifiedWitness()).isEmpty();
+          assertThat(committed.frozenRetirementRequest()).isEmpty();
+          var result = validatedResult(request, UUID.randomUUID());
+          resultRef.set(result);
+          return result;
+        });
 
     var outcome = owner.receive(credentials);
     var original = outcome.coordinates();
@@ -759,7 +756,8 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       throws Exception {
     var authority = new ControlledAuthority();
     var provider = new TracedProvider(writer);
-    var contexts = client(provider, authority, 1);
+    var contexts =
+        client(provider, authority, new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000));
     var account = mock(CanonicalGameplayLoginAccountClient.class);
     var cleanup = cleanup(contexts, account);
     var owner = new InitialGameplayLoginOwner(contexts, cleanup, account);
@@ -771,52 +769,50 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var retirementRef =
         new AtomicReference<net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest>();
     when(account.authenticate(any(AuthenticateRequest.class), any()))
-        .thenAnswer(
-            invocation -> {
-              var request = invocation.getArgument(0, AuthenticateRequest.class);
-              var original = coordinates(request);
-              assertThat(provider.traces).hasSize(2);
-              assertThat(admin.get(key(original)))
-                  .containsExactly(InitialGameplayLoginContextState.pending(original).encode());
-              assertThat(journal.readCommitted(original).orElseThrow().verifiedWitness()).isEmpty();
-              var result = validatedResult(request, UUID.randomUUID());
-              resultRef.set(result);
-              credentials.close();
-              return result;
-            });
+        .thenAnswer(invocation -> {
+          var request = invocation.getArgument(0, AuthenticateRequest.class);
+          var original = coordinates(request);
+          assertThat(provider.traces).hasSize(2);
+          assertThat(admin.get(key(original)))
+              .containsExactly(InitialGameplayLoginContextState.pending(original).encode());
+          assertThat(journal.readCommitted(original).orElseThrow().verifiedWitness()).isEmpty();
+          var result = validatedResult(request, UUID.randomUUID());
+          resultRef.set(result);
+          credentials.close();
+          return result;
+        });
     when(account.retireInitialGameplayLogin(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  invocation.getArgument(
-                      0, net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class);
-              var original = coordinates(request);
-              retirementRef.set(request);
-              assertThat(authority.active).isTrue();
-              assertThat(authority.current).isTrue();
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(resultRef.get())
-                  .as(
-                      "late-custody scenario requires successful CREATE_PENDING and a returned "
-                          + "Authenticate response; provider command trace: %s",
-                      provider.traces)
-                  .isNotNull();
-              assertThat(request.hasTokenWitness()).isTrue();
-              assertThat(provider.traces).hasSize(4);
-              assertThat(provider.traces.get(2)).containsSubsequence("evalsha", "WAITAOF", "close");
-              assertThat(provider.traces.get(3)).containsSubsequence("get", "close");
-              assertThat(admin.get(key(original)))
-                  .containsExactly(InitialGameplayLoginContextState.closed(original).encode());
-              var beforeAccount = journal.readCommitted(original).orElseThrow();
-              assertThat(beforeAccount.abandoned()).isTrue();
-              assertThat(beforeAccount.frozenRetirementRequest()).contains(request);
-              return new InitialGameplayLoginDisposalResult(
-                  UUID.fromString(request.getRequestId()),
-                  UUID.fromString(request.getCallerContextId()),
-                  UUID.randomUUID(),
-                  Disposition.PENDING,
-                  ProofKind.NONE);
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              invocation.getArgument(
+                  0, net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class);
+          var original = coordinates(request);
+          retirementRef.set(request);
+          assertThat(authority.active).isTrue();
+          assertThat(authority.current).isTrue();
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(resultRef.get())
+              .as(
+                  "late-custody scenario requires successful CREATE_PENDING and a returned "
+                      + "Authenticate response; provider command trace: %s",
+                  provider.traces)
+              .isNotNull();
+          assertThat(request.hasTokenWitness()).isTrue();
+          assertThat(provider.traces).hasSize(4);
+          assertThat(provider.traces.get(2)).containsSubsequence("evalsha", "WAITAOF", "close");
+          assertThat(provider.traces.get(3)).containsSubsequence("get", "close");
+          assertThat(admin.get(key(original)))
+              .containsExactly(InitialGameplayLoginContextState.closed(original).encode());
+          var beforeAccount = journal.readCommitted(original).orElseThrow();
+          assertThat(beforeAccount.abandoned()).isTrue();
+          assertThat(beforeAccount.frozenRetirementRequest()).contains(request);
+          return new InitialGameplayLoginDisposalResult(
+              UUID.fromString(request.getRequestId()),
+              UUID.fromString(request.getCallerContextId()),
+              UUID.randomUUID(),
+              Disposition.PENDING,
+              ProofKind.NONE);
+        });
 
     var outcome = owner.receive(credentials);
     var original = outcome.coordinates();
@@ -840,11 +836,10 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     assertThat(committed.frozenRetirementRequest()).contains(exactRetirement);
     assertThat(retirementRef.get()).isEqualTo(exactRetirement);
     assertThat(committed.retainedReceipt())
-        .hasValueSatisfying(
-            receipt -> {
-              assertThat(receipt.disposition()).isEqualTo(Disposition.PENDING);
-              assertThat(receipt.proofKind()).isEqualTo(ProofKind.NONE);
-            });
+        .hasValueSatisfying(receipt -> {
+          assertThat(receipt.disposition()).isEqualTo(Disposition.PENDING);
+          assertThat(receipt.proofKind()).isEqualTo(ProofKind.NONE);
+        });
     assertThat(provider.traces).hasSize(4);
     assertThat(outcome.takePrivateResult()).isEmpty();
     verify(account).authenticate(any(AuthenticateRequest.class), any());
@@ -927,21 +922,19 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var release = new CountDownLatch(1);
     var closing = new CountDownLatch(1);
     var fixture =
-        installedLobbyFixture(
-            () -> {
-              entered.countDown();
-              awaitLobby(release);
-            });
+        installedLobbyFixture(() -> {
+          entered.countDown();
+          awaitLobby(release);
+        });
     try (var executor = Executors.newFixedThreadPool(2)) {
       var borrowing = executor.submit(fixture::realms);
       try {
         assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
         var closed =
-            executor.submit(
-                () -> {
-                  closing.countDown();
-                  fixture.installed().close();
-                });
+            executor.submit(() -> {
+              closing.countDown();
+              fixture.installed().close();
+            });
         assertThat(closing.await(10, TimeUnit.SECONDS)).isTrue();
         assertThatThrownBy(() -> closed.get(100, TimeUnit.MILLISECONDS))
             .isInstanceOf(TimeoutException.class);
@@ -991,62 +984,56 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     try (var executor = Executors.newFixedThreadPool(3)) {
       var rowOwner =
-          executor.submit(
-              () ->
-                  transaction.execute(
-                      status -> {
-                        fixture
-                            .repository()
-                            .verifyOriginal(fixture.installed().coordinates(), fixture.result());
-                        rowLocked.countDown();
-                        awaitLobby(readResult);
-                        // This is the actual repository ordering: original SQL row, then live
-                        // result bytes.
-                        scope.requireCurrent(
-                            fixture.installed().coordinates(),
-                            fixture.result(),
-                            fixture.transport(),
-                            CLOCK);
-                        // Neither drain waiting nor cleanup may hold the Outcome monitor across SQL
-                        // work.
-                        assertThat(fixture.installed().custodyLossCleanup()).isEmpty();
-                        return true;
-                      }));
+          executor.submit(() ->
+              transaction.execute(status -> {
+                fixture
+                    .repository()
+                    .verifyOriginal(fixture.installed().coordinates(), fixture.result());
+                rowLocked.countDown();
+                awaitLobby(readResult);
+                // This is the actual repository ordering: original SQL row, then live
+                // result bytes.
+                scope.requireCurrent(
+                    fixture.installed().coordinates(),
+                    fixture.result(),
+                    fixture.transport(),
+                    CLOCK);
+                // Neither drain waiting nor cleanup may hold the Outcome monitor across SQL
+                // work.
+                assertThat(fixture.installed().custodyLossCleanup()).isEmpty();
+                return true;
+              }));
       try {
         boolean locked = rowLocked.await(10, TimeUnit.SECONDS);
         if (!locked) rowOwner.get(1, TimeUnit.SECONDS); // Surface an early owner failure.
         assertThat(locked).isTrue();
         var borrowing =
-            executor.submit(
-                () ->
-                    fixture
-                        .installed()
-                        .withOwnedPrivateResult(
-                            result -> {
-                              assertThat(result).isSameAs(fixture.result());
-                              borrowEntered.countDown();
-                              return transaction.execute(
-                                  status -> {
-                                    DSL.using(
-                                            new TransactionAwareDataSourceProxy(journalDataSource),
-                                            SQLDialect.POSTGRES)
-                                        .execute("SET LOCAL lock_timeout = '5s'");
-                                    return fixture
-                                        .repository()
-                                        .current(
-                                            fixture.installed().coordinates(),
-                                            result,
-                                            fixture.transport(),
-                                            CLOCK);
-                                  });
-                            }));
+            executor.submit(() ->
+                fixture
+                    .installed()
+                    .withOwnedPrivateResult(result -> {
+                      assertThat(result).isSameAs(fixture.result());
+                      borrowEntered.countDown();
+                      return transaction.execute(status -> {
+                        DSL.using(
+                                new TransactionAwareDataSourceProxy(journalDataSource),
+                                SQLDialect.POSTGRES)
+                            .execute("SET LOCAL lock_timeout = '5s'");
+                        return fixture
+                            .repository()
+                            .current(
+                                fixture.installed().coordinates(),
+                                result,
+                                fixture.transport(),
+                                CLOCK);
+                      });
+                    }));
         assertThat(borrowEntered.await(10, TimeUnit.SECONDS)).isTrue();
         var closed =
-            executor.submit(
-                () -> {
-                  closing.countDown();
-                  fixture.installed().close();
-                });
+            executor.submit(() -> {
+              closing.countDown();
+              fixture.installed().close();
+            });
         assertThat(closing.await(10, TimeUnit.SECONDS)).isTrue();
         assertThatThrownBy(() -> closed.get(100, TimeUnit.MILLISECONDS))
             .isInstanceOf(TimeoutException.class);
@@ -1078,27 +1065,24 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var cleanup = cleanup(contexts, account);
     var result = new AtomicReference<CanonicalGameplayLoginResult>();
     when(account.retireInitialGameplayLogin(any()))
-        .thenAnswer(
-            call -> {
-              var request =
-                  call.getArgument(
-                      0, net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class);
-              return new InitialGameplayLoginDisposalResult(
-                  UUID.fromString(request.getRequestId()),
-                  UUID.fromString(request.getCallerContextId()),
-                  UUID.randomUUID(),
-                  Disposition.PENDING,
-                  ProofKind.NONE);
-            });
+        .thenAnswer(call -> {
+          var request =
+              call.getArgument(
+                  0, net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class);
+          return new InitialGameplayLoginDisposalResult(
+              UUID.fromString(request.getRequestId()),
+              UUID.fromString(request.getCallerContextId()),
+              UUID.randomUUID(),
+              Disposition.PENDING,
+              ProofKind.NONE);
+        });
     when(account.authenticate(any(AuthenticateRequest.class), any()))
-        .thenAnswer(
-            call -> {
-              var value =
-                  validatedResult(
-                      call.getArgument(0, AuthenticateRequest.class), UUID.randomUUID());
-              result.set(value);
-              return value;
-            });
+        .thenAnswer(call -> {
+          var value =
+              validatedResult(call.getArgument(0, AuthenticateRequest.class), UUID.randomUUID());
+          result.set(value);
+          return value;
+        });
     var installed =
         new InitialGameplayLoginOwner(contexts, cleanup, account)
             .receive(
@@ -1141,16 +1125,15 @@ class InitialGameplayLoginContextRedisIntegrationTest {
             DSL.using(new TransactionAwareDataSourceProxy(journalDataSource), SQLDialect.POSTGRES));
     var lobbyAccount = mock(AccountClient.class);
     when(lobbyAccount.issueDirectTextConnectScope(any(), any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              duringScopeCall.run();
-              return IssueDirectTextConnectScopeResponse.newBuilder()
-                  .setConnectScopeId("controlled-scope")
-                  .setEvaluatedAt(CLOCK.instant().minusSeconds(1).toString())
-                  .setConnectScopeExpiresAt(CLOCK.instant().plusSeconds(60).toString())
-                  .build();
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          duringScopeCall.run();
+          return IssueDirectTextConnectScopeResponse.newBuilder()
+              .setConnectScopeId("controlled-scope")
+              .setEvaluatedAt(CLOCK.instant().minusSeconds(1).toString())
+              .setConnectScopeExpiresAt(CLOCK.instant().plusSeconds(60).toString())
+              .build();
+        });
     return new LobbyFixture(
         installed,
         result.get(),
@@ -1178,24 +1161,23 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       DirectTextWorldSelectionService selection,
       AccountClient lobbyAccount) {
     DirectTextAuthenticatedLobbyScope realms() {
-      return installed.withOwnedPrivateResult(
-          borrowed -> {
-            assertThat(borrowed).isSameAs(result);
-            var custody =
-                new DirectTextAuthenticatedLobbyCustody() {
-                  @Override
-                  public <T> T withCurrent(
-                      InitialGameplayLoginAttemptCoordinates original,
-                      CanonicalGameplayLoginResult candidate,
-                      Function<ObservedDirectTextTransport, T> action) {
-                    assertThat(original).isEqualTo(installed.coordinates());
-                    assertThat(candidate).isSameAs(borrowed);
-                    return action.apply(transport);
-                  }
-                };
-            return lobby.realms(
-                installed.coordinates(), borrowed, custody, selection.browse().orElseThrow(), "1");
-          });
+      return installed.withOwnedPrivateResult(borrowed -> {
+        assertThat(borrowed).isSameAs(result);
+        var custody =
+            new DirectTextAuthenticatedLobbyCustody() {
+              @Override
+              public <T> T withCurrent(
+                  InitialGameplayLoginAttemptCoordinates original,
+                  CanonicalGameplayLoginResult candidate,
+                  Function<ObservedDirectTextTransport, T> action) {
+                assertThat(original).isEqualTo(installed.coordinates());
+                assertThat(candidate).isSameAs(borrowed);
+                return action.apply(transport);
+              }
+            };
+        return lobby.realms(
+            installed.coordinates(), borrowed, custody, selection.browse().orElseThrow(), "1");
+      });
     }
   }
 
@@ -1378,19 +1360,18 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       this.upstreamPort = upstreamPort;
       this.policy = policy;
       listener = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
-      workers.submit(
-          () -> {
-            while (!stopping.get()) {
-              try {
-                var downstream = listener.accept();
-                sockets.add(downstream);
-                workers.submit(() -> relay(downstream));
-              } catch (IOException disconnected) {
-                if (!stopping.get())
-                  throw new IllegalStateException("Controlled loopback relay unavailable");
-              }
-            }
-          });
+      workers.submit(() -> {
+        while (!stopping.get()) {
+          try {
+            var downstream = listener.accept();
+            sockets.add(downstream);
+            workers.submit(() -> relay(downstream));
+          } catch (IOException disconnected) {
+            if (!stopping.get())
+              throw new IllegalStateException("Controlled loopback relay unavailable");
+          }
+        }
+      });
     }
 
     private int port() {

@@ -75,17 +75,15 @@ class CurrentPrivatePlaytestLifecycleReadGrpcCodecTest {
     assertThatThrownBy(
             () -> CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(otherRequest, response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(
-                    expected,
-                    response.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(
+                expected,
+                response.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     ByteArrayOutputStream trailing = new ByteArrayOutputStream();
@@ -102,46 +100,41 @@ class CurrentPrivatePlaytestLifecycleReadGrpcCodecTest {
 
   @Test
   void requestAndResponseEnforceWireBoundsAndRequiredCanonicalPayload() {
-    assertThatThrownBy(
-            () ->
-                CurrentPrivatePlaytestLifecycleReadGrpcCodec.parseRequest(
-                    net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePlaytestLifecycleRequest
-                        .getDefaultInstance()))
+    assertThatThrownBy(() ->
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.parseRequest(
+                net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePlaytestLifecycleRequest
+                    .getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentPrivatePlaytestLifecycleReadGrpcCodec.parseRequest(
-                    net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePlaytestLifecycleRequest
-                        .newBuilder()
-                        .setCanonicalEvidence(
-                            ByteString.copyFrom(
-                                new byte
-                                    [CurrentPrivatePlaytestLifecycleReadGrpcCodec
-                                        .MAX_REQUEST_WIRE_BYTES]))
-                        .build()))
+    assertThatThrownBy(() ->
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.parseRequest(
+                net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePlaytestLifecycleRequest
+                    .newBuilder()
+                    .setCanonicalEvidence(
+                        ByteString.copyFrom(
+                            new byte
+                                [CurrentPrivatePlaytestLifecycleReadGrpcCodec
+                                    .MAX_REQUEST_WIRE_BYTES]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentPrivatePlaytestLifecycleReadGrpcCodec.parseRequest(
-                    CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(request()).toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.parseRequest(
+                CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(request()).toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(
-                    request(),
-                    ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
-                        .setCanonicalEvidence(
-                            ByteString.copyFrom(
-                                new byte
-                                    [CurrentPrivatePlaytestLifecycleReadGrpcCodec
-                                        .MAX_RESPONSE_WIRE_BYTES]))
-                        .build()))
+    assertThatThrownBy(() ->
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(
+                request(),
+                ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
+                    .setCanonicalEvidence(
+                        ByteString.copyFrom(
+                            new byte
+                                [CurrentPrivatePlaytestLifecycleReadGrpcCodec
+                                    .MAX_RESPONSE_WIRE_BYTES]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -153,65 +146,63 @@ class CurrentPrivatePlaytestLifecycleReadGrpcCodecTest {
     assertThat(snapshotAt(valid, ReadState.EXPIRED, valid.forkExpiresAt()).readState())
         .isEqualTo(ReadState.EXPIRED);
 
-    assertThatThrownBy(
-            () ->
-                new Snapshot(
-                    valid.scope(),
-                    valid.selectionRequestId(),
-                    valid.selectionHeadRevision(),
-                    valid.selectionRequestDigest(),
-                    valid.selectedAt(),
-                    valid.preparationRequestId(),
-                    valid.preparationRequestDigest(),
-                    valid.playtestLifecycleId(),
-                    valid.playableStateNamespaceId(),
-                    valid.playtestStateGeneration(),
-                    valid.forkExpiresAt(),
-                    valid.preparationState(),
-                    ReadState.EXPIRED,
-                    valid.observedAt(),
-                    valid.canonicalVersionId(),
-                    valid.sourceCatalogRealmId(),
-                    valid.sourceCatalogRequestId(),
-                    valid.sourceCatalogRevision(),
-                    valid.publishedReleaseBundleRef(),
-                    valid.publishedReleaseBundleDigest(),
-                    valid.privatePolicyId(),
-                    valid.privatePolicyDigest(),
-                    valid.policySourceCommitId(),
-                    valid.policySourceRevisionId(),
-                    valid.policyLogicalRevisionId(),
-                    valid.policySetDigest()))
+    assertThatThrownBy(() ->
+            new Snapshot(
+                valid.scope(),
+                valid.selectionRequestId(),
+                valid.selectionHeadRevision(),
+                valid.selectionRequestDigest(),
+                valid.selectedAt(),
+                valid.preparationRequestId(),
+                valid.preparationRequestDigest(),
+                valid.playtestLifecycleId(),
+                valid.playableStateNamespaceId(),
+                valid.playtestStateGeneration(),
+                valid.forkExpiresAt(),
+                valid.preparationState(),
+                ReadState.EXPIRED,
+                valid.observedAt(),
+                valid.canonicalVersionId(),
+                valid.sourceCatalogRealmId(),
+                valid.sourceCatalogRequestId(),
+                valid.sourceCatalogRevision(),
+                valid.publishedReleaseBundleRef(),
+                valid.publishedReleaseBundleDigest(),
+                valid.privatePolicyId(),
+                valid.privatePolicyDigest(),
+                valid.policySourceCommitId(),
+                valid.policySourceRevisionId(),
+                valid.policyLogicalRevisionId(),
+                valid.policySetDigest()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Snapshot(
-                    valid.scope(),
-                    valid.selectionRequestId(),
-                    valid.selectionHeadRevision(),
-                    valid.selectionRequestDigest(),
-                    valid.observedAt().plusSeconds(1),
-                    valid.preparationRequestId(),
-                    valid.preparationRequestDigest(),
-                    valid.playtestLifecycleId(),
-                    valid.playableStateNamespaceId(),
-                    valid.playtestStateGeneration(),
-                    valid.forkExpiresAt(),
-                    valid.preparationState(),
-                    valid.readState(),
-                    valid.observedAt(),
-                    valid.canonicalVersionId(),
-                    valid.sourceCatalogRealmId(),
-                    valid.sourceCatalogRequestId(),
-                    valid.sourceCatalogRevision(),
-                    valid.publishedReleaseBundleRef(),
-                    valid.publishedReleaseBundleDigest(),
-                    valid.privatePolicyId(),
-                    valid.privatePolicyDigest(),
-                    valid.policySourceCommitId(),
-                    valid.policySourceRevisionId(),
-                    valid.policyLogicalRevisionId(),
-                    valid.policySetDigest()))
+    assertThatThrownBy(() ->
+            new Snapshot(
+                valid.scope(),
+                valid.selectionRequestId(),
+                valid.selectionHeadRevision(),
+                valid.selectionRequestDigest(),
+                valid.observedAt().plusSeconds(1),
+                valid.preparationRequestId(),
+                valid.preparationRequestDigest(),
+                valid.playtestLifecycleId(),
+                valid.playableStateNamespaceId(),
+                valid.playtestStateGeneration(),
+                valid.forkExpiresAt(),
+                valid.preparationState(),
+                valid.readState(),
+                valid.observedAt(),
+                valid.canonicalVersionId(),
+                valid.sourceCatalogRealmId(),
+                valid.sourceCatalogRequestId(),
+                valid.sourceCatalogRevision(),
+                valid.publishedReleaseBundleRef(),
+                valid.publishedReleaseBundleDigest(),
+                valid.privatePolicyId(),
+                valid.privatePolicyDigest(),
+                valid.policySourceCommitId(),
+                valid.policySourceRevisionId(),
+                valid.policyLogicalRevisionId(),
+                valid.policySetDigest()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

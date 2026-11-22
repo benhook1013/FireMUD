@@ -395,10 +395,9 @@ public class AccountMembershipAuthorityEventProducer {
     PairAuthority pair =
         pairAuthorityRepository
             .readForUpdate(accountUuid, tenantUuid)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Canonical first JOIN has no committed never-joined pair baseline"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Canonical first JOIN has no committed never-joined pair baseline"));
     requireExactPairScope(pair, accountUuid, tenantUuid, provenance);
 
     String streamKey = membershipStreamKey(accountUuid, tenantUuid);
@@ -518,9 +517,8 @@ public class AccountMembershipAuthorityEventProducer {
     Event bySequence =
         authorityOutboxRepository
             .findEvent(streamKey, 1L)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Canonical first-JOIN sequence-one event is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Canonical first-JOIN sequence-one event is absent"));
     if (!appended.equals(byRequest) || !appended.equals(bySequence)) {
       throw new IllegalStateException("Canonical first-JOIN event readback differs from append");
     }
@@ -564,9 +562,8 @@ public class AccountMembershipAuthorityEventProducer {
     Event bySequence =
         authorityOutboxRepository
             .findEvent(streamKey, 1L)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Committed first-JOIN sequence-one event is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Committed first-JOIN sequence-one event is absent"));
     if (!byRequest.equals(bySequence)) {
       throw new IllegalStateException("Committed first-JOIN event identity is contradictory");
     }
@@ -616,14 +613,13 @@ public class AccountMembershipAuthorityEventProducer {
     sourceSnapshot
         .account()
         .accountSecurityCutoff()
-        .ifPresent(
-            cutoff ->
-                authorityTuple.put(
-                    "accountSecurityCutoff",
-                    Map.of(
-                        "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey", cutoff.outboxStreamKey(),
-                        "outboxSequence", cutoff.outboxSequence())));
+        .ifPresent(cutoff ->
+            authorityTuple.put(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey", cutoff.outboxStreamKey(),
+                    "outboxSequence", cutoff.outboxSequence())));
     authorityTuple.put(
         "tenantBillingCutoff",
         Map.of(
@@ -1392,20 +1388,18 @@ public class AccountMembershipAuthorityEventProducer {
         authorityTuple,
         issuanceFence,
         checkpoints.stream()
-            .map(
-                checkpoint ->
-                    new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(
-                        checkpoint.outboxStreamKey(), checkpoint.outboxSequence()))
+            .map(checkpoint ->
+                new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(
+                    checkpoint.outboxStreamKey(), checkpoint.outboxSequence()))
             .toList(),
         sourceEvidence.stream()
-            .map(
-                source ->
-                    new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
-                        source.outboxStreamKey(),
-                        source.outboxSequence(),
-                        source.eventId(),
-                        source.eventDigest(),
-                        source.canonicalEventJson()))
+            .map(source ->
+                new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+                    source.outboxStreamKey(),
+                    source.outboxSequence(),
+                    source.eventId(),
+                    source.eventDigest(),
+                    source.canonicalEventJson()))
             .toList());
   }
 

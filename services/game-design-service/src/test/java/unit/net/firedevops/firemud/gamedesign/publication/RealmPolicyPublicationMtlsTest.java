@@ -148,11 +148,10 @@ class RealmPolicyPublicationMtlsTest {
             PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(resolveRequest, resolved);
         assertThat(selected).isEqualTo(complete);
         assertThat(selected.policies())
-            .anySatisfy(
-                policy -> {
-                  assertThat(policy.policy().worldSlug()).isEqualTo("earth");
-                  assertThat(policy.policy().realmSlug()).isEqualTo("main");
-                });
+            .anySatisfy(policy -> {
+              assertThat(policy.policy().worldSlug()).isEqualTo("earth");
+              assertThat(policy.policy().realmSlug()).isEqualTo("main");
+            });
         verify(owner, times(2))
             .readPublishedSet(
                 fixture.target().canonicalTenantId(), fixture.target().canonicalVersionId());

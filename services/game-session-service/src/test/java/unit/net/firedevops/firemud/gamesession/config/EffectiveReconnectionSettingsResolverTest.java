@@ -19,14 +19,12 @@ class EffectiveReconnectionSettingsResolverTest {
         Mockito.mock(SharedSettingsAuthorityReader.class);
 
     assertThatIllegalStateException()
-        .isThrownBy(
-            () ->
-                new EffectiveReconnectionSettingsResolver(
-                    new FiremudReconnectionProperties(
-                        new FiremudReconnectionProperties.Policy(45_000L, true),
-                        new FiremudReconnectionProperties.Buffer(
-                            60_000L, 256, 8, 24, 70_000, 65_536)),
-                    authorityReader))
+        .isThrownBy(() ->
+            new EffectiveReconnectionSettingsResolver(
+                new FiremudReconnectionProperties(
+                    new FiremudReconnectionProperties.Policy(45_000L, true),
+                    new FiremudReconnectionProperties.Buffer(60_000L, 256, 8, 24, 70_000, 65_536)),
+                authorityReader))
         .withMessage("Operator reconnection buffer hardMaxBytes must be at least softMaxBytes");
   }
 

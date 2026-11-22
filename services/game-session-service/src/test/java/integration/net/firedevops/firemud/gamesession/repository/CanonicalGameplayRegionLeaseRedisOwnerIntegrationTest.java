@@ -89,20 +89,19 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       listener.setSoTimeout(2_000);
       var disconnected = new CompletableFuture<Boolean>();
       Thread.ofVirtual()
-          .start(
-              () -> {
-                try (var socket = listener.accept()) {
-                  socket.setSoTimeout(2_000);
-                  var input = socket.getInputStream();
-                  boolean handshakeReceived = input.read() != -1;
-                  while (input.read() != -1) {
-                    // Read the handshake without answering it.
-                  }
-                  disconnected.complete(handshakeReceived);
-                } catch (IOException failure) {
-                  disconnected.completeExceptionally(failure);
-                }
-              });
+          .start(() -> {
+            try (var socket = listener.accept()) {
+              socket.setSoTimeout(2_000);
+              var input = socket.getInputStream();
+              boolean handshakeReceived = input.read() != -1;
+              while (input.read() != -1) {
+                // Read the handshake without answering it.
+              }
+              disconnected.complete(handshakeReceived);
+            } catch (IOException failure) {
+              disconnected.completeExceptionally(failure);
+            }
+          });
       var uri =
           RedisURI.Builder.redis("127.0.0.1", listener.getLocalPort())
               .withTimeout(Duration.ofSeconds(10))
@@ -115,13 +114,9 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
         var owner =
             new CanonicalGameplayRegionLeaseRedisOwner(client, uri, catalog)
                 .forHandoffDeadline(clock, clock.millis() + 1_000L);
-        assertThatThrownBy(
-                () ->
-                    owner.acquire(
-                        source(GAME_INSTANCE_ID_A),
-                        7L,
-                        Duration.ofSeconds(30),
-                        identity("stalled")))
+        assertThatThrownBy(() ->
+                owner.acquire(
+                    source(GAME_INSTANCE_ID_A), 7L, Duration.ofSeconds(30), identity("stalled")))
             .isInstanceOf(IllegalStateException.class);
         assertThat(disconnected.get(2, TimeUnit.SECONDS)).isTrue();
       }
@@ -206,8 +201,12 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       assertThat(redis.admin().get(leaseKey)).isNull();
 
       Clock current = Clock.systemUTC();
-      var timely = owner.forHandoffDeadline(current, current.millis() + 4_000);
+      long handoffDeadline = current.millis() + 4_000;
+      var timely = owner.forHandoffDeadline(current, handoffDeadline);
       var grant = timely.acquire(source, 7L, Duration.ofSeconds(30), identity("timely"));
+      assertThat(redis.admin().pexpiretime(leaseKey))
+          .isPositive()
+          .isLessThanOrEqualTo(handoffDeadline);
       timely.requireCurrent(grant);
       timely.renew(grant, Duration.ofSeconds(30));
       byte[] token = redis.admin().get(leaseKey);
@@ -271,10 +270,8 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       assertThat(redis.admin().hdel(metaKey, ascii("current_tick_id"))).isEqualTo(1L);
       long ttlBeforeRejectedRenewal = redis.admin().pttl(leaseKey);
 
-      assertThatThrownBy(
-              () ->
-                  owner.acquire(
-                      source, 7L, Duration.ofMinutes(2), identity("after-missing-tick-id")))
+      assertThatThrownBy(() ->
+              owner.acquire(source, 7L, Duration.ofMinutes(2), identity("after-missing-tick-id")))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")
           .satisfies(failure -> assertThat(failure.getCause()).isNull());

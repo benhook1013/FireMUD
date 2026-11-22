@@ -123,12 +123,11 @@ class AccountAuthorizedTenantCreationServiceTest {
             "sha256:" + "c".repeat(64),
             ACCOUNT_DIGEST);
 
-    assertThatThrownBy(
-            () ->
-                service()
-                    .create(
-                        new AccountAuthorizedTenantCreationService.CandidateRequest(
-                            CREATE_ID, changed, SOURCE_KEY, NAME, DESCRIPTION)))
+    assertThatThrownBy(() ->
+            service()
+                .create(
+                    new AccountAuthorizedTenantCreationService.CandidateRequest(
+                        CREATE_ID, changed, SOURCE_KEY, NAME, DESCRIPTION)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact Account original request digest");
     verifyNoInteractions(
@@ -180,14 +179,13 @@ class AccountAuthorizedTenantCreationServiceTest {
     VerifiedAuthorization authorization = prepareFreshCreation();
     AtomicInteger attempts = new AtomicInteger();
     when(authorizationClient.resolveCurrent(BINDING))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideSql();
-              int attempt = attempts.incrementAndGet();
-              if (attempt == 1) throw Status.UNAVAILABLE.asRuntimeException();
-              if (attempt == 2) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
-              return authorization;
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideSql();
+          int attempt = attempts.incrementAndGet();
+          if (attempt == 1) throw Status.UNAVAILABLE.asRuntimeException();
+          if (attempt == 2) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+          return authorization;
+        });
 
     assertThat(service().create(candidate())).isEqualTo(receipt());
     assertThat(retryDelays)
@@ -292,10 +290,8 @@ class AccountAuthorizedTenantCreationServiceTest {
           .when(client)
           .resolveCurrent(BINDING);
       when(dispatchRepository.readCommitted(BINDING))
-          .thenAnswer(
-              invocation ->
-                  Optional.of(
-                      new AuthorizedDispatch(BINDING, successfulReadId.get(), validBefore)));
+          .thenAnswer(invocation ->
+              Optional.of(new AuthorizedDispatch(BINDING, successfulReadId.get(), validBefore)));
 
       try (var incoming = Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, scheduler)) {
         incoming.run(() -> assertThat(service(client).create(candidate())).isEqualTo(receipt()));
@@ -328,11 +324,10 @@ class AccountAuthorizedTenantCreationServiceTest {
   void transientReadExhaustionWithoutIncomingDeadlineStopsAfterThreeAttemptsBeforeWrites() {
     StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
     when(authorizationClient.resolveCurrent(BINDING))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideSql();
-              throw unavailable;
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideSql();
+          throw unavailable;
+        });
 
     assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable);
 
@@ -403,12 +398,11 @@ class AccountAuthorizedTenantCreationServiceTest {
             });
     StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
     when(authorizationClient.resolveCurrent(BINDING))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideSql();
-              nanos.set(TimeUnit.MILLISECONDS.toNanos(1500));
-              throw unavailable;
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideSql();
+          nanos.set(TimeUnit.MILLISECONDS.toNanos(1500));
+          throw unavailable;
+        });
     try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
       incoming.run(
           () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
@@ -422,12 +416,11 @@ class AccountAuthorizedTenantCreationServiceTest {
     StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
     try (var incoming = Context.current().withCancellation()) {
       when(authorizationClient.resolveCurrent(BINDING))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideSql();
-                incoming.cancel(null);
-                throw unavailable;
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideSql();
+            incoming.cancel(null);
+            throw unavailable;
+          });
       incoming.run(
           () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
       verify(authorizationClient).resolveCurrent(BINDING);
@@ -524,11 +517,10 @@ class AccountAuthorizedTenantCreationServiceTest {
   void interruptionDuringReadPreventsDelayAndAnotherReadWithoutClearingFlag() {
     StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
     when(authorizationClient.resolveCurrent(BINDING))
-        .thenAnswer(
-            invocation -> {
-              Thread.currentThread().interrupt();
-              throw unavailable;
-            });
+        .thenAnswer(invocation -> {
+          Thread.currentThread().interrupt();
+          throw unavailable;
+        });
     try {
       assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable);
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
@@ -589,11 +581,10 @@ class AccountAuthorizedTenantCreationServiceTest {
             });
     StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
     when(authorizationClient.resolveCurrent(BINDING))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideSql();
-              throw unavailable;
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideSql();
+          throw unavailable;
+        });
     try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
       incoming.run(
           () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
@@ -633,11 +624,10 @@ class AccountAuthorizedTenantCreationServiceTest {
         .thenReturn(
             Optional.of(new AuthorizedDispatch(BINDING, AUTHORIZATION_READ_ID, validBefore)));
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              TransactionSynchronizationManager.setActualTransactionActive(true);
-              return mock(TransactionStatus.class);
-            });
+        .thenAnswer(invocation -> {
+          TransactionSynchronizationManager.setActualTransactionActive(true);
+          return mock(TransactionStatus.class);
+        });
     doAnswer(
             invocation -> {
               TransactionSynchronizationManager.setActualTransactionActive(false);
@@ -744,10 +734,9 @@ class AccountAuthorizedTenantCreationServiceTest {
     service().closeOriginal(BINDING);
     verify(transactionManager)
         .getTransaction(
-            org.mockito.ArgumentMatchers.argThat(
-                definition ->
-                    definition.getIsolationLevel() == TransactionDefinition.ISOLATION_READ_COMMITTED
-                        && !definition.isReadOnly()));
+            org.mockito.ArgumentMatchers.argThat(definition ->
+                definition.getIsolationLevel() == TransactionDefinition.ISOLATION_READ_COMMITTED
+                    && !definition.isReadOnly()));
     verify(dispatchRepository).applyLocalWriteTimeouts();
     verify(outcomeRepository).closeNotCreatedLocked(BINDING);
     verifyNoInteractions(authorizationClient, creationRepository);

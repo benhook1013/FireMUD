@@ -744,11 +744,10 @@ public class AccountJwtJwksPublicationRepository {
   private static String activeJson(Optional<ActiveSigner> active) {
     Map<String, Object> value = new LinkedHashMap<>();
     value.put("present", active.isPresent());
-    active.ifPresent(
-        signer -> {
-          value.put("generation", signer.generation());
-          value.put("kid", signer.kid());
-        });
+    active.ifPresent(signer -> {
+      value.put("generation", signer.generation());
+      value.put("kid", signer.kid());
+    });
     return new String(canonicalJson(value), StandardCharsets.UTF_8);
   }
 

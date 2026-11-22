@@ -622,16 +622,15 @@ public class WorldDraftTopologyCommitRepository {
     result.put(
         "affectedEpochsAfter",
         plan.binding().affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                u -> {
-                  Map<String, String> after = new LinkedHashMap<>();
-                  after.put("aggregateType", u.aggregateType());
-                  after.put("aggregateId", u.aggregateId());
-                  after.put("scopeType", u.scopeType());
-                  after.put("scopeId", u.scopeId());
-                  after.put("epoch", "1");
-                  return after;
-                })
+            .map(u -> {
+              Map<String, String> after = new LinkedHashMap<>();
+              after.put("aggregateType", u.aggregateType());
+              after.put("aggregateId", u.aggregateId());
+              after.put("scopeType", u.scopeType());
+              after.put("scopeId", u.scopeId());
+              after.put("epoch", "1");
+              return after;
+            })
             .toList());
     return STABLE_JSON.writeValueAsBytes(result);
   }

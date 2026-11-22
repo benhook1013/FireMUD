@@ -186,15 +186,14 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
 
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_session_start_session_template_association_pin "
-                        + "SET selected_commit_id = ? WHERE target_namespace = ? "
-                        + "AND control_plane_request_id = ?",
-                    UUID.fromString("66666666-6666-4666-8666-666666666666"),
-                    claim.targetNamespace(),
-                    claim.controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_session_start_session_template_association_pin "
+                    + "SET selected_commit_id = ? WHERE target_namespace = ? "
+                    + "AND control_plane_request_id = ?",
+                UUID.fromString("66666666-6666-4666-8666-666666666666"),
+                claim.targetNamespace(),
+                claim.controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(fixture.pinCount()).isEqualTo(1);
   }
@@ -255,11 +254,9 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
             GameSessionStartSessionOperatorAttemptRepository
                 .StaleStartSessionOperatorAttemptClaimException.class)
         .hasMessageContaining("expired");
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status ->
-                        fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence())))
+    assertThatThrownBy(() ->
+            fixture.transactions.execute(
+                status -> fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("outside the owner transaction");
     assertThat(fixture.attemptCount()).isEqualTo(attemptsBefore);
@@ -300,10 +297,8 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
           tupleWithReference(tuple, referenceChange[0], referenceChange[1]);
       replaceOwnerProjection(fixture, tuple, substituted.canonicalBytes());
 
-      assertThatThrownBy(
-              () ->
-                  fixture.pin(
-                      claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
+      assertThatThrownBy(() ->
+              fixture.pin(claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
           .isInstanceOf(
               GameSessionStartSessionOperatorAttemptRepository
                   .StaleStartSessionOperatorAttemptClaimException.class)
@@ -393,10 +388,8 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
 
     assertThat(fixture.leaseExpired(claim.controlPlaneRequestId())).isFalse();
     assertThat(fixture.originalAuthorizationReferenceLive(expiresAt.toString())).isFalse();
-    assertThatThrownBy(
-            () ->
-                fixture.pin(
-                    claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            fixture.pin(claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StaleStartSessionOperatorAttemptClaimException.class)
@@ -427,43 +420,37 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
       java.util.concurrent.CompletableFuture<Integer> blockerPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<?> blocker =
-          executor.submit(
-              () ->
-                  fixture.transactions.executeWithoutResult(
-                      status -> {
-                        int backendPid =
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class));
-                        fixture.dsl.execute(
-                            "LOCK TABLE game_session_start_session_template_association_pin "
-                                + "IN SHARE ROW EXCLUSIVE MODE");
-                        blockerPid.complete(backendPid);
-                        blockerReady.countDown();
-                        awaitLatch(releaseBlocker, "association insert lock release");
-                      }));
+          executor.submit(() ->
+              fixture.transactions.executeWithoutResult(status -> {
+                int backendPid =
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                fixture.dsl.execute(
+                    "LOCK TABLE game_session_start_session_template_association_pin "
+                        + "IN SHARE ROW EXCLUSIVE MODE");
+                blockerPid.complete(backendPid);
+                blockerReady.countDown();
+                awaitLatch(releaseBlocker, "association insert lock release");
+              }));
       assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
 
       java.util.concurrent.CompletableFuture<Integer> waiterPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<RuntimeException> waiter =
-          executor.submit(
-              () ->
-                  fixture.transactions.execute(
-                      status -> {
-                        waiterPid.complete(
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class)));
-                        try {
-                          fixture.pins.pinInitialOrValidateExactReplay(claim, initial);
-                          return null;
-                        } catch (RuntimeException failure) {
-                          return failure;
-                        }
-                      }));
+          executor.submit(() ->
+              fixture.transactions.execute(status -> {
+                waiterPid.complete(
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class)));
+                try {
+                  fixture.pins.pinInitialOrValidateExactReplay(claim, initial);
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              }));
       int pinBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
       int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
       awaitPostgresLockWait(fixture.dsl, pinBackendPid, blockerBackendPid);
@@ -500,43 +487,37 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
       java.util.concurrent.CompletableFuture<Integer> blockerPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<?> blocker =
-          executor.submit(
-              () ->
-                  fixture.transactions.executeWithoutResult(
-                      status -> {
-                        int backendPid =
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class));
-                        fixture.dsl.execute(
-                            "LOCK TABLE game_session_start_session_template_association_pin "
-                                + "IN SHARE ROW EXCLUSIVE MODE");
-                        blockerPid.complete(backendPid);
-                        blockerReady.countDown();
-                        awaitLatch(releaseBlocker, "association insert lock release");
-                      }));
+          executor.submit(() ->
+              fixture.transactions.executeWithoutResult(status -> {
+                int backendPid =
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                fixture.dsl.execute(
+                    "LOCK TABLE game_session_start_session_template_association_pin "
+                        + "IN SHARE ROW EXCLUSIVE MODE");
+                blockerPid.complete(backendPid);
+                blockerReady.countDown();
+                awaitLatch(releaseBlocker, "association insert lock release");
+              }));
       assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
 
       java.util.concurrent.CompletableFuture<Integer> waiterPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<RuntimeException> waiter =
-          executor.submit(
-              () ->
-                  fixture.transactions.execute(
-                      status -> {
-                        waiterPid.complete(
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class)));
-                        try {
-                          fixture.pins.pinInitialOrValidateExactReplay(claim, initial);
-                          return null;
-                        } catch (RuntimeException failure) {
-                          return failure;
-                        }
-                      }));
+          executor.submit(() ->
+              fixture.transactions.execute(status -> {
+                waiterPid.complete(
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class)));
+                try {
+                  fixture.pins.pinInitialOrValidateExactReplay(claim, initial);
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              }));
       int pinBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
       int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
       awaitPostgresLockWait(fixture.dsl, pinBackendPid, blockerBackendPid);
@@ -845,26 +826,22 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
             .setCanonicalVersionId(VERSION.toString())
             .setManifestSchemaVersion(1);
     AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder()
-        .forEach(
-            owner -> {
-              ParticipantDigest.Builder participant =
-                  ParticipantDigest.newBuilder()
-                      .setParticipantKey(owner)
-                      .setScopeValue("19")
-                      .setAppliedCommitId(request.appliedCommitId())
-                      .setContentDigest(
-                          "WORLD_MANAGEMENT".equals(owner)
-                              ? request.contentDigest()
-                              : "d".repeat(64))
-                      .setDigestSchemaVersion(
-                          AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                              owner,
-                              AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION));
-              if ("GAME_LOGIC".equals(owner)) {
-                participant.setAbilitySchemaDigest("sha256:" + "e".repeat(64));
-              }
-              builder.addParticipantDigests(participant);
-            });
+        .forEach(owner -> {
+          ParticipantDigest.Builder participant =
+              ParticipantDigest.newBuilder()
+                  .setParticipantKey(owner)
+                  .setScopeValue("19")
+                  .setAppliedCommitId(request.appliedCommitId())
+                  .setContentDigest(
+                      "WORLD_MANAGEMENT".equals(owner) ? request.contentDigest() : "d".repeat(64))
+                  .setDigestSchemaVersion(
+                      AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                          owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION));
+          if ("GAME_LOGIC".equals(owner)) {
+            participant.setAbilitySchemaDigest("sha256:" + "e".repeat(64));
+          }
+          builder.addParticipantDigests(participant);
+        });
     return builder.build();
   }
 
@@ -889,15 +866,14 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
               graphDigest);
       var tuples =
           draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-              .map(
-                  unit ->
-                      new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                          unit.owner().name(),
-                          unit.aggregateType(),
-                          unit.aggregateId(),
-                          unit.scopeType(),
-                          unit.scopeId(),
-                          unit.expectedEpoch()))
+              .map(unit ->
+                  new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                      unit.owner().name(),
+                      unit.aggregateType(),
+                      unit.aggregateId(),
+                      unit.scopeType(),
+                      unit.scopeId(),
+                      unit.expectedEpoch()))
               .toList();
       var selectorRequest =
           new WorldPublishedStartLocationEvidence.Request(
@@ -1032,15 +1008,14 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     applied.put(
         "appliedEpochs",
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    Map.of(
-                        "aggregateType", unit.aggregateType(),
-                        "aggregateId", unit.aggregateId(),
-                        "scopeType", unit.scopeType(),
-                        "scopeId", unit.scopeId(),
-                        "expectedEpoch", unit.expectedEpoch(),
-                        "resultingEpoch", "1"))
+            .map(unit ->
+                Map.of(
+                    "aggregateType", unit.aggregateType(),
+                    "aggregateId", unit.aggregateId(),
+                    "scopeType", unit.scopeType(),
+                    "scopeId", unit.scopeId(),
+                    "expectedEpoch", unit.expectedEpoch(),
+                    "resultingEpoch", "1"))
             .toList());
     return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(applied));
   }

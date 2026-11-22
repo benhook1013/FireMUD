@@ -56,10 +56,9 @@ class GameLogicGameplayRuleIntakeTerminalReadGrpcServiceTest {
           GameLogicIntakeTerminalReadEvidence.Request.create(NAMESPACE, authorization());
       var observer = new RecordingObserver<ReadGameplayRuleIntakeTerminalResponse>();
 
-      asAccount(
-          () ->
-              transport.readGameplayRuleIntakeTerminal(
-                  GameLogicIntakeTerminalReadGrpcCodec.toRequest(evidenceRequest), observer));
+      asAccount(() ->
+          transport.readGameplayRuleIntakeTerminal(
+              GameLogicIntakeTerminalReadGrpcCodec.toRequest(evidenceRequest), observer));
 
       assertThat(observer.error).isEqualTo(expectedCodes.get(index));
       assertThat(observer.failureHasCause).isFalse();

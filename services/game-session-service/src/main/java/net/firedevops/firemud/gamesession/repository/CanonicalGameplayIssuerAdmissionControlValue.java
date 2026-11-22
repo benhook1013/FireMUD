@@ -272,30 +272,29 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
   }
 
   private byte[] encode() {
-    return encode(
-        out -> {
-          writeText(out, ENCODING);
-          writeText(out, issuerId);
-          writeText(out, state.name());
-          writeBigInteger(out, liveBarrierEpoch);
-          writeUuid(out, currentOperationId);
-          writeText(out, currentOperationKind.name());
-          writeUuid(out, bootstrapOperationId);
-          writeUuid(out, bootstrapRequestId);
-          writeBigInteger(out, bootstrapControlEpoch);
-          writeBytes(out, anchorExactBytes);
-          writeText(out, anchorExactDigest);
-          writeBigInteger(out, accountIssuerAuthGeneration);
-          writeBytes(out, accountCheckpointBytes);
-          writeText(out, accountCheckpointDigest);
-          writeNullableBytes(out, accountSourceEventBytes);
-          writeNullableText(out, accountSourceEventDigest);
-          writeBytes(out, stableIncarnationBytes);
-          writeText(out, stableIncarnationDigest);
-          writeBigInteger(out, inventorySnapshotRevision);
-          out.writeLong(cohortRowCount);
-          writeText(out, cohortDigest);
-        });
+    return encode(out -> {
+      writeText(out, ENCODING);
+      writeText(out, issuerId);
+      writeText(out, state.name());
+      writeBigInteger(out, liveBarrierEpoch);
+      writeUuid(out, currentOperationId);
+      writeText(out, currentOperationKind.name());
+      writeUuid(out, bootstrapOperationId);
+      writeUuid(out, bootstrapRequestId);
+      writeBigInteger(out, bootstrapControlEpoch);
+      writeBytes(out, anchorExactBytes);
+      writeText(out, anchorExactDigest);
+      writeBigInteger(out, accountIssuerAuthGeneration);
+      writeBytes(out, accountCheckpointBytes);
+      writeText(out, accountCheckpointDigest);
+      writeNullableBytes(out, accountSourceEventBytes);
+      writeNullableText(out, accountSourceEventDigest);
+      writeBytes(out, stableIncarnationBytes);
+      writeText(out, stableIncarnationDigest);
+      writeBigInteger(out, inventorySnapshotRevision);
+      out.writeLong(cohortRowCount);
+      writeText(out, cohortDigest);
+    });
   }
 
   boolean matchesCurrentIssuerState(

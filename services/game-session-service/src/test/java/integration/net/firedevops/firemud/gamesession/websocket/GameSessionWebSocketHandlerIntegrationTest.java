@@ -238,12 +238,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .when(redisSetOperations)
         .remove(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
     when(redisSetOperations.members(org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(
-            invocation -> {
-              java.util.LinkedHashSet<Object> members =
-                  redisSetStore.get(invocation.getArgument(0));
-              return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
-            });
+        .thenAnswer(invocation -> {
+          java.util.LinkedHashSet<Object> members = redisSetStore.get(invocation.getArgument(0));
+          return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
+        });
     when(moderationPolicyClient.evaluateGameplayAdmission(
             org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(
@@ -280,16 +278,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
-    org.mockito.Mockito.doAnswer(
-            invocation ->
-                GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
-                    .setGameplayAvailable(true)
-                    .setAllowPublicJoin(true)
-                    .setEntitlementVersion(1L)
-                    .setTenantBillingSequence(1L)
-                    .setEvaluatedAt(java.time.Instant.now().toString())
-                    .build())
+    org.mockito.Mockito.doAnswer(invocation ->
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(java.time.Instant.now().toString())
+                .build())
         .when(accountClient)
         .getTenantEntitlementsForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
@@ -331,21 +328,19 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(commandService.enqueue(eq("41"), eq("QUICKLOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("AFK"), eq(false)))
-        .thenAnswer(
-            invocation -> {
-              gameplayPresenceService.setExplicitAfk(41L, true);
-              return CommandEnqueueResult.success();
-            });
+        .thenAnswer(invocation -> {
+          gameplayPresenceService.setExplicitAfk(41L, true);
+          return CommandEnqueueResult.success();
+        });
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("PLAY demo Emberline"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("AFK"), eq(false)))
-        .thenAnswer(
-            invocation -> {
-              gameplayPresenceService.setExplicitAfk(1L, true);
-              return CommandEnqueueResult.success();
-            });
+        .thenAnswer(invocation -> {
+          gameplayPresenceService.setExplicitAfk(1L, true);
+          return CommandEnqueueResult.success();
+        });
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(gameLogicClient.resolveLook(
@@ -428,44 +423,41 @@ class GameSessionWebSocketHandlerIntegrationTest {
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(2L);
     when(worldManagementClient.getWorldInstanceLifecycle(
             org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long tenantId = invocation.getArgument(0);
-              long gameInstanceId = invocation.getArgument(1);
-              return GetWorldInstanceLifecycleResponse.newBuilder()
-                  .setWorldInstance(
-                      WorldInstanceLifecycleSnapshot.newBuilder()
-                          .setTenantId(Long.toString(tenantId))
-                          .setGameInstanceId(Long.toString(gameInstanceId))
-                          .setLifecycleEpoch(2L)
-                          .setStatus(
-                              WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
-                          .build())
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          long tenantId = invocation.getArgument(0);
+          long gameInstanceId = invocation.getArgument(1);
+          return GetWorldInstanceLifecycleResponse.newBuilder()
+              .setWorldInstance(
+                  WorldInstanceLifecycleSnapshot.newBuilder()
+                      .setTenantId(Long.toString(tenantId))
+                      .setGameInstanceId(Long.toString(gameInstanceId))
+                      .setLifecycleEpoch(2L)
+                      .setStatus(
+                          WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                      .build())
+              .build();
+        });
     when(worldManagementClient.terminateWorldInstance(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString()))
-        .thenAnswer(
-            invocation -> {
-              long tenantId = invocation.getArgument(0);
-              long gameInstanceId = invocation.getArgument(1);
-              long expectedLifecycleEpoch = invocation.getArgument(2);
-              return TerminateWorldInstanceResponse.newBuilder()
-                  .setWorldInstance(
-                      WorldInstanceLifecycleSnapshot.newBuilder()
-                          .setTenantId(Long.toString(tenantId))
-                          .setGameInstanceId(Long.toString(gameInstanceId))
-                          .setLifecycleEpoch(expectedLifecycleEpoch + 1L)
-                          .setStatus(
-                              WorldInstanceLifecycleStatus
-                                  .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
-                          .build())
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          long tenantId = invocation.getArgument(0);
+          long gameInstanceId = invocation.getArgument(1);
+          long expectedLifecycleEpoch = invocation.getArgument(2);
+          return TerminateWorldInstanceResponse.newBuilder()
+              .setWorldInstance(
+                  WorldInstanceLifecycleSnapshot.newBuilder()
+                      .setTenantId(Long.toString(tenantId))
+                      .setGameInstanceId(Long.toString(gameInstanceId))
+                      .setLifecycleEpoch(expectedLifecycleEpoch + 1L)
+                      .setStatus(
+                          WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
+                      .build())
+              .build();
+        });
   }
 
   @Test
@@ -482,19 +474,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads)
         .anyMatch(payload -> payload.startsWith("OK PLAY") && payload.endsWith("> "));
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("OK LOOK")
-                    && payload.contains("Room: Login Hall")
-                    && payload.contains("Long: A narrow testing hall used for login verification.")
-                    && payload.endsWith("> "));
+        .anyMatch(payload ->
+            payload.startsWith("OK LOOK")
+                && payload.contains("Room: Login Hall")
+                && payload.contains("Long: A narrow testing hall used for login verification.")
+                && payload.endsWith("> "));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
-        .hasValueSatisfying(
-            context -> {
-              assertThat(context.gameInstanceId()).isEqualTo(1L);
-              assertThat(context.characterId()).isEqualTo(123L);
-              assertThat(context.roomInstanceId()).isNotBlank();
-            });
+        .hasValueSatisfying(context -> {
+          assertThat(context.gameInstanceId()).isEqualTo(1L);
+          assertThat(context.characterId()).isEqualTo(123L);
+          assertThat(context.roomInstanceId()).isNotBlank();
+        });
 
     verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
@@ -582,12 +572,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("OK QUICKLOOK")
-                    && payload.endsWith("> ")
-                    && payload.contains("Room: Login Hall")
-                    && !payload.contains("Long:"));
+        .anyMatch(payload ->
+            payload.startsWith("OK QUICKLOOK")
+                && payload.endsWith("> ")
+                && payload.contains("Room: Login Hall")
+                && !payload.contains("Long:"));
     verify(lookCacheService)
         .cache(
             eq(22L),
@@ -694,13 +683,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
           java.time.Duration.ofSeconds(5),
           () -> {
             return Mockito.mockingDetails(commandService).getInvocations().stream()
-                .anyMatch(
-                    invocation ->
-                        invocation.getMethod().getName().equals("enqueue")
-                            && invocation.getArguments().length == 3
-                            && "41".equals(invocation.getArguments()[0])
-                            && "AFK".equals(invocation.getArguments()[1])
-                            && Boolean.FALSE.equals(invocation.getArguments()[2]));
+                .anyMatch(invocation ->
+                    invocation.getMethod().getName().equals("enqueue")
+                        && invocation.getArguments().length == 3
+                        && "41".equals(invocation.getArguments()[0])
+                        && "AFK".equals(invocation.getArguments()[1])
+                        && Boolean.FALSE.equals(invocation.getArguments()[2]));
           });
       GameplayAsyncAssertions.assertEventually(
           "AFK presence state",
@@ -769,10 +757,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.contains("Salle : Galerie")
-                    && payload.contains("Court : Un couloir etroit file vers le sud."));
+        .anyMatch(payload ->
+            payload.contains("Salle : Galerie")
+                && payload.contains("Court : Un couloir etroit file vers le sud."));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(context -> assertThat(context.localeTag()).isEqualTo("fr"));
   }
@@ -789,11 +776,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
           java.time.Duration.ofSeconds(5),
           () -> {
             return org.mockito.Mockito.mockingDetails(commandService).getInvocations().stream()
-                .anyMatch(
-                    invocation ->
-                        "enqueue".equals(invocation.getMethod().getName())
-                            && java.util.List.of(invocation.getArguments())
-                                .equals(java.util.List.of("42", "north", false)));
+                .anyMatch(invocation ->
+                    "enqueue".equals(invocation.getMethod().getName())
+                        && java.util.List.of(invocation.getArguments())
+                            .equals(java.util.List.of("42", "north", false)));
           });
       payloads = client.responses();
     }
@@ -819,21 +805,18 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("OK REALMS")
-                    && payload.contains("Live Realm (production) [shared, allow_new]"));
+        .anyMatch(payload ->
+            payload.startsWith("OK REALMS")
+                && payload.contains("Live Realm (production) [shared, allow_new]"));
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE")
-                    && payload.contains("known character name"));
+        .anyMatch(payload ->
+            payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE")
+                && payload.contains("known character name"));
     assertThat(payloads)
-        .noneMatch(
-            payload ->
-                payload.startsWith("OK CHARS")
-                    || payload.contains("Emberline [lvl")
-                    || payload.contains("Sora [lvl"));
+        .noneMatch(payload ->
+            payload.startsWith("OK CHARS")
+                || payload.contains("Emberline [lvl")
+                || payload.contains("Sora [lvl"));
     verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
@@ -1005,25 +988,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR LOGIN_REQUIRED"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("OK WORLDS") && !payload.contains("Builder Sandbox (sandbox)"));
+        .anyMatch(payload ->
+            payload.startsWith("OK WORLDS") && !payload.contains("Builder Sandbox (sandbox)"));
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("ERROR INVALID_ARGUMENT")
-                    && payload.contains("REALMS requires a valid world selector"));
+        .anyMatch(payload ->
+            payload.startsWith("ERROR INVALID_ARGUMENT")
+                && payload.contains("REALMS requires a valid world selector"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
-        .hasValueSatisfying(
-            context -> {
-              assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID);
-              assertThat(context.gameInstanceId()).isZero();
-              assertThat(context.characterId()).isZero();
-              assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
-              assertThat(context.worldSlug()).isEqualTo("sandbox");
-              assertThat(context.realmSlug()).isEqualTo("production");
-              assertThat(context.pointerVersion()).isEqualTo(1L);
-            });
+        .hasValueSatisfying(context -> {
+          assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID);
+          assertThat(context.gameInstanceId()).isZero();
+          assertThat(context.characterId()).isZero();
+          assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
+          assertThat(context.worldSlug()).isEqualTo("sandbox");
+          assertThat(context.realmSlug()).isEqualTo("production");
+          assertThat(context.pointerVersion()).isEqualTo(1L);
+        });
     assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
   }
 
@@ -1079,11 +1059,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
       long newGameInstanceId, boolean requiresCharacterSelection) {
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
-            .filter(
-                pointer ->
-                    pointer.tenantId() == 22L
-                        && "demo".equals(pointer.worldSlug())
-                        && "production".equals(pointer.realmSlug()))
+            .filter(pointer ->
+                pointer.tenantId() == 22L
+                    && "demo".equals(pointer.worldSlug())
+                    && "production".equals(pointer.realmSlug()))
             .findFirst()
             .orElseThrow();
     gameplayAdmissionPointerAuthorityService.upsertPointer(
@@ -1149,9 +1128,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             0L,
             null));
     assertThat(gameplayAdmissionPointerAuthorityService.listPointers())
-        .filteredOn(
-            pointer ->
-                pointer.tenantId() == 22L && pointer.visible() && pointer.publicProductionRealm())
+        .filteredOn(pointer ->
+            pointer.tenantId() == 22L && pointer.visible() && pointer.publicProductionRealm())
         .extracting(GameplayAdmissionPointerSnapshot::worldSlug)
         .containsExactly("demo");
   }
@@ -1159,11 +1137,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @SuppressWarnings("unchecked")
   private static void stubTransactionExecution(RedisTemplate<String, Object> redisTemplate) {
     when(redisTemplate.execute(Mockito.any(SessionCallback.class)))
-        .thenAnswer(
-            invocation -> {
-              SessionCallback<?> callback = invocation.getArgument(0);
-              return callback.execute((RedisOperations<String, Object>) redisTemplate);
-            });
+        .thenAnswer(invocation -> {
+          SessionCallback<?> callback = invocation.getArgument(0);
+          return callback.execute((RedisOperations<String, Object>) redisTemplate);
+        });
     when(redisTemplate.exec()).thenReturn(List.of("OK"));
   }
 

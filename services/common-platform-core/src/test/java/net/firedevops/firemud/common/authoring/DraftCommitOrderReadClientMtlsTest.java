@@ -92,10 +92,9 @@ class DraftCommitOrderReadClientMtlsTest {
 
         assertThatThrownBy(() -> client.read(request))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
         assertThat(server.rpcStarts()).as(identity.alias()).hasValue(0);
         assertThat(server.ownerReads()).as(identity.alias()).hasValue(0);
         assertThat(server.clientPeerUri().get()).isNull();
@@ -114,12 +113,10 @@ class DraftCommitOrderReadClientMtlsTest {
           new GrpcChannelFactory()
               .buildChannel("127.0.0.1:" + server.port(), 6565, noClientCertificate, false);
       try {
-        assertThatThrownBy(
-                () ->
-                    AccountDraftCommitOrderReadServiceGrpc.newBlockingStub(channel)
-                        .withDeadlineAfter(3, TimeUnit.SECONDS)
-                        .readHeldOriginalCommitOrder(
-                            DraftCommitOrderReadGrpcCodec.toRequest(request)))
+        assertThatThrownBy(() ->
+                AccountDraftCommitOrderReadServiceGrpc.newBlockingStub(channel)
+                    .withDeadlineAfter(3, TimeUnit.SECONDS)
+                    .readHeldOriginalCommitOrder(DraftCommitOrderReadGrpcCodec.toRequest(request)))
             .satisfies(
                 failure -> assertThat(isMissingClientCertificateHandshake(failure)).isTrue());
         assertThat(server.rpcStarts()).hasValue(0);
@@ -131,23 +128,21 @@ class DraftCommitOrderReadClientMtlsTest {
 
       CommonGrpcClientProperties plaintext = pki.clientProperties(tempDirectory, pki.worldClient());
       plaintext.setPlaintext(true);
-      assertThatThrownBy(
-              () ->
-                  new DraftCommitOrderReadClient(
-                      endpoints(server.port()), plaintext, new GrpcChannelFactory(), NAMESPACE))
+      assertThatThrownBy(() ->
+              new DraftCommitOrderReadClient(
+                  endpoints(server.port()), plaintext, new GrpcChannelFactory(), NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("workload mTLS");
 
       CommonGrpcClientProperties missingCertificate =
           pki.clientProperties(tempDirectory, pki.worldClient());
       missingCertificate.setCertChain("");
-      assertThatThrownBy(
-              () ->
-                  new DraftCommitOrderReadClient(
-                      endpoints(server.port()),
-                      missingCertificate,
-                      new GrpcChannelFactory(),
-                      NAMESPACE))
+      assertThatThrownBy(() ->
+              new DraftCommitOrderReadClient(
+                  endpoints(server.port()),
+                  missingCertificate,
+                  new GrpcChannelFactory(),
+                  NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("file-backed");
     }

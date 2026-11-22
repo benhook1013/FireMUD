@@ -544,14 +544,13 @@ public class AccountControlUiIssuanceRepository {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw denied();
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw denied();
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw denied();
+      }
+    });
   }
 
   static final class Stored {

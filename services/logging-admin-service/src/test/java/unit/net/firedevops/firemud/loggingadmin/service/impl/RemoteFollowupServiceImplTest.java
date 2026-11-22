@@ -186,61 +186,58 @@ class RemoteFollowupServiceImplTest {
     request.setFailureCode("NONE");
 
     when(gameSessionControlPlaneClient.listRemoteFollowups(
-            argThat(
-                grpcRequest ->
-                    "2".equals(grpcRequest.getTenantId())
-                        && "region-b".equals(grpcRequest.getTargetRegionId())
-                        && "SCHEDULED".equals(grpcRequest.getStatus())
-                        && "7".equals(grpcRequest.getOriginGameInstanceId())
-                        && "region-a".equals(grpcRequest.getOriginRegionId())
-                        && "9".equals(grpcRequest.getTargetGameInstanceId())
-                        && grpcRequest.getTargetRegionEpoch() == 4L
-                        && "rf-1".equals(grpcRequest.getFollowupId())
-                        && "script-1".equals(grpcRequest.getScriptId())
-                        && "plugin-1".equals(grpcRequest.getPluginId())
-                        && "dispatch-1".equals(grpcRequest.getAutomationDispatchId())
-                        && "cmd-1".equals(grpcRequest.getCommandId())
-                        && grpcRequest.getLimit() == 25
-                        && grpcRequest.getOriginRegionEpoch() == 3L
-                        && "patch-1".equals(grpcRequest.getScriptPatchVersion())
-                        && "plugin-v1".equals(grpcRequest.getPluginVersionId())
-                        && grpcRequest.getPlayableStateScope()
-                            == PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED
-                        && "ops".equals(grpcRequest.getWorldSlug())
-                        && "preview".equals(grpcRequest.getRealmSlug())
-                        && grpcRequest.getPointerVersion() == 29L
-                        && "enqueue_automation_command".equals(grpcRequest.getPayloadKind())
-                        && "REMOTE_FOLLOWUP".equals(grpcRequest.getOriginSourceKind())
-                        && "work-1".equals(grpcRequest.getAutomationWorkItemId())
-                        && "entity-9".equals(grpcRequest.getTargetEntityId())
-                        && "damage:1".equals(grpcRequest.getEffectKey())
-                        && grpcRequest.getRequiresSoloTick()
-                        && "onEnterRegion".equals(grpcRequest.getEventType())
-                        && "evt-1".equals(grpcRequest.getScriptEventId())
-                        && "target-cmd-1".equals(grpcRequest.getTargetCommandId())
-                        && "APPLIED".equals(grpcRequest.getTargetCommandExecutionOutcome())
-                        && "SUCCESS".equals(grpcRequest.getTargetCommandGameplayResult())
-                        && "91".equals(grpcRequest.getClaimedTickBatchId())
-                        && "LOOK".equals(grpcRequest.getRequestedCommand())
-                        && "TARGET_REGION_EXECUTED".equals(grpcRequest.getOriginSourceState())
-                        && grpcRequest.getOriginDeadlineRegionEpoch() == 3L
-                        && grpcRequest.getOriginDeadlineTickId() == 88L
-                        && "late_result_safe_to_ignore".equals(grpcRequest.getLateResultPolicy())
-                        && "entity:entity-9".equals(grpcRequest.getClaimTargetAggregate())
-                        && "region-origin-current"
-                            .equals(grpcRequest.getCurrentOriginRuntimeRegionId())
-                        && grpcRequest.getCurrentOriginRuntimeRegionEpoch() == 13L
-                        && "region-target-current"
-                            .equals(grpcRequest.getCurrentTargetRuntimeRegionId())
-                        && grpcRequest.getCurrentTargetRuntimeRegionEpoch() == 14L
-                        && "REMOTE_FOLLOWUP".equals(grpcRequest.getQueueSourceKind())
-                        && "TARGET_REGION_CLAIMED".equals(grpcRequest.getQueueSourceState())
-                        && grpcRequest.getQueueSourceOrdinal() == 2L
-                        && grpcRequest.getQueueSourceDueTickId() == 55L
-                        && grpcRequest.getQueueSourceDueAtMs() == 1700L
-                        && "7".equals(grpcRequest.getCurrentOriginRuntimeGameInstanceId())
-                        && "9".equals(grpcRequest.getCurrentTargetRuntimeGameInstanceId())
-                        && "NONE".equals(grpcRequest.getFailureCode()))))
+            argThat(grpcRequest ->
+                "2".equals(grpcRequest.getTenantId())
+                    && "region-b".equals(grpcRequest.getTargetRegionId())
+                    && "SCHEDULED".equals(grpcRequest.getStatus())
+                    && "7".equals(grpcRequest.getOriginGameInstanceId())
+                    && "region-a".equals(grpcRequest.getOriginRegionId())
+                    && "9".equals(grpcRequest.getTargetGameInstanceId())
+                    && grpcRequest.getTargetRegionEpoch() == 4L
+                    && "rf-1".equals(grpcRequest.getFollowupId())
+                    && "script-1".equals(grpcRequest.getScriptId())
+                    && "plugin-1".equals(grpcRequest.getPluginId())
+                    && "dispatch-1".equals(grpcRequest.getAutomationDispatchId())
+                    && "cmd-1".equals(grpcRequest.getCommandId())
+                    && grpcRequest.getLimit() == 25
+                    && grpcRequest.getOriginRegionEpoch() == 3L
+                    && "patch-1".equals(grpcRequest.getScriptPatchVersion())
+                    && "plugin-v1".equals(grpcRequest.getPluginVersionId())
+                    && grpcRequest.getPlayableStateScope()
+                        == PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED
+                    && "ops".equals(grpcRequest.getWorldSlug())
+                    && "preview".equals(grpcRequest.getRealmSlug())
+                    && grpcRequest.getPointerVersion() == 29L
+                    && "enqueue_automation_command".equals(grpcRequest.getPayloadKind())
+                    && "REMOTE_FOLLOWUP".equals(grpcRequest.getOriginSourceKind())
+                    && "work-1".equals(grpcRequest.getAutomationWorkItemId())
+                    && "entity-9".equals(grpcRequest.getTargetEntityId())
+                    && "damage:1".equals(grpcRequest.getEffectKey())
+                    && grpcRequest.getRequiresSoloTick()
+                    && "onEnterRegion".equals(grpcRequest.getEventType())
+                    && "evt-1".equals(grpcRequest.getScriptEventId())
+                    && "target-cmd-1".equals(grpcRequest.getTargetCommandId())
+                    && "APPLIED".equals(grpcRequest.getTargetCommandExecutionOutcome())
+                    && "SUCCESS".equals(grpcRequest.getTargetCommandGameplayResult())
+                    && "91".equals(grpcRequest.getClaimedTickBatchId())
+                    && "LOOK".equals(grpcRequest.getRequestedCommand())
+                    && "TARGET_REGION_EXECUTED".equals(grpcRequest.getOriginSourceState())
+                    && grpcRequest.getOriginDeadlineRegionEpoch() == 3L
+                    && grpcRequest.getOriginDeadlineTickId() == 88L
+                    && "late_result_safe_to_ignore".equals(grpcRequest.getLateResultPolicy())
+                    && "entity:entity-9".equals(grpcRequest.getClaimTargetAggregate())
+                    && "region-origin-current".equals(grpcRequest.getCurrentOriginRuntimeRegionId())
+                    && grpcRequest.getCurrentOriginRuntimeRegionEpoch() == 13L
+                    && "region-target-current".equals(grpcRequest.getCurrentTargetRuntimeRegionId())
+                    && grpcRequest.getCurrentTargetRuntimeRegionEpoch() == 14L
+                    && "REMOTE_FOLLOWUP".equals(grpcRequest.getQueueSourceKind())
+                    && "TARGET_REGION_CLAIMED".equals(grpcRequest.getQueueSourceState())
+                    && grpcRequest.getQueueSourceOrdinal() == 2L
+                    && grpcRequest.getQueueSourceDueTickId() == 55L
+                    && grpcRequest.getQueueSourceDueAtMs() == 1700L
+                    && "7".equals(grpcRequest.getCurrentOriginRuntimeGameInstanceId())
+                    && "9".equals(grpcRequest.getCurrentTargetRuntimeGameInstanceId())
+                    && "NONE".equals(grpcRequest.getFailureCode()))))
         .thenReturn(
             ListRemoteFollowupsResponse.newBuilder().addFollowups(remoteFollowup("2")).build());
 

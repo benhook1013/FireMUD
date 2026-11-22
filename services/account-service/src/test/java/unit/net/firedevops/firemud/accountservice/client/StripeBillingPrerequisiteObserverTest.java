@@ -383,19 +383,19 @@ class StripeBillingPrerequisiteObserverTest {
 
   private static String customerResponse() {
     return """
-        {"id":"cus_expected","object":"customer","deleted":false,"livemode":false,
-         "metadata":{"firemud_metadata_schema_version":"1",
-          "firemud_operation_type":"customer_provisioning",
-          "firemud_operation_id":"4e2af076-4a10-4aaf-93a0-e5df29271310",
-          "firemud_account_id":"79015b62-73ad-4dc0-a349-cc5b1a288a19"}}
-        """;
+    {"id":"cus_expected","object":"customer","deleted":false,"livemode":false,
+     "metadata":{"firemud_metadata_schema_version":"1",
+      "firemud_operation_type":"customer_provisioning",
+      "firemud_operation_id":"4e2af076-4a10-4aaf-93a0-e5df29271310",
+      "firemud_account_id":"79015b62-73ad-4dc0-a349-cc5b1a288a19"}}
+    """;
   }
 
   private static String customerResponseWithoutMetadata() {
     return """
-        {"id":"cus_expected","object":"customer","deleted":false,
-         "livemode":false,"metadata":null}
-        """;
+    {"id":"cus_expected","object":"customer","deleted":false,
+     "livemode":false,"metadata":null}
+    """;
   }
 
   private static String customerResponseWithoutAccountMetadata() {
@@ -406,10 +406,10 @@ class StripeBillingPrerequisiteObserverTest {
 
   private static String paymentMethodResponse() {
     return """
-        {"id":"pm_expected","object":"payment_method","type":"card","livemode":false,
-         "customer":"cus_expected","card":{"brand":"visa","last4":"4242",
-          "exp_month":12,"exp_year":2030}}
-        """;
+    {"id":"pm_expected","object":"payment_method","type":"card","livemode":false,
+     "customer":"cus_expected","card":{"brand":"visa","last4":"4242",
+      "exp_month":12,"exp_year":2030}}
+    """;
   }
 
   private static final class ControlledStripeTransport implements StripeResponseGetter {

@@ -150,10 +150,8 @@ public final class AccountJwtReadinessProbeService {
         inTransaction(() -> repository.readCurrentInventoryObservationContext(binding, trust));
     AccountJwtValidatorInventorySource.InventorySnapshot snapshot =
         inventorySource.observe(observationContext);
-    return inTransaction(
-        () ->
-            repository.planCurrent(
-                binding, trust, Instant.ofEpochSecond(nowEpochSecond()), snapshot));
+    return inTransaction(() ->
+        repository.planCurrent(binding, trust, Instant.ofEpochSecond(nowEpochSecond()), snapshot));
   }
 
   /** Rereads protected live inventory before opening the exact receiver target-read transaction. */
@@ -178,10 +176,9 @@ public final class AccountJwtReadinessProbeService {
     if (!snapshot.namespace().equals(authenticatedWorkloadNamespace)) {
       throw new AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException();
     }
-    return inTransaction(
-        () ->
-            repository.readCurrentProbeOwner(
-                binding, trust, selector, snapshot, authenticatedWorkloadNamespace));
+    return inTransaction(() ->
+        repository.readCurrentProbeOwner(
+            binding, trust, selector, snapshot, authenticatedWorkloadNamespace));
   }
 
   /** Rereads protected live inventory before committing one immutable per-Pod receipt. */
@@ -193,10 +190,8 @@ public final class AccountJwtReadinessProbeService {
       AuthenticatedAcceptance acceptance) {
     AccountJwtValidatorInventorySource.InventorySnapshot snapshot =
         observeCurrentInventory(binding, trust, entry.rotationOperationId());
-    return inTransaction(
-        () ->
-            repository.recordPodAcceptance(
-                binding, trust, entry, expectedPod, acceptance, snapshot));
+    return inTransaction(() ->
+        repository.recordPodAcceptance(binding, trust, entry, expectedPod, acceptance, snapshot));
   }
 
   /**
@@ -259,10 +254,9 @@ public final class AccountJwtReadinessProbeService {
     Objects.requireNonNull(claim, "Persisted one-shot delivery claim is required");
     Objects.requireNonNull(delivery, "Per-invocation internal delivery is required");
     DeliveryClaim persistedClaim =
-        inTransaction(
-            () ->
-                repository.requireCurrentDeliveryClaim(
-                    binding, trust, plan, claim, Instant.ofEpochSecond(nowEpochSecond())));
+        inTransaction(() ->
+            repository.requireCurrentDeliveryClaim(
+                binding, trust, plan, claim, Instant.ofEpochSecond(nowEpochSecond())));
     if (persistedClaim == null || !persistedClaim.equals(claim)) {
       throw new AccountJwtReadinessProbeRepository.DeliveryAlreadyClaimedException();
     }
@@ -326,13 +320,9 @@ public final class AccountJwtReadinessProbeService {
                   try {
                     pinBeforeDelivery(binding, trust, digest);
                     ProbeEntry issued =
-                        inTransaction(
-                            () ->
-                                repository.recordIssued(
-                                    binding,
-                                    trust,
-                                    digest,
-                                    Instant.ofEpochSecond(nowEpochSecond())));
+                        inTransaction(() ->
+                            repository.recordIssued(
+                                binding, trust, digest, Instant.ofEpochSecond(nowEpochSecond())));
                     DeliveryMetadata metadata = DeliveryMetadata.from(plan, issued, digest);
                     delivery.deliver(metadata, exactCompactJwt);
                     if (!sha256(exactCompactJwt).equals(metadata.compactTokenSha256())) {
@@ -370,29 +360,26 @@ public final class AccountJwtReadinessProbeService {
 
   /** Expires due entries and performs bounded cleanup for only the named operation. */
   public List<ProbeEntry> expireAndClean(Binding binding, TrustFence trust, UUID operationId) {
-    return inTransaction(
-        () -> {
-          repository.expireCurrent(
-              binding, trust, operationId, Instant.ofEpochSecond(nowEpochSecond()));
-          return repository.cleanTerminalEntries(
-              operationId, AccountJwtReadinessProbeRepository.MAX_ENTRIES_PER_OPERATION);
-        });
+    return inTransaction(() -> {
+      repository.expireCurrent(
+          binding, trust, operationId, Instant.ofEpochSecond(nowEpochSecond()));
+      return repository.cleanTerminalEntries(
+          operationId, AccountJwtReadinessProbeRepository.MAX_ENTRIES_PER_OPERATION);
+    });
   }
 
   /** Bounded terminal cleanup never scans outside this explicit operation ID. */
   public List<ProbeEntry> cleanTerminalEntries(UUID operationId) {
-    return inTransaction(
-        () ->
-            repository.cleanTerminalEntries(
-                operationId, AccountJwtReadinessProbeRepository.MAX_ENTRIES_PER_OPERATION));
+    return inTransaction(() ->
+        repository.cleanTerminalEntries(
+            operationId, AccountJwtReadinessProbeRepository.MAX_ENTRIES_PER_OPERATION));
   }
 
   private void pinBeforeDelivery(Binding binding, TrustFence trust, SignedProbeDigest digest) {
     try {
-      inTransaction(
-          () ->
-              repository.recordSigningAttempt(
-                  binding, trust, digest, Instant.ofEpochSecond(nowEpochSecond())));
+      inTransaction(() ->
+          repository.recordSigningAttempt(
+              binding, trust, digest, Instant.ofEpochSecond(nowEpochSecond())));
     } catch (RuntimeException failure) {
       throw new SigningAttemptConflict();
     }
@@ -437,22 +424,19 @@ public final class AccountJwtReadinessProbeService {
         && (readback.state() != ProbeState.VERIFIED
             || readback
                 .verificationReceipt()
-                .filter(
-                    receipt ->
-                        receipt.sourceEntryVersion() == issuedEntryVersion
-                            && receipt.resultEntryVersion() == resultEntryVersion)
+                .filter(receipt ->
+                    receipt.sourceEntryVersion() == issuedEntryVersion
+                        && receipt.resultEntryVersion() == resultEntryVersion)
                 .isPresent())
         && readback.compactTokenSha256().equals(java.util.Optional.of(signed.compactTokenSha256()));
   }
 
   private List<ProbeEntry> quarantineCurrent(Binding binding, TrustFence trust, UUID operationId) {
-    return inTransaction(
-        () -> {
-          repository.abortCurrent(
-              binding, trust, operationId, Instant.ofEpochSecond(nowEpochSecond()));
-          return repository.cleanTerminalEntries(
-              operationId, AccountJwtReadinessProbeRepository.MAX_ENTRIES_PER_OPERATION);
-        });
+    return inTransaction(() -> {
+      repository.abortCurrent(binding, trust, operationId, Instant.ofEpochSecond(nowEpochSecond()));
+      return repository.cleanTerminalEntries(
+          operationId, AccountJwtReadinessProbeRepository.MAX_ENTRIES_PER_OPERATION);
+    });
   }
 
   private ProbeEntry currentEntry(
@@ -462,10 +446,9 @@ public final class AccountJwtReadinessProbeService {
     return plan.entries().stream()
         .filter(entry -> entry.jti().equals(expected.jti()))
         .findFirst()
-        .orElseThrow(
-            () ->
-                new AccountJwtReadinessProbeRepository.QuarantinedStateException(
-                    "Readiness probe entry disappeared from its immutable plan"));
+        .orElseThrow(() ->
+            new AccountJwtReadinessProbeRepository.QuarantinedStateException(
+                "Readiness probe entry disappeared from its immutable plan"));
   }
 
   private long nowEpochSecond() {

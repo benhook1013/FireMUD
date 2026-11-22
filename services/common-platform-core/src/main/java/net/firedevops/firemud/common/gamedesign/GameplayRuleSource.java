@@ -46,10 +46,9 @@ public final class GameplayRuleSource {
               .filter(value -> value.revisionId().equals(revisionId))
               .filter(value -> value.revisionOrder().equals(revisionOrder))
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new IllegalArgumentException(
-                          "Rule mutation does not match an original Game Design revision"));
+              .orElseThrow(() ->
+                  new IllegalArgumentException(
+                      "Rule mutation does not match an original Game Design revision"));
       String expected;
       if (operation == OperationKind.UPSERT) {
         Objects.requireNonNull(definition);

@@ -170,16 +170,15 @@ class HostedTermsEnvironmentBindingFencePostgresIntegrationTest {
 
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              repository.ensureScope(scopeId);
-              repository.claimPublication(requestId, scopeId, request);
-              repository.lockScope(scopeId);
-              repository.insertCandidate(candidate);
-              repository.markScheduled(requestId, candidate);
-              repository.completePublication(
-                  requestId, candidate, HostedTermsEncoding.catalog(candidate), null);
-            });
+        .executeWithoutResult(status -> {
+          repository.ensureScope(scopeId);
+          repository.claimPublication(requestId, scopeId, request);
+          repository.lockScope(scopeId);
+          repository.insertCandidate(candidate);
+          repository.markScheduled(requestId, candidate);
+          repository.completePublication(
+              requestId, candidate, HostedTermsEncoding.catalog(candidate), null);
+        });
     return new CatalogVersion(candidate);
   }
 
@@ -193,15 +192,13 @@ class HostedTermsEnvironmentBindingFencePostgresIntegrationTest {
     HostedTermsEnvironmentBinding[] candidate = new HostedTermsEnvironmentBinding[1];
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              repository.ensureHead(boundary);
-              repository.claimPublication(requestId, boundary, request);
-              repository.lockHead(boundary);
-              candidate[0] =
-                  repository.insertCandidate(UUID.randomUUID(), requestId, evidence, null);
-              repository.completePublication(requestId, candidate[0], null, null);
-            });
+        .executeWithoutResult(status -> {
+          repository.ensureHead(boundary);
+          repository.claimPublication(requestId, boundary, request);
+          repository.lockHead(boundary);
+          candidate[0] = repository.insertCandidate(UUID.randomUUID(), requestId, evidence, null);
+          repository.completePublication(requestId, candidate[0], null, null);
+        });
     return candidate[0];
   }
 
@@ -222,39 +219,36 @@ class HostedTermsEnvironmentBindingFencePostgresIntegrationTest {
 
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              bindings.claimPublication(requestId, boundary, request);
-              HostedTermsEnvironmentBindingRepository.HeadSnapshot head =
-                  bindings.lockHead(boundary);
-              if (!predecessor.equals(head.current())) {
-                throw new IllegalStateException("Test predecessor differs from exact binding head");
-              }
-              HostedTermsEnvironmentBinding candidate =
-                  bindings.insertCandidate(UUID.randomUUID(), requestId, evidence, head.current());
-              SourceEvidence predecessorSource = predecessor.sourceEvidence();
-              SourceEvidence priorCatalogSource = catalogSource(catalogs.first());
-              SourceEvidence targetCatalogSource = catalogSource(catalogs.second());
-              List<SourceEvidence> expectedSources =
-                  List.of(predecessorSource, priorCatalogSource, targetCatalogSource);
-              List<SourceEvidence> changedSources =
-                  changedSources(shape, expectedSources, predecessor);
-              DraftAuthorizationFenceRepository.SourceChange change =
-                  new DraftAuthorizationFenceRepository.SourceChange(
-                      changeId,
-                      changedSources,
-                      HostedTermsEnvironmentBindingEncoding.receipt(candidate));
-              if (!fences.requestSourceChange(change) || !fences.sourceMutationPermitted(change)) {
-                throw new IllegalStateException("Run-owned Draft source fixture did not settle");
-              }
-              bindings.markOwnerSettlementPending(requestId, candidate, change.canonicalBytes());
-              bindings.completePublication(
-                  requestId, candidate, change.canonicalBytes(), head.current());
-              if (shape != ChangeShape.WAITING) {
-                fences.markSourceCommitted(change);
-              }
-              committed[0] = candidate;
-            });
+        .executeWithoutResult(status -> {
+          bindings.claimPublication(requestId, boundary, request);
+          HostedTermsEnvironmentBindingRepository.HeadSnapshot head = bindings.lockHead(boundary);
+          if (!predecessor.equals(head.current())) {
+            throw new IllegalStateException("Test predecessor differs from exact binding head");
+          }
+          HostedTermsEnvironmentBinding candidate =
+              bindings.insertCandidate(UUID.randomUUID(), requestId, evidence, head.current());
+          SourceEvidence predecessorSource = predecessor.sourceEvidence();
+          SourceEvidence priorCatalogSource = catalogSource(catalogs.first());
+          SourceEvidence targetCatalogSource = catalogSource(catalogs.second());
+          List<SourceEvidence> expectedSources =
+              List.of(predecessorSource, priorCatalogSource, targetCatalogSource);
+          List<SourceEvidence> changedSources = changedSources(shape, expectedSources, predecessor);
+          DraftAuthorizationFenceRepository.SourceChange change =
+              new DraftAuthorizationFenceRepository.SourceChange(
+                  changeId,
+                  changedSources,
+                  HostedTermsEnvironmentBindingEncoding.receipt(candidate));
+          if (!fences.requestSourceChange(change) || !fences.sourceMutationPermitted(change)) {
+            throw new IllegalStateException("Run-owned Draft source fixture did not settle");
+          }
+          bindings.markOwnerSettlementPending(requestId, candidate, change.canonicalBytes());
+          bindings.completePublication(
+              requestId, candidate, change.canonicalBytes(), head.current());
+          if (shape != ChangeShape.WAITING) {
+            fences.markSourceCommitted(change);
+          }
+          committed[0] = candidate;
+        });
     return committed[0];
   }
 

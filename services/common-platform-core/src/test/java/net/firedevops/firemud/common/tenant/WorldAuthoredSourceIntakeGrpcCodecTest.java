@@ -163,11 +163,10 @@ class WorldAuthoredSourceIntakeGrpcCodecTest {
     ReadRequest readRequest = new ReadRequest(BINDING, READ_REQUEST_ID);
     ReadAuthoredWorldSourceIntakeResponse readResponse =
         WorldAuthoredSourceIntakeGrpcCodec.toReadResponse(readRequest, committedReceipt(BINDING));
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredSourceIntakeGrpcCodec.fromReadResponse(
-                    readRequest,
-                    readResponse.toBuilder().setRequestId(INTAKE_REQUEST_ID.toString()).build()))
+    assertThatThrownBy(() ->
+            WorldAuthoredSourceIntakeGrpcCodec.fromReadResponse(
+                readRequest,
+                readResponse.toBuilder().setRequestId(INTAKE_REQUEST_ID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

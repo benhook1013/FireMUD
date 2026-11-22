@@ -143,10 +143,9 @@ class StartSessionOperatorActionCodecTest {
 
   @Test
   void rejectsRawUtf8AndActionSpecificOversizeInputs() throws IOException {
-    assertThatThrownBy(
-            () ->
-                StartSessionOperatorActionCodec.decode(
-                    new byte[] {'{', '"', (byte) 0xff, '"', ':', '1', '}'}))
+    assertThatThrownBy(() ->
+            StartSessionOperatorActionCodec.decode(
+                new byte[] {'{', '"', (byte) 0xff, '"', ':', '1', '}'}))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] oversizedRaw = new byte[StartSessionOperatorActionCodec.MAX_RAW_BYTES + 1];
@@ -155,17 +154,15 @@ class StartSessionOperatorActionCodecTest {
 
     String base = findVector("base").path("input").asText();
     String oversizedReason = base.replace("scheduled launch", "x".repeat(1_001));
-    assertThatThrownBy(
-            () ->
-                StartSessionOperatorActionCodec.decode(
-                    oversizedReason.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionOperatorActionCodec.decode(
+                oversizedReason.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
 
     String oversizedClientIp = base.replace("192.0.2.1", "x".repeat(129));
-    assertThatThrownBy(
-            () ->
-                StartSessionOperatorActionCodec.decode(
-                    oversizedClientIp.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionOperatorActionCodec.decode(
+                oversizedClientIp.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -180,10 +177,8 @@ class StartSessionOperatorActionCodecTest {
     for (int codePoint : sharedWhitespaceCodepoints) {
       String blankReason = new String(Character.toChars(codePoint));
       String blankInput = replaceAuditReason(base, blankReason);
-      assertThatThrownBy(
-              () ->
-                  StartSessionOperatorActionCodec.decode(
-                      blankInput.getBytes(StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              StartSessionOperatorActionCodec.decode(blankInput.getBytes(StandardCharsets.UTF_8)))
           .as("blank audit reason U+%04X", codePoint)
           .isInstanceOf(IllegalArgumentException.class);
 
@@ -209,24 +204,21 @@ class StartSessionOperatorActionCodecTest {
   @Test
   void rejectsObjectMemberAndArrayElementLimitViolations() {
     String tooManyMembers = "{" + String.join(",", Collections.nCopies(17, "\"k\":0")) + "}";
-    assertThatThrownBy(
-            () ->
-                StartSessionOperatorActionCodec.canonicalGrammarValueForTest(
-                    tooManyMembers.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionOperatorActionCodec.canonicalGrammarValueForTest(
+                tooManyMembers.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
 
     String tooManyElements = "[" + String.join(",", Collections.nCopies(65, "0")) + "]";
-    assertThatThrownBy(
-            () ->
-                StartSessionOperatorActionCodec.canonicalGrammarValueForTest(
-                    tooManyElements.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionOperatorActionCodec.canonicalGrammarValueForTest(
+                tooManyElements.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
 
     String tooDeep = "[".repeat(9) + "0" + "]".repeat(9);
-    assertThatThrownBy(
-            () ->
-                StartSessionOperatorActionCodec.canonicalGrammarValueForTest(
-                    tooDeep.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionOperatorActionCodec.canonicalGrammarValueForTest(
+                tooDeep.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

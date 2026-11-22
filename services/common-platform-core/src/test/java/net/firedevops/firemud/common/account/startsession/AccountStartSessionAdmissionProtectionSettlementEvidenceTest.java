@@ -107,10 +107,9 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
             false,
             terminal.terminalAt());
     for (var invalid : List.of(pending, substituted, wrongPointer)) {
-      assertThatThrownBy(
-              () ->
-                  AccountStartSessionAdmissionProtectionSettlementEvidence.create(
-                      fixture.protection(), invalid))
+      assertThatThrownBy(() ->
+              AccountStartSessionAdmissionProtectionSettlementEvidence.create(
+                  fixture.protection(), invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -181,10 +180,8 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
             fixture.terminal().proofDigest(),
             false,
             fixture.terminal().terminalAt());
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionSettlementEvidence.create(
-                    protection, changed))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionSettlementEvidence.create(protection, changed))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact next pointer");
   }
@@ -236,26 +233,21 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
             Base64.getEncoder().encodeToString(proof) + "\n")) {
       var changed = fields(bytes);
       changed.put(TERMINAL, invalid);
-      assertThatThrownBy(
-              () ->
-                  AccountStartSessionAdmissionProtectionSettlementEvidence.decode(
-                      canonical(changed)))
+      assertThatThrownBy(() ->
+              AccountStartSessionAdmissionProtectionSettlementEvidence.decode(canonical(changed)))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var changedProtection = fields(bytes);
     changedProtection.put(PROTECTION, Base64.getEncoder().encodeToString(new byte[] {1, 2, 3}));
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionSettlementEvidence.decode(
-                    canonical(changedProtection)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionSettlementEvidence.decode(
+                canonical(changedProtection)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionSettlementEvidence.decode(
-                    new byte
-                        [AccountStartSessionAdmissionProtectionSettlementEvidence
-                                .MAX_CANONICAL_BYTES
-                            + 1]))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionSettlementEvidence.decode(
+                new byte
+                    [AccountStartSessionAdmissionProtectionSettlementEvidence.MAX_CANONICAL_BYTES
+                        + 1]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import integration.net.firedevops.firemud.accountservice.AccountTenantCreatorBootstrapIntegrationFixture;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -18,7 +19,9 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +30,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
@@ -39,6 +43,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
@@ -53,6 +58,8 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -65,6 +72,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmi
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
@@ -243,10 +252,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             .doesNotContain(CONTROLLED_COMPACT_TOKEN);
         assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
             .isExactlyInstanceOf(io.grpc.StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(io.grpc.Status.Code.CANCELLED));
+            .satisfies(failure ->
+                assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.CANCELLED));
         assertThat(f.dsl.fetchCount(DSL.table("account_tenant_membership")))
             .isEqualTo(membershipsBefore);
       } finally {
@@ -275,12 +283,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
                   .isFalse();
-              f.dsl.connection(
-                  connection -> {
-                    assertThat(connection.getTransactionIsolation())
-                        .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
-                    assertThat(connection.isReadOnly()).isFalse();
-                  });
+              f.dsl.connection(connection -> {
+                assertThat(connection.getTransactionIsolation())
+                    .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
+                assertThat(connection.isReadOnly()).isFalse();
+              });
               return invocation.callRealMethod();
             })
         .when(f.demos)
@@ -326,11 +333,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             status -> f.memberships.findFreshMembership(f.account.getAccountUuid(), f.tenantId));
     assertThat(missing).isEmpty();
     assertThat(value.membershipSource().checkpoints())
-        .anySatisfy(
-            checkpoint -> {
-              assertThat(checkpoint.outboxStreamKey()).contains("membership/");
-              assertThat(checkpoint.outboxSequence()).isEqualTo("0");
-            });
+        .anySatisfy(checkpoint -> {
+          assertThat(checkpoint.outboxStreamKey()).contains("membership/");
+          assertThat(checkpoint.outboxSequence()).isEqualTo("0");
+        });
     assertThat(value.membershipSource().sourceEvidence()).isNotEmpty();
   }
 
@@ -417,8 +423,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     Fixture f = fixture(false, behindDatabase);
     assertThat(behindDatabase.instant()).isBefore(databaseNow(f.dsl));
 
+    Instant databaseBeforeEvaluation = databaseNow(f.dsl);
     var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
     Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(value.evaluatedAt()).isAfterOrEqualTo(databaseBeforeEvaluation);
     assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
 
     var retained =
@@ -476,6 +484,160 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void exactCapacityRefusalReplaysAfterHeadroomReturnsAndEvaluationExpires() {
+    Fixture f = fixture(true, true);
+    var request = capacityRequest(f);
+    long quota = request.evidence().quota();
+    assertThat(quota).isBetween(1L, 10L);
+    TenantCapacityAdmission.Request firstHold = null;
+    for (long used = 0; used < quota; used++) {
+      var occupying = capacityRequest(f);
+      assertThat(f.capacityOwner.commit(occupying, PEER).state())
+          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      if (firstHold == null) {
+        firstHold = occupying;
+      }
+    }
+    String readHeld =
+        "SELECT held_units FROM account_tenant_capacity_usage"
+            + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
+    assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
+        .isEqualTo(quota);
+    UUID requestId = request.identity().requestId();
+    var decision = new java.util.concurrent.atomic.AtomicReference<UUID>();
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(error.durableDenialId()).isNotNull();
+              decision.set(error.durableDenialId());
+            });
+    String readDenial =
+        "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions"
+            + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
+    Object[] identity = {f.tenantId, requestId, request.identity().admissionId()};
+    var retained = f.dsl.fetchSingle(readDenial, identity).intoMap();
+    assertThat(retained)
+        .containsEntry("decision", "NO_ACCEPT")
+        .containsEntry("refusal_code", "CAPACITY_QUOTA_EXCEEDED")
+        .containsEntry("decision_id", decision.get());
+    String countDeniedReservations =
+        "SELECT count(*) AS n FROM account_tenant_capacity_reservations"
+            + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
+    assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+
+    // The external no-execution observation is controlled; all Account storage mutations are real.
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.capacityOwner,
+            f.dsl,
+            (occupying, reservation, deadline) ->
+                new AccountTenantCapacityRecoveryWorker.Observation(
+                    PEER,
+                    reservation,
+                    net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                        occupying),
+                    AccountTenantCapacityRecoveryWorker.Disposition
+                        .NOT_EXECUTED_AFTER_AUTHORIZATION,
+                    occupying.admissionAttemptId(),
+                    7,
+                    "sha256:" + "e".repeat(64),
+                    "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
+            f.clock);
+    assertThat(
+            recovery
+                .reconcile(
+                    java.util.Objects.requireNonNull(firstHold),
+                    AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
+                .state())
+        .isEqualTo(TenantCapacityAdmission.State.RELEASED);
+    assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
+        .isEqualTo(quota - 1);
+    // The exact durable refusal must win over both returned quota headroom and expired evidence.
+    Instant evaluationExpiresAt = request.evidence().expiresAt();
+    assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
+    f.clock.setInstant(evaluationExpiresAt.plus(1, ChronoUnit.MICROS));
+    assertThat(f.clock.instant()).isAfter(evaluationExpiresAt);
+    var retainedReservations =
+        f.dsl
+            .fetch(
+                "SELECT *, xmin::text AS row_version FROM account_tenant_capacity_reservations "
+                    + "ORDER BY reservation_id")
+            .intoMaps();
+    var retainedSlots =
+        f.dsl
+            .fetch(
+                "SELECT tenant_uuid, slot, decision_id "
+                    + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                f.tenantId)
+            .intoMaps();
+    assertThat(retainedSlots).hasSize(1);
+    assertThat(retainedSlots.get(0)).containsEntry("decision_id", decision.get());
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(error.durableDenialId()).isEqualTo(decision.get());
+            });
+    assertThat(f.dsl.fetchSingle(readDenial, identity).intoMap())
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT *, xmin::text AS row_version FROM account_tenant_capacity_reservations "
+                        + "ORDER BY reservation_id")
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(retainedReservations);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT tenant_uuid, slot, decision_id "
+                        + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                    f.tenantId)
+                .intoMaps())
+        .isEqualTo(retainedSlots);
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
+        .isEqualTo(Math.toIntExact(quota + 1));
+    assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+  }
+
+  private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {
+    var entitlementRequest = f.request();
+    var entitlement = f.owner.evaluate(entitlementRequest, CONTROLLED_COMPACT_TOKEN);
+    var evidence =
+        TenantCapacityAdmission.Evidence.parse(
+            entitlement.canonicalBytes(), TenantCapacityAdmission.Owner.GAME_SESSION);
+    UUID requestId = entitlementRequest.requestId();
+    return new TenantCapacityAdmission.Request(
+            new TenantCapacityAdmission.Identity(f.tenantId, requestId, UUID.randomUUID()),
+            UUID.randomUUID(),
+            1,
+            NAMESPACE,
+            new TenantCapacityAdmission.PlayerContext(
+                f.account.getAccountUuid(),
+                f.tenantId,
+                f.scope.playableStateNamespaceId(),
+                f.scope.gameInstanceId(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                f.scope.realmId(),
+                requestId,
+                f.scope.playableStateScope()),
+            TenantCapacityAdmission.Operation.CAPACITY_CREATING,
+            new TenantCapacityAdmission.Shape(0, 0, 0),
+            new TenantCapacityAdmission.Shape(1, 0, 0),
+            evidence,
+            1L,
+            null)
+        .withDigest();
+  }
+
+  @Test
   void blockedAccountSourceReadIsCancelledWithinOwnerTransactionBudget() throws Exception {
     Fixture f = fixture(false);
     try (Connection blocker = f.dataSource.getConnection()) {
@@ -489,13 +651,12 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         // jOOQ connection must propagate the owner's five-second JDBC query timeout.
         assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
-            .satisfies(
-                failure -> {
-                  Throwable cause = failure;
-                  while (cause.getCause() != null) cause = cause.getCause();
-                  assertThat(cause).isInstanceOf(SQLException.class);
-                  assertThat(((SQLException) cause).getSQLState()).isEqualTo("57014");
-                });
+            .satisfies(failure -> {
+              Throwable cause = failure;
+              while (cause.getCause() != null) cause = cause.getCause();
+              assertThat(cause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) cause).getSQLState()).isEqualTo("57014");
+            });
       } finally {
         blocker.rollback();
       }
@@ -555,14 +716,24 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   private Fixture fixture(boolean join) {
-    return fixture(join, Clock.systemUTC());
+    return fixture(join, false);
+  }
+
+  private Fixture fixture(boolean join, boolean initializeCapacity) {
+    return fixture(join, null, new org.jooq.impl.DefaultExecuteListener(), initializeCapacity);
   }
 
   private Fixture fixture(boolean join, Clock applicationClock) {
-    return fixture(join, applicationClock, new org.jooq.impl.DefaultExecuteListener());
+    return fixture(join, applicationClock, new org.jooq.impl.DefaultExecuteListener(), false);
   }
 
   private Fixture fixture(boolean join, Clock applicationClock, org.jooq.ExecuteListener listener) {
+    return fixture(join, applicationClock, listener, false);
+  }
+
+  private Fixture fixture(
+      boolean join, Clock applicationClock, org.jooq.ExecuteListener listener,
+      boolean initializeCapacity) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
@@ -576,7 +747,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .migrate();
     DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     Instant baseTime = databaseNow(setupDsl).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
-    return new Fixture(dataSource, join, baseTime, applicationClock, listener);
+    return new Fixture(dataSource, join, baseTime, applicationClock, listener, initializeCapacity);
   }
 
   private static Instant databaseNow(DSLContext dsl) {
@@ -587,96 +758,89 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
   private static void controlledTarget(CanonicalGameplayAdmissionDecisionReadClient targets) {
     when(targets.resolvePublishedRealmAdmissionTarget(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var selector =
-                  invocation.getArgument(
-                      0,
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
-              var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
-              when(target.targetNamespace()).thenReturn(selector.targetNamespace());
-              when(target.canonicalTenantId()).thenReturn(selector.tenantId());
-              when(target.tenantSlug()).thenReturn(selector.tenantSlug());
-              when(target.worldSlug()).thenReturn(selector.worldSlug());
-              when(target.realmId()).thenReturn(selector.realmId());
-              when(target.realmSlug()).thenReturn(selector.realmSlug());
-              when(target.playableStateNamespaceId())
-                  .thenReturn(selector.playableStateNamespaceId());
-              when(target.playableStateScope()).thenReturn(selector.playableStateScope());
-              when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
-              when(target.catalogRevision()).thenReturn(selector.catalogRevision());
-              when(target.pointerVersion()).thenReturn(selector.pointerVersion());
-              when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
-              when(target.ownerProofOutcome())
-                  .thenReturn(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
-              UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
-              when(target.canonicalVersionId()).thenReturn(version);
-              when(target.activeWorldEpoch()).thenReturn(5L);
-              var strict =
-                  new CanonicalGameplayRosterOwnerReadEvidence.Request(
-                      selector.readRequestId(),
-                      selector.accountId(),
-                      selector.targetNamespace(),
-                      selector.tenantId(),
-                      selector.worldSlug(),
-                      selector.realmId(),
-                      selector.realmSlug(),
-                      selector.playableStateNamespaceId(),
-                      selector.playableStateScope(),
-                      selector.gameInstanceId(),
-                      version,
-                      selector.catalogRevision(),
-                      selector.pointerVersion(),
-                      5L);
-              var resolved =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget
-                          .class);
-              when(resolved.selector()).thenReturn(selector);
-              when(resolved.currentTarget()).thenReturn(target);
-              when(resolved.strictSelector()).thenReturn(strict);
-              var read =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
-              when(read.selector()).thenReturn(strict);
-              when(read.currentTarget()).thenReturn(target);
-              var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
-              when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
-              var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
-              when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
-              when(source.publishedPolicySetEvidence()).thenReturn(policies);
-              var ownerProof =
-                  mock(
-                      net.firedevops.firemud.common.world
-                          .GameSessionCanonicalInitialAdmissionOwnerProof.class);
-              when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
-              when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
-              when(read.sourceEvidence()).thenReturn(source);
-              var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              when(world.canonicalBytes())
-                  .thenReturn(
-                      "controlled-complete-world-source"
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-              when(world.captureId())
-                  .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
-              when(world.rowVersion()).thenReturn(2L);
-              when(read.worldLifecycleEvidence()).thenReturn(world);
-              when(targets.readPublishedRealmAdmissionOwner(strict))
-                  .thenAnswer(
-                      readCall -> {
-                        assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                            .isFalse();
-                        return read;
-                      });
-              return resolved;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var selector =
+              invocation.getArgument(
+                  0, CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
+          var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
+          when(target.targetNamespace()).thenReturn(selector.targetNamespace());
+          when(target.canonicalTenantId()).thenReturn(selector.tenantId());
+          when(target.tenantSlug()).thenReturn(selector.tenantSlug());
+          when(target.worldSlug()).thenReturn(selector.worldSlug());
+          when(target.realmId()).thenReturn(selector.realmId());
+          when(target.realmSlug()).thenReturn(selector.realmSlug());
+          when(target.playableStateNamespaceId()).thenReturn(selector.playableStateNamespaceId());
+          when(target.playableStateScope()).thenReturn(selector.playableStateScope());
+          when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
+          when(target.catalogRevision()).thenReturn(selector.catalogRevision());
+          when(target.pointerVersion()).thenReturn(selector.pointerVersion());
+          when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
+          when(target.ownerProofOutcome())
+              .thenReturn(
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
+          UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
+          when(target.canonicalVersionId()).thenReturn(version);
+          when(target.activeWorldEpoch()).thenReturn(5L);
+          var strict =
+              new CanonicalGameplayRosterOwnerReadEvidence.Request(
+                  selector.readRequestId(),
+                  selector.accountId(),
+                  selector.targetNamespace(),
+                  selector.tenantId(),
+                  selector.worldSlug(),
+                  selector.realmId(),
+                  selector.realmSlug(),
+                  selector.playableStateNamespaceId(),
+                  selector.playableStateScope(),
+                  selector.gameInstanceId(),
+                  version,
+                  selector.catalogRevision(),
+                  selector.pointerVersion(),
+                  5L);
+          var resolved =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget.class);
+          when(resolved.selector()).thenReturn(selector);
+          when(resolved.currentTarget()).thenReturn(target);
+          when(resolved.strictSelector()).thenReturn(strict);
+          var read =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+          when(read.selector()).thenReturn(strict);
+          when(read.currentTarget()).thenReturn(target);
+          var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
+          when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
+          var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
+          when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
+          when(source.publishedPolicySetEvidence()).thenReturn(policies);
+          var ownerProof =
+              mock(
+                  net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof
+                      .class);
+          when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
+          when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
+          when(read.sourceEvidence()).thenReturn(source);
+          var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          when(world.canonicalBytes())
+              .thenReturn(
+                  "controlled-complete-world-source"
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          when(world.captureId())
+              .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
+          when(world.rowVersion()).thenReturn(2L);
+          when(read.worldLifecycleEvidence()).thenReturn(world);
+          when(targets.readPublishedRealmAdmissionOwner(strict))
+              .thenAnswer(readCall -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return read;
+              });
+          return resolved;
+        });
   }
 
   private static final class Fixture {
     private final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
+    private final MutableClock clock;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
     private final AccountTenantMembershipRepository memberships;
@@ -686,15 +850,18 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private final UUID tenantId = UUID.randomUUID();
     private final CanonicalJoinScopeV2 scope;
     private final AccountPlayerAdmissionEntitlementOwner owner;
+    private final AccountTenantCapacityOwner capacityOwner;
 
     private Fixture(
         DriverManagerDataSource dataSource,
         boolean join,
         Instant baseTime,
         Clock applicationClock,
-        org.jooq.ExecuteListener listener) {
+        org.jooq.ExecuteListener listener,
+        boolean initializeCapacity) {
       this.dataSource = dataSource;
       this.baseTime = baseTime;
+      clock = new MutableClock(baseTime, ZoneOffset.UTC);
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
       dsl.configuration().set(new org.jooq.impl.DefaultExecuteListenerProvider(listener));
       var transactions = new DataSourceTransactionManager(dataSource);
@@ -787,53 +954,59 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               baseTime.plusSeconds(120).toString());
       String joinRequestId = UUID.randomUUID().toString();
       String callerBinding = "controlled-join-caller";
-      transaction.execute(
-          status -> {
-            tenants.importVerified(tenantSource);
-            sources.initializeIssuerIfAbsent(ISSUER);
-            generations.initializeTenantIfAbsent(tenantId);
-            generations.initialize(
-                AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.getAccountUuid(), tenantId));
-            scopes.insertCanonical(account.getId(), scope, provenance);
-            operations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
-            return null;
-          });
+      transaction.execute(status -> {
+        tenants.importVerified(tenantSource);
+        if (initializeCapacity) {
+          var bootstrap = new AccountTenantCreationBootstrapOperationRepository(dsl);
+          var claim =
+              AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
+                  bootstrap, account, tenantSource);
+          bootstrap.complete(
+              claim.requestId(), AccountTenantCreatorBootstrapIntegrationFixture.completion(claim));
+          new AccountCapacityRefusalBudgetRepository(dsl).provision(tenantId, 1);
+        }
+        sources.initializeIssuerIfAbsent(ISSUER);
+        generations.initializeTenantIfAbsent(tenantId);
+        generations.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.getAccountUuid(), tenantId));
+        scopes.insertCanonical(account.getId(), scope, provenance);
+        operations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
+        return null;
+      });
       var entitlement =
-          transaction.execute(
-              status ->
-                  demos.provision(
-                      new DemoTenantEntitlementRequest(
-                          UUID.randomUUID(),
-                          tenantId,
-                          tenantSource.creationRequestId(),
-                          tenantSource.requestDigest(),
-                          null,
-                          null,
-                          null,
-                          true,
-                          true,
-                          true,
-                          true,
-                          new DemoTenantEntitlementRequest.Quotas(3, 2, 4096)),
-                      tenantSource));
+          transaction.execute(status ->
+              demos.provision(
+                  new DemoTenantEntitlementRequest(
+                      UUID.randomUUID(),
+                      tenantId,
+                      tenantSource.creationRequestId(),
+                      tenantSource.requestDigest(),
+                      null,
+                      null,
+                      null,
+                      true,
+                      true,
+                      true,
+                      true,
+                      new DemoTenantEntitlementRequest.Quotas(3, 2, 4096)),
+                  tenantSource));
       if (entitlement == null) throw new IllegalStateException("Demo source is absent");
-      transaction.execute(
-          status -> {
-            operations.bindCanonicalPolicyEvidence(
-                joinRequestId,
-                scope,
-                callerBinding,
-                entitlement.allowPublicJoin(),
-                entitlement.entitlementVersion());
-            if (join) {
-              terminal.commitCanonicalFirstJoin(scope, joinRequestId, callerBinding);
-            } else {
-              accounts.findByAccountUuidForUpdate(account.getAccountUuid()).orElseThrow();
-              memberships.prepareFreshCreatorAbsence(account.getAccountUuid(), tenantId);
-            }
-            return null;
-          });
+      transaction.execute(status -> {
+        operations.bindCanonicalPolicyEvidence(
+            joinRequestId,
+            scope,
+            callerBinding,
+            entitlement.allowPublicJoin(),
+            entitlement.entitlementVersion());
+        if (join) {
+          terminal.commitCanonicalFirstJoin(scope, joinRequestId, callerBinding);
+        } else {
+          accounts.findByAccountUuidForUpdate(account.getAccountUuid()).orElseThrow();
+          memberships.prepareFreshCreatorAbsence(account.getAccountUuid(), tenantId);
+        }
+        return null;
+      });
       var issuances = mock(AccountGameplayDelegationIssuanceRepository.class);
       var callers = mock(AccountGameplayAdmissionCallerVerifier.class);
       var identity =
@@ -870,17 +1043,17 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       when(caller.currentCandidate()).thenReturn(candidate);
       when(callers.verifyPresentedCompactToken(CONTROLLED_COMPACT_TOKEN)).thenReturn(caller);
       when(issuances.readCurrentCommittedCandidateByJti(identity.tokenJti()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                    .isFalse();
-                dsl.connection(
-                    connection ->
-                        assertThat(connection.getTransactionIsolation())
-                            .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
-                return Optional.of(candidate);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+            dsl.connection(connection ->
+                assertThat(connection.getTransactionIsolation())
+                    .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
+            return Optional.of(candidate);
+          });
+      capacityOwner =
+          new AccountTenantCapacityOwner(
+              dsl, accounts, snapshots, issuances, scopes, transactions, clock, NAMESPACE);
       var targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
       controlledTarget(targets);
       owner =
@@ -897,7 +1070,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               tenantEvents,
               targets,
               transactions,
-              applicationClock,
+              applicationClock == null ? clock : applicationClock,
               NAMESPACE);
     }
 
@@ -919,6 +1092,39 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               scope.pointerVersion()),
           scope.connectScopeId(),
           PEER);
+    }
+  }
+
+  private static final class MutableClock extends Clock {
+    private final AtomicReference<Instant> current;
+    private final ZoneId zone;
+
+    private MutableClock(Instant instant, ZoneId zone) {
+      this(new AtomicReference<>(instant), zone);
+    }
+
+    private MutableClock(AtomicReference<Instant> current, ZoneId zone) {
+      this.current = current;
+      this.zone = zone;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId newZone) {
+      return zone.equals(newZone) ? this : new MutableClock(current, newZone);
+    }
+
+    @Override
+    public Instant instant() {
+      return current.get();
+    }
+
+    private void setInstant(Instant instant) {
+      current.set(instant);
     }
   }
 

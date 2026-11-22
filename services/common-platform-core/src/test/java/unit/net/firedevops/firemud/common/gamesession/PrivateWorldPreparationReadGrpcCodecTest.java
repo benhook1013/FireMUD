@@ -51,33 +51,30 @@ class PrivateWorldPreparationReadGrpcCodecTest {
             () -> PrivateWorldPreparationBuildGrpcCodec.fromResponse(request(snapshot), wire))
         .isInstanceOf(IllegalArgumentException.class);
     var unrelated = snapshot();
-    assertThatThrownBy(
-            () ->
-                new PrivateWorldPreparationBuildGrpcCodec.Build(
-                    new PrivateWorldPreparationReadEvidence.Evidence(request(unrelated), unrelated),
-                    world))
+    assertThatThrownBy(() ->
+            new PrivateWorldPreparationBuildGrpcCodec.Build(
+                new PrivateWorldPreparationReadEvidence.Evidence(request(unrelated), unrelated),
+                world))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationBuildGrpcCodec.fromResponse(
-                    request,
-                    wire.toBuilder()
-                        .setCanonicalEvidence(
-                            ByteString.copyFrom(
-                                new byte
-                                    [PrivateWorldPreparationBuildGrpcCodec.MAX_RESPONSE_WIRE_BYTES
-                                        + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationBuildGrpcCodec.fromResponse(
+                request,
+                wire.toBuilder()
+                    .setCanonicalEvidence(
+                        ByteString.copyFrom(
+                            new byte
+                                [PrivateWorldPreparationBuildGrpcCodec.MAX_RESPONSE_WIRE_BYTES
+                                    + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var unknown =
         com.google.protobuf.UnknownFieldSet.newBuilder()
             .addField(
                 2, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationBuildGrpcCodec.fromResponse(
-                    request, wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationBuildGrpcCodec.fromResponse(
+                request, wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -110,18 +107,16 @@ class PrivateWorldPreparationReadGrpcCodecTest {
     assertThat(held.admissionAllowed()).isFalse();
     assertThatThrownBy(() -> PrivatePreparationProtectionGrpcCodec.fromResponse(read, acquired))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivatePreparationProtectionGrpcCodec.fromResponse(
-                    new PrivatePreparationProtectionGrpcCodec.Acquire(UUID.randomUUID(), evidence),
-                    acquired))
+    assertThatThrownBy(() ->
+            PrivatePreparationProtectionGrpcCodec.fromResponse(
+                new PrivatePreparationProtectionGrpcCodec.Acquire(UUID.randomUUID(), evidence),
+                acquired))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivatePreparationProtectionGrpcCodec.response(
-                    new PrivatePreparationProtectionGrpcCodec.Read(
-                        UUID.randomUUID(), held.requestId(), held.holdId(), 2, held.sourceDigest()),
-                    held))
+    assertThatThrownBy(() ->
+            PrivatePreparationProtectionGrpcCodec.response(
+                new PrivatePreparationProtectionGrpcCodec.Read(
+                    UUID.randomUUID(), held.requestId(), held.holdId(), 2, held.sourceDigest()),
+                held))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -138,19 +133,17 @@ class PrivateWorldPreparationReadGrpcCodecTest {
             .addField(
                 99, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                PrivatePreparationProtectionGrpcCodec.parse(
-                    wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            PrivatePreparationProtectionGrpcCodec.parse(
+                wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivatePreparationProtectionGrpcCodec.parse(
-                    wire.toBuilder()
-                        .setCanonicalEvidence(
-                            ByteString.copyFrom(
-                                new byte[PrivatePreparationProtectionGrpcCodec.MAX_WIRE_BYTES + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivatePreparationProtectionGrpcCodec.parse(
+                wire.toBuilder()
+                    .setCanonicalEvidence(
+                        ByteString.copyFrom(
+                            new byte[PrivatePreparationProtectionGrpcCodec.MAX_WIRE_BYTES + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -185,40 +178,36 @@ class PrivateWorldPreparationReadGrpcCodecTest {
     var bytes = wire.getCanonicalEvidence();
     int frames = frameCount(bytes);
 
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    wire.toBuilder()
-                        .setCanonicalEvidence(
-                            replaceFrame(
-                                bytes, frames - 4, id("different-runtime-instance").toString()))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                wire.toBuilder()
+                    .setCanonicalEvidence(
+                        replaceFrame(
+                            bytes, frames - 4, id("different-runtime-instance").toString()))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    wire.toBuilder()
-                        .setCanonicalEvidence(
-                            replaceFrame(bytes, frames - 3, "sha256:" + "b".repeat(64)))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                wire.toBuilder()
+                    .setCanonicalEvidence(
+                        replaceFrame(bytes, frames - 3, "sha256:" + "b".repeat(64)))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    wire.toBuilder().setCanonicalEvidence(removeFrame(bytes, frames - 2)).build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                wire.toBuilder().setCanonicalEvidence(removeFrame(bytes, frames - 2)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    wire.toBuilder()
-                        .setCanonicalEvidence(
-                            replaceFrame(
-                                bytes, 0, "game-session-private-world-preparation-response/v1"))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                wire.toBuilder()
+                    .setCanonicalEvidence(
+                        replaceFrame(
+                            bytes, 0, "game-session-private-world-preparation-response/v1"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -250,61 +239,48 @@ class PrivateWorldPreparationReadGrpcCodecTest {
         UnknownFieldSet.newBuilder()
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.parseRequest(
-                    wireRequest.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.parseRequest(
+                wireRequest.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request, wireResponse.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request, wireResponse.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.parseRequest(
-                    wireRequest.toBuilder()
-                        .setCanonicalEvidence(
-                            wireRequest
-                                .getCanonicalEvidence()
-                                .concat(ByteString.copyFromUtf8("0:")))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.parseRequest(
+                wireRequest.toBuilder()
+                    .setCanonicalEvidence(
+                        wireRequest.getCanonicalEvidence().concat(ByteString.copyFromUtf8("0:")))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    wireResponse.toBuilder()
-                        .setCanonicalEvidence(
-                            wireResponse
-                                .getCanonicalEvidence()
-                                .concat(ByteString.copyFromUtf8("0:")))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                wireResponse.toBuilder()
+                    .setCanonicalEvidence(
+                        wireResponse.getCanonicalEvidence().concat(ByteString.copyFromUtf8("0:")))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.parseRequest(
-                    ReadPrivateWorldPreparationRequest.newBuilder()
-                        .setCanonicalEvidence(
-                            ByteString.copyFrom(
-                                new byte
-                                    [PrivateWorldPreparationReadGrpcCodec.MAX_REQUEST_WIRE_BYTES]))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.parseRequest(
+                ReadPrivateWorldPreparationRequest.newBuilder()
+                    .setCanonicalEvidence(
+                        ByteString.copyFrom(
+                            new byte[PrivateWorldPreparationReadGrpcCodec.MAX_REQUEST_WIRE_BYTES]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    ReadPrivateWorldPreparationResponse.newBuilder()
-                        .setCanonicalEvidence(
-                            ByteString.copyFrom(
-                                new byte
-                                    [PrivateWorldPreparationReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES]))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                ReadPrivateWorldPreparationResponse.newBuilder()
+                    .setCanonicalEvidence(
+                        ByteString.copyFrom(
+                            new byte[PrivateWorldPreparationReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(request(snapshot), wireResponse))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(request(snapshot), wireResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -313,48 +289,43 @@ class PrivateWorldPreparationReadGrpcCodecTest {
     var snapshot = snapshot();
     var request = request(snapshot);
     var bytes = PrivateWorldPreparationReadGrpcCodec.toRequest(request).getCanonicalEvidence();
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.parseRequest(
-                    ReadPrivateWorldPreparationRequest.newBuilder()
-                        .setCanonicalEvidence(
-                            replaceFrame(
-                                bytes,
-                                3,
-                                snapshot
-                                    .scope()
-                                    .tenantId()
-                                    .toString()
-                                    .toUpperCase(java.util.Locale.ROOT)))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.parseRequest(
+                ReadPrivateWorldPreparationRequest.newBuilder()
+                    .setCanonicalEvidence(
+                        replaceFrame(
+                            bytes,
+                            3,
+                            snapshot
+                                .scope()
+                                .tenantId()
+                                .toString()
+                                .toUpperCase(java.util.Locale.ROOT)))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var response = PrivateWorldPreparationReadGrpcCodec.toResponse(request, snapshot);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setCanonicalEvidence(
-                            replaceFrame(response.getCanonicalEvidence(), 4, "01"))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setCanonicalEvidence(replaceFrame(response.getCanonicalEvidence(), 4, "01"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.toResponse(
-                    new PrivateWorldPreparationReadGrpcCodec.Request(
-                        UUID.randomUUID(), snapshot.scope(), UUID.randomUUID()),
-                    snapshot))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.toResponse(
+                new PrivateWorldPreparationReadGrpcCodec.Request(
+                    UUID.randomUUID(), snapshot.scope(), UUID.randomUUID()),
+                snapshot))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Selection(
-                    snapshot.selection().requestId(),
-                    null,
-                    null,
-                    1,
-                    DIGEST,
-                    NOW,
-                    snapshot.selection().originalRequest()))
+    assertThatThrownBy(() ->
+            new Selection(
+                snapshot.selection().requestId(),
+                null,
+                null,
+                1,
+                DIGEST,
+                NOW,
+                snapshot.selection().originalRequest()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -365,24 +336,22 @@ class PrivateWorldPreparationReadGrpcCodecTest {
     var wire = PrivateWorldPreparationReadGrpcCodec.toResponse(request, snapshot);
     // ABSENT selection: selectedAt, createdAt, forkExpiresAt and final observedAt.
     for (int frame : new int[] {6, 15, 16, frameCount(wire.getCanonicalEvidence()) - 1}) {
-      assertThatThrownBy(
-              () ->
-                  PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                      request,
-                      wire.toBuilder()
-                          .setCanonicalEvidence(
-                              replaceFrame(wire.getCanonicalEvidence(), frame, "not-an-instant"))
-                          .build()))
+      assertThatThrownBy(() ->
+              PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                  request,
+                  wire.toBuilder()
+                      .setCanonicalEvidence(
+                          replaceFrame(wire.getCanonicalEvidence(), frame, "not-an-instant"))
+                      .build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     // RealmEntryPolicy already normalizes malformed JSON at its parsing boundary.
-    assertThatThrownBy(
-            () ->
-                PrivateWorldPreparationReadGrpcCodec.fromResponse(
-                    request,
-                    wire.toBuilder()
-                        .setCanonicalEvidence(replaceFrame(wire.getCanonicalEvidence(), 36, "{"))
-                        .build()))
+    assertThatThrownBy(() ->
+            PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                request,
+                wire.toBuilder()
+                    .setCanonicalEvidence(replaceFrame(wire.getCanonicalEvidence(), 36, "{"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -406,16 +375,15 @@ class PrivateWorldPreparationReadGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> snapshot.requireCurrentAt(snapshot.preparation().forkExpiresAt()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Snapshot(
-                    snapshot.scope(),
-                    snapshot.selection(),
-                    snapshot.preparation(),
-                    snapshot.source(),
-                    snapshot.target(),
-                    snapshot.runtimeAllocation(),
-                    snapshot.preparation().forkExpiresAt()))
+    assertThatThrownBy(() ->
+            new Snapshot(
+                snapshot.scope(),
+                snapshot.selection(),
+                snapshot.preparation(),
+                snapshot.source(),
+                snapshot.target(),
+                snapshot.runtimeAllocation(),
+                snapshot.preparation().forkExpiresAt()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -481,9 +449,9 @@ class PrivateWorldPreparationReadGrpcCodecTest {
     var policy =
         RealmEntryPolicy.parse(
             """
-        {"schemaVersion":1,"worldSlug":"world","worldDisplayName":"World","realmSlug":"private",
-         "realmDisplayName":"Private","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
-        """,
+            {"schemaVersion":1,"worldSlug":"world","worldDisplayName":"World","realmSlug":"private",
+             "realmDisplayName":"Private","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
+            """,
             JsonMapper.builder().build());
     var source =
         new Source(

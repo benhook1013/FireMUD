@@ -5,6 +5,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.protobuf.ByteString;
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ClientInterceptors;
+import io.grpc.ForwardingClientCall.SimpleForwardingClientCall;
+import io.grpc.ForwardingClientCallListener.SimpleForwardingClientCallListener;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -26,11 +37,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.account.v1.GameplayLoginSourceContext;
 import net.firedevops.firemud.account.v1.GameplayLoginTransportClass;
 import net.firedevops.firemud.accountservice.client.AccountOriginalNewFinalAdmissionGrpcReadClient;
@@ -50,11 +61,14 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -100,18 +114,20 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
   private static final String FAULT_FUNCTION = "actual_final_test_fail_confirmation";
   private static final String FAULT_TRIGGER = "actual_final_test_confirmation_fault";
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture(true);
   private final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest accountFixtures =
-      new AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest();
+      AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.withPostgres(POSTGRES);
   @TempDir Path temporaryDirectory;
 
   @BeforeAll
   static void startPostgres() {
-    AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.startPostgres();
+    POSTGRES.start();
   }
 
   @AfterAll
   static void stopPostgres() {
-    AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.stopPostgres();
+    POSTGRES.stop();
   }
 
   @AfterEach
@@ -191,15 +207,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   void missingCapacityInputRefusesBeforeAnyFinalSessionOrReservationMutation() throws Exception {
     try (Session session = session()) {
       byte[] candidate = session.gs.physicalSession();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      null))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  null))
           .isInstanceOf(IllegalStateException.class);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
       assertThat(
@@ -225,15 +240,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
       var physical = session.gs.capacityStateImage();
       String capacity = session.capacityImage();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      null))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  null))
           .isInstanceOf(IllegalStateException.class);
       assertThat(session.gs.capacityStateImage()).isEqualTo(physical);
       assertThat(session.capacityImage()).isEqualTo(capacity);
@@ -262,15 +276,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String capacityBefore = session.capacityImage();
       var gsBefore = session.gs.capacityStateImage();
       byte[] candidate = session.gs.physicalSession();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      changed))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  changed))
           .isInstanceOf(IllegalStateException.class)
           .hasCauseInstanceOf(IllegalStateException.class)
           .hasRootCauseMessage("Original NEW capacity execution is indeterminate");
@@ -310,15 +323,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String capacityBefore = session.capacityImage();
       var gsBefore = session.gs.capacityStateImage();
       for (int attempt = 0; attempt < 2; attempt++) {
-        assertThatThrownBy(
-                () ->
-                    session.gs.complete(
-                        session.client,
-                        session.jwks,
-                        session.jwt,
-                        System.currentTimeMillis() + 10_000L,
-                        session.capacityClient,
-                        mismatched))
+        assertThatThrownBy(() ->
+                session.gs.complete(
+                    session.client,
+                    session.jwks,
+                    session.jwt,
+                    System.currentTimeMillis() + 10_000L,
+                    session.capacityClient,
+                    mismatched))
             .isInstanceOf(IllegalStateException.class);
         assertThat(session.capacityImage()).isEqualTo(capacityBefore);
         assertThat(session.gs.capacityStateImage()).isEqualTo(gsBefore);
@@ -330,15 +342,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       denied.requireStructurallyValid();
       String beforeDenial = session.capacityImage();
       byte[] candidate = session.gs.physicalSession();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      denied))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  denied))
           .isInstanceOfSatisfying(
               CapacityRefusedException.class,
               failure -> assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED));
@@ -458,6 +469,29 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
   }
 
+  // The fresh owner path takes the account row lock after retained-decision lookup;
+  // sequential replay never takes it. A second waiter may queue behind the first waiter.
+  private static void awaitCompetingFreshAccountDecisions(DSLContext inspector, int blocker)
+      throws InterruptedException {
+    long expiry = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    do {
+      long waiting =
+          inspector
+              .fetchSingle(
+                  "WITH RECURSIVE blocked(pid) AS (SELECT CAST(? AS integer) UNION"
+                      + " SELECT activity.pid FROM pg_stat_activity activity JOIN blocked parent"
+                      + " ON parent.pid = ANY(pg_blocking_pids(activity.pid))"
+                      + " WHERE activity.datname = current_database())"
+                      + " SELECT count(*) FROM blocked WHERE pid <> ?",
+                  blocker,
+                  blocker)
+              .get(0, Long.class);
+      if (waiting >= 2) return;
+      Thread.sleep(10);
+    } while (System.nanoTime() < expiry);
+    throw new AssertionError("Both fresh Account decisions did not wait on the held owner row");
+  }
+
   @Test
   void zeroQuotaRetainsOnlyTheExactAccountDenialAndReplaysIt() throws Exception {
     try (Session session = session()) {
@@ -470,18 +504,33 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String before = session.capacityImage() + session.durableImage();
       UUID denialId;
       try (var callers = Executors.newVirtualThreadPerTaskExecutor()) {
-        var start = new CountDownLatch(1);
         java.util.concurrent.Callable<CapacityRefusedException> deny =
-            () -> {
-              if (!start.await(5, TimeUnit.SECONDS))
-                throw new IllegalStateException("Concurrent quota requests did not start");
-              return assertThrows(
-                  CapacityRefusedException.class,
-                  () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
-            };
-        var first = callers.submit(deny);
-        var second = callers.submit(deny);
-        start.countDown();
+            () ->
+                assertThrows(
+                    CapacityRefusedException.class,
+                    () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
+        java.util.concurrent.Future<CapacityRefusedException> first;
+        java.util.concurrent.Future<CapacityRefusedException> second;
+        var player = (TenantCapacityAdmission.PlayerContext) request.context();
+        try (var holder = session.account.dataSource.getConnection()) {
+          holder.setAutoCommit(false);
+          var locked = DSL.using(holder, SQLDialect.POSTGRES);
+          assertThat(
+                  locked.fetchOne(
+                      "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                      player.accountId()))
+              .isNotNull();
+          int blocker = locked.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+          first = callers.submit(deny);
+          second = callers.submit(deny);
+          try {
+            awaitCompetingFreshAccountDecisions(session.dsl, blocker);
+            assertThat(first.isDone()).isFalse();
+            assertThat(second.isDone()).isFalse();
+          } finally {
+            holder.rollback();
+          }
+        }
         denialId = assertExactAccountQuotaDenial(session, request, first.get(6, TimeUnit.SECONDS));
         var repeated = second.get(6, TimeUnit.SECONDS);
         assertThat(repeated.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
@@ -492,14 +541,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
               .CapacityException.class,
           () ->
-              session.serializable.execute(
-                  status ->
-                      new AccountCapacityRefusalBudgetRepository(session.dsl)
-                          .requireReady(request.identity().tenantId(), 1, 1)));
-      session.serializable.executeWithoutResult(
-          status ->
-              new AccountCapacityRefusalBudgetRepository(session.dsl)
-                  .provision(request.identity().tenantId(), 1));
+              session.serializable.execute(status ->
+                  new AccountCapacityRefusalBudgetRepository(session.dsl)
+                      .requireReady(request.identity().tenantId(), 1, 1)));
+      session.serializable.executeWithoutResult(status ->
+          new AccountCapacityRefusalBudgetRepository(session.dsl)
+              .provision(request.identity().tenantId(), 1));
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       var replay =
           assertThrows(
@@ -589,6 +636,228 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void lostCommittedQuotaResponseKeepsReserveUntilExactRetry() throws Exception {
+    try (Session session = session(CLOCK, 1, 2);
+        OriginalNewCredential credential = session.issue()) {
+      session.provisionCapacityRefusalBudget();
+      var request = session.retainControlledEvaluation(true, "0");
+      var fault = new DropFirstQuotaResponse(request);
+      // Preserve the real TLS server and channel setup; inject caller-side transport loss only.
+      session.startCapacityClient(fault.channels());
+      byte[] candidate = session.gs.physicalSession();
+      String capacityBefore = session.capacityImage();
+      String transitionsBefore = session.gsReceiptImage();
+
+      var uncertain = assertThrows(IllegalStateException.class, () -> session.complete(request));
+      assertThat(uncertain).isNotInstanceOf(CapacityRefusedException.class);
+      assertThat(uncertain.getCause())
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              status -> {
+                assertThat(status.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+                assertThat(status.getTrailers()).isNotNull();
+                assertThat(status.getTrailers().keys()).isEmpty();
+              });
+      assertThat(fault.successfullyDropped.get()).isTrue();
+      assertThat(fault.calls.get()).isEqualTo(1);
+      UUID committedId = fault.observedDenial.get();
+      assertThat(committedId).isNotNull();
+      String decision = session.capacityDecisionImage();
+      var accountDenial =
+          session.dsl.fetchSingle(
+              "SELECT * FROM account_capacity_origin_decisions WHERE admission_attempt_id=?",
+              request.admissionAttemptId());
+      assertThat(accountDenial.get("decision_id", UUID.class)).isEqualTo(committedId);
+      assertThat(accountDenial.get("decision", String.class)).isEqualTo("NO_ACCEPT");
+      assertThat(accountDenial.get("refusal_code", String.class))
+          .isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+      assertThat(accountDenial.get("canonical_payload", byte[].class))
+          .containsExactly(CapacityAdmissionDigest.preimage(request));
+      var active =
+          session
+              .gs
+              .dsl()
+              .fetchSingle(
+                  "SELECT account_denial_id, tenant_id, admission_id, mutation_digest"
+                      + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  request.admissionAttemptId());
+      assertThat(active.get("tenant_id", UUID.class)).isEqualTo(request.identity().tenantId());
+      assertThat(active.get("admission_id", UUID.class))
+          .isEqualTo(request.identity().admissionId());
+      assertThat(active.get("account_denial_id", UUID.class)).isNull();
+      assertThat(active.get("mutation_digest", String.class)).isEqualTo(request.mutationDigest());
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
+      assertProvisionalUnchanged(session, candidate);
+
+      var exactRetry =
+          assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(assertExactAccountQuotaDenial(session, request, exactRetry))
+          .isEqualTo(committedId);
+      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(session.capacityDecisionImage()).isEqualTo(decision);
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      request.admissionAttemptId())
+                  .get(0, UUID.class))
+          .isEqualTo(committedId);
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge"
+                          + " WHERE tenant_id=? AND account_denial_id IS NULL",
+                      request.identity().tenantId())
+                  .get(0, Long.class))
+          .isZero();
+
+      session.stopCapacityServer();
+      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(replay.durableDenialId()).isEqualTo(committedId);
+      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(session.capacityDecisionImage()).isEqualTo(decision);
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
+      assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
+      assertThat(session.genesis().confirmedAdmissionAtMillis()).isNull();
+      assertProvisionalUnchanged(session, candidate);
+    }
+  }
+
+  /** Changes one completed, exact authenticated response into plain caller-facing UNAVAILABLE. */
+  private static final class DropFirstQuotaResponse implements ClientInterceptor {
+    private final TenantCapacityAdmission.Request exact;
+    final java.util.concurrent.atomic.AtomicInteger calls =
+        new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicReference<UUID> observedDenial =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    final java.util.concurrent.atomic.AtomicBoolean successfullyDropped =
+        new java.util.concurrent.atomic.AtomicBoolean();
+
+    DropFirstQuotaResponse(TenantCapacityAdmission.Request exact) {
+      this.exact = exact;
+    }
+
+    @Override
+    public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
+        MethodDescriptor<ReqT, RespT> method, CallOptions options, Channel next) {
+      var delegate = next.newCall(method, options);
+      if (!net.firedevops.firemud.account.v1.AccountServiceGrpc
+              .getCommitTenantCapacityAdmissionMethod()
+              .getFullMethodName()
+              .equals(method.getFullMethodName())
+          || calls.incrementAndGet() != 1) {
+        return delegate;
+      }
+      return new SimpleForwardingClientCall<ReqT, RespT>(delegate) {
+        @Override
+        public void start(Listener<RespT> listener, Metadata headers) {
+          super.start(
+              new SimpleForwardingClientCallListener<RespT>(listener) {
+                private UUID withheld;
+
+                @Override
+                public void onMessage(RespT message) {
+                  if (message instanceof CommitTenantCapacityAdmissionResponse response) {
+                    var refusal =
+                        TenantCapacityAdmissionGrpcCodec.readRefusalDetails(exact, response);
+                    if (refusal.isPresent()
+                        && refusal.orElseThrow().code() == Failure.CAPACITY_QUOTA_EXCEEDED
+                        && refusal.orElseThrow().durableDenialId() != null) {
+                      withheld = refusal.orElseThrow().durableDenialId();
+                      return;
+                    }
+                  }
+                  super.onMessage(message);
+                }
+
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                  if (status.isOk() && withheld != null) {
+                    observedDenial.set(withheld);
+                    successfullyDropped.set(true);
+                    super.onClose(Status.UNAVAILABLE, new Metadata());
+                    return;
+                  }
+                  super.onClose(status, trailers);
+                }
+              },
+              headers);
+        }
+      };
+    }
+
+    GrpcChannelFactory channels() {
+      return new GrpcChannelFactory() {
+        @Override
+        public ManagedChannel buildChannel(
+            String target,
+            int defaultPort,
+            CommonGrpcClientProperties properties,
+            boolean keepAlive,
+            ResolvedGrpcTlsMaterial tlsMaterial)
+            throws javax.net.ssl.SSLException {
+          var channel = super.buildChannel(target, defaultPort, properties, keepAlive, tlsMaterial);
+          var intercepted = ClientInterceptors.intercept(channel, DropFirstQuotaResponse.this);
+          return new ManagedChannel() {
+            @Override
+            public ManagedChannel shutdown() {
+              channel.shutdown();
+              return this;
+            }
+
+            @Override
+            public ManagedChannel shutdownNow() {
+              channel.shutdownNow();
+              return this;
+            }
+
+            @Override
+            public boolean isShutdown() {
+              return channel.isShutdown();
+            }
+
+            @Override
+            public boolean isTerminated() {
+              return channel.isTerminated();
+            }
+
+            @Override
+            public boolean awaitTermination(long timeout, TimeUnit unit)
+                throws InterruptedException {
+              return channel.awaitTermination(timeout, unit);
+            }
+
+            @Override
+            public String authority() {
+              return intercepted.authority();
+            }
+
+            @Override
+            public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+                MethodDescriptor<ReqT, RespT> method, CallOptions options) {
+              return intercepted.newCall(method, options);
+            }
+          };
+        }
+      };
+    }
+  }
+
+  @Test
   void authenticatedQuotaDenialFreesTheLastActiveSlotForADistinctAdmission() throws Exception {
     try (Session session = new Session(CLOCK, 1, 2, true)) {
       session.provisionCapacityRefusalBudget();
@@ -632,6 +901,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
       session.startCapacityServer();
       var second = session.gs.prepareSecondAdmission();
+      assertThatThrownBy(session.gs::prepareSecondAdmission)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Second admission has already been prepared");
       var secondLease =
           session
               .client
@@ -684,11 +956,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(charges).hasSize(2).contains(firstCharge);
       var secondCharge =
           charges.stream()
-              .filter(
-                  charge ->
-                      secondRequest
-                          .admissionAttemptId()
-                          .equals(charge.get("admission_attempt_id", UUID.class)))
+              .filter(charge ->
+                  secondRequest
+                      .admissionAttemptId()
+                      .equals(charge.get("admission_attempt_id", UUID.class)))
               .findFirst()
               .orElseThrow();
       assertThat(secondCharge.get("account_denial_id", UUID.class)).isNull();
@@ -879,23 +1150,22 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           session, quotaRefusal, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       var player = (TenantCapacityAdmission.PlayerContext) session.capacityRequest.context();
       try (var replayCaller = Executors.newVirtualThreadPerTaskExecutor()) {
-        session.serializable.executeWithoutResult(
-            status -> {
-              assertThat(
-                      session.dsl.fetchOne(
-                          "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-                          player.accountId()))
-                  .isNotNull();
-              assertThat(
-                      CompletableFuture.supplyAsync(
-                              () ->
-                                  session.capacityClient.commit(
-                                      session.capacityRequest, CLOCK.millis() + 5_000L),
-                              replayCaller)
-                          .orTimeout(6L, TimeUnit.SECONDS)
-                          .join())
-                  .isEqualTo(first);
-            });
+        session.serializable.executeWithoutResult(status -> {
+          assertThat(
+                  session.dsl.fetchOne(
+                      "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                      player.accountId()))
+              .isNotNull();
+          assertThat(
+                  CompletableFuture.supplyAsync(
+                          () ->
+                              session.capacityClient.commit(
+                                  session.capacityRequest, CLOCK.millis() + 5_000L),
+                          replayCaller)
+                      .orTimeout(6L, TimeUnit.SECONDS)
+                      .join())
+              .isEqualTo(first);
+        });
       }
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
@@ -1096,7 +1366,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private void startCapacityServer() throws Exception {
-      if (capacityClient != null) capacityClient.close();
       capacityServer =
           new net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService(
                   capacityOwner, "test")
@@ -1105,13 +1374,18 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   pki.keyManagerFactory(pki.identity("account")),
                   pki.trustManagerFactory());
       capacityServer.start();
+      startCapacityClient(new GrpcChannelFactory());
+    }
+
+    private void startCapacityClient(GrpcChannelFactory channels) throws Exception {
+      if (capacityClient != null) capacityClient.close();
       var capacityEndpoints = new ServiceEndpointsProperties();
       capacityEndpoints.setAccountService("localhost:" + capacityServer.getPort());
       capacityClient =
           new AccountTenantCapacityClient(
               capacityEndpoints,
               pki.clientProperties(pkiDirectory, pki.identity("gs-client")),
-              new GrpcChannelFactory(),
+              channels,
               "test",
               CLOCK);
       capacityClient.init();
@@ -1247,13 +1521,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private void provisionCapacityRefusalBudget() {
-      serializable.executeWithoutResult(
-          status -> {
-            var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
-            budgets.provision(capacityRequest.identity().tenantId(), 1);
-            assertThat(budgets.requireReady(capacityRequest.identity().tenantId(), 1, 1))
-                .isEqualTo(1);
-          });
+      serializable.executeWithoutResult(status -> {
+        var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
+        budgets.provision(capacityRequest.identity().tenantId(), 1);
+        assertThat(budgets.requireReady(capacityRequest.identity().tenantId(), 1, 1)).isEqualTo(1);
+      });
     }
 
     private void stopCapacityServer() throws InterruptedException {
@@ -1266,10 +1538,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private Genesis genesis() {
-      return serializable.execute(
-          status ->
-              new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
-                  .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
+      return serializable.execute(status ->
+          new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
+              .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
     }
 
     /** Controlled evaluation inputs with actual immutable retention. */
@@ -1408,34 +1679,49 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
     @Override
     public void close() throws Exception {
-      try {
-        if (capacityClient != null) capacityClient.close();
-        stopCapacityServer();
-        if (client != null) client.close();
-      } finally {
-        try {
-          if (accountServer != null) {
-            accountServer.shutdownNow();
-            if (!accountServer.awaitTermination(5, TimeUnit.SECONDS))
-              throw new IllegalStateException("Account teardown timed out");
-          }
-        } finally {
-          try {
-            if (finalRead != null) finalRead.close();
-          } finally {
-            try {
-              if (reverse != null) reverse.close();
-            } finally {
-              try {
-                if (gs != null) gs.close();
-              } finally {
-                redis.close();
-              }
+      closeFixtureResources(
+          () -> {
+            if (capacityClient != null) capacityClient.close();
+          },
+          this::stopCapacityServer,
+          () -> {
+            if (client != null) client.close();
+          },
+          () -> {
+            if (accountServer != null) {
+              accountServer.shutdownNow();
+              if (!accountServer.awaitTermination(5, TimeUnit.SECONDS))
+                throw new IllegalStateException("Account teardown timed out");
             }
-          }
+          },
+          () -> {
+            if (finalRead != null) finalRead.close();
+          },
+          () -> {
+            if (reverse != null) reverse.close();
+          },
+          () -> {
+            if (gs != null) gs.close();
+          },
+          () -> redis.close());
+    }
+  }
+
+  private static void closeFixtureResources(AutoCloseable... resources) throws Exception {
+    Throwable firstFailure = null;
+    for (AutoCloseable resource : resources) {
+      try {
+        resource.close();
+      } catch (Exception | Error failure) {
+        if (firstFailure == null) {
+          firstFailure = failure;
+        } else if (failure != firstFailure) {
+          firstFailure.addSuppressed(failure);
         }
       }
     }
+    if (firstFailure instanceof Exception exception) throw exception;
+    if (firstFailure instanceof Error error) throw error;
   }
 
   private static void assertPhysicalSession(

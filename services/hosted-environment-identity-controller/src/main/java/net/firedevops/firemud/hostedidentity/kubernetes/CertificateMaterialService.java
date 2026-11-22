@@ -966,13 +966,12 @@ public class CertificateMaterialService {
     List<OwnerReference> owners = request.getMetadata().getOwnerReferences();
     return owners != null
         && owners.stream()
-            .anyMatch(
-                owner ->
-                    Boolean.TRUE.equals(owner.getController())
-                        && "cert-manager.io/v1".equals(owner.getApiVersion())
-                        && "Certificate".equals(owner.getKind())
-                        && certificate.name().equals(owner.getName())
-                        && certificate.uid().equals(owner.getUid()));
+            .anyMatch(owner ->
+                Boolean.TRUE.equals(owner.getController())
+                    && "cert-manager.io/v1".equals(owner.getApiVersion())
+                    && "Certificate".equals(owner.getKind())
+                    && certificate.name().equals(owner.getName())
+                    && certificate.uid().equals(owner.getUid()));
   }
 
   static Map<String, String> issuerReference(GenericKubernetesResource resource) {
@@ -1000,10 +999,8 @@ public class CertificateMaterialService {
         && conditionList.stream()
             .filter(Map.class::isInstance)
             .map(Map.class::cast)
-            .anyMatch(
-                condition ->
-                    "Ready".equals(condition.get("type"))
-                        && "True".equals(condition.get("status")));
+            .anyMatch(condition ->
+                "Ready".equals(condition.get("type")) && "True".equals(condition.get("status")));
   }
 
   private static void requireCertManagerSourceBinding(
@@ -1026,13 +1023,11 @@ public class CertificateMaterialService {
     if (ownerReferences != null
         && ownerReferences.stream()
             .filter(reference -> Boolean.TRUE.equals(reference.getController()))
-            .anyMatch(
-                reference ->
-                    !"cert-manager.io/v1".equals(reference.getApiVersion())
-                        || !"Certificate".equals(reference.getKind())
-                        || !certificateName.equals(reference.getName())
-                        || (certificate != null
-                            && !certificate.uid().equals(reference.getUid())))) {
+            .anyMatch(reference ->
+                !"cert-manager.io/v1".equals(reference.getApiVersion())
+                    || !"Certificate".equals(reference.getKind())
+                    || !certificateName.equals(reference.getName())
+                    || (certificate != null && !certificate.uid().equals(reference.getUid())))) {
       throw new IllegalStateException("identity source Secret has an invalid Certificate owner");
     }
   }
@@ -1230,12 +1225,11 @@ public class CertificateMaterialService {
         conditionList.stream()
             .filter(Map.class::isInstance)
             .map(Map.class::cast)
-            .anyMatch(
-                condition ->
-                    "Ready".equals(condition.get("type"))
-                        && "True".equals(condition.get("status"))
-                        && Long.valueOf(generation)
-                            .equals(positiveLong(condition.get("observedGeneration"))));
+            .anyMatch(condition ->
+                "Ready".equals(condition.get("type"))
+                    && "True".equals(condition.get("status"))
+                    && Long.valueOf(generation)
+                        .equals(positiveLong(condition.get("observedGeneration"))));
     return ready ? new CertificateRevision(revision, generation) : null;
   }
 

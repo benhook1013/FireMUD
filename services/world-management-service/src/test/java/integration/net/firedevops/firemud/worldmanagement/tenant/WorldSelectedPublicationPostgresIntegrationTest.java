@@ -263,11 +263,10 @@ class WorldSelectedPublicationPostgresIntegrationTest {
 
       assertThat(appliedResult.appliedEpochs())
           .hasSize(12)
-          .allSatisfy(
-              epoch -> {
-                assertThat(epoch.expectedEpoch()).isEqualTo("0");
-                assertThat(epoch.resultingEpoch()).isEqualTo("1");
-              });
+          .allSatisfy(epoch -> {
+            assertThat(epoch.expectedEpoch()).isEqualTo("0");
+            assertThat(epoch.resultingEpoch()).isEqualTo("1");
+          });
       assertThat(appliedPlan.graph().freshGraphDeclaration().orElseThrow().familyCounts())
           .extracting(WorldDraftTopologyInputGraph.FamilyCount::count)
           .containsExactly(1, 1, 2, 1, 0, 1);
@@ -407,30 +406,26 @@ class WorldSelectedPublicationPostgresIntegrationTest {
           new AtomicReference<GameDesignPublicationTerminalReadEvidence.Status>(
               GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN);
       when(terminalClient.read(any()))
-          .thenAnswer(
-              invocation -> {
-                var request =
-                    (GameDesignPublicationTerminalReadEvidence.ReadRequest)
-                        invocation.getArgument(0);
-                var status = terminalStatus.get();
-                return new GameDesignPublicationTerminalReadEvidence.ReadResult(
-                    request,
-                    status,
-                    status == GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN
-                        ? Optional.empty()
-                        : Optional.of(terminal));
-              });
+          .thenAnswer(invocation -> {
+            var request =
+                (GameDesignPublicationTerminalReadEvidence.ReadRequest) invocation.getArgument(0);
+            var status = terminalStatus.get();
+            return new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                request,
+                status,
+                status == GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN
+                    ? Optional.empty()
+                    : Optional.of(terminal));
+          });
       var terminalRepository = new WorldPublicationTerminalRepository(dsl, transactionManager);
       WorldPublicationTerminalService terminalService =
           WorldPublicationTerminalService.authenticated(
               terminalRepository, terminalClient, NAMESPACE);
       Map<String, List<String>> beforeUnknownTerminal = snapshotMutationRows(dsl);
-      assertThatThrownBy(
-              () ->
-                  authenticatedGameDesign.call(
-                      () ->
-                          terminalService.complete(
-                              publicationOperation.canonicalBytes(), terminal.canonicalBytes())))
+      assertThatThrownBy(() ->
+              authenticatedGameDesign.call(() ->
+                  terminalService.complete(
+                      publicationOperation.canonicalBytes(), terminal.canonicalBytes())))
           .isInstanceOf(SecurityException.class)
           .hasMessageContaining("outcome is unknown");
       assertThat(snapshotMutationRows(dsl)).isEqualTo(beforeUnknownTerminal);
@@ -439,10 +434,9 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       assertThat(publicationTerminalCount(dsl, acknowledgement.publicationFence())).isZero();
       terminalStatus.set(GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED);
       GameDesignPublicationTerminalEvidence completed =
-          authenticatedGameDesign.call(
-              () ->
-                  terminalService.complete(
-                      publicationOperation.canonicalBytes(), terminal.canonicalBytes()));
+          authenticatedGameDesign.call(() ->
+              terminalService.complete(
+                  publicationOperation.canonicalBytes(), terminal.canonicalBytes()));
       assertThat(completed.canonicalBytes()).containsExactly(terminal.canonicalBytes());
       assertThat(publicationOwnerPhase(dsl, acknowledgement.publicationFence()))
           .isEqualTo("PUBLISHED");
@@ -492,12 +486,11 @@ class WorldSelectedPublicationPostgresIntegrationTest {
               GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
       verify(terminalClient, org.mockito.Mockito.times(2)).read(terminalReadRequests.capture());
       assertThat(terminalReadRequests.getAllValues())
-          .allSatisfy(
-              request -> {
-                assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-                assertThat(request.operationBytes())
-                    .containsExactly(publicationOperation.canonicalBytes());
-              });
+          .allSatisfy(request -> {
+            assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+            assertThat(request.operationBytes())
+                .containsExactly(publicationOperation.canonicalBytes());
+          });
       assertThat(terminalReadRequests.getAllValues().get(0).readRequestId())
           .isNotEqualTo(terminalReadRequests.getAllValues().get(1).readRequestId());
 
@@ -545,18 +538,13 @@ class WorldSelectedPublicationPostgresIntegrationTest {
               transactionManager,
               unsupportedRuleOwner);
       Map<String, List<String>> beforeUnsupportedRuleFreeze = snapshotMutationRows(dsl);
-      assertThatThrownBy(
-              () ->
-                  authenticatedGameDesign.call(
-                      () ->
-                          unsupportedRuleFreeze
-                              .freezeService()
-                              .begin(unsupportedRuleFreezeRequest)))
-          .satisfies(
-              failure ->
-                  assertThat(allThrowableText(failure))
-                      .contains(
-                          "GENERATION_RULE name/scope/value inputs without a closed requiredness registry"));
+      assertThatThrownBy(() ->
+              authenticatedGameDesign.call(
+                  () -> unsupportedRuleFreeze.freezeService().begin(unsupportedRuleFreezeRequest)))
+          .satisfies(failure ->
+              assertThat(allThrowableText(failure))
+                  .contains(
+                      "GENERATION_RULE name/scope/value inputs without a closed requiredness registry"));
       assertThat(snapshotMutationRows(dsl)).isEqualTo(beforeUnsupportedRuleFreeze);
       assertThat(publicationOwnerPhase(dsl, unsupportedRuleOwner)).isEqualTo("OPEN");
       assertThat(
@@ -636,12 +624,11 @@ class WorldSelectedPublicationPostgresIntegrationTest {
     var terminal = publishedTerminal(operation, world);
     var client = mock(GameDesignPublicationTerminalClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation ->
-                new GameDesignPublicationTerminalReadEvidence.ReadResult(
-                    invocation.getArgument(0),
-                    GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
-                    Optional.of(terminal)));
+        .thenAnswer(invocation ->
+            new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                invocation.getArgument(0),
+                GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
+                Optional.of(terminal)));
     var terminalService =
         WorldPublicationTerminalService.authenticated(
             new WorldPublicationTerminalRepository(dsl, transactions), client, NAMESPACE);
@@ -665,36 +652,33 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       OwnerFixture owner) {
     var selectionClient = mock(AuthoredDraftPublishSelectionReadClient.class);
     when(selectionClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  (AuthoredDraftPublishSelectionReadEvidence.Request) invocation.getArgument(0);
-              var evidence = mock(AuthoredDraftPublishSelectionReadEvidence.class);
-              when(evidence.request()).thenReturn(request);
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              (AuthoredDraftPublishSelectionReadEvidence.Request) invocation.getArgument(0);
+          var evidence = mock(AuthoredDraftPublishSelectionReadEvidence.class);
+          when(evidence.request()).thenReturn(request);
+          return evidence;
+        });
     var versionStateClient = mock(AuthoredWorldVersionStateClient.class);
     when(versionStateClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request = (AuthoredWorldVersionStateEvidence.Request) invocation.getArgument(0);
-              return AuthoredWorldVersionStateEvidence.create(
-                  request,
-                  owner.source(),
-                  owner.version().canonicalVersionId(),
-                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                  1L);
-            });
+        .thenAnswer(invocation -> {
+          var request = (AuthoredWorldVersionStateEvidence.Request) invocation.getArgument(0);
+          return AuthoredWorldVersionStateEvidence.create(
+              request,
+              owner.source(),
+              owner.version().canonicalVersionId(),
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+              1L);
+        });
     var accountClient = mock(AccountPublicationAuthorizationReadClient.class);
     when(accountClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  (AccountPublicationAuthorizationReadEvidence.Request) invocation.getArgument(0);
-              var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
-              when(evidence.request()).thenReturn(request);
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              (AccountPublicationAuthorizationReadEvidence.Request) invocation.getArgument(0);
+          var evidence = mock(AccountPublicationAuthorizationReadEvidence.class);
+          when(evidence.request()).thenReturn(request);
+          return evidence;
+        });
     var authorizationRepository = new WorldSelectedDraftPublicationAuthorizationRepository(dsl);
     var inventoryRepository = new WorldSelectedPublicationArtifactInventoryRepository(dsl);
     var authoredSnapshotRepository = new WorldAuthoredGraphSnapshotRepository(dsl);
@@ -761,15 +745,14 @@ class WorldSelectedPublicationPostgresIntegrationTest {
             .derivedWorkflowIdentity();
     var tuples =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     return new WorldAuthoredGraphSnapshot.CaptureRequest(
         request.targetNamespace(),
@@ -792,15 +775,14 @@ class WorldSelectedPublicationPostgresIntegrationTest {
     var freeze = source.frozenTopology().request().freeze();
     var tuples =
         freeze.suppliedOwnedAffectedTuples().stream()
-            .map(
-                tuple ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        tuple.owner(),
-                        tuple.aggregateType(),
-                        tuple.aggregateId(),
-                        tuple.scopeType(),
-                        tuple.scopeId(),
-                        tuple.expectedEpoch()))
+            .map(tuple ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    tuple.owner(),
+                    tuple.aggregateType(),
+                    tuple.aggregateId(),
+                    tuple.scopeType(),
+                    tuple.scopeId(),
+                    tuple.expectedEpoch()))
             .toList();
     var request =
         new WorldPublishedStartLocationEvidence.Request(
@@ -833,23 +815,21 @@ class WorldSelectedPublicationPostgresIntegrationTest {
     String commitId = worldEvidence.request().appliedCommitId();
     List<Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                participant ->
-                    new Participant(
+            .map(participant ->
+                new Participant(
+                    participant,
+                    scope,
+                    null,
+                    commitId,
+                    "WORLD_MANAGEMENT".equals(participant)
+                        ? worldEvidence.request().contentDigest()
+                        : "a".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                         participant,
-                        scope,
-                        null,
-                        commitId,
-                        "WORLD_MANAGEMENT".equals(participant)
-                            ? worldEvidence.request().contentDigest()
-                            : "a".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant,
-                            AuthoredWorldReleaseAttestationEvidence
-                                .CLOSURE_SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(participant) ? "sha256:" + "b".repeat(64) : null,
-                        null,
-                        null))
+                        AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(participant) ? "sha256:" + "b".repeat(64) : null,
+                    null,
+                    null))
             .toList();
     var release =
         new ReleaseContent(

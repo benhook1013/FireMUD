@@ -100,15 +100,13 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(catalog.schemaFacts())
           .anyMatch(fact -> fact.kind() == FactKind.ROUTINE)
           .anyMatch(fact -> fact.kind() == FactKind.COLUMN)
-          .anyMatch(
-              fact ->
-                  fact.kind() == FactKind.SEQUENCE
-                      && fact.identity().equals("entity_runtime_entity_id_sequence"))
+          .anyMatch(fact ->
+              fact.kind() == FactKind.SEQUENCE
+                  && fact.identity().equals("entity_runtime_entity_id_sequence"))
           .anyMatch(fact -> fact.kind() == FactKind.MIGRATION && fact.identity().contains("1004"))
-          .anyMatch(
-              fact ->
-                  fact.kind() == FactKind.MIGRATION
-                      && fact.identity().equals("catalog-installation:1025"));
+          .anyMatch(fact ->
+              fact.kind() == FactKind.MIGRATION
+                  && fact.identity().equals("catalog-installation:1025"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -240,10 +238,9 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
           StateClass.NOT_PAYLOAD,
           FreshDisposition.SELECTED_EMPTY_SOURCE_ONLY);
       assertThat(catalog.families())
-          .noneMatch(
-              family ->
-                  family.familyId().equals("entity_tick_state")
-                      || family.familyId().equals("character"));
+          .noneMatch(family ->
+              family.familyId().equals("entity_tick_state")
+                  || family.familyId().equals("character"));
     }
   }
 
@@ -585,10 +582,9 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(current.catalog().catalogEpoch()).isEqualTo(2);
       assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
       assertThat(current.catalog().schemaFacts())
-          .anyMatch(
-              fact ->
-                  fact.kind() == FactKind.MIGRATION
-                      && fact.identity().equals("catalog-installation:1026"));
+          .anyMatch(fact ->
+              fact.kind() == FactKind.MIGRATION
+                  && fact.identity().equals("catalog-installation:1026"));
       migration(f.source, f.schema, HISTORY, null).load().validate();
     }
   }
@@ -659,19 +655,18 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
         byte[] insertedEvidence = evidenceBytes;
         String insertedNamespace = namespace;
         long before = f.count("entity_runtime_family_catalog_snapshot");
-        assertThatThrownBy(
-                () ->
-                    f.dsl.execute(
-                        "INSERT INTO entity_runtime_family_catalog_snapshot(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)",
-                        read.readRequestId(),
-                        insertedNamespace,
-                        insertedRequest,
-                        EntityRuntimeFamilyCatalog.sha256(insertedRequest),
-                        snapshot,
-                        original.catalog().catalogEpoch(),
-                        original.catalog().digest(),
-                        insertedEvidence,
-                        EntityRuntimeFamilyCatalog.sha256(insertedEvidence)))
+        assertThatThrownBy(() ->
+                f.dsl.execute(
+                    "INSERT INTO entity_runtime_family_catalog_snapshot(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+                    read.readRequestId(),
+                    insertedNamespace,
+                    insertedRequest,
+                    EntityRuntimeFamilyCatalog.sha256(insertedRequest),
+                    snapshot,
+                    original.catalog().catalogEpoch(),
+                    original.catalog().digest(),
+                    insertedEvidence,
+                    EntityRuntimeFamilyCatalog.sha256(insertedEvidence)))
             .as(vector)
             .hasMessageContaining("complete exact request and evidence");
         assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(before);
@@ -698,16 +693,14 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
         assertThatThrownBy(() -> f.dsl.execute("TRUNCATE " + table + " CASCADE"))
             .hasMessageContaining("immutable");
       }
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE entity_runtime_family_classification SET state_class='S3' WHERE family_id='item_instances'"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE entity_runtime_family_classification SET state_class='S3' WHERE family_id='item_instances'"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO entity_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 3,catalog_bytes,catalog_digest FROM entity_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO entity_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
+                      + " SELECT 3,catalog_bytes,catalog_digest FROM entity_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
           .hasMessageContaining("exact classified installed schema");
     }
   }
@@ -723,10 +716,9 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
               .orElseThrow();
       Context.current()
           .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-          .run(
-              () ->
-                  service.readEntityRuntimeFamilyCatalog(
-                      EntityRuntimeFamilyCatalogCodec.toRequest(read), collector));
+          .run(() ->
+              service.readEntityRuntimeFamilyCatalog(
+                  EntityRuntimeFamilyCatalogCodec.toRequest(read), collector));
       assertThat(collector.error).isNull();
       assertThat(collector.completed).isTrue();
       assertThat(EntityRuntimeFamilyCatalogCodec.fromResponse(read, collector.value))
@@ -794,13 +786,12 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
       StateClass state,
       FreshDisposition disposition) {
     assertThat(catalog.families())
-        .anySatisfy(
-            family -> {
-              assertThat(family.familyId()).isEqualTo(name);
-              assertThat(family.role()).isEqualTo(role);
-              assertThat(family.stateClass()).isEqualTo(state);
-              assertThat(family.freshDisposition()).isEqualTo(disposition);
-            });
+        .anySatisfy(family -> {
+          assertThat(family.familyId()).isEqualTo(name);
+          assertThat(family.role()).isEqualTo(role);
+          assertThat(family.stateClass()).isEqualTo(state);
+          assertThat(family.freshDisposition()).isEqualTo(disposition);
+        });
   }
 
   private static Request request() {

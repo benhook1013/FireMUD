@@ -150,17 +150,15 @@ class WorldCompleteLaunchBindingServiceTest {
     assertThatThrownBy(
             () -> withoutPeer(() -> committedService.bindCommittedLaunch(fixture.request())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-design-service"),
-                    () -> committedService.bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-design-service"),
+                () -> committedService.bindCommittedLaunch(fixture.request())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("other", "game-session-service"),
-                    () -> committedService.bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("other", "game-session-service"),
+                () -> committedService.bindCommittedLaunch(fixture.request())))
         .isInstanceOf(SecurityException.class);
 
     SessionContext.setContext(
@@ -182,9 +180,8 @@ class WorldCompleteLaunchBindingServiceTest {
             fixture.request().expectedDescriptorResultDigest(),
             fixture.request().expectedReleaseAttestationEvidenceDigest());
     SessionContext.clear();
-    assertThatThrownBy(
-            () ->
-                withGameSession(() -> committedService.bindCommittedLaunch(wrongNamespaceRequest)))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedService.bindCommittedLaunch(wrongNamespaceRequest)))
         .isInstanceOf(SecurityException.class);
     verifyNoInteractions(client, gameSessionClient, repository, sourceRepository);
     assertThat(transactionManager.startedWith).isNull();
@@ -207,10 +204,8 @@ class WorldCompleteLaunchBindingServiceTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("outside ambient transactions");
     verifyNoInteractions(client, gameSessionClient, repository, sourceRepository);
@@ -264,10 +259,8 @@ class WorldCompleteLaunchBindingServiceTest {
     when(client.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(fixture.evidence());
     when(gameSessionClient.read(fixture.request())).thenReturn(mismatchedAssociation);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request())))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
     verify(sourceRepository, never()).readBySource(any(), any(), any(), any(), any());
     verifyNoInteractions(repository);
@@ -299,10 +292,8 @@ class WorldCompleteLaunchBindingServiceTest {
     when(client.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(fixture.evidence());
     when(gameSessionClient.read(fixture.request())).thenReturn(changedAssociation);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request())))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class)
         .hasMessageContaining("exact World selector");
     verify(sourceRepository, never()).readBySource(any(), any(), any(), any(), any());
@@ -342,10 +333,8 @@ class WorldCompleteLaunchBindingServiceTest {
     when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
         .thenReturn(Optional.of(changedStored));
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request())))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
     verify(repository, never()).acceptFresh(any(), any(), any());
     verify(repository, never()).toReceipt(any(), any());
@@ -364,10 +353,8 @@ class WorldCompleteLaunchBindingServiceTest {
             fixture.sourceReceipt().sourceEvidenceDigest()))
         .thenReturn(Optional.empty());
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request())))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("no exact committed World source intake");
     verifyNoInteractions(repository);
@@ -474,10 +461,8 @@ class WorldCompleteLaunchBindingServiceTest {
         .thenReturn(fixture.receipt());
     transactionManager.loseCommitAcknowledgment = true;
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> committedLaunchService().bindCommittedLaunch(fixture.request())))
+    assertThatThrownBy(() ->
+            withGameSession(() -> committedLaunchService().bindCommittedLaunch(fixture.request())))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
     verify(repository).acceptFresh(NAMESPACE, fixture.sourceReceipt(), fixture.evidence());
     verify(repository, never()).toReceipt(any(), any());
@@ -499,17 +484,15 @@ class WorldCompleteLaunchBindingServiceTest {
     assertThatThrownBy(
             () -> withoutPeer(() -> service.readCurrentVersionState(request, CURRENT_READ_ID)))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-design-service"),
-                    () -> service.readCurrentVersionState(request, CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-design-service"),
+                () -> service.readCurrentVersionState(request, CURRENT_READ_ID)))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("other", "game-session-service"),
-                    () -> service.readCurrentVersionState(request, CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("other", "game-session-service"),
+                () -> service.readCurrentVersionState(request, CURRENT_READ_ID)))
         .isInstanceOf(SecurityException.class);
     AuthoredWorldLaunchDescriptorEvidence.Request original = request.expectedRequest();
     AuthoredWorldLaunchDescriptorEvidence.Request wrongNamespace =
@@ -529,20 +512,15 @@ class WorldCompleteLaunchBindingServiceTest {
             original.targetVersionId(),
             original.requestedRuntimeFlagsJsonPresent(),
             original.requestedRuntimeFlagsJson());
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () ->
-                        service.bind(
-                            new GetRequest(UUID.randomUUID(), wrongNamespace, digest('a')))))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.bind(new GetRequest(UUID.randomUUID(), wrongNamespace, digest('a')))))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () ->
-                        service.readCurrentVersionState(
-                            new GetRequest(UUID.randomUUID(), wrongNamespace, digest('a')),
-                            CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(() ->
+                service.readCurrentVersionState(
+                    new GetRequest(UUID.randomUUID(), wrongNamespace, digest('a')),
+                    CURRENT_READ_ID)))
         .isInstanceOf(SecurityException.class);
     verifyNoInteractions(client, versionStateClient, repository, sourceRepository);
   }
@@ -624,10 +602,9 @@ class WorldCompleteLaunchBindingServiceTest {
     CompleteLaunchBindingEvidence expectedEvidence = evidence(source);
     CompleteLaunchBindingEvidence otherEvidence =
         evidence(source, "another-world-launch-request", 42L);
-    assertThatThrownBy(
-            () ->
-                new CompleteLaunchBindingEvidence(
-                    expectedEvidence.descriptor(), otherEvidence.releaseAttestation()))
+    assertThatThrownBy(() ->
+            new CompleteLaunchBindingEvidence(
+                expectedEvidence.descriptor(), otherEvidence.releaseAttestation()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new CompleteLaunchBindingEvidence(null, null))
         .isInstanceOf(NullPointerException.class);
@@ -656,10 +633,9 @@ class WorldCompleteLaunchBindingServiceTest {
 
     assertThatThrownBy(() -> withGameSession(() -> service.bind(request(evidence))))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(evidence), CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(evidence), CURRENT_READ_ID)))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(client, versionStateClient, repository, sourceRepository);
   }
@@ -675,21 +651,19 @@ class WorldCompleteLaunchBindingServiceTest {
     AtomicReference<WorldCompleteLaunchBindingRepository.StoredBinding> committed =
         new AtomicReference<>();
     when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST))
-        .thenAnswer(
-            invocation -> {
-              WorldCompleteLaunchBindingRepository.StoredBinding value = committed.get();
-              return value == null ? Optional.empty() : Optional.of(value);
-            });
+        .thenAnswer(invocation -> {
+          WorldCompleteLaunchBindingRepository.StoredBinding value = committed.get();
+          return value == null ? Optional.empty() : Optional.of(value);
+        });
     when(client.getComplete(any())).thenReturn(evidence);
     when(sourceRepository.readBySource(
             NAMESPACE, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()))
         .thenReturn(Optional.of(sourceReceipt));
     when(repository.acceptFresh(NAMESPACE, sourceReceipt, evidence))
-        .thenAnswer(
-            invocation -> {
-              committed.set(stored);
-              return receipt;
-            });
+        .thenAnswer(invocation -> {
+          committed.set(stored);
+          return receipt;
+        });
     when(repository.toReceipt(stored, sourceReceipt)).thenReturn(receipt);
     transactionManager.loseCommitAcknowledgment = true;
 
@@ -791,10 +765,9 @@ class WorldCompleteLaunchBindingServiceTest {
     AuthoredWorldVersionStateEvidence firstRead =
         withGameSession(() -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID));
     assertThat(firstRead).isEqualTo(first);
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), ADVANCED_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), ADVANCED_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("epoch differs");
 
@@ -826,10 +799,9 @@ class WorldCompleteLaunchBindingServiceTest {
             binding.descriptor().versionStateEpoch());
     when(versionStateClient.read(any())).thenReturn(swappedSource);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("exact committed World source");
     verify(repository, never()).acceptFresh(any(), any(), any());
@@ -849,10 +821,9 @@ class WorldCompleteLaunchBindingServiceTest {
             binding.descriptor().versionStateEpoch());
     when(versionStateClient.read(any())).thenReturn(swappedSelector);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("exact committed World source");
     verify(repository, never()).acceptFresh(any(), any(), any());
@@ -887,10 +858,9 @@ class WorldCompleteLaunchBindingServiceTest {
     assertThat(substituted.canonicalVersionId()).isNotEqualTo(committedCanonicalVersionId);
     when(versionStateClient.read(any())).thenReturn(substituted);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("canonical version UUID differs");
     verify(repository, never()).acceptFresh(any(), any(), any());
@@ -904,10 +874,8 @@ class WorldCompleteLaunchBindingServiceTest {
     GetRequest substituted =
         new GetRequest(UUID.randomUUID(), binding.descriptor().request(), digest('b'));
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(substituted, CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(() -> service.readCurrentVersionState(substituted, CURRENT_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.RegistrationConflictException.class);
     verifyNoInteractions(versionStateClient);
     verify(repository, never()).acceptFresh(any(), any(), any());
@@ -918,10 +886,9 @@ class WorldCompleteLaunchBindingServiceTest {
     CompleteLaunchBindingEvidence binding = evidence(source());
     when(repository.read(NAMESPACE, TENANT, CONTROL_PLANE_REQUEST)).thenReturn(Optional.empty());
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("requires a committed launch binding");
     verifyNoInteractions(client, versionStateClient, sourceRepository);
@@ -942,10 +909,9 @@ class WorldCompleteLaunchBindingServiceTest {
             binding.descriptor().versionStateEpoch());
     when(versionStateClient.read(any())).thenReturn(draft);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), CURRENT_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("not PUBLISHED or ACTIVE");
 
@@ -957,19 +923,16 @@ class WorldCompleteLaunchBindingServiceTest {
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED,
             binding.descriptor().versionStateEpoch());
     when(versionStateClient.read(any())).thenReturn(retired);
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), OTHER_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(() -> service.readCurrentVersionState(request(binding), OTHER_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("not PUBLISHED or ACTIVE");
 
     when(versionStateClient.read(any()))
         .thenThrow(new IllegalStateException("Game Design is unavailable"));
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), ADVANCED_READ_ID)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), ADVANCED_READ_ID)))
         .isInstanceOf(WorldCompleteLaunchBindingRepository.InvalidBindingEvidenceException.class)
         .hasMessageContaining("unavailable or invalid");
     assertThat(original.evidence()).isEqualTo(binding);
@@ -982,26 +945,19 @@ class WorldCompleteLaunchBindingServiceTest {
     CompleteLaunchBindingEvidence binding = evidence(source);
     stubCommittedBinding(source, binding);
 
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () -> service.readCurrentVersionState(request(binding), SOURCE_OPERATION)))
+    assertThatThrownBy(() ->
+            withGameSession(
+                () -> service.readCurrentVersionState(request(binding), SOURCE_OPERATION)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("separate from source and registration IDs");
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () ->
-                        service.readCurrentVersionState(
-                            request(binding), source.registrationRequestId())))
+    assertThatThrownBy(() ->
+            withGameSession(() ->
+                service.readCurrentVersionState(request(binding), source.registrationRequestId())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("separate from source and registration IDs");
-    assertThatThrownBy(
-            () ->
-                withGameSession(
-                    () ->
-                        service.readCurrentVersionState(
-                            request(binding), request(binding).requestId())))
+    assertThatThrownBy(() ->
+            withGameSession(() ->
+                service.readCurrentVersionState(request(binding), request(binding).requestId())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("separate from source and registration IDs");
     verifyNoInteractions(versionStateClient);

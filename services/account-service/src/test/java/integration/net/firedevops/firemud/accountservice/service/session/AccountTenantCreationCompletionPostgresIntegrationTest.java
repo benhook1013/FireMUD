@@ -253,11 +253,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     when(dsl.fetchOne("SELECT clock_timestamp() AS observed_at")).thenReturn(ownerClock);
     var actors = mock(AccountControlUiActorService.class);
     when(actors.readAcceptedSignerKey("kid"))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
+        });
     var captured = mock(AccountTenantCreationOwnerSourceCapture.Captured.class);
     when(captured.originalClaims()).thenReturn(issuance.claims);
     when(captured.originalSignerReceipt()).thenReturn(signer);
@@ -272,17 +271,16 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     when(dsl.fetchOne("SELECT txid_current()::text AS owner_transaction")).thenReturn(transaction);
     var bootstrap = mock(AccountTenantCreationBootstrapService.class);
     when(bootstrap.bootstrapForCompletion(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(actual.fetchCount(DSL.table("account_fresh_tenant_identity_associations")))
-                  .isEqualTo(1);
-              assertThat(
-                      actual.fetchCount(
-                          DSL.table("account_authority_generations"),
-                          DSL.field("tenant_uuid").eq(tenant)))
-                  .isEqualTo(1);
-              throw new IllegalStateException("Controlled downstream bootstrap refusal");
-            });
+        .thenAnswer(invocation -> {
+          assertThat(actual.fetchCount(DSL.table("account_fresh_tenant_identity_associations")))
+              .isEqualTo(1);
+          assertThat(
+                  actual.fetchCount(
+                      DSL.table("account_authority_generations"),
+                      DSL.field("tenant_uuid").eq(tenant)))
+              .isEqualTo(1);
+          throw new IllegalStateException("Controlled downstream bootstrap refusal");
+        });
     var owner =
         new AccountTenantCreationCompletionOwner(
             dsl,
@@ -301,13 +299,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             recentEvidence,
             mock(AccountAuditOutboxRepository.class),
             manager);
-    assertThatThrownBy(
-            () ->
-                owner.complete(
-                    operation,
-                    terminal,
-                    mock(CapturedEnvironmentBoundary.class),
-                    mock(AccountRecentReauthenticationEvidence.class)))
+    assertThatThrownBy(() ->
+            owner.complete(
+                operation,
+                terminal,
+                mock(CapturedEnvironmentBoundary.class),
+                mock(AccountRecentReauthenticationEvidence.class)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Controlled downstream bootstrap refusal");
     assertThat(actual.fetchCount(DSL.table("account_fresh_tenant_identity_associations"))).isZero();
@@ -563,18 +560,15 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                 f.request.capacityDelta(),
                 null)
             .withDigest();
-    assertThatThrownBy(
-            () ->
-                f.context.transaction.execute(
-                    status -> f.repository.exact(changed, f.repository.find(changed.identity()))))
+    assertThatThrownBy(() ->
+            f.context.transaction.execute(
+                status -> f.repository.exact(changed, f.repository.find(changed.identity()))))
         .hasMessage("IDEMPOTENCY_CONFLICT");
-    assertThatThrownBy(
-            () ->
-                f.context.transaction.executeWithoutResult(
-                    status ->
-                        f.context.dsl.execute(
-                            "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, usage_revision = usage_revision + 1 WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
-                            f.request.identity().tenantId())))
+    assertThatThrownBy(() ->
+            f.context.transaction.executeWithoutResult(status ->
+                f.context.dsl.execute(
+                    "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, usage_revision = usage_revision + 1 WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                    f.request.identity().tenantId())))
         .isInstanceOf(RuntimeException.class);
     assertThat(
             Objects.requireNonNull(
@@ -990,13 +984,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             .issuedAt()
             .plusSeconds(
                 assembled.recent.recentAgeSeconds() - assembled.recent.maxClockSkewSeconds());
-    c.tx(
-        () -> {
-          c.dsl.execute("SET LOCAL statement_timeout = '20s'");
-          return c.dsl.fetch(
-              "SELECT pg_sleep(GREATEST(0.0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
-              OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
-        });
+    c.tx(() -> {
+      c.dsl.execute("SET LOCAL statement_timeout = '20s'");
+      return c.dsl.fetch(
+          "SELECT pg_sleep(GREATEST(0.0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
+          OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
+    });
     var historical =
         assembled.owner.complete(
             fixture.intent.creationOperationId(),
@@ -1030,11 +1023,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             c.dsl.fetch(
                 "SELECT *, xmin::text AS settled_xmin FROM account_tenant_creation_source_order_settlements"))
         .isEqualTo(settled);
-    originals.forEach(
-        (table, rows) ->
-            assertThat(c.dsl.fetch("SELECT *, xmin::text AS original_xmin FROM " + table))
-                .as(table)
-                .isEqualTo(rows));
+    originals.forEach((table, rows) ->
+        assertThat(c.dsl.fetch("SELECT *, xmin::text AS original_xmin FROM " + table))
+            .as(table)
+            .isEqualTo(rows));
     assertAtomicRows(c, 0);
     assertThat(c.dsl.fetchCount(DSL.table("account_recent_reauthentication_consumptions")))
         .isZero();
@@ -1066,13 +1058,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var executor = Executors.newSingleThreadExecutor();
     try {
       var pending =
-          executor.submit(
-              () ->
-                  assembled.owner.complete(
-                      fixture.intent.creationOperationId(),
-                      assembled.terminal,
-                      assembled.environment,
-                      assembled.recent));
+          executor.submit(() ->
+              assembled.owner.complete(
+                  fixture.intent.creationOperationId(),
+                  assembled.terminal,
+                  assembled.environment,
+                  assembled.recent));
       assertThat(initialPhaseCommitted.await(10, TimeUnit.SECONDS)).isTrue();
       awaitOriginalCutoff(c, assembled.recent);
       var historical =
@@ -1109,11 +1100,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     StorageContext c = storageContext(15, 0);
     var fixture = storageFixture(c);
     var recent =
-        c.tx(
-            () ->
-                c.evidenceRepository
-                    .findByCreationOperation(fixture.intent.creationOperationId())
-                    .orElseThrow());
+        c.tx(() ->
+            c.evidenceRepository
+                .findByCreationOperation(fixture.intent.creationOperationId())
+                .orElseThrow());
     var crossedCutoffDuringSignerRead = new AtomicBoolean();
     var assembled =
         assembleStoredOwner(
@@ -1147,13 +1137,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     // Wait on the genuine database clock; immutable owner rows and clock functions stay intact.
     Instant cutoff =
         recent.issuedAt().plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
-    c.tx(
-        () -> {
-          c.dsl.execute("SET LOCAL statement_timeout = '20s'");
-          return c.dsl.fetch(
-              "SELECT pg_sleep(GREATEST(0.0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
-              OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
-        });
+    c.tx(() -> {
+      c.dsl.execute("SET LOCAL statement_timeout = '20s'");
+      return c.dsl.fetch(
+          "SELECT pg_sleep(GREATEST(0.0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
+          OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
+    });
   }
 
   private static void assertNoAccountCompletion(StorageContext c, StoredOwner assembled) {
@@ -1196,13 +1185,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             org.mockito.ArgumentMatchers.eq("ACCOUNT_TENANT_CREATION_COMPLETED"),
             org.mockito.ArgumentMatchers.anyString());
     var assembled = assembleStoredOwner(c, fixture, audits);
-    assertThatThrownBy(
-            () ->
-                assembled.owner.complete(
-                    fixture.intent.creationOperationId(),
-                    assembled.terminal,
-                    assembled.environment,
-                    assembled.recent))
+    assertThatThrownBy(() ->
+            assembled.owner.complete(
+                fixture.intent.creationOperationId(),
+                assembled.terminal,
+                assembled.environment,
+                assembled.recent))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Controlled failure after actual final audit insertion");
     assertAtomicRows(c, 0);
@@ -1262,19 +1250,17 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     StorageContext c = storageContext();
     var fixture = storageFixture(c);
     var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "INSERT INTO account_tenant_creation_dispatch_intents"
-                                + " (creation_operation_id, dispatch_call_id, authorization_binding_payload, authorization_digest, valid_before_epoch_millis)"
-                                + " VALUES (?, ?, ?, ?, ?)",
-                            fixture.intent.creationOperationId(),
-                            UUID.randomUUID(),
-                            assembled.prepared.sourceOrderBinding(),
-                            assembled.prepared.authorizationDigest(),
-                            System.currentTimeMillis() - 1)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "INSERT INTO account_tenant_creation_dispatch_intents"
+                        + " (creation_operation_id, dispatch_call_id, authorization_binding_payload, authorization_digest, valid_before_epoch_millis)"
+                        + " VALUES (?, ?, ?, ?, ?)",
+                    fixture.intent.creationOperationId(),
+                    UUID.randomUUID(),
+                    assembled.prepared.sourceOrderBinding(),
+                    assembled.prepared.authorizationDigest(),
+                    System.currentTimeMillis() - 1)))
         .isInstanceOf(RuntimeException.class);
     assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_dispatch_intents"))).isZero();
     assertThat(
@@ -1318,11 +1304,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
       var outcomes = mock(GameDesignOriginalTenantCreationOutcomeClient.class);
       var completion = mock(AccountTenantCreationCompletionOwner.class);
       when(outcomes.readOriginal(original.binding()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                throw Status.NOT_FOUND.asRuntimeException();
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            throw Status.NOT_FOUND.asRuntimeException();
+          });
       var coordinator =
           new AccountTenantCreationCoordinator(
               admission,
@@ -1339,15 +1324,14 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             .isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
       }
       org.mockito.Mockito.verifyNoInteractions(admission, creation, completion);
-      retained.forEach(
-          (table, rows) ->
-              assertThat(
-                      c.dsl.fetch(
-                          "SELECT *, xmin::text AS original_xmin FROM "
-                              + table
-                              + " ORDER BY creation_operation_id"))
-                  .as(table)
-                  .isEqualTo(rows));
+      retained.forEach((table, rows) ->
+          assertThat(
+                  c.dsl.fetch(
+                      "SELECT *, xmin::text AS original_xmin FROM "
+                          + table
+                          + " ORDER BY creation_operation_id"))
+              .as(table)
+              .isEqualTo(rows));
       assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_dispatch_intents")))
           .isEqualTo(claimed ? 1 : 0);
       assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_completions"))).isZero();
@@ -1407,11 +1391,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var dsl = c.dsl;
     var intent = fixture.intent;
     var recent =
-        c.tx(
-            () ->
-                c.evidenceRepository
-                    .findByCreationOperation(intent.creationOperationId())
-                    .orElseThrow());
+        c.tx(() ->
+            c.evidenceRepository
+                .findByCreationOperation(intent.creationOperationId())
+                .orElseThrow());
     var party =
         new IndividualCreatorPartySource(
             intent.creatorPartyId(),
@@ -1424,19 +1407,18 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             1L,
             1L);
     byte[] partyPayload = CreatorPartyEncoding.party(party);
-    c.tx(
-        () ->
-            dsl.execute(
-                "INSERT INTO account_individual_creator_party_sources"
-                    + " (creator_party_id, account_uuid, verification_status, identity_version, policy_reference, policy_version,"
-                    + " verification_evidence_reference, verification_evidence_version, source_version, source_payload, source_digest)"
-                    + " VALUES (?, ?, 'VERIFIED', 1, ?, 1, ?, 1, 1, ?, ?)",
-                party.creatorPartyId(),
-                party.accountId(),
-                party.policyReference(),
-                party.verificationEvidenceReference(),
-                partyPayload,
-                CreatorPartyEncoding.digest(partyPayload)));
+    c.tx(() ->
+        dsl.execute(
+            "INSERT INTO account_individual_creator_party_sources"
+                + " (creator_party_id, account_uuid, verification_status, identity_version, policy_reference, policy_version,"
+                + " verification_evidence_reference, verification_evidence_version, source_version, source_payload, source_digest)"
+                + " VALUES (?, ?, 'VERIFIED', 1, ?, 1, ?, 1, 1, ?, ?)",
+            party.creatorPartyId(),
+            party.accountId(),
+            party.policyReference(),
+            party.verificationEvidenceReference(),
+            partyPayload,
+            CreatorPartyEncoding.digest(partyPayload)));
     List<SourceEvidence> sources = controlledSources(c, fixture);
     seedSerializationRows(c, sources);
     var orderRepository =
@@ -1477,13 +1459,11 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var issuance = c.tx(() -> issuances.findToken(fixture.admitted.binding().tokenHash()));
     var accepted = mock(AccountControlUiActorService.class);
     when(accepted.readAcceptedSignerKey("test-key"))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              beforeSignerRead.run();
-              return new AccountControlUiActorService.AcceptedSignerKey(
-                  "test-key", "test-fingerprint");
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          beforeSignerRead.run();
+          return new AccountControlUiActorService.AcceptedSignerKey("test-key", "test-fingerprint");
+        });
     var captured = mock(AccountTenantCreationOwnerSourceCapture.Captured.class);
     when(captured.originalClaims()).thenReturn(issuance.claims);
     when(captured.originalSignerReceipt()).thenReturn(issuance.signerReceipt);
@@ -1593,26 +1573,24 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
       AccountTenantCreationOwnerSourceCapture capture) {}
 
   private static void seedSerializationRows(StorageContext context, List<SourceEvidence> sources) {
-    context.tx(
-        () -> {
-          for (SourceEvidence source : sources) {
-            context.dsl.execute(
-                "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?) "
-                    + "ON CONFLICT DO NOTHING",
-                source.key());
-          }
-          return null;
-        });
+    context.tx(() -> {
+      for (SourceEvidence source : sources) {
+        context.dsl.execute(
+            "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?) "
+                + "ON CONFLICT DO NOTHING",
+            source.key());
+      }
+      return null;
+    });
   }
 
   private static List<SourceEvidence> controlledSources(
       StorageContext context, StorageFixture fixture) {
     List<SourceEvidence> policySources =
-        context.tx(
-            () ->
-                new AccountRecentReauthenticationPolicyRepository(context.dsl)
-                    .resolveCurrentSourcesForGameCreation()
-                    .sources());
+        context.tx(() ->
+            new AccountRecentReauthenticationPolicyRepository(context.dsl)
+                .resolveCurrentSourcesForGameCreation()
+                .sources());
     UUID actor = fixture.intent().initiatingAccountId();
     UUID creatorParty = fixture.intent().creatorPartyId();
     UUID hostedScope = UUID.randomUUID();
@@ -1669,24 +1647,23 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         context.service.reauthenticate(
             context.request(account, UUID.randomUUID(), creationOperationId));
     var intent =
-        context.tx(
-            () ->
-                new AccountTenantCreationIntentRepository(context.dsl, context.evidenceRepository)
-                    .claim(
-                        new AccountTenantCreationIntentRepository.Request(
-                            UUID.randomUUID(),
-                            creationOperationId,
-                            UUID.randomUUID(),
-                            account.getAccountUuid(),
-                            "test-game",
-                            "source-game",
-                            "Game",
-                            "controlled source-order test",
-                            reauthentication.evidenceId(),
-                            creatorPartyId,
-                            UUID.randomUUID(),
-                            1,
-                            true)));
+        context.tx(() ->
+            new AccountTenantCreationIntentRepository(context.dsl, context.evidenceRepository)
+                .claim(
+                    new AccountTenantCreationIntentRepository.Request(
+                        UUID.randomUUID(),
+                        creationOperationId,
+                        UUID.randomUUID(),
+                        account.getAccountUuid(),
+                        "test-game",
+                        "source-game",
+                        "Game",
+                        "controlled source-order test",
+                        reauthentication.evidenceId(),
+                        creatorPartyId,
+                        UUID.randomUUID(),
+                        1,
+                        true)));
 
     UUID issuanceOperationId = UUID.randomUUID();
     String tokenHash =
@@ -1699,55 +1676,51 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     long operationDeadline = tokenExpiry;
     long cleanupDeadline = tokenExpiry + 300_000;
     long receiptDeadline = operationDeadline + 86_400_000;
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_control_ui_issuance_operations "
-                    + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, authorization_scope, caller_workload, "
-                    + "caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, "
-                    + "issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
-                    + "VALUES (?, ?, ?, ?, NULL, 'ACCOUNT', 'spiffe://test-only/source-order', ?, 'test-mac', ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
-                UUID.randomUUID(),
-                issuanceOperationId,
-                UUID.randomUUID(),
-                account.getAccountUuid(),
-                UUID.randomUUID(),
-                "c".repeat(64),
-                activeRegistry,
-                activeRegistry,
-                activeRegistry,
-                AccountControlUiAuthority.canonical(
-                    Map.of("kid", "test-key", "publicKeyFingerprint", "test-fingerprint")),
-                issuedAt,
-                issuedAt + 300,
-                cleanupDeadline,
-                OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 60), ZoneOffset.UTC)));
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
-                    + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
-                tokenHash,
-                activeRegistry,
-                activeRegistry,
-                issuanceOperationId));
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_control_ui_response_envelopes "
-                    + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
-                    + "SELECT operation_id, ?, ?, recovery_expires_at "
-                    + "FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-                activeRegistry,
-                activeRegistry,
-                issuanceOperationId));
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
-                    + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
-                activeRegistry,
-                issuanceOperationId));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_control_ui_issuance_operations "
+                + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, authorization_scope, caller_workload, "
+                + "caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, "
+                + "issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
+                + "VALUES (?, ?, ?, ?, NULL, 'ACCOUNT', 'spiffe://test-only/source-order', ?, 'test-mac', ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
+            UUID.randomUUID(),
+            issuanceOperationId,
+            UUID.randomUUID(),
+            account.getAccountUuid(),
+            UUID.randomUUID(),
+            "c".repeat(64),
+            activeRegistry,
+            activeRegistry,
+            activeRegistry,
+            AccountControlUiAuthority.canonical(
+                Map.of("kid", "test-key", "publicKeyFingerprint", "test-fingerprint")),
+            issuedAt,
+            issuedAt + 300,
+            cleanupDeadline,
+            OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAt + 60), ZoneOffset.UTC)));
+    context.tx(() ->
+        context.dsl.execute(
+            "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
+                + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
+            tokenHash,
+            activeRegistry,
+            activeRegistry,
+            issuanceOperationId));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_control_ui_response_envelopes "
+                + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+                + "SELECT operation_id, ?, ?, recovery_expires_at "
+                + "FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+            activeRegistry,
+            activeRegistry,
+            issuanceOperationId));
+    context.tx(() ->
+        context.dsl.execute(
+            "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
+                + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+            activeRegistry,
+            issuanceOperationId));
 
     var admissionBinding =
         new AccountTenantCreationAdmissionBinding(
@@ -1767,52 +1740,47 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             preparedAt,
             operationDeadline,
             receiptDeadline);
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_tenant_creation_admission_requests "
-                    + "(creation_operation_id, intent_request_id, issuance_operation_id, actor_account_id, target_namespace, "
-                    + "game_design_creation_request_id, game_design_request_digest, intent_digest, active_registry_digest, "
-                    + "reauthentication_evidence_id, token_hash, token_cleanup_deadline_epoch_millis, token_expires_at_epoch_millis, "
-                    + "prepared_at_epoch_millis, operation_deadline_epoch_millis, receipt_cleanup_deadline_epoch_millis, binding_payload, binding_digest) "
-                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                creationOperationId,
-                intent.requestId(),
-                issuanceOperationId,
-                account.getAccountUuid(),
-                admissionBinding.targetNamespace(),
-                admissionBinding.gameDesignCreationRequestId(),
-                admissionBinding.gameDesignRequestDigest(),
-                admissionBinding.intentDigest(),
-                admissionBinding.activeRegistryDigest(),
-                reauthentication.evidenceId(),
-                tokenHash,
-                cleanupDeadline,
-                tokenExpiry,
-                preparedAt,
-                operationDeadline,
-                receiptDeadline,
-                admissionBinding.canonicalReceipt(),
-                AccountControlUiCoordination.digest(
-                    "SHA-256", admissionBinding.canonicalReceipt())));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_tenant_creation_admission_requests "
+                + "(creation_operation_id, intent_request_id, issuance_operation_id, actor_account_id, target_namespace, "
+                + "game_design_creation_request_id, game_design_request_digest, intent_digest, active_registry_digest, "
+                + "reauthentication_evidence_id, token_hash, token_cleanup_deadline_epoch_millis, token_expires_at_epoch_millis, "
+                + "prepared_at_epoch_millis, operation_deadline_epoch_millis, receipt_cleanup_deadline_epoch_millis, binding_payload, binding_digest) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            creationOperationId,
+            intent.requestId(),
+            issuanceOperationId,
+            account.getAccountUuid(),
+            admissionBinding.targetNamespace(),
+            admissionBinding.gameDesignCreationRequestId(),
+            admissionBinding.gameDesignRequestDigest(),
+            admissionBinding.intentDigest(),
+            admissionBinding.activeRegistryDigest(),
+            reauthentication.evidenceId(),
+            tokenHash,
+            cleanupDeadline,
+            tokenExpiry,
+            preparedAt,
+            operationDeadline,
+            receiptDeadline,
+            admissionBinding.canonicalReceipt(),
+            AccountControlUiCoordination.digest("SHA-256", admissionBinding.canonicalReceipt())));
     // Physical AOF/replica/qualification values are controlled test facts. The private Admitted
     // value is still obtained only by reading the actual V1022 durable rows.
-    context.tx(
-        () ->
-            context.dsl.execute(
-                "INSERT INTO account_tenant_creation_admissions "
-                    + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, "
-                    + "protected_binding_id, qualification_fence) VALUES (?, ?, ?, 1, 1, 'test-stipulated-physical-evidence', 7)",
-                creationOperationId,
-                admissionBinding.canonicalReceipt(),
-                AccountControlUiCoordination.digest(
-                    "SHA-256", admissionBinding.canonicalReceipt())));
+    context.tx(() ->
+        context.dsl.execute(
+            "INSERT INTO account_tenant_creation_admissions "
+                + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, "
+                + "protected_binding_id, qualification_fence) VALUES (?, ?, ?, 1, 1, 'test-stipulated-physical-evidence', 7)",
+            creationOperationId,
+            admissionBinding.canonicalReceipt(),
+            AccountControlUiCoordination.digest("SHA-256", admissionBinding.canonicalReceipt())));
     var admitted =
-        context.tx(
-            () ->
-                new AccountTenantCreationAdmissionRepository(context.dsl)
-                    .readAdmitted(creationOperationId)
-                    .orElseThrow());
+        context.tx(() ->
+            new AccountTenantCreationAdmissionRepository(context.dsl)
+                .readAdmitted(creationOperationId)
+                .orElseThrow());
     return new StorageFixture(account, intent, admitted);
   }
 
@@ -1838,20 +1806,19 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    transaction.executeWithoutResult(
-        ignored -> {
-          dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('PLATFORM', 1, ?, ?), ('DEPLOYMENT', 1, ?, ?)",
-              recentAgeSeconds,
-              maxClockSkewSeconds,
-              recentAgeSeconds,
-              maxClockSkewSeconds);
-          dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_current "
-                  + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
-        });
+    transaction.executeWithoutResult(ignored -> {
+      dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('PLATFORM', 1, ?, ?), ('DEPLOYMENT', 1, ?, ?)",
+          recentAgeSeconds,
+          maxClockSkewSeconds,
+          recentAgeSeconds,
+          maxClockSkewSeconds);
+      dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_current "
+              + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
+    });
     var generations = new AccountAuthorityGenerationRepository(dsl);
     var outbox = new AccountAuthorityOutboxRepository(dsl);
     var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);

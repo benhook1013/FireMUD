@@ -37,10 +37,9 @@ class AccountAuditOutboxRepositoryTest {
   void exactCommittedOrMinimizedTerminalReceiptAfterLostCompareAndSetIsANoOp() {
     for (String status : new String[] {"COMMITTED", "MINIMIZED"}) {
       boolean minimized = "MINIMIZED".equals(status);
-      assertThatCode(
-              () ->
-                  repositoryWithReadback(status, RECEIPT_ID, LOG_EVENT_ID, true)
-                      .markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, minimized))
+      assertThatCode(() ->
+              repositoryWithReadback(status, RECEIPT_ID, LOG_EVENT_ID, true)
+                  .markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, minimized))
           .doesNotThrowAnyException();
     }
   }
@@ -159,15 +158,11 @@ class AccountAuditOutboxRepositoryTest {
 
   @Test
   void canonicalTenantAuditIdentityRejectsNilAndNoncanonicalUuidForms() {
-    assertThatThrownBy(
-            () ->
-                AccountAuditTenantIdentity.canonicalTenantV2(
-                    "00000000-0000-0000-0000-000000000000"))
+    assertThatThrownBy(() ->
+            AccountAuditTenantIdentity.canonicalTenantV2("00000000-0000-0000-0000-000000000000"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuditTenantIdentity.canonicalTenantV2(
-                    "F4DF3B0A-5FC6-4F86-9EFC-0F053103B200"))
+    assertThatThrownBy(() ->
+            AccountAuditTenantIdentity.canonicalTenantV2("F4DF3B0A-5FC6-4F86-9EFC-0F053103B200"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

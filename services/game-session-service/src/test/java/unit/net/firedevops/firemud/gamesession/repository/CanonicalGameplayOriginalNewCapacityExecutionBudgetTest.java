@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -151,9 +152,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .isInstanceOf(IllegalStateException.class);
     when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1000L);
     when(tokenRead.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
-        .thenAnswer(
-            ignored ->
-                UUID.randomUUID().toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        .thenAnswer(ignored ->
+            UUID.randomUUID().toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
         .isInstanceOf(IllegalStateException.class);
     when(status.ownerInstanceId()).thenReturn("replacement-instance");
@@ -201,10 +201,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .isEqualTo(frozenClock.millis() + 1000L);
     try (var context = Context.current().withCancellation()) {
       context.cancel(new IllegalStateException("cancelled before installation"));
-      context.run(
-          () ->
-              assertThatThrownBy(() -> assertThat(owner.forInstallation(frozenClock)).isNotNull())
-                  .isInstanceOf(IllegalStateException.class));
+      context.run(() ->
+          assertThatThrownBy(() -> assertThat(owner.forInstallation(frozenClock)).isNotNull())
+              .isInstanceOf(IllegalStateException.class));
     }
     verifyNoInteractions(client);
   }
@@ -222,11 +221,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     CompletableFuture<Void> close = new CompletableFuture<>();
     CountDownLatch connected = new CountDownLatch(1);
     when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
-        .thenAnswer(
-            invocation -> {
-              connected.countDown();
-              return ConnectionFuture.from(new InetSocketAddress("localhost", 6379), handshake);
-            });
+        .thenAnswer(invocation -> {
+          connected.countDown();
+          return ConnectionFuture.from(new InetSocketAddress("localhost", 6379), handshake);
+        });
     when(connection.closeAsync()).thenReturn(close);
     Semaphore permits =
         (Semaphore)
@@ -238,17 +236,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       var caller =
-          executor.submit(
-              () ->
-                  assertThatThrownBy(
-                          () ->
-                              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                                  CLOCK,
-                                  CLOCK.millis() + 500,
-                                  budget ->
-                                      ReflectionTestUtils.invokeMethod(
-                                          owner, "openConnection", budget)))
-                      .isInstanceOf(IllegalStateException.class));
+          executor.submit(() ->
+              assertThatThrownBy(() ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                          CLOCK,
+                          CLOCK.millis() + 500,
+                          budget ->
+                              ReflectionTestUtils.invokeMethod(owner, "openConnection", budget)))
+                  .isInstanceOf(IllegalStateException.class));
       try {
         assertThat(connected.await(2, TimeUnit.SECONDS)).isTrue();
         caller.get(2, TimeUnit.SECONDS);
@@ -434,15 +429,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
     when(connection.closeAsync()).thenReturn(close);
     when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
-              if ("INITIALIZE"
-                  .equals(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))) {
-                submittedArguments.set(arguments);
-              }
-              return initialized;
-            });
+        .thenAnswer(invocation -> {
+          byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+          if ("INITIALIZE"
+              .equals(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))) {
+            submittedArguments.set(arguments);
+          }
+          return initialized;
+        });
     when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
     RuntimeIdentity identity =
         new RuntimeIdentity(
@@ -577,17 +571,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       var caller =
-          executor.submit(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                      CLOCK,
-                      CLOCK.millis() + 4000,
-                      budget -> {
-                        owner
-                            .forTransferBudget(budget)
-                            .withTransferReadback(ignored -> readbackReturned.countDown());
-                        return true;
-                      }));
+          executor.submit(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  CLOCK,
+                  CLOCK.millis() + 4000,
+                  budget -> {
+                    owner
+                        .forTransferBudget(budget)
+                        .withTransferReadback(ignored -> readbackReturned.countDown());
+                    return true;
+                  }));
       try {
         assertThat(readbackReturned.await(2, TimeUnit.SECONDS)).isTrue();
         verify(connection, timeout(1000)).closeAsync();
@@ -617,12 +610,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     RedisClient redis = mock();
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
     when(provider.acquire())
-        .thenAnswer(
-            invocation -> {
-              entered.countDown();
-              awaitUninterruptibly(release);
-              return connection;
-            });
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
     DSLContext dsl = source(provider);
     var owner =
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
@@ -648,11 +640,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     long started = System.nanoTime();
     try {
-      assertThatThrownBy(
-              () ->
-                  Context.current()
-                      .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
-                      .call(() -> owner.readExact(request, reservation)))
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
+                  .call(() -> owner.readExact(request, reservation)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
@@ -683,24 +674,22 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     Connection connection = mock();
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
     when(provider.acquire())
-        .thenAnswer(
-            invocation -> {
-              entered.countDown();
-              awaitUninterruptibly(release);
-              return connection;
-            });
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
     var inventory = new CanonicalGameplayBindingInventoryRepository(source(provider));
     var candidate = mock(CanonicalGameplayOriginalNewCandidate.class);
     UUID transitionId = UUID.randomUUID();
     when(candidate.bindingDecisionId()).thenReturn(transitionId);
     long started = System.nanoTime();
     try {
-      assertThatThrownBy(
-              () ->
-                  inventory.withinTransferRead(
-                      CLOCK,
-                      CLOCK.millis() + 1000,
-                      scoped -> scoped.readRegionTransferCommittedSource(transitionId, candidate)))
+      assertThatThrownBy(() ->
+              inventory.withinTransferRead(
+                  CLOCK,
+                  CLOCK.millis() + 1000,
+                  scoped -> scoped.readRegionTransferCommittedSource(transitionId, candidate)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2500);
@@ -718,12 +707,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     Connection connection = mock();
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
     when(provider.acquire())
-        .thenAnswer(
-            invocation -> {
-              entered.countDown();
-              awaitUninterruptibly(release);
-              return connection;
-            });
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
     var dsl = source(provider);
     var transferRepository =
         new CanonicalGameplayRegionOwnerTransferRepository(
@@ -767,11 +755,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             "sha256:" + "e".repeat(64));
 
     try {
-      assertThatThrownBy(
-              () ->
-                  transfer.withStatusRepository(
-                      CLOCK.millis() + 1000,
-                      statusRepository -> statusRepository.findTimelinePreparation(regionSource)))
+      assertThatThrownBy(() ->
+              transfer.withStatusRepository(
+                  CLOCK.millis() + 1000,
+                  statusRepository -> statusRepository.findTimelinePreparation(regionSource)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
       verifyNoInteractions(connection);
@@ -834,12 +821,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     AtomicBoolean returned = new AtomicBoolean();
     AtomicBoolean orderingViolation = new AtomicBoolean();
     when(statement.execute())
-        .thenAnswer(
-            invocation -> {
-              executing.countDown();
-              awaitUninterruptibly(finishExecution);
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          executing.countDown();
+          awaitUninterruptibly(finishExecution);
+          return true;
+        });
     doAnswer(
             invocation -> {
               if (returned.get()) orderingViolation.set(true);
@@ -864,10 +850,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     DSLContext dsl = source(provider);
     long started = System.nanoTime();
     try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                      CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                  CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
           .isInstanceOf(IllegalStateException.class);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(executing.await(1, TimeUnit.SECONDS)).isTrue();
@@ -921,19 +906,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       int before = retained.get();
       int available = permits.availablePermits();
       try {
-        assertThatThrownBy(
-                () ->
-                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                        CLOCK,
-                        Long.MAX_VALUE,
-                        budget -> {
-                          captured.set(budget);
-                          var scoped =
-                              budget.sql(source(provider)).configuration().connectionProvider();
-                          scoped.acquire();
-                          scoped.acquire();
-                          return true;
-                        }))
+        assertThatThrownBy(() ->
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                    CLOCK,
+                    Long.MAX_VALUE,
+                    budget -> {
+                      captured.set(budget);
+                      var scoped =
+                          budget.sql(source(provider)).configuration().connectionProvider();
+                      scoped.acquire();
+                      scoped.acquire();
+                      return true;
+                    }))
             .isInstanceOf(IllegalStateException.class);
         assertThat(
                 registry
@@ -989,24 +973,48 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     int priorOperations = operations.availablePermits();
     int priorBackground = background.availablePermits();
     int priorRetained = retained.get();
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.class);
+    var events =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    events.start();
+    logger.addAppender(events);
+    CompletableFuture<Void> late = new CompletableFuture<>();
     CompletableFuture<Void> cancelled = new CompletableFuture<>();
-    cancelled.cancel(false);
     try {
-      for (var close :
-          List.of(
-              CompletableFuture.<Void>failedFuture(new IllegalStateException("close failed")),
-              cancelled)) {
-        assertThatThrownBy(
-                () ->
-                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                        CLOCK,
-                        Long.MAX_VALUE,
-                        budget -> {
-                          budget.awaitAsyncClose(close);
-                          return true;
-                        }))
-            .isInstanceOf(IllegalStateException.class);
-      }
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  CLOCK,
+                  Long.MAX_VALUE,
+                  budget -> {
+                    budget.awaitAsyncClose(
+                        CompletableFuture.failedFuture(
+                            new IllegalStateException(
+                                "fixture diagnostic marker must not be emitted")));
+                    return true;
+                  }))
+          .isExactlyInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          CLOCK,
+          Long.MAX_VALUE,
+          budget -> {
+            budget.retainUntilAsyncClose(cancelled);
+            budget.retainUntilAsyncClose(late);
+            return true;
+          });
+      assertThat(events.list).hasSize(1);
+      assertThat(cancelled.cancel(false)).isTrue();
+      assertThat(late.completeExceptionally(new IllegalStateException("second close failure")))
+          .isTrue();
+      assertThat(events.list)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .containsExactly(
+              "Original NEW Redis close failed; operation permit retained (category=exception)",
+              "Original NEW Redis close failed; operation permit retained (category=cancelled)");
+      assertThat(events.list).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
       assertThat(operations.availablePermits()).isEqualTo(priorOperations - 2);
       assertThat(background.availablePermits()).isEqualTo(priorBackground - 2);
       assertThat(
@@ -1016,6 +1024,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                   .value())
           .isEqualTo(priorRetained + 2);
     } finally {
+      late.complete(null);
+      cancelled.complete(null);
+      logger.detachAppender(events);
+      events.stop();
       operations.release(priorOperations - operations.availablePermits());
       background.release(priorBackground - background.availablePermits());
       retained.set(priorRetained);
@@ -1041,32 +1053,39 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .when(provider)
         .release(connection);
     DSLContext dsl = source(provider);
-    try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                      CLOCK,
-                      CLOCK.millis() + 200,
-                      budget -> {
-                        execute(budget.sql(dsl));
-                        awaitUninterruptibly(finish);
-                        return true;
-                      },
-                      cancellation ->
-                          Thread.ofVirtual()
-                              .name("test-original-new-capacity-cancel")
-                              .unstarted(
-                                  () -> {
-                                    try {
-                                      cancellation.run();
-                                    } finally {
-                                      cancellationWorkerFinished.countDown();
-                                    }
-                                  })))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(returned.await(1, TimeUnit.SECONDS)).isTrue();
-    } finally {
-      finish.countDown();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() -> {
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            CLOCK,
+                            Long.MAX_VALUE,
+                            budget -> {
+                              execute(budget.sql(dsl));
+                              awaitUninterruptibly(finish);
+                              return true;
+                            },
+                            cancellation ->
+                                Thread.ofVirtual()
+                                    .name("test-original-new-capacity-cancel")
+                                    .unstarted(() -> {
+                                      try {
+                                        cancellation.run();
+                                      } finally {
+                                        cancellationWorkerFinished.countDown();
+                                      }
+                                    })))
+                    .isInstanceOf(IllegalStateException.class);
+              }));
+      try {
+        assertThat(returned.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+      } finally {
+        finish.countDown();
+      }
     }
     assertThat(cancellationWorkerFinished.await(2, TimeUnit.SECONDS)).isTrue();
     awaitResourceAndCancellationWorkerCleanup();
@@ -1081,12 +1100,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
     CountDownLatch entered = new CountDownLatch(maximum), release = new CountDownLatch(1);
     when(provider.acquire())
-        .thenAnswer(
-            invocation -> {
-              entered.countDown();
-              awaitUninterruptibly(release);
-              return connection;
-            });
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
     DSLContext source = source(provider);
     var callers = new ArrayList<CompletableFuture<Void>>();
     var executor = Executors.newFixedThreadPool(maximum);
@@ -1095,21 +1113,21 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         callers.add(
             CompletableFuture.runAsync(
                 () ->
-                    assertThatThrownBy(
-                            () ->
-                                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                                    CLOCK,
-                                    CLOCK.millis() + 300,
-                                    budget -> execute(budget.sql(source))))
+                    assertThatThrownBy(() ->
+                            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                                CLOCK,
+                                CLOCK.millis() + 3000,
+                                budget -> execute(budget.sql(source))))
                         .isInstanceOf(IllegalStateException.class),
                 executor));
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                      CLOCK, CLOCK.millis() + 1000, budget -> execute(budget.sql(source))))
-          .isInstanceOf(IllegalStateException.class);
+      for (var caller : callers) assertThat(caller.isDone()).isFalse();
+      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(5, TimeUnit.SECONDS);
+      assertPromptBudgetRefusal(
+          executor,
+          () ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                  CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))));
       verify(provider, org.mockito.Mockito.times(maximum)).acquire();
       verifyNoInteractions(connection);
     } finally {
@@ -1131,13 +1149,12 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     CountDownLatch allEntered = new CountDownLatch(maximum);
     CountDownLatch release = new CountDownLatch(1);
     when(provider.acquire())
-        .thenAnswer(
-            invocation -> {
-              backgroundEntered.countDown();
-              allEntered.countDown();
-              awaitUninterruptibly(release);
-              return connection;
-            });
+        .thenAnswer(invocation -> {
+          backgroundEntered.countDown();
+          allEntered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
     DSLContext source = source(provider);
     var callers = new ArrayList<CompletableFuture<Void>>();
     var executor = Executors.newFixedThreadPool(maximum);
@@ -1146,26 +1163,25 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         callers.add(
             CompletableFuture.runAsync(
                 () ->
-                    assertThatThrownBy(
-                            () ->
-                                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                                    CLOCK,
-                                    CLOCK.millis() + 1000,
-                                    budget -> execute(budget.sql(source))))
+                    assertThatThrownBy(() ->
+                            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                                CLOCK,
+                                CLOCK.millis() + 1000,
+                                budget -> execute(budget.sql(source))))
                         .isInstanceOf(IllegalStateException.class),
                 executor));
       assertThat(backgroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
       var refused = new AtomicBoolean();
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                      CLOCK,
-                      Long.MAX_VALUE,
-                      budget -> {
-                        refused.set(true);
-                        return true;
-                      }))
-          .isInstanceOf(IllegalStateException.class);
+      assertPromptBudgetRefusal(
+          executor,
+          () ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  CLOCK,
+                  Long.MAX_VALUE,
+                  budget -> {
+                    refused.set(true);
+                    return true;
+                  }));
       assertThat(refused).isFalse();
       boolean admitted =
           CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
@@ -1175,28 +1191,43 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         callers.add(
             CompletableFuture.runAsync(
                 () ->
-                    assertThatThrownBy(
-                            () ->
-                                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                                    CLOCK,
-                                    CLOCK.millis() + 1000,
-                                    budget -> execute(budget.sql(source))))
+                    assertThatThrownBy(() ->
+                            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                                CLOCK,
+                                CLOCK.millis() + 1000,
+                                budget -> execute(budget.sql(source))))
                         .isInstanceOf(IllegalStateException.class),
                 executor));
       assertThat(allEntered.await(2, TimeUnit.SECONDS)).isTrue();
       CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
       // Callers timed out, but blocked acquisition still owns all four permits.
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                      CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))))
-          .isInstanceOf(IllegalStateException.class);
+      assertPromptBudgetRefusal(
+          executor,
+          () ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                  CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))));
       verify(provider, org.mockito.Mockito.times(maximum)).acquire();
       verifyNoInteractions(connection);
     } finally {
       release.countDown();
       executor.shutdownNow();
       verify(provider, timeout(2000).times(maximum)).release(connection);
+    }
+  }
+
+  private static void assertPromptBudgetRefusal(ExecutorService executor, Runnable extra)
+      throws Exception {
+    // The holders stay blocked. The independent watchdog is shorter than the five-second
+    // operation budget, so an operation that queues and times out cannot satisfy this assertion.
+    var refusal =
+        executor.submit(() ->
+            assertThatThrownBy(extra::run)
+                .isInstanceOf(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class));
+    try {
+      refusal.get(2, TimeUnit.SECONDS);
+    } finally {
+      refusal.cancel(true);
     }
   }
 
@@ -1209,29 +1240,27 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     AtomicInteger executions = new AtomicInteger();
     CountDownLatch second = new CountDownLatch(1), release = new CountDownLatch(1);
     when(statement.execute())
-        .thenAnswer(
-            invocation -> {
-              if (executions.incrementAndGet() == 1)
-                assertThat(new CountDownLatch(1).await(80, TimeUnit.MILLISECONDS)).isFalse();
-              else {
-                second.countDown();
-                awaitUninterruptibly(release);
-              }
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          if (executions.incrementAndGet() == 1)
+            assertThat(new CountDownLatch(1).await(80, TimeUnit.MILLISECONDS)).isFalse();
+          else {
+            second.countDown();
+            awaitUninterruptibly(release);
+          }
+          return true;
+        });
     DSLContext dsl = source(provider);
     long started = System.nanoTime();
     try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                      CLOCK,
-                      CLOCK.millis() + 250,
-                      budget -> {
-                        var sql = budget.sql(dsl);
-                        execute(sql);
-                        return execute(sql);
-                      }))
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                  CLOCK,
+                  CLOCK.millis() + 250,
+                  budget -> {
+                    var sql = budget.sql(dsl);
+                    execute(sql);
+                    return execute(sql);
+                  }))
           .isInstanceOf(IllegalStateException.class);
       assertThat(second.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(1500);
@@ -1253,10 +1282,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .isEqualTo("capacity-test");
     assertThat(ReflectionTestUtils.getField(rebound, "allocationVersion")).isEqualTo(7);
     assertThat(ReflectionTestUtils.getField(tags, "dsl")).isSameAs(original);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                    CLOCK, CLOCK.millis() - 1, budget -> execute(budget.sql(original))))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                CLOCK, CLOCK.millis() - 1, budget -> execute(budget.sql(original))))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(provider, operation);
   }
@@ -1271,45 +1299,54 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
         new AtomicReference<>();
     when(statement.execute())
-        .thenAnswer(
-            invocation -> {
-              entered.countDown();
-              awaitUninterruptibly(finish);
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(finish);
+          return true;
+        });
     DSLContext dsl = source(provider);
-    try {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                      CLOCK,
-                      CLOCK.millis() + 200,
-                      budget -> {
-                        captured.set(budget);
-                        return execute(budget.sql(dsl));
-                      },
-                      ignored -> {
-                        throw new java.util.concurrent.RejectedExecutionException(
-                            "Controlled startup refusal");
-                      }))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
-      verify(statement, never()).cancel();
-      verify(provider, never()).release(connection);
-      assertThat(ReflectionTestUtils.getField(captured.get(), "cancellationDone")).isEqualTo(true);
-      finish.countDown();
-      verify(provider, timeout(2000)).release(connection);
-      assertNoOwnedConnections(captured.get());
-      for (int index = 0;
-          index < 2 * CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
-          index++) {
-        boolean admitted =
-            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                CLOCK, Long.MAX_VALUE, budget -> true);
-        assertThat(admitted).isTrue();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() -> {
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            CLOCK,
+                            Long.MAX_VALUE,
+                            budget -> {
+                              captured.set(budget);
+                              return execute(budget.sql(dsl));
+                            },
+                            ignored -> {
+                              throw new java.util.concurrent.RejectedExecutionException(
+                                  "Controlled startup refusal");
+                            }))
+                    .isInstanceOf(IllegalStateException.class);
+              }));
+      try {
+        assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+        verify(statement, never()).cancel();
+        verify(provider, never()).release(connection);
+        assertThat(ReflectionTestUtils.getField(captured.get(), "cancellationDone"))
+            .isEqualTo(true);
+        finish.countDown();
+        verify(provider, timeout(2000)).release(connection);
+        assertNoOwnedConnections(captured.get());
+        for (int index = 0;
+            index
+                < 2 * CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+            index++) {
+          boolean admitted =
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                  CLOCK, Long.MAX_VALUE, budget -> true);
+          assertThat(admitted).isTrue();
+        }
+      } finally {
+        finish.countDown();
       }
-    } finally {
-      finish.countDown();
     }
   }
 
@@ -1320,17 +1357,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(provider.acquire()).thenReturn(connection);
     AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
         new AtomicReference<>();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                    CLOCK,
-                    Long.MAX_VALUE,
-                    budget -> {
-                      captured.set(budget);
-                      budget.sql(source(provider)).configuration().connectionProvider().acquire();
-                      throw new IllegalStateException(
-                          "Controlled exception before ordinary provider release");
-                    }))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                CLOCK,
+                Long.MAX_VALUE,
+                budget -> {
+                  captured.set(budget);
+                  budget.sql(source(provider)).configuration().connectionProvider().acquire();
+                  throw new IllegalStateException(
+                      "Controlled exception before ordinary provider release");
+                }))
         .isInstanceOf(IllegalStateException.class);
     verify(provider).release(connection);
     assertNoOwnedConnections(captured.get());
@@ -1346,11 +1382,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     PreparedStatement statement = mock();
     when(provider.acquire()).thenReturn(preparedConnection(statement));
     when(statement.execute())
-        .thenAnswer(
-            ignored -> {
-              now.addAndGet(1000);
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          now.addAndGet(1000);
+          return true;
+        });
     DSLContext dsl = source(provider);
 
     long retainedDeadline =
@@ -1399,10 +1434,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       long retainedDeadline =
           Context.current()
               .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
-              .call(
-                  () ->
-                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                          clock, clock.millis() + 4000, budget -> budget.absoluteDeadlineMillis()));
+              .call(() ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      clock, clock.millis() + 4000, budget -> budget.absoluteDeadlineMillis()));
       assertThat(retainedDeadline).isBetween(clock.millis() + 1, clock.millis() + 2000);
     } finally {
       scheduler.shutdownNow();
@@ -1439,12 +1473,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   private static boolean execute(DSLContext sql) {
-    return sql.connectionResult(
-        connection -> {
-          try (var statement = connection.prepareStatement("controlled")) {
-            return statement.execute();
-          }
-        });
+    return sql.connectionResult(connection -> {
+      try (var statement = connection.prepareStatement("controlled")) {
+        return statement.execute();
+      }
+    });
   }
 
   private static void awaitUninterruptibly(CountDownLatch latch) {

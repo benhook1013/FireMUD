@@ -67,10 +67,9 @@ class ProtectedProjectionMountTest {
         BASE_MOUNT
             + "10 1 0:9 / /parent/projection ro - tmpfs tmpfs rw\n"
             + "20 1 0:9 /other /parent rw - tmpfs tmpfs rw\n";
-    assertThatThrownBy(
-            () ->
-                ProtectedProjectionMount.parse(
-                    Path.of("/parent/projection"), table.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            ProtectedProjectionMount.parse(
+                Path.of("/parent/projection"), table.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IOException.class);
   }
 

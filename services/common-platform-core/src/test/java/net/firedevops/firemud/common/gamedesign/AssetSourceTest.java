@@ -80,25 +80,23 @@ class AssetSourceTest {
         binding(AssetSource.upsertPayload("1", "logo.png", AssetSource.Requiredness.REQUIRED));
     var revision = binding.revisions().getFirst();
 
-    assertThatThrownBy(
-            () ->
-                new AssetSource.Reference(
-                    "logo.png",
-                    "1",
-                    AssetSource.Requiredness.OPTIONAL,
-                    binding,
-                    "0",
-                    revision.revisionId()))
+    assertThatThrownBy(() ->
+            new AssetSource.Reference(
+                "logo.png",
+                "1",
+                AssetSource.Requiredness.OPTIONAL,
+                binding,
+                "0",
+                revision.revisionId()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AssetSource.Reference(
-                    "logo.png",
-                    "1",
-                    AssetSource.Requiredness.REQUIRED,
-                    binding,
-                    "0",
-                    UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            new AssetSource.Reference(
+                "logo.png",
+                "1",
+                AssetSource.Requiredness.REQUIRED,
+                binding,
+                "0",
+                UUID.randomUUID()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -111,18 +109,16 @@ class AssetSourceTest {
 
     assertThatThrownBy(() -> AssetSource.replay(references, foreign))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AssetSource.Snapshot(
-                    original, List.of(references.getFirst(), references.getFirst())))
+    assertThatThrownBy(() ->
+            new AssetSource.Snapshot(
+                original, List.of(references.getFirst(), references.getFirst())))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AssetSource.replay(
-                    references,
-                    binding(
-                        AssetSource.upsertPayload(
-                            "1", "alias.png", AssetSource.Requiredness.REQUIRED))))
+    assertThatThrownBy(() ->
+            AssetSource.replay(
+                references,
+                binding(
+                    AssetSource.upsertPayload(
+                        "1", "alias.png", AssetSource.Requiredness.REQUIRED))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

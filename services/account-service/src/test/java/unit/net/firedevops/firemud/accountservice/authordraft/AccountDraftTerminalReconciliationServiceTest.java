@@ -47,25 +47,23 @@ class AccountDraftTerminalReconciliationServiceTest {
   void unknownFromBothOwnersStaysPendingAndRemoteReadsRunOutsideTransactions() {
     Fixture f = fixture(Ordering.COMMIT_ORDER);
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-              assertThat(request.originalAccountBinding())
-                  .containsExactly(f.binding().canonicalBytes());
-              return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+          assertThat(request.originalAccountBinding())
+              .containsExactly(f.binding().canonicalBytes());
+          return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
+        });
     when(f.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-              assertThat(request.originalAccountBinding())
-                  .containsExactly(f.binding().canonicalBytes());
-              return new WorldDraftTerminalReadEvidence(request, Optional.empty());
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+          assertThat(request.originalAccountBinding())
+              .containsExactly(f.binding().canonicalBytes());
+          return new WorldDraftTerminalReadEvidence(request, Optional.empty());
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
     assertThat(f.manager().commits).isEqualTo(2);
@@ -80,19 +78,18 @@ class AccountDraftTerminalReconciliationServiceTest {
         readback(f.binding(), Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {7});
     f.stored().put(Owner.WORLD, world);
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(),
-                          Owner.GAME_DESIGN,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {8})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      f.binding(),
+                      Owner.GAME_DESIGN,
+                      Outcome.DEFINITIVELY_ABORTED,
+                      new byte[] {8})));
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId()))
         .contains(Settlement.FAILED_NONPUBLICATION);
@@ -110,19 +107,15 @@ class AccountDraftTerminalReconciliationServiceTest {
         readback(f.binding(), Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED, new byte[] {9});
     f.stored().put(Owner.GAME_DESIGN, gameDesign);
     when(f.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new WorldDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(),
-                          Owner.WORLD,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {10})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new WorldDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      f.binding(), Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {10})));
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId()))
         .contains(Settlement.FAILED_NONPUBLICATION);
@@ -154,31 +147,29 @@ class AccountDraftTerminalReconciliationServiceTest {
       Fixture f = fixture(Ordering.COMMIT_ORDER);
       int selectedMismatch = mismatch;
       when(f.gameDesignClient().read(any()))
-          .thenAnswer(
-              invocation -> {
-                var expected =
-                    (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-                var response = mock(GameDesignDraftTerminalReadEvidence.class);
-                var returnedRequest =
-                    selectedMismatch == 0
-                        ? new GameDesignDraftTerminalReadEvidence.Request(
-                            expected.schemaVersion(),
-                            "other-namespace",
-                            expected.readRequestId(),
-                            expected.originalAccountBinding())
-                        : expected;
-                var wrongBinding = binding();
-                var resultBinding = selectedMismatch == 2 ? wrongBinding : f.binding();
-                OwnerReadback value =
-                    readback(
-                        resultBinding,
-                        selectedMismatch == 1 ? Owner.WORLD : Owner.GAME_DESIGN,
-                        Outcome.DEFINITIVELY_ABORTED,
-                        new byte[] {11});
-                when(response.request()).thenReturn(returnedRequest);
-                when(response.ownerReadback()).thenReturn(Optional.of(value));
-                return response;
-              });
+          .thenAnswer(invocation -> {
+            var expected = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+            var response = mock(GameDesignDraftTerminalReadEvidence.class);
+            var returnedRequest =
+                selectedMismatch == 0
+                    ? new GameDesignDraftTerminalReadEvidence.Request(
+                        expected.schemaVersion(),
+                        "other-namespace",
+                        expected.readRequestId(),
+                        expected.originalAccountBinding())
+                    : expected;
+            var wrongBinding = binding();
+            var resultBinding = selectedMismatch == 2 ? wrongBinding : f.binding();
+            OwnerReadback value =
+                readback(
+                    resultBinding,
+                    selectedMismatch == 1 ? Owner.WORLD : Owner.GAME_DESIGN,
+                    Outcome.DEFINITIVELY_ABORTED,
+                    new byte[] {11});
+            when(response.request()).thenReturn(returnedRequest);
+            when(response.ownerReadback()).thenReturn(Optional.of(value));
+            return response;
+          });
 
       assertThatThrownBy(() -> f.service().reconcile(f.binding().operationId()))
           .isInstanceOf(IllegalArgumentException.class);
@@ -203,33 +194,28 @@ class AccountDraftTerminalReconciliationServiceTest {
               }
             });
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(),
-                          Owner.GAME_DESIGN,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {12})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      f.binding(),
+                      Owner.GAME_DESIGN,
+                      Outcome.DEFINITIVELY_ABORTED,
+                      new byte[] {12})));
+        });
     when(f.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new WorldDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(),
-                          Owner.WORLD,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {13})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new WorldDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      f.binding(), Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {13})));
+        });
 
     assertThatThrownBy(() -> f.service().reconcile(f.binding().operationId()))
         .isInstanceOf(IllegalStateException.class)
@@ -260,31 +246,26 @@ class AccountDraftTerminalReconciliationServiceTest {
               original.sources());
       assertThat(changed.canonicalBytes()).isNotEqualTo(original.canonicalBytes());
       when(f.gameDesignClient().read(any()))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideTransaction(f);
-                var request =
-                    (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-                doAnswer(
-                        originalRead -> {
-                          assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                              .isTrue();
-                          assertThat(
-                                  TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                              .isFalse();
-                          return absent ? Optional.empty() : Optional.of(changed);
-                        })
-                    .when(f.repository())
-                    .readOriginalBinding(any());
-                return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideTransaction(f);
+            var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+            doAnswer(
+                    originalRead -> {
+                      assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                          .isTrue();
+                      assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                          .isFalse();
+                      return absent ? Optional.empty() : Optional.of(changed);
+                    })
+                .when(f.repository())
+                .readOriginalBinding(any());
+            return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
+          });
       when(f.worldClient().read(any()))
-          .thenAnswer(
-              invocation -> {
-                assertOutsideTransaction(f);
-                return new WorldDraftTerminalReadEvidence(
-                    invocation.getArgument(0), Optional.empty());
-              });
+          .thenAnswer(invocation -> {
+            assertOutsideTransaction(f);
+            return new WorldDraftTerminalReadEvidence(invocation.getArgument(0), Optional.empty());
+          });
 
       assertThatThrownBy(() -> f.service().reconcile(original.operationId()))
           .isInstanceOf(IllegalStateException.class);
@@ -297,19 +278,18 @@ class AccountDraftTerminalReconciliationServiceTest {
   void lostResponseDoesNotInventAbortAndExactRetrySettlesFromBothImmutableResults() {
     Fixture f = fixture(Ordering.COMMIT_ORDER);
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(),
-                          Owner.GAME_DESIGN,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {14})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      f.binding(),
+                      Owner.GAME_DESIGN,
+                      Outcome.DEFINITIVELY_ABORTED,
+                      new byte[] {14})));
+        });
     when(f.worldClient().read(any()))
         .thenThrow(new IllegalStateException("synthetic lost response"));
     assertThatThrownBy(() -> f.service().reconcile(f.binding().operationId()))
@@ -346,21 +326,19 @@ class AccountDraftTerminalReconciliationServiceTest {
     OwnerReadback worldAbort =
         readback(f.binding(), Owner.WORLD, Outcome.DEFINITIVELY_ABORTED, new byte[] {26});
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              f.stored().put(Owner.GAME_DESIGN, gameDesignAbort);
-              f.stored().put(Owner.WORLD, worldAbort);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          f.stored().put(Owner.GAME_DESIGN, gameDesignAbort);
+          f.stored().put(Owner.WORLD, worldAbort);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(request, Optional.empty());
+        });
     when(f.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new WorldDraftTerminalReadEvidence(request, Optional.empty());
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new WorldDraftTerminalReadEvidence(request, Optional.empty());
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId()))
         .contains(Settlement.FAILED_NONPUBLICATION);
@@ -377,26 +355,24 @@ class AccountDraftTerminalReconciliationServiceTest {
     OwnerReadback originalWorld =
         readback(f.binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {16});
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(),
-                          Owner.GAME_DESIGN,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {17})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      f.binding(),
+                      Owner.GAME_DESIGN,
+                      Outcome.DEFINITIVELY_ABORTED,
+                      new byte[] {17})));
+        });
     when(f.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return worldEvidence(request, originalWorld);
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return worldEvidence(request, originalWorld);
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
     assertThat(f.stored().get(Owner.WORLD).canonicalBytes())
@@ -415,28 +391,23 @@ class AccountDraftTerminalReconciliationServiceTest {
   void bothCommitOrderCommitsSettleAndRevokeOrderNeverAcceptsACommit() {
     Fixture committed = fixture(Ordering.COMMIT_ORDER);
     when(committed.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(committed);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          committed.binding(),
-                          Owner.GAME_DESIGN,
-                          Outcome.COMMITTED,
-                          new byte[] {20})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(committed);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      committed.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {20})));
+        });
     when(committed.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(committed);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return worldEvidence(
-                  request,
-                  readback(committed.binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {21}));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(committed);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return worldEvidence(
+              request,
+              readback(committed.binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {21}));
+        });
     assertThat(committed.service().reconcile(committed.binding().operationId()))
         .contains(Settlement.COMMITTED);
 
@@ -447,19 +418,18 @@ class AccountDraftTerminalReconciliationServiceTest {
             Owner.GAME_DESIGN,
             readback(revoked.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {22}));
     when(revoked.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(revoked);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new WorldDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          revoked.binding(),
-                          Owner.WORLD,
-                          Outcome.DEFINITIVELY_ABORTED,
-                          new byte[] {23})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(revoked);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new WorldDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(
+                      revoked.binding(),
+                      Owner.WORLD,
+                      Outcome.DEFINITIVELY_ABORTED,
+                      new byte[] {23})));
+        });
     assertThat(revoked.service().reconcile(revoked.binding().operationId()))
         .contains(Settlement.PENDING);
     assertThat(revoked.stored().get(Owner.GAME_DESIGN).outcome()).isEqualTo(Outcome.COMMITTED);
@@ -496,14 +466,12 @@ class AccountDraftTerminalReconciliationServiceTest {
     var ambientTransaction = new TransactionTemplate(ambient.manager());
     ambientTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     ambientTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    ambientTransaction.execute(
-        status -> {
-          assertThatThrownBy(() -> ambient.service().reconcile(ambient.binding().operationId()))
-              .isInstanceOf(IllegalStateException.class);
-          verifyNoInteractions(
-              ambient.repository(), ambient.gameDesignClient(), ambient.worldClient());
-          return null;
-        });
+    ambientTransaction.execute(status -> {
+      assertThatThrownBy(() -> ambient.service().reconcile(ambient.binding().operationId()))
+          .isInstanceOf(IllegalStateException.class);
+      verifyNoInteractions(ambient.repository(), ambient.gameDesignClient(), ambient.worldClient());
+      return null;
+    });
   }
 
   @Test
@@ -513,16 +481,14 @@ class AccountDraftTerminalReconciliationServiceTest {
             Ordering.COMMIT_ORDER,
             requiredBinding(List.of(DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)));
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {31})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(f.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {31})));
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.COMMITTED);
     assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.COMMITTED);
@@ -543,24 +509,21 @@ class AccountDraftTerminalReconciliationServiceTest {
                     DraftCommitBinding.Owner.WORLD_MANAGEMENT,
                     DraftCommitBinding.Owner.ENTITY_MANAGEMENT)));
     when(f.gameDesignClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return new GameDesignDraftTerminalReadEvidence(
-                  request,
-                  Optional.of(
-                      readback(
-                          f.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {32})));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (GameDesignDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return new GameDesignDraftTerminalReadEvidence(
+              request,
+              Optional.of(
+                  readback(f.binding(), Owner.GAME_DESIGN, Outcome.COMMITTED, new byte[] {32})));
+        });
     when(f.worldClient().read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction(f);
-              var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
-              return worldEvidence(
-                  request, readback(f.binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {33}));
-            });
+        .thenAnswer(invocation -> {
+          assertOutsideTransaction(f);
+          var request = (WorldDraftTerminalReadEvidence.Request) invocation.getArgument(0);
+          return worldEvidence(
+              request, readback(f.binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {33}));
+        });
 
     assertThat(f.service().reconcile(f.binding().operationId())).contains(Settlement.PENDING);
     byte[] originalWorld = f.stored().get(Owner.WORLD).canonicalBytes();
@@ -584,20 +547,18 @@ class AccountDraftTerminalReconciliationServiceTest {
             original.inputDigest());
     var revisions =
         java.util.stream.IntStream.range(0, owners.size())
-            .mapToObj(
-                index ->
-                    new DraftCommitBinding.RevisionPayload(
-                        Integer.toString(index),
-                        UUID.randomUUID(),
-                        owners.get(index),
-                        "payload-" + index))
+            .mapToObj(index ->
+                new DraftCommitBinding.RevisionPayload(
+                    Integer.toString(index),
+                    UUID.randomUUID(),
+                    owners.get(index),
+                    "payload-" + index))
             .toList();
     var affected =
         owners.stream()
-            .map(
-                owner ->
-                    new DraftCommitBinding.AffectedUnit(
-                        owner, "aggregate", owner.name(), "aggregate", owner.name(), "0"))
+            .map(owner ->
+                new DraftCommitBinding.AffectedUnit(
+                    owner, "aggregate", owner.name(), "aggregate", owner.name(), "0"))
             .toList();
     var complete =
         DraftCommitBinding.create(
@@ -638,33 +599,30 @@ class AccountDraftTerminalReconciliationServiceTest {
     when(repository.readOriginalBinding(any())).thenReturn(Optional.of(binding));
     when(repository.read(any())).thenAnswer(invocation -> fenceSnapshot(binding, ordering));
     when(repository.readOwnerResult(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              Owner owner = invocation.getArgument(1);
-              OwnerReadback value = stored.get(owner);
-              return value == null
-                  ? Optional.empty()
-                  : Optional.of(
-                      new DraftAuthorizationFenceRepository.OwnerResultSnapshot(
-                          value.outcome(), value.canonicalBytes(), OffsetDateTime.now()));
-            });
+        .thenAnswer(invocation -> {
+          Owner owner = invocation.getArgument(1);
+          OwnerReadback value = stored.get(owner);
+          return value == null
+              ? Optional.empty()
+              : Optional.of(
+                  new DraftAuthorizationFenceRepository.OwnerResultSnapshot(
+                      value.outcome(), value.canonicalBytes(), OffsetDateTime.now()));
+        });
     when(repository.readSettlement(any()))
-        .thenAnswer(
-            invocation -> {
-              if (ordering == Ordering.RESERVED
-                  || !stored.keySet().equals(java.util.Set.copyOf(binding.requiredOwners()))) {
-                return Settlement.PENDING;
-              }
-              if (ordering == Ordering.COMMIT_ORDER
-                  && stored.values().stream()
-                      .allMatch(value -> value.outcome() == Outcome.COMMITTED)) {
-                return Settlement.COMMITTED;
-              }
-              return stored.values().stream()
-                      .allMatch(value -> value.outcome() == Outcome.DEFINITIVELY_ABORTED)
-                  ? Settlement.FAILED_NONPUBLICATION
-                  : Settlement.PENDING;
-            });
+        .thenAnswer(invocation -> {
+          if (ordering == Ordering.RESERVED
+              || !stored.keySet().equals(java.util.Set.copyOf(binding.requiredOwners()))) {
+            return Settlement.PENDING;
+          }
+          if (ordering == Ordering.COMMIT_ORDER
+              && stored.values().stream().allMatch(value -> value.outcome() == Outcome.COMMITTED)) {
+            return Settlement.COMMITTED;
+          }
+          return stored.values().stream()
+                  .allMatch(value -> value.outcome() == Outcome.DEFINITIVELY_ABORTED)
+              ? Settlement.FAILED_NONPUBLICATION
+              : Settlement.PENDING;
+        });
     doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();

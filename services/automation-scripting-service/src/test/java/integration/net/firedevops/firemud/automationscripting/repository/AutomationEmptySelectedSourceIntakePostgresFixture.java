@@ -131,10 +131,9 @@ final class AutomationEmptySelectedSourceIntakePostgresFixture {
     DraftCommitBinding authored = authoredBinding(declarationPayload);
     TemplateConfigOwnerSourceInventoryDeclaration ownerDeclaration =
         TemplateConfigSourceValues.mutations(authored).stream()
-            .filter(
-                mutation ->
-                    mutation.operation()
-                        == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .filter(mutation ->
+                mutation.operation()
+                    == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
             .map(TemplateConfigSourceValues.Mutation::ownerInventoryDeclaration)
             .findFirst()
             .orElseThrow();
@@ -364,15 +363,14 @@ final class AutomationEmptySelectedSourceIntakePostgresFixture {
             0,
             0,
             selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList(),
             emptyInboundClosure());
     var ownerScope =

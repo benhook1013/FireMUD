@@ -112,37 +112,34 @@ class AccountGameplayDelegationRedisClientTest {
         .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
     when(commands.<Long>evalsha(
             anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[][] keys = invocation.getArgument(2);
-              Object[] rawArguments = invocation.getRawArguments();
-              if (rawArguments.length != 4
-                  || !(rawArguments[3] instanceof byte[][] arguments)
-                  || arguments.length != 3) return -1L;
-              String key = new String(keys[0], StandardCharsets.UTF_8);
-              String mode = new String(arguments[0], StandardCharsets.US_ASCII);
-              byte[] current = stored.get(key);
-              if (current != null && Arrays.equals(current, arguments[2])) return 0L;
-              if (("ABSENT".equals(mode) && current != null)
-                  || ("PRESENT".equals(mode) && !Arrays.equals(current, arguments[1]))) {
-                return -1L;
-              }
-              stored.put(key, arguments[2].clone());
-              return 1L;
-            });
+        .thenAnswer(invocation -> {
+          byte[][] keys = invocation.getArgument(2);
+          Object[] rawArguments = invocation.getRawArguments();
+          if (rawArguments.length != 4
+              || !(rawArguments[3] instanceof byte[][] arguments)
+              || arguments.length != 3) return -1L;
+          String key = new String(keys[0], StandardCharsets.UTF_8);
+          String mode = new String(arguments[0], StandardCharsets.US_ASCII);
+          byte[] current = stored.get(key);
+          if (current != null && Arrays.equals(current, arguments[2])) return 0L;
+          if (("ABSENT".equals(mode) && current != null)
+              || ("PRESENT".equals(mode) && !Arrays.equals(current, arguments[1]))) {
+            return -1L;
+          }
+          stored.put(key, arguments[2].clone());
+          return 1L;
+        });
     doReturn(List.of(1L, 1L))
         .when(commands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     when(commands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation ->
-                stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
+        .thenAnswer(invocation ->
+            stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
     AccountGameplayDelegationRedisClient client =
-        client(
-            () -> {
-              openedConnections.incrementAndGet();
-              return connection;
-            });
+        client(() -> {
+          openedConnections.incrementAndGet();
+          return connection;
+        });
 
     assertThat(
             client.publishSelectedAuthorityEventPage(ACCOUNT_ID, tenant, false, null, candidates))
@@ -159,11 +156,10 @@ class AccountGameplayDelegationRedisClientTest {
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     verify(commands)
         .get(
-            argThat(
-                key ->
-                    Arrays.equals(
-                        key,
-                        ascii("session:auth:generation:membership:" + ACCOUNT_ID + ":" + tenant))));
+            argThat(key ->
+                Arrays.equals(
+                    key,
+                    ascii("session:auth:generation:membership:" + ACCOUNT_ID + ":" + tenant))));
     verify(connection).close();
     assertThat(args.getAllValues()).hasSize(128);
     for (int index = 0; index < candidates.size(); index++) {
@@ -192,21 +188,19 @@ class AccountGameplayDelegationRedisClientTest {
         .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
     when(failedCommands.<Long>evalsha(
             anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(
-            invocation -> {
-              int attempt = attempts.incrementAndGet();
-              if (attempt == 3) return -1L;
-              Object[] rawArguments = invocation.getRawArguments();
-              if (rawArguments.length != 4
-                  || !(rawArguments[3] instanceof byte[][] arguments)
-                  || arguments.length != 3) return -1L;
-              stored.put(key, arguments[2].clone());
-              return 1L;
-            });
-    assertThatThrownBy(
-            () ->
-                client(failedConnection)
-                    .publishSelectedAuthorityEventPage(ACCOUNT_ID, tenant, false, null, candidates))
+        .thenAnswer(invocation -> {
+          int attempt = attempts.incrementAndGet();
+          if (attempt == 3) return -1L;
+          Object[] rawArguments = invocation.getRawArguments();
+          if (rawArguments.length != 4
+              || !(rawArguments[3] instanceof byte[][] arguments)
+              || arguments.length != 3) return -1L;
+          stored.put(key, arguments[2].clone());
+          return 1L;
+        });
+    assertThatThrownBy(() ->
+            client(failedConnection)
+                .publishSelectedAuthorityEventPage(ACCOUNT_ID, tenant, false, null, candidates))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     assertThat(stored.get(key)).containsExactly(candidates.get(1));
     verify(failedCommands, org.mockito.Mockito.never())
@@ -220,22 +214,20 @@ class AccountGameplayDelegationRedisClientTest {
         .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
     when(recoveryCommands.<Long>evalsha(
             anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(
-            invocation -> {
-              Object[] rawArguments = invocation.getRawArguments();
-              if (rawArguments.length != 4
-                  || !(rawArguments[3] instanceof byte[][] arguments)
-                  || arguments.length != 3) return -1L;
-              stored.put(key, arguments[2].clone());
-              return 1L;
-            });
+        .thenAnswer(invocation -> {
+          Object[] rawArguments = invocation.getRawArguments();
+          if (rawArguments.length != 4
+              || !(rawArguments[3] instanceof byte[][] arguments)
+              || arguments.length != 3) return -1L;
+          stored.put(key, arguments[2].clone());
+          return 1L;
+        });
     doReturn(List.of(1L, 1L))
         .when(recoveryCommands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     when(recoveryCommands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation ->
-                stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
+        .thenAnswer(invocation ->
+            stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
 
     assertThat(
             client(recoveryConnection)
@@ -270,11 +262,9 @@ class AccountGameplayDelegationRedisClientTest {
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
       if (badReadback) when(commands.get(any(byte[].class))).thenReturn(ascii("wrong head"));
 
-      assertThatThrownBy(
-              () ->
-                  client(connection)
-                      .publishSelectedAuthorityEventPage(
-                          ACCOUNT_ID, tenant, false, null, candidates))
+      assertThatThrownBy(() ->
+              client(connection)
+                  .publishSelectedAuthorityEventPage(ACCOUNT_ID, tenant, false, null, candidates))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       verify(connection).close();
@@ -302,25 +292,23 @@ class AccountGameplayDelegationRedisClientTest {
     when(commands.scriptLoad(any(byte[].class)))
         .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
     when(commands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation ->
-                stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
+        .thenAnswer(invocation ->
+            stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
     when(commands.<Long>evalsha(
             anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[][] keys = invocation.getArgument(2);
-              String key = new String(keys[0], StandardCharsets.UTF_8);
-              if (key.startsWith("session:auth:generation:tenant:")) {
-                stored.put(key, values[2]);
-                return 1L;
-              }
-              if (key.startsWith("session:auth:generation:membership:")) {
-                stored.put(key, values[3]);
-                return 1L;
-              }
-              return 0L;
-            });
+        .thenAnswer(invocation -> {
+          byte[][] keys = invocation.getArgument(2);
+          String key = new String(keys[0], StandardCharsets.UTF_8);
+          if (key.startsWith("session:auth:generation:tenant:")) {
+            stored.put(key, values[2]);
+            return 1L;
+          }
+          if (key.startsWith("session:auth:generation:membership:")) {
+            stored.put(key, values[3]);
+            return 1L;
+          }
+          return 0L;
+        });
     doReturn(List.of(1L, 1L))
         .when(commands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
@@ -351,22 +339,20 @@ class AccountGameplayDelegationRedisClientTest {
       var connection = connection();
       var commands = connection.sync();
       when(commands.get(any(byte[].class)))
-          .thenAnswer(
-              invocation -> {
-                String key = new String(invocation.getArgument(0), StandardCharsets.UTF_8);
-                if (key.contains(":issuer:")) return values[0];
-                if (key.contains(":account:")) return values[1];
-                if (key.contains(":tenant:")) return values[2];
-                return missing ? null : values[3];
-              });
+          .thenAnswer(invocation -> {
+            String key = new String(invocation.getArgument(0), StandardCharsets.UTF_8);
+            if (key.contains(":issuer:")) return values[0];
+            if (key.contains(":account:")) return values[1];
+            if (key.contains(":tenant:")) return values[2];
+            return missing ? null : values[3];
+          });
       if (!missing)
         when(commands.pttl(any(byte[].class)))
-            .thenAnswer(
-                invocation ->
-                    new String(invocation.getArgument(0), StandardCharsets.UTF_8)
-                            .contains(":membership:")
-                        ? 500L
-                        : -1L);
+            .thenAnswer(invocation ->
+                new String(invocation.getArgument(0), StandardCharsets.UTF_8)
+                        .contains(":membership:")
+                    ? 500L
+                    : -1L);
       assertThatThrownBy(
               () -> client(connection).readSelectedAuthorityProjections(ACCOUNT_ID, tenant))
           .isInstanceOf(
@@ -391,18 +377,16 @@ class AccountGameplayDelegationRedisClientTest {
         .when(commands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     when(commands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[] key = invocation.getArgument(0);
-              if (Arrays.equals(
-                  key, ascii("session:auth:generation:issuer:firemud-account-service"))) {
-                return values[0].clone();
-              }
-              if (Arrays.equals(key, ascii("session:auth:generation:account:" + ACCOUNT_ID))) {
-                return values[1].clone();
-              }
-              return null;
-            });
+        .thenAnswer(invocation -> {
+          byte[] key = invocation.getArgument(0);
+          if (Arrays.equals(key, ascii("session:auth:generation:issuer:firemud-account-service"))) {
+            return values[0].clone();
+          }
+          if (Arrays.equals(key, ascii("session:auth:generation:account:" + ACCOUNT_ID))) {
+            return values[1].clone();
+          }
+          return null;
+        });
     AccountGameplayDelegationRedisClient client = client(connection);
 
     assertThat(client.publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
@@ -433,10 +417,9 @@ class AccountGameplayDelegationRedisClientTest {
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     verify(commands)
         .get(
-            argThat(
-                key ->
-                    Arrays.equals(
-                        key, ascii("session:auth:generation:issuer:firemud-account-service"))));
+            argThat(key ->
+                Arrays.equals(
+                    key, ascii("session:auth:generation:issuer:firemud-account-service"))));
     verify(commands, times(2))
         .get(
             argThat(
@@ -470,13 +453,12 @@ class AccountGameplayDelegationRedisClientTest {
     var connection = connection();
     var commands = connection.sync();
     when(commands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[] key = invocation.getArgument(0);
-              return Arrays.equals(key, ascii("session:auth:generation:account:" + ACCOUNT_ID))
-                  ? pair[1]
-                  : pair[0];
-            });
+        .thenAnswer(invocation -> {
+          byte[] key = invocation.getArgument(0);
+          return Arrays.equals(key, ascii("session:auth:generation:account:" + ACCOUNT_ID))
+              ? pair[1]
+              : pair[0];
+        });
     when(commands.pttl(any(byte[].class))).thenReturn(1000L);
     assertThatThrownBy(() -> client(connection).readAuthorityProjections(ACCOUNT_ID))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
@@ -490,15 +472,13 @@ class AccountGameplayDelegationRedisClientTest {
     var connection = connection();
     var commands = connection.sync();
     when(commands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[] key = invocation.getArgument(0);
-              return Arrays.equals(key, issuerProjectionKey()) ? pair[0] : pair[1];
-            });
+        .thenAnswer(invocation -> {
+          byte[] key = invocation.getArgument(0);
+          return Arrays.equals(key, issuerProjectionKey()) ? pair[0] : pair[1];
+        });
     when(commands.pttl(any(byte[].class)))
-        .thenAnswer(
-            invocation ->
-                Arrays.equals(invocation.getArgument(0), issuerProjectionKey()) ? 1L : -1L);
+        .thenAnswer(invocation ->
+            Arrays.equals(invocation.getArgument(0), issuerProjectionKey()) ? 1L : -1L);
 
     assertThatThrownBy(() -> client(connection).readAuthorityProjections(ACCOUNT_ID))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
@@ -522,17 +502,15 @@ class AccountGameplayDelegationRedisClientTest {
         .when(commands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     when(commands.get(any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              byte[] key = invocation.getArgument(0);
-              if (Arrays.equals(key, issuerProjectionKey())) return values[0].clone();
-              if (Arrays.equals(key, accountProjectionKey())) return values[1].clone();
-              return null;
-            });
+        .thenAnswer(invocation -> {
+          byte[] key = invocation.getArgument(0);
+          if (Arrays.equals(key, issuerProjectionKey())) return values[0].clone();
+          if (Arrays.equals(key, accountProjectionKey())) return values[1].clone();
+          return null;
+        });
     when(commands.pttl(any(byte[].class)))
-        .thenAnswer(
-            invocation ->
-                Arrays.equals(invocation.getArgument(0), issuerProjectionKey()) ? 1L : -1L);
+        .thenAnswer(invocation ->
+            Arrays.equals(invocation.getArgument(0), issuerProjectionKey()) ? 1L : -1L);
 
     assertThatThrownBy(
             () -> client(connection).publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
@@ -557,10 +535,8 @@ class AccountGameplayDelegationRedisClientTest {
         .when(noAckCommands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
 
-    assertThatThrownBy(
-            () ->
-                client(noAckConnection)
-                    .publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
+    assertThatThrownBy(() ->
+            client(noAckConnection).publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verify(noAckCommands, times(1)).get(any(byte[].class));
 
@@ -576,10 +552,9 @@ class AccountGameplayDelegationRedisClientTest {
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
     when(readbackCommands.get(any(byte[].class))).thenReturn(null, ascii("wrong projection"));
 
-    assertThatThrownBy(
-            () ->
-                client(readbackConnection)
-                    .publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
+    assertThatThrownBy(() ->
+            client(readbackConnection)
+                .publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
   }
 
@@ -596,9 +571,8 @@ class AccountGameplayDelegationRedisClientTest {
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
           .thenReturn(result);
 
-      assertThatThrownBy(
-              () ->
-                  client(connection).publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
+      assertThatThrownBy(() ->
+              client(connection).publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
 
@@ -622,11 +596,10 @@ class AccountGameplayDelegationRedisClientTest {
     assertThat(descriptors).hasSize(1);
     RedisScriptDescriptor issuer =
         descriptors.stream()
-            .filter(
-                descriptor ->
-                    descriptor
-                        .scriptId()
-                        .equals(AccountGameplayDelegationRedisClient.ISSUER_PROJECTION_SCRIPT_ID))
+            .filter(descriptor ->
+                descriptor
+                    .scriptId()
+                    .equals(AccountGameplayDelegationRedisClient.ISSUER_PROJECTION_SCRIPT_ID))
             .findFirst()
             .orElseThrow();
     RedisScriptDescriptor account =
@@ -720,11 +693,9 @@ class AccountGameplayDelegationRedisClientTest {
     RedisScriptDescriptor descriptor =
         new AccountGameplayDelegationRedisScriptContribution()
             .descriptors().stream()
-                .filter(
-                    item ->
-                        item.scriptId()
-                            .equals(
-                                AccountGameplayDelegationRedisClient.ACTIVE_TRANSITION_SCRIPT_ID))
+                .filter(item ->
+                    item.scriptId()
+                        .equals(AccountGameplayDelegationRedisClient.ACTIVE_TRANSITION_SCRIPT_ID))
                 .findFirst()
                 .orElseThrow();
     assertThat(descriptor.owner()).isEqualTo("account-service");
@@ -832,10 +803,9 @@ class AccountGameplayDelegationRedisClientTest {
         client(
             () -> fixture.connection(),
             Clock.fixed(Instant.ofEpochSecond(expirySecond), ZoneOffset.UTC));
-    assertThatThrownBy(
-            () ->
-                atExpiry.requirePendingRecord(
-                    fixture.pendingRecord().tokenHash(), pendingBytes, expiryMillis))
+    assertThatThrownBy(() ->
+            atExpiry.requirePendingRecord(
+                fixture.pendingRecord().tokenHash(), pendingBytes, expiryMillis))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
   }
 
@@ -847,12 +817,11 @@ class AccountGameplayDelegationRedisClientTest {
             () -> fixture.connection(),
             Clock.fixed(Instant.ofEpochMilli(fixture.absoluteExpiryMillis()), ZoneOffset.UTC));
 
-    assertThatThrownBy(
-            () ->
-                atDeadline.requirePendingRecord(
-                    fixture.pendingRecord().tokenHash(),
-                    fixture.registryValue().get(),
-                    fixture.absoluteExpiryMillis()))
+    assertThatThrownBy(() ->
+            atDeadline.requirePendingRecord(
+                fixture.pendingRecord().tokenHash(),
+                fixture.registryValue().get(),
+                fixture.absoluteExpiryMillis()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
   }
 
@@ -861,11 +830,8 @@ class AccountGameplayDelegationRedisClientTest {
     ActivationFixture fixture =
         activationFixture(Clock.fixed(Instant.ofEpochSecond(1_800_000_180L), ZoneOffset.UTC));
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .client()
-                    .activateCommittedPending(fixture.pendingReceipt(), fixture.owner()))
+    assertThatThrownBy(() ->
+            fixture.client().activateCommittedPending(fixture.pendingReceipt(), fixture.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verify(fixture.commands(), times(1))
         .<Long>evalsha(
@@ -877,12 +843,10 @@ class AccountGameplayDelegationRedisClientTest {
       throws Exception {
     ActivationFixture ownerMismatch = activationFixture();
     doReturn("f".repeat(64)).when(ownerMismatch.owner()).tokenSha256();
-    assertThatThrownBy(
-            () ->
-                ownerMismatch
-                    .client()
-                    .activateCommittedPending(
-                        ownerMismatch.pendingReceipt(), ownerMismatch.owner()))
+    assertThatThrownBy(() ->
+            ownerMismatch
+                .client()
+                .activateCommittedPending(ownerMismatch.pendingReceipt(), ownerMismatch.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verify(ownerMismatch.commands(), times(1))
         .<Long>evalsha(
@@ -890,11 +854,8 @@ class AccountGameplayDelegationRedisClientTest {
 
     ActivationFixture missing = activationFixture();
     missing.registryValue().set(null);
-    assertThatThrownBy(
-            () ->
-                missing
-                    .client()
-                    .activateCommittedPending(missing.pendingReceipt(), missing.owner()))
+    assertThatThrownBy(() ->
+            missing.client().activateCommittedPending(missing.pendingReceipt(), missing.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verify(missing.commands(), times(1))
         .<Long>evalsha(
@@ -916,11 +877,10 @@ class AccountGameplayDelegationRedisClientTest {
   void committedActivationRejectsWrongRoleExpiryReadbackAndInsufficientAof() throws Exception {
     ActivationFixture wrongRole = activationFixture();
     doReturn("account_coord_admin").when(wrongRole.commands()).aclWhoami();
-    assertThatThrownBy(
-            () ->
-                wrongRole
-                    .client()
-                    .activateCommittedPending(wrongRole.pendingReceipt(), wrongRole.owner()))
+    assertThatThrownBy(() ->
+            wrongRole
+                .client()
+                .activateCommittedPending(wrongRole.pendingReceipt(), wrongRole.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verify(wrongRole.commands(), times(1))
         .<Long>evalsha(
@@ -930,11 +890,10 @@ class AccountGameplayDelegationRedisClientTest {
     doReturn(wrongExpiry.absoluteExpiryMillis() + 1L)
         .when(wrongExpiry.commands())
         .pexpiretime(any(byte[].class));
-    assertThatThrownBy(
-            () ->
-                wrongExpiry
-                    .client()
-                    .activateCommittedPending(wrongExpiry.pendingReceipt(), wrongExpiry.owner()))
+    assertThatThrownBy(() ->
+            wrongExpiry
+                .client()
+                .activateCommittedPending(wrongExpiry.pendingReceipt(), wrongExpiry.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verify(wrongExpiry.commands(), times(1))
         .<Long>evalsha(
@@ -942,19 +901,16 @@ class AccountGameplayDelegationRedisClientTest {
 
     ActivationFixture wrongReadback = activationFixture();
     AtomicInteger reads = new AtomicInteger();
-    doAnswer(
-            invocation ->
-                reads.incrementAndGet() == 2
-                    ? ascii("unexpected-active-readback")
-                    : wrongReadback.registryValue().get().clone())
+    doAnswer(invocation ->
+            reads.incrementAndGet() == 2
+                ? ascii("unexpected-active-readback")
+                : wrongReadback.registryValue().get().clone())
         .when(wrongReadback.commands())
         .get(any(byte[].class));
-    assertThatThrownBy(
-            () ->
-                wrongReadback
-                    .client()
-                    .activateCommittedPending(
-                        wrongReadback.pendingReceipt(), wrongReadback.owner()))
+    assertThatThrownBy(() ->
+            wrongReadback
+                .client()
+                .activateCommittedPending(wrongReadback.pendingReceipt(), wrongReadback.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     assertThat(wrongReadback.absoluteExpiry().get())
         .isEqualTo(wrongReadback.absoluteExpiryMillis());
@@ -963,12 +919,11 @@ class AccountGameplayDelegationRedisClientTest {
     doReturn(List.of(1L, 0L))
         .when(insufficientAof.commands())
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
-    assertThatThrownBy(
-            () ->
-                insufficientAof
-                    .client()
-                    .activateCommittedPending(
-                        insufficientAof.pendingReceipt(), insufficientAof.owner()))
+    assertThatThrownBy(() ->
+            insufficientAof
+                .client()
+                .activateCommittedPending(
+                    insufficientAof.pendingReceipt(), insufficientAof.owner()))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     assertThat(
             GameSessionAccountDelegationRegistryRecord.decode(

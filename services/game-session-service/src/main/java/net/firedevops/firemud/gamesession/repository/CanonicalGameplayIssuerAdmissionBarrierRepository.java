@@ -60,75 +60,72 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState before =
         readCurrentState();
     PreparedInitializerSource source =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              if (requestAssignment != null) {
-                requireCurrentTagMapping(
-                    transaction,
-                    requestAssignment.tenantId(),
-                    requestAssignment.tenantGameplayTag());
-              }
-              CanonicalGameplayIssuerInstalledAnchor anchor =
-                  CanonicalGameplayIssuerBootstrapCoverageRepository
-                      .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
-              CanonicalGameplayIssuerAdmissionControlValue control =
-                  CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
-                      transaction, anchor, before);
-              Record byOperation =
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + INITIALIZER
-                          + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
-                      operationId,
-                      ISSUER);
-              if (byOperation != null) {
-                CanonicalGameplayIssuerAdmissionBarrierValue frozen =
-                    readFrozenInitializer(transaction, byOperation, null, anchor, control, before);
-                if (requestAssignment != null) {
-                  requireSameTargetAssignment(requestAssignment, frozen.initializer());
-                }
-                return new PreparedInitializerSource(frozen, null);
-              }
-              if (requestAssignment == null) {
-                throw conflict("The exact original tenant initializer disappeared");
-              }
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          if (requestAssignment != null) {
+            requireCurrentTagMapping(
+                transaction, requestAssignment.tenantId(), requestAssignment.tenantGameplayTag());
+          }
+          CanonicalGameplayIssuerInstalledAnchor anchor =
+              CanonicalGameplayIssuerBootstrapCoverageRepository
+                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
+          CanonicalGameplayIssuerAdmissionControlValue control =
+              CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
+                  transaction, anchor, before);
+          Record byOperation =
+              transaction.fetchOne(
+                  "SELECT * FROM "
+                      + INITIALIZER
+                      + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
+                  operationId,
+                  ISSUER);
+          if (byOperation != null) {
+            CanonicalGameplayIssuerAdmissionBarrierValue frozen =
+                readFrozenInitializer(transaction, byOperation, null, anchor, control, before);
+            if (requestAssignment != null) {
+              requireSameTargetAssignment(requestAssignment, frozen.initializer());
+            }
+            return new PreparedInitializerSource(frozen, null);
+          }
+          if (requestAssignment == null) {
+            throw conflict("The exact original tenant initializer disappeared");
+          }
 
-              CurrentRequestTarget requestTarget =
-                  requireCurrentRequestTarget(transaction, operationId, requestAssignment, before);
-              Record targetInitializer =
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + INITIALIZER
-                          + " WHERE issuer_id = ? AND tenant_id = ?"
-                          + " AND playable_state_namespace_id = ? AND live_barrier_epoch = ?"
-                          + " FOR UPDATE",
-                      ISSUER,
-                      requestAssignment.tenantId(),
-                      requestAssignment.playableStateNamespaceId(),
-                      control.liveBarrierEpoch());
-              if (targetInitializer != null) {
-                CanonicalGameplayIssuerAdmissionBarrierValue frozen =
-                    readFrozenInitializer(
-                        transaction, targetInitializer, requestAssignment, anchor, control, before);
-                return new PreparedInitializerSource(frozen, requestAssignment);
-              }
+          CurrentRequestTarget requestTarget =
+              requireCurrentRequestTarget(transaction, operationId, requestAssignment, before);
+          Record targetInitializer =
+              transaction.fetchOne(
+                  "SELECT * FROM "
+                      + INITIALIZER
+                      + " WHERE issuer_id = ? AND tenant_id = ?"
+                      + " AND playable_state_namespace_id = ? AND live_barrier_epoch = ?"
+                      + " FOR UPDATE",
+                  ISSUER,
+                  requestAssignment.tenantId(),
+                  requestAssignment.playableStateNamespaceId(),
+                  control.liveBarrierEpoch());
+          if (targetInitializer != null) {
+            CanonicalGameplayIssuerAdmissionBarrierValue frozen =
+                readFrozenInitializer(
+                    transaction, targetInitializer, requestAssignment, anchor, control, before);
+            return new PreparedInitializerSource(frozen, requestAssignment);
+          }
 
-              CanonicalGameplayAdmissionBarrierTuple tuple =
-                  buildOriginalInitializer(
-                      transaction,
-                      operationId,
-                      requestTarget,
-                      requestAssignment,
-                      anchor,
-                      control,
-                      before);
-              CanonicalGameplayIssuerAdmissionBarrierValue original =
-                  CanonicalGameplayIssuerAdmissionBarrierValue.open(tuple.initializer());
-              persistOriginalInitializer(transaction, original);
-              return new PreparedInitializerSource(original, requestAssignment);
-            });
+          CanonicalGameplayAdmissionBarrierTuple tuple =
+              buildOriginalInitializer(
+                  transaction,
+                  operationId,
+                  requestTarget,
+                  requestAssignment,
+                  anchor,
+                  control,
+                  before);
+          CanonicalGameplayIssuerAdmissionBarrierValue original =
+              CanonicalGameplayIssuerAdmissionBarrierValue.open(tuple.initializer());
+          persistOriginalInitializer(transaction, original);
+          return new PreparedInitializerSource(original, requestAssignment);
+        });
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current =
         readCurrentState();
     CanonicalGameplayIssuerAdmissionBarrierValue value = source.value();
@@ -205,56 +202,54 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     requireNoAmbientTransaction();
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current =
         readCurrentState();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-          CanonicalGameplayIssuerAdmissionControlValue control =
-              readCurrentControl(transaction, anchor, current);
-          if (!cutoffOperationId.equals(control.currentOperationId())
-              || control.state()
-                  != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING) {
-            throw conflict("The exact current issuer cutoff is not pending");
-          }
-          new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
-              .verifyCurrentCutoffTarget(transaction, control, tenantId, namespaceId, null);
-          Record target =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + CUTOFF_TARGET
-                      + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
-                      + " AND playable_state_namespace_id = ? FOR UPDATE",
-                  cutoffOperationId,
-                  ISSUER,
-                  tenantId,
-                  namespaceId);
-          if (target == null
-              || !tenantId.equals(requiredUuid(target, "tenant_id"))
-              || !namespaceId.equals(requiredUuid(target, "playable_state_namespace_id"))) {
-            throw conflict("The exact durable cutoff target is unavailable");
-          }
-          String tenantTag = requireText(target, "tenant_gameplay_tag");
-          requireCurrentTagMapping(transaction, tenantId, tenantTag);
-          CanonicalGameplayIssuerAdmissionBarrierValue closed =
-              CanonicalGameplayIssuerAdmissionBarrierValue.decode(
-                  requireBytes(target, "closed_payload_bytes"));
-          byte[] capturedOpen = target.get("captured_open_payload_bytes", byte[].class);
-          CanonicalGameplayIssuerAdmissionBarrierValue expectedOpen =
-              capturedOpen == null
-                  ? null
-                  : CanonicalGameplayIssuerAdmissionBarrierValue.decode(capturedOpen);
-          if (!closed.exactDigest().equals(target.get("closed_payload_digest", String.class))) {
-            throw conflict("Persisted issuer cutoff target digest is invalid");
-          }
-          return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget(
-              closed,
-              expectedOpen,
-              CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
-                  ISSUER, tenantId, namespaceId, tenantTag));
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+      CanonicalGameplayIssuerAdmissionControlValue control =
+          readCurrentControl(transaction, anchor, current);
+      if (!cutoffOperationId.equals(control.currentOperationId())
+          || control.state() != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING) {
+        throw conflict("The exact current issuer cutoff is not pending");
+      }
+      new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+          .verifyCurrentCutoffTarget(transaction, control, tenantId, namespaceId, null);
+      Record target =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + CUTOFF_TARGET
+                  + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
+                  + " AND playable_state_namespace_id = ? FOR UPDATE",
+              cutoffOperationId,
+              ISSUER,
+              tenantId,
+              namespaceId);
+      if (target == null
+          || !tenantId.equals(requiredUuid(target, "tenant_id"))
+          || !namespaceId.equals(requiredUuid(target, "playable_state_namespace_id"))) {
+        throw conflict("The exact durable cutoff target is unavailable");
+      }
+      String tenantTag = requireText(target, "tenant_gameplay_tag");
+      requireCurrentTagMapping(transaction, tenantId, tenantTag);
+      CanonicalGameplayIssuerAdmissionBarrierValue closed =
+          CanonicalGameplayIssuerAdmissionBarrierValue.decode(
+              requireBytes(target, "closed_payload_bytes"));
+      byte[] capturedOpen = target.get("captured_open_payload_bytes", byte[].class);
+      CanonicalGameplayIssuerAdmissionBarrierValue expectedOpen =
+          capturedOpen == null
+              ? null
+              : CanonicalGameplayIssuerAdmissionBarrierValue.decode(capturedOpen);
+      if (!closed.exactDigest().equals(target.get("closed_payload_digest", String.class))) {
+        throw conflict("Persisted issuer cutoff target digest is invalid");
+      }
+      return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget(
+          closed,
+          expectedOpen,
+          CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
+              ISSUER, tenantId, namespaceId, tenantTag));
+    });
   }
 
   @Override
@@ -274,37 +269,35 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
             ? null
             : tenantTags.assignmentForTransition(prepared.assignment().transitionId());
     if (assignment != null) requireSameAssignment(prepared.assignment(), assignment);
-    dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-          CanonicalGameplayIssuerAdmissionControlValue control =
-              CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
-                  transaction, anchor, current);
-          if (!control.liveBarrierEpoch().equals(initializer.admissionEpoch())
-              || !control.currentOperationId().equals(anchor.bootstrapOperationId())) {
-            throw conflict("Original initializer no longer belongs to current OPEN live control");
-          }
-          if (assignment != null) {
-            requireCurrentTagMapping(
-                transaction, assignment.tenantId(), assignment.tenantGameplayTag());
-            requireCurrentRequestTarget(
-                transaction, prepared.requestOperationId(), assignment, current);
-          }
-          Record saved =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + INITIALIZER
-                      + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
-                  initializer.operationId(),
-                  ISSUER);
-          readFrozenInitializer(
-              transaction, saved, prepared.assignment(), anchor, control, current);
-          return null;
-        });
+    dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+      CanonicalGameplayIssuerAdmissionControlValue control =
+          CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
+              transaction, anchor, current);
+      if (!control.liveBarrierEpoch().equals(initializer.admissionEpoch())
+          || !control.currentOperationId().equals(anchor.bootstrapOperationId())) {
+        throw conflict("Original initializer no longer belongs to current OPEN live control");
+      }
+      if (assignment != null) {
+        requireCurrentTagMapping(
+            transaction, assignment.tenantId(), assignment.tenantGameplayTag());
+        requireCurrentRequestTarget(
+            transaction, prepared.requestOperationId(), assignment, current);
+      }
+      Record saved =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + INITIALIZER
+                  + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
+              initializer.operationId(),
+              ISSUER);
+      readFrozenInitializer(transaction, saved, prepared.assignment(), anchor, control, current);
+      return null;
+    });
   }
 
   @Override
@@ -315,30 +308,29 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current =
         readCurrentState();
     CanonicalGameplayIssuerAdmissionBarrierValue closed = prepared.closedValue();
-    dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-          CanonicalGameplayIssuerAdmissionControlValue value =
-              readCurrentControl(transaction, anchor, current);
-          if (!closed.ownerOperationId().equals(value.currentOperationId())
-              || value.state() != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING
-              || !closed.admissionEpoch().equals(value.liveBarrierEpoch())) {
-            throw conflict("Prepared CLOSED target no longer belongs to current pending cutoff");
-          }
-          new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
-              .verifyCurrentCutoffTarget(
-                  transaction,
-                  value,
-                  closed.tenantId(),
-                  closed.playableStateNamespaceId(),
-                  closed.exactBytes());
-          requireCurrentTagMapping(transaction, closed.tenantId(), closed.tenantGameplayTag());
-          return null;
-        });
+    dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+      CanonicalGameplayIssuerAdmissionControlValue value =
+          readCurrentControl(transaction, anchor, current);
+      if (!closed.ownerOperationId().equals(value.currentOperationId())
+          || value.state() != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING
+          || !closed.admissionEpoch().equals(value.liveBarrierEpoch())) {
+        throw conflict("Prepared CLOSED target no longer belongs to current pending cutoff");
+      }
+      new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+          .verifyCurrentCutoffTarget(
+              transaction,
+              value,
+              closed.tenantId(),
+              closed.playableStateNamespaceId(),
+              closed.exactBytes());
+      requireCurrentTagMapping(transaction, closed.tenantId(), closed.tenantGameplayTag());
+      return null;
+    });
   }
 
   @Override
@@ -357,70 +349,66 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     }
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current =
         readCurrentState();
-    dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-          CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
-              transaction, anchor, current);
-          Record initializer =
-              transaction.fetchSingle(
-                  "SELECT * FROM "
-                      + INITIALIZER
-                      + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
-                  value.initializer().operationId(),
-                  ISSUER);
-          requirePersistedInitializer(initializer, value);
-          String initializationState = initializer.get("initialization_state", String.class);
-          if (!List.of("INITIALIZING", "OPEN_CONFIRMED").contains(initializationState)) {
-            throw conflict("OPEN readback has no durable first-attempt initializer state");
-          }
-          transaction.execute(
-              "INSERT INTO "
-                  + INITIALIZER_RECEIPT
-                  + " (operation_id, issuer_id, exact_open_payload_bytes,"
-                  + " exact_open_payload_digest, script_outcome) VALUES (?, ?, ?, ?, ?)"
-                  + " ON CONFLICT (operation_id) DO NOTHING",
+    dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+      CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
+          transaction, anchor, current);
+      Record initializer =
+          transaction.fetchSingle(
+              "SELECT * FROM "
+                  + INITIALIZER
+                  + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
               value.initializer().operationId(),
-              ISSUER,
-              value.exactBytes(),
-              value.exactDigest(),
-              (short) readback.scriptOutcome());
-          Record receipt =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + INITIALIZER_RECEIPT
-                      + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
-                  value.initializer().operationId(),
-                  ISSUER);
-          if (receipt == null
-              || !Arrays.equals(
-                  requireBytes(receipt, "exact_open_payload_bytes"), value.exactBytes())
-              || !value.exactDigest().equals(receipt.get("exact_open_payload_digest", String.class))
-              || !List.of((short) 1, (short) 2)
-                  .contains(receipt.get("script_outcome", Short.class))) {
-            throw conflict(
-                "Original OPEN readback receipt conflicts with durable initializer bytes");
-          }
-          if ("INITIALIZING".equals(initializationState)) {
-            int confirmed =
-                transaction.execute(
-                    "UPDATE "
-                        + INITIALIZER
-                        + " SET initialization_state = 'OPEN_CONFIRMED'"
-                        + " WHERE operation_id = ? AND issuer_id = ?"
-                        + " AND initialization_state = 'INITIALIZING'",
-                    value.initializer().operationId(),
-                    ISSUER);
-            if (confirmed != 1) {
-              throw conflict("Original OPEN receipt could not confirm its initializer state");
-            }
-          }
-          return null;
-        });
+              ISSUER);
+      requirePersistedInitializer(initializer, value);
+      String initializationState = initializer.get("initialization_state", String.class);
+      if (!List.of("INITIALIZING", "OPEN_CONFIRMED").contains(initializationState)) {
+        throw conflict("OPEN readback has no durable first-attempt initializer state");
+      }
+      transaction.execute(
+          "INSERT INTO "
+              + INITIALIZER_RECEIPT
+              + " (operation_id, issuer_id, exact_open_payload_bytes,"
+              + " exact_open_payload_digest, script_outcome) VALUES (?, ?, ?, ?, ?)"
+              + " ON CONFLICT (operation_id) DO NOTHING",
+          value.initializer().operationId(),
+          ISSUER,
+          value.exactBytes(),
+          value.exactDigest(),
+          (short) readback.scriptOutcome());
+      Record receipt =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + INITIALIZER_RECEIPT
+                  + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
+              value.initializer().operationId(),
+              ISSUER);
+      if (receipt == null
+          || !Arrays.equals(requireBytes(receipt, "exact_open_payload_bytes"), value.exactBytes())
+          || !value.exactDigest().equals(receipt.get("exact_open_payload_digest", String.class))
+          || !List.of((short) 1, (short) 2).contains(receipt.get("script_outcome", Short.class))) {
+        throw conflict("Original OPEN readback receipt conflicts with durable initializer bytes");
+      }
+      if ("INITIALIZING".equals(initializationState)) {
+        int confirmed =
+            transaction.execute(
+                "UPDATE "
+                    + INITIALIZER
+                    + " SET initialization_state = 'OPEN_CONFIRMED'"
+                    + " WHERE operation_id = ? AND issuer_id = ?"
+                    + " AND initialization_state = 'INITIALIZING'",
+                value.initializer().operationId(),
+                ISSUER);
+        if (confirmed != 1) {
+          throw conflict("Original OPEN receipt could not confirm its initializer state");
+        }
+      }
+      return null;
+    });
   }
 
   @Override
@@ -437,70 +425,65 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     }
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current =
         readCurrentState();
-    dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-          CanonicalGameplayIssuerAdmissionControlValue control =
-              readCurrentControl(transaction, anchor, current);
-          if (!value.ownerOperationId().equals(control.currentOperationId())
-              || control.state()
-                  != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING) {
-            throw conflict("CLOSED readback is not owned by the current pending cutoff");
-          }
-          new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
-              .verifyCurrentCutoffTarget(
-                  transaction,
-                  control,
-                  value.tenantId(),
-                  value.playableStateNamespaceId(),
-                  value.exactBytes());
-          requireCurrentTagMapping(transaction, value.tenantId(), value.tenantGameplayTag());
-          Record target =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + CUTOFF_TARGET
-                      + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
-                      + " AND playable_state_namespace_id = ? FOR UPDATE",
-                  value.ownerOperationId(),
-                  ISSUER,
-                  value.tenantId(),
-                  value.playableStateNamespaceId());
-          if (target == null
-              || !Arrays.equals(requireBytes(target, "closed_payload_bytes"), value.exactBytes())
-              || !value.exactDigest().equals(target.get("closed_payload_digest", String.class))) {
-            throw conflict("CLOSED readback target changed before durable acknowledgement");
-          }
-          String state = target.get("target_state", String.class);
-          if ("REQUIRED".equals(state)) {
-            int updated =
-                transaction.execute(
-                    "UPDATE "
-                        + CUTOFF_TARGET
-                        + " SET exact_closed_readback_bytes = ?, exact_closed_readback_digest = ? ,"
-                        + " script_outcome = ?, target_state = 'CLOSED'"
-                        + " WHERE operation_id = ? AND target_ordinal = ? AND target_state = 'REQUIRED'",
-                    value.exactBytes(),
-                    value.exactDigest(),
-                    (short) readback.scriptOutcome(),
-                    value.ownerOperationId(),
-                    target.get("target_ordinal", Long.class));
-            if (updated != 1) throw conflict("CLOSED target changed during receipt persistence");
-          } else if (!"CLOSED".equals(state)
-              || !Arrays.equals(
-                  requireBytes(target, "exact_closed_readback_bytes"), value.exactBytes())
-              || !value
-                  .exactDigest()
-                  .equals(target.get("exact_closed_readback_digest", String.class))
-              || !List.of((short) 1, (short) 2, (short) 3)
-                  .contains(target.get("script_outcome", Short.class))) {
-            throw conflict("CLOSED retry conflicts with its immutable durable readback");
-          }
-          return null;
-        });
+    dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+      CanonicalGameplayIssuerAdmissionControlValue control =
+          readCurrentControl(transaction, anchor, current);
+      if (!value.ownerOperationId().equals(control.currentOperationId())
+          || control.state() != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING) {
+        throw conflict("CLOSED readback is not owned by the current pending cutoff");
+      }
+      new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+          .verifyCurrentCutoffTarget(
+              transaction,
+              control,
+              value.tenantId(),
+              value.playableStateNamespaceId(),
+              value.exactBytes());
+      requireCurrentTagMapping(transaction, value.tenantId(), value.tenantGameplayTag());
+      Record target =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + CUTOFF_TARGET
+                  + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
+                  + " AND playable_state_namespace_id = ? FOR UPDATE",
+              value.ownerOperationId(),
+              ISSUER,
+              value.tenantId(),
+              value.playableStateNamespaceId());
+      if (target == null
+          || !Arrays.equals(requireBytes(target, "closed_payload_bytes"), value.exactBytes())
+          || !value.exactDigest().equals(target.get("closed_payload_digest", String.class))) {
+        throw conflict("CLOSED readback target changed before durable acknowledgement");
+      }
+      String state = target.get("target_state", String.class);
+      if ("REQUIRED".equals(state)) {
+        int updated =
+            transaction.execute(
+                "UPDATE "
+                    + CUTOFF_TARGET
+                    + " SET exact_closed_readback_bytes = ?, exact_closed_readback_digest = ? ,"
+                    + " script_outcome = ?, target_state = 'CLOSED'"
+                    + " WHERE operation_id = ? AND target_ordinal = ? AND target_state = 'REQUIRED'",
+                value.exactBytes(),
+                value.exactDigest(),
+                (short) readback.scriptOutcome(),
+                value.ownerOperationId(),
+                target.get("target_ordinal", Long.class));
+        if (updated != 1) throw conflict("CLOSED target changed during receipt persistence");
+      } else if (!"CLOSED".equals(state)
+          || !Arrays.equals(requireBytes(target, "exact_closed_readback_bytes"), value.exactBytes())
+          || !value.exactDigest().equals(target.get("exact_closed_readback_digest", String.class))
+          || !List.of((short) 1, (short) 2, (short) 3)
+              .contains(target.get("script_outcome", Short.class))) {
+        throw conflict("CLOSED retry conflicts with its immutable durable readback");
+      }
+      return null;
+    });
   }
 
   private CurrentRequestTarget requireCurrentRequestTarget(
@@ -788,76 +771,73 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
             ? null
             : tenantTags.assignmentForTransition(prepared.assignment().transitionId());
     if (assignment != null) requireSameAssignment(prepared.assignment(), assignment);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-          CanonicalGameplayIssuerAdmissionControlValue control =
-              CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
-                  transaction, anchor, current);
-          if (!control.liveBarrierEpoch().equals(value.admissionEpoch())
-              || !control.currentOperationId().equals(anchor.bootstrapOperationId())) {
-            throw conflict(
-                "Original initializer no longer belongs to the current OPEN live control");
-          }
-          if (assignment != null) {
-            requireCurrentTagMapping(
-                transaction, assignment.tenantId(), assignment.tenantGameplayTag());
-            requireCurrentRequestTarget(
-                transaction, prepared.requestOperationId(), assignment, current);
-          }
-          Record saved =
-              transaction.fetchSingle(
-                  "SELECT * FROM "
-                      + INITIALIZER
-                      + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
-                  operationId,
-                  ISSUER);
-          readFrozenInitializer(
-              transaction, saved, prepared.assignment(), anchor, control, current);
-          requirePersistedInitializer(saved, value);
-          String state = saved.get("initialization_state", String.class);
-          if ("PREPARED".equals(state)) {
-            Record origin =
-                transaction.fetchOne(
-                    "SELECT transition.status AS transition_status FROM "
-                        + LOCAL_OPERATION
-                        + " operation JOIN game_session_canonical_binding_transition transition"
-                        + " ON transition.transition_id = operation.transition_id"
-                        + " WHERE operation.operation_id = ? AND operation.issuer_id = ?"
-                        + " FOR SHARE OF operation, transition",
-                    operationId,
-                    ISSUER);
-            if (origin == null) {
-              throw conflict("Original initializer lost its persisted local-operation provenance");
-            }
-            if ("ABORTED".equals(origin.get("transition_status", String.class))) {
-              return false;
-            }
-            if (!List.of("PROVISIONAL", "COMMITTED")
-                .contains(origin.get("transition_status", String.class))) {
-              throw conflict("Original initializer source is no longer an eligible first NEW");
-            }
-            int claimed =
-                transaction.execute(
-                    "UPDATE "
-                        + INITIALIZER
-                        + " SET initialization_state = 'INITIALIZING'"
-                        + " WHERE operation_id = ? AND issuer_id = ?"
-                        + " AND initialization_state = 'PREPARED'",
-                    operationId,
-                    ISSUER);
-            if (claimed != 1) {
-              throw conflict("Original initializer first-create permit was not uniquely claimed");
-            }
-            return true;
-          }
-          if ("INITIALIZING".equals(state) || "OPEN_CONFIRMED".equals(state)) return false;
-          throw conflict("Original initializer has an unknown or non-admitting durable state");
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+      CanonicalGameplayIssuerAdmissionControlValue control =
+          CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
+              transaction, anchor, current);
+      if (!control.liveBarrierEpoch().equals(value.admissionEpoch())
+          || !control.currentOperationId().equals(anchor.bootstrapOperationId())) {
+        throw conflict("Original initializer no longer belongs to the current OPEN live control");
+      }
+      if (assignment != null) {
+        requireCurrentTagMapping(
+            transaction, assignment.tenantId(), assignment.tenantGameplayTag());
+        requireCurrentRequestTarget(
+            transaction, prepared.requestOperationId(), assignment, current);
+      }
+      Record saved =
+          transaction.fetchSingle(
+              "SELECT * FROM "
+                  + INITIALIZER
+                  + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
+              operationId,
+              ISSUER);
+      readFrozenInitializer(transaction, saved, prepared.assignment(), anchor, control, current);
+      requirePersistedInitializer(saved, value);
+      String state = saved.get("initialization_state", String.class);
+      if ("PREPARED".equals(state)) {
+        Record origin =
+            transaction.fetchOne(
+                "SELECT transition.status AS transition_status FROM "
+                    + LOCAL_OPERATION
+                    + " operation JOIN game_session_canonical_binding_transition transition"
+                    + " ON transition.transition_id = operation.transition_id"
+                    + " WHERE operation.operation_id = ? AND operation.issuer_id = ?"
+                    + " FOR SHARE OF operation, transition",
+                operationId,
+                ISSUER);
+        if (origin == null) {
+          throw conflict("Original initializer lost its persisted local-operation provenance");
+        }
+        if ("ABORTED".equals(origin.get("transition_status", String.class))) {
+          return false;
+        }
+        if (!List.of("PROVISIONAL", "COMMITTED")
+            .contains(origin.get("transition_status", String.class))) {
+          throw conflict("Original initializer source is no longer an eligible first NEW");
+        }
+        int claimed =
+            transaction.execute(
+                "UPDATE "
+                    + INITIALIZER
+                    + " SET initialization_state = 'INITIALIZING'"
+                    + " WHERE operation_id = ? AND issuer_id = ?"
+                    + " AND initialization_state = 'PREPARED'",
+                operationId,
+                ISSUER);
+        if (claimed != 1) {
+          throw conflict("Original initializer first-create permit was not uniquely claimed");
+        }
+        return true;
+      }
+      if ("INITIALIZING".equals(state) || "OPEN_CONFIRMED".equals(state)) return false;
+      throw conflict("Original initializer has an unknown or non-admitting durable state");
+    });
   }
 
   private UUID transitionForLocalOperation(UUID operationId) {
@@ -874,13 +854,12 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
 
   private CanonicalGameplayIssuerInstalledAnchor readInstalledAnchor(
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current) {
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          return CanonicalGameplayIssuerBootstrapCoverageRepository
-              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      return CanonicalGameplayIssuerBootstrapCoverageRepository
+          .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+    });
   }
 
   private CanonicalGameplayIssuerAdmissionControlValue readCurrentControl(
@@ -978,13 +957,12 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
       throw conflict("Issuer tenant barrier owner cannot join an ambient SQL transaction");
     }
     try {
-      dsl.connectionResult(
-          connection -> {
-            if (!connection.getAutoCommit()) {
-              throw conflict("Issuer tenant barrier owner cannot join a jOOQ transaction");
-            }
-            return Boolean.TRUE;
-          });
+      dsl.connectionResult(connection -> {
+        if (!connection.getAutoCommit()) {
+          throw conflict("Issuer tenant barrier owner cannot join a jOOQ transaction");
+        }
+        return Boolean.TRUE;
+      });
     } catch (RuntimeException failure) {
       if (failure instanceof CanonicalGameplayBindingInventoryConflictException) throw failure;
       throw new CanonicalGameplayBindingInventoryConflictException(

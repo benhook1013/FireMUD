@@ -41,19 +41,17 @@ class RedisScriptCatalogTest {
   void rejectsDuplicateScriptIdentityAndContributionOwnerMismatch() {
     RedisScriptDescriptor first = descriptor("account.control-ui.v1", "account-service");
     RedisScriptDescriptor duplicate = descriptor("account.control-ui.v1", "account-service");
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(
-                    List.of(
-                        contribution("account-service", List.of(first)),
-                        contribution("account-service", List.of(duplicate)))))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(
+                List.of(
+                    contribution("account-service", List.of(first)),
+                    contribution("account-service", List.of(duplicate)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Duplicate Redis script descriptor identity");
 
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(
-                    List.of(contribution("game-session-service", List.of(first)))))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(
+                List.of(contribution("game-session-service", List.of(first)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("owner does not match contribution");
   }
@@ -63,27 +61,21 @@ class RedisScriptCatalogTest {
     assertThatThrownBy(() -> RedisScriptCatalog.fromContributions(null))
         .isInstanceOf(NullPointerException.class);
     assertThat(RedisScriptCatalog.fromContributions(List.of()).descriptors()).isEmpty();
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(Arrays.asList((RedisScriptContribution) null)))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(Arrays.asList((RedisScriptContribution) null)))
         .isInstanceOf(NullPointerException.class);
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(
-                    List.of(contribution("account-service", List.of()))))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(
+                List.of(contribution("account-service", List.of()))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("cannot be empty");
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(
-                    List.of(
-                        contribution(
-                            "account-service", Arrays.asList((RedisScriptDescriptor) null)))))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(
+                List.of(
+                    contribution("account-service", Arrays.asList((RedisScriptDescriptor) null)))))
         .isInstanceOf(NullPointerException.class);
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(
-                    List.of(contribution("account-service", null))))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(List.of(contribution("account-service", null))))
         .isInstanceOf(NullPointerException.class);
   }
 
@@ -104,10 +96,9 @@ class RedisScriptCatalogTest {
     for (int index = 0; index <= RedisScriptCatalog.MAX_DESCRIPTORS; index++) {
       tooManyDescriptors.add(descriptor("account.script-" + index + ".v1", "account-service"));
     }
-    assertThatThrownBy(
-            () ->
-                RedisScriptCatalog.fromContributions(
-                    List.of(contribution("account-service", tooManyDescriptors))))
+    assertThatThrownBy(() ->
+            RedisScriptCatalog.fromContributions(
+                List.of(contribution("account-service", tooManyDescriptors))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("descriptor count exceeds its bound");
   }
@@ -119,20 +110,19 @@ class RedisScriptCatalogTest {
     ClassLoader classLoader = getClass().getClassLoader();
     Stream<ServiceLoader.Provider<RedisScriptContribution>> providers =
         IntStream.range(0, RedisScriptCatalog.MAX_CONTRIBUTIONS + 20)
-            .mapToObj(
-                ignored ->
-                    new ServiceLoader.Provider<>() {
-                      @Override
-                      public Class<? extends RedisScriptContribution> type() {
-                        return RedisScriptContribution.class;
-                      }
+            .mapToObj(ignored ->
+                new ServiceLoader.Provider<>() {
+                  @Override
+                  public Class<? extends RedisScriptContribution> type() {
+                    return RedisScriptContribution.class;
+                  }
 
-                      @Override
-                      public RedisScriptContribution get() {
-                        INSTALLED_PROVIDER_GET_CALLS.incrementAndGet();
-                        return null;
-                      }
-                    });
+                  @Override
+                  public RedisScriptContribution get() {
+                    INSTALLED_PROVIDER_GET_CALLS.incrementAndGet();
+                    return null;
+                  }
+                });
     when(installed.stream()).thenReturn(providers);
 
     try (MockedStatic<ServiceLoader> serviceLoader = mockStatic(ServiceLoader.class)) {

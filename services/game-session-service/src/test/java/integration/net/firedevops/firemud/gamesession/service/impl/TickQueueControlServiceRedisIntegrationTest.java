@@ -174,9 +174,8 @@ class TickQueueControlServiceRedisIntegrationTest {
     redisTemplate.opsForList().rightPush(QUEUE_KEY, existingPayload);
     redisTemplate.opsForList().rightPush(PENDING_KEY, conflictingPayload);
 
-    assertThatThrownBy(
-            () ->
-                service.enqueueCommand(TENANT_ID, GAME_INSTANCE_ID, "cmd-conflict", "look", false))
+    assertThatThrownBy(() ->
+            service.enqueueCommand(TENANT_ID, GAME_INSTANCE_ID, "cmd-conflict", "look", false))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertThat(values(QUEUE_KEY)).containsExactly(existingPayload);
@@ -196,9 +195,8 @@ class TickQueueControlServiceRedisIntegrationTest {
     redisTemplate.opsForList().rightPush(QUEUE_KEY, payload);
     redisTemplate.opsForList().rightPush(PENDING_KEY, payload);
 
-    assertThatThrownBy(
-            () ->
-                service.enqueueCommand(TENANT_ID, GAME_INSTANCE_ID, "cmd-duplicate", "look", false))
+    assertThatThrownBy(() ->
+            service.enqueueCommand(TENANT_ID, GAME_INSTANCE_ID, "cmd-duplicate", "look", false))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertThat(values(QUEUE_KEY)).containsExactly(payload);

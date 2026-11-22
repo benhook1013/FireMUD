@@ -68,10 +68,9 @@ class SelectedOwnerIntakeAuthorizationProducerProtoCodecTest {
             exactEcho.toBuilder().setSelectedDraftBinding(ByteString.copyFromUtf8("{}")).build());
 
     for (var echo : changed) {
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(
-                      request, response.toBuilder().setRequest(echo).build()))
+      assertThatThrownBy(() ->
+              SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(
+                  request, response.toBuilder().setRequest(echo).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -119,9 +118,8 @@ class SelectedOwnerIntakeAuthorizationProducerProtoCodecTest {
         response.toBuilder().setIntakeAuthorizationDigest("sha256:" + "0".repeat(64)).build();
 
     for (var changed : List.of(mismatchedOwnerBinding, wrongDigest)) {
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, changed))
+      assertThatThrownBy(() ->
+              SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -179,15 +177,12 @@ class SelectedOwnerIntakeAuthorizationProducerProtoCodecTest {
                     .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(
-                    request, nestedUnknown))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, nestedUnknown))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(
-                    request, unknownResponse))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(
+                request, unknownResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -210,9 +205,8 @@ class SelectedOwnerIntakeAuthorizationProducerProtoCodecTest {
     var missing = SelectedOwnerIntakeAuthorizationProducerResponse.getDefaultInstance();
 
     for (var changed : List.of(malformed, oversized, missing)) {
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, changed))
+      assertThatThrownBy(() ->
+              SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -231,9 +225,8 @@ class SelectedOwnerIntakeAuthorizationProducerProtoCodecTest {
 
     assertThat(oversized.getSerializedSize())
         .isGreaterThan(SelectedOwnerIntakeAuthorizationProducerProtoCodec.MAX_WIRE_BYTES);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, oversized))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationProducerProtoCodec.fromResponse(request, oversized))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

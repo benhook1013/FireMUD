@@ -228,10 +228,8 @@ class AccountTenantCreationOwnerSourceCaptureTest {
     f = new Fixture();
     var wrong = f.evidence(UUID.randomUUID(), f.operation);
     var denied = f;
-    assertThatThrownBy(
-            () ->
-                denied.capture.captureLocked(
-                    denied.intent, denied.admitted, denied.environment, wrong))
+    assertThatThrownBy(() ->
+            denied.capture.captureLocked(denied.intent, denied.admitted, denied.environment, wrong))
         .isInstanceOf(IllegalStateException.class);
     org.mockito.Mockito.verifyNoInteractions(f.reauth);
     f = new Fixture();
@@ -289,10 +287,9 @@ class AccountTenantCreationOwnerSourceCaptureTest {
     var current = f.currentness(f.party, f.owner.id);
     var sources = new ArrayList<>(current.sourceEvidence());
     sources.add(sources.getFirst());
-    assertThatThrownBy(
-            () ->
-                new EnvironmentBoundCurrentness(
-                    current.environment(), current.binding(), current.terms(), sources))
+    assertThatThrownBy(() ->
+            new EnvironmentBoundCurrentness(
+                current.environment(), current.binding(), current.terms(), sources))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

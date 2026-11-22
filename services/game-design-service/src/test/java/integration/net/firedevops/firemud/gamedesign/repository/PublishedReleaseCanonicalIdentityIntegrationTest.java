@@ -92,14 +92,13 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     String versionXminBefore = versionXmin(fixture.dsl(), version.getId());
     String gameXminBefore = gameXmin(fixture.dsl(), owner.getId());
     String otherGameXminBefore = gameXmin(fixture.dsl(), other.getId());
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(VERSION)
-                    .set(CANONICAL_TENANT_ID, other.getCanonicalTenantId())
-                    .where(ID.eq(version.getId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(VERSION)
+                .set(CANONICAL_TENANT_ID, other.getCanonicalTenantId())
+                .where(ID.eq(version.getId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("canonical Version identity and its tenant source are immutable");
 
@@ -127,40 +126,37 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     String versionXminBefore = versionXmin(fixture.dsl(), version.getId());
     String gameXminBefore = gameXmin(fixture.dsl(), owner.getId());
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transactionTemplate()
-                    .execute(
-                        status -> {
-                          PublishedReleaseBundle saved =
-                              fixture
-                                  .releaseBundleRepository()
-                                  .save(bundle(owner.getTenantId(), version.getId()));
-                          assertThat(saved.getCanonicalTenantId())
-                              .isEqualTo(owner.getCanonicalTenantId());
-                          assertThat(saved.getCanonicalVersionId())
-                              .isEqualTo(version.getCanonicalVersionId());
-                          assertThat(saved.getPublishedReleaseBundleRef()).isNotBlank();
-                          Version publishingVersion =
-                              fixture
-                                  .versionRepository()
-                                  .findByTenantIdAndId(owner.getTenantId(), version.getId())
-                                  .orElseThrow();
-                          publishingVersion.setVersionState(VersionLifecycleState.PUBLISHED);
-                          publishingVersion.setVersionStateEpoch(
-                              publishingVersion.getVersionStateEpoch() + 1L);
-                          fixture.versionRepository().save(publishingVersion);
-                          assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
-                          assertThat(
-                                  fixture
-                                      .versionRepository()
-                                      .findByTenantIdAndId(owner.getTenantId(), version.getId())
-                                      .orElseThrow()
-                                      .getVersionState())
-                              .isEqualTo(VersionLifecycleState.PUBLISHED);
-                          throw new IllegalStateException("simulate failed outer publication");
-                        }))
+    assertThatThrownBy(() ->
+            fixture
+                .transactionTemplate()
+                .execute(status -> {
+                  PublishedReleaseBundle saved =
+                      fixture
+                          .releaseBundleRepository()
+                          .save(bundle(owner.getTenantId(), version.getId()));
+                  assertThat(saved.getCanonicalTenantId()).isEqualTo(owner.getCanonicalTenantId());
+                  assertThat(saved.getCanonicalVersionId())
+                      .isEqualTo(version.getCanonicalVersionId());
+                  assertThat(saved.getPublishedReleaseBundleRef()).isNotBlank();
+                  Version publishingVersion =
+                      fixture
+                          .versionRepository()
+                          .findByTenantIdAndId(owner.getTenantId(), version.getId())
+                          .orElseThrow();
+                  publishingVersion.setVersionState(VersionLifecycleState.PUBLISHED);
+                  publishingVersion.setVersionStateEpoch(
+                      publishingVersion.getVersionStateEpoch() + 1L);
+                  fixture.versionRepository().save(publishingVersion);
+                  assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+                  assertThat(
+                          fixture
+                              .versionRepository()
+                              .findByTenantIdAndId(owner.getTenantId(), version.getId())
+                              .orElseThrow()
+                              .getVersionState())
+                      .isEqualTo(VersionLifecycleState.PUBLISHED);
+                  throw new IllegalStateException("simulate failed outer publication");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("simulate failed outer publication");
 
@@ -199,11 +195,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     var otherBefore = sourceRow(fixture.dsl(), "game", other.getId());
     var versionBefore = sourceRow(fixture.dsl(), "version", version.getId());
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .releaseBundleRepository()
-                    .save(bundle(other.getTenantId(), version.getId())))
+    assertThatThrownBy(() ->
+            fixture.releaseBundleRepository().save(bundle(other.getTenantId(), version.getId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("No exact canonical Game Design source association");
 
@@ -219,34 +212,31 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Caller-supplied canonical release identity");
 
-    assertThatThrownBy(
-            () ->
-                insertRawBundle(
-                    fixture.dsl(),
-                    owner.getTenantId(),
-                    version.getId(),
-                    NIL_UUID,
-                    version.getCanonicalVersionId()))
+    assertThatThrownBy(() ->
+            insertRawBundle(
+                fixture.dsl(),
+                owner.getTenantId(),
+                version.getId(),
+                NIL_UUID,
+                version.getCanonicalVersionId()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("non-nil canonical identity");
-    assertThatThrownBy(
-            () ->
-                insertRawBundle(
-                    fixture.dsl(),
-                    owner.getTenantId(),
-                    version.getId(),
-                    other.getCanonicalTenantId(),
-                    version.getCanonicalVersionId()))
+    assertThatThrownBy(() ->
+            insertRawBundle(
+                fixture.dsl(),
+                owner.getTenantId(),
+                version.getId(),
+                other.getCanonicalTenantId(),
+                version.getCanonicalVersionId()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("does not match its exact Version and Game source");
-    assertThatThrownBy(
-            () ->
-                insertRawBundle(
-                    fixture.dsl(),
-                    other.getTenantId(),
-                    version.getId(),
-                    owner.getCanonicalTenantId(),
-                    version.getCanonicalVersionId()))
+    assertThatThrownBy(() ->
+            insertRawBundle(
+                fixture.dsl(),
+                other.getTenantId(),
+                version.getId(),
+                owner.getCanonicalTenantId(),
+                version.getCanonicalVersionId()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("does not match its exact Version and Game source");
     assertThat(bundleCount(fixture.dsl())).isZero();
@@ -286,75 +276,68 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Published release bundle is immutable");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(RELEASE_BUNDLE)
-                    .set(DSL.field(DSL.name("manifest_hash"), String.class), OTHER_MANIFEST_HASH)
-                    .where(ID.eq(mapped.getId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(RELEASE_BUNDLE)
+                .set(DSL.field(DSL.name("manifest_hash"), String.class), OTHER_MANIFEST_HASH)
+                .where(ID.eq(mapped.getId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE published_release_bundle SET manifest_hash = manifest_hash "
-                            + "WHERE id = ?",
-                        mapped.getId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE published_release_bundle SET manifest_hash = manifest_hash "
+                        + "WHERE id = ?",
+                    mapped.getId()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(RELEASE_BUNDLE)
-                    .set(CANONICAL_TENANT_ID, UUID.randomUUID())
-                    .where(ID.eq(mapped.getId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(RELEASE_BUNDLE)
+                .set(CANONICAL_TENANT_ID, UUID.randomUUID())
+                .where(ID.eq(mapped.getId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(RELEASE_BUNDLE)
-                    .set(CANONICAL_VERSION_ID, UUID.randomUUID())
-                    .where(ID.eq(mapped.getId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(RELEASE_BUNDLE)
+                .set(CANONICAL_VERSION_ID, UUID.randomUUID())
+                .where(ID.eq(mapped.getId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(RELEASE_BUNDLE)
-                    .set(DSL.field(DSL.name("manifest_hash"), String.class), OTHER_MANIFEST_HASH)
-                    .where(ID.eq(retainedBundleId))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(RELEASE_BUNDLE)
+                .set(DSL.field(DSL.name("manifest_hash"), String.class), OTHER_MANIFEST_HASH)
+                .where(ID.eq(retainedBundleId))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(RELEASE_BUNDLE)
-                    .set(PUBLISHED_RELEASE_BUNDLE_REF, "attempted-retained-release-reference")
-                    .where(ID.eq(retainedBundleId))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(RELEASE_BUNDLE)
+                .set(PUBLISHED_RELEASE_BUNDLE_REF, "attempted-retained-release-reference")
+                .where(ID.eq(retainedBundleId))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(RELEASE_BUNDLE)
-                    .set(CANONICAL_TENANT_ID, game.getCanonicalTenantId())
-                    .set(CANONICAL_VERSION_ID, mappedVersion.getCanonicalVersionId())
-                    .where(ID.eq(retainedBundleId))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(RELEASE_BUNDLE)
+                .set(CANONICAL_TENANT_ID, game.getCanonicalTenantId())
+                .set(CANONICAL_VERSION_ID, mappedVersion.getCanonicalVersionId())
+                .where(ID.eq(retainedBundleId))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("published release bundle attestation is immutable");
 
@@ -416,26 +399,23 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     var gameBefore = sourceRow(fixture.dsl(), "game", owner.getId());
     var versionBefore = sourceRow(fixture.dsl(), "version", version.getId());
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .transaction(
-                        configuration -> {
-                          DSLContext ownerSql = DSL.using(configuration);
-                          var repository = new PublishedReleaseBundleRepository(ownerSql);
-                          var saved = repository.save(bundle(owner.getTenantId(), version.getId()));
-                          assertThat(saved.getCanonicalTenantId())
-                              .isEqualTo(owner.getCanonicalTenantId());
-                          assertThat(saved.getCanonicalVersionId())
-                              .isEqualTo(version.getCanonicalVersionId());
-                          assertThat(
-                                  repository.findByTenantIdAndVersionId(
-                                      owner.getTenantId(), version.getId()))
-                              .isPresent();
-                          assertThat(bundleCount(ownerSql)).isEqualTo(1);
-                          throw new IllegalStateException("simulate failed outer jOOQ owner");
-                        }))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .transaction(configuration -> {
+                  DSLContext ownerSql = DSL.using(configuration);
+                  var repository = new PublishedReleaseBundleRepository(ownerSql);
+                  var saved = repository.save(bundle(owner.getTenantId(), version.getId()));
+                  assertThat(saved.getCanonicalTenantId()).isEqualTo(owner.getCanonicalTenantId());
+                  assertThat(saved.getCanonicalVersionId())
+                      .isEqualTo(version.getCanonicalVersionId());
+                  assertThat(
+                          repository.findByTenantIdAndVersionId(
+                              owner.getTenantId(), version.getId()))
+                      .isPresent();
+                  assertThat(bundleCount(ownerSql)).isEqualTo(1);
+                  throw new IllegalStateException("simulate failed outer jOOQ owner");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("simulate failed outer jOOQ owner");
 
@@ -472,10 +452,9 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
           .put(
               "digestSchemaVersion",
               participant.digestSchemaVersion() == 1 ? 2 : participant.digestSchemaVersion() - 1);
-      assertThatThrownBy(
-              () ->
-                  insertRawSelectedFull(
-                      fixture, version, operation, original, json.writeValueAsString(mixed)))
+      assertThatThrownBy(() ->
+              insertRawSelectedFull(
+                  fixture, version, operation, original, json.writeValueAsString(mixed)))
           .as("mixed storage profile for %s", participant.participantKey())
           .isInstanceOf(DataAccessException.class)
           .hasMessageContaining("selected participant differs from commit/digest/schema");
@@ -487,14 +466,12 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     var saved =
         fixture
             .transactionTemplate()
-            .execute(
-                status ->
-                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                        .commitStorage(
-                            fixture.dsl(),
-                            fixture.versionRepository(),
-                            operation,
-                            () -> fixture.releaseBundleRepository().save(requested)));
+            .execute(status ->
+                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+                    fixture.dsl(),
+                    fixture.versionRepository(),
+                    operation,
+                    () -> fixture.releaseBundleRepository().save(requested)));
     assertThat(saved).isNotNull();
     var tuple = releaseBundleTuple(fixture.dsl(), saved.getId());
     var independent =
@@ -532,16 +509,15 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             start.await();
             return fixture
                 .transactionTemplate()
-                .execute(
-                    status ->
-                        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                            .commitStorage(
-                                fixture.dsl(),
-                                fixture.versionRepository(),
-                                operation,
-                                () ->
-                                    new PublishedReleaseBundleRepository(fixture.dsl())
-                                        .save(selectedFullBundle(version, operation.world()))));
+                .execute(status ->
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .commitStorage(
+                            fixture.dsl(),
+                            fixture.versionRepository(),
+                            operation,
+                            () ->
+                                new PublishedReleaseBundleRepository(fixture.dsl())
+                                    .save(selectedFullBundle(version, operation.world()))));
           };
       var first = executor.submit(save);
       var second = executor.submit(save);
@@ -693,19 +669,18 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThat(sourceRow(fixture.dsl(), "version", version.getId())).isEqualTo(versionBefore);
     fixture
         .transactionTemplate()
-        .executeWithoutResult(
-            status ->
-                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
-                    fixture.dsl(),
-                    fixture.versionRepository(),
-                    operation,
-                    () -> {
-                      insertRawSelectedFull(fixture, version, operation, original, participants);
-                      return fixture
-                          .releaseBundleRepository()
-                          .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
-                          .orElseThrow();
-                    }));
+        .executeWithoutResult(status ->
+            net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+                fixture.dsl(),
+                fixture.versionRepository(),
+                operation,
+                () -> {
+                  insertRawSelectedFull(fixture, version, operation, original, participants);
+                  return fixture
+                      .releaseBundleRepository()
+                      .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+                      .orElseThrow();
+                }));
     assertThat(
             new PublishedReleaseBundleRepository(fixture.dsl())
                 .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
@@ -722,26 +697,24 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
       String evidence,
       String participants,
       String rejectionMessage) {
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transactionTemplate()
-                    .executeWithoutResult(
-                        status ->
-                            net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                                .commitStorage(
-                                    fixture.dsl(),
-                                    fixture.versionRepository(),
-                                    operation,
-                                    () -> {
-                                      insertRawSelectedFull(
-                                          fixture, version, operation, evidence, participants);
-                                      return fixture
-                                          .releaseBundleRepository()
-                                          .findByTenantIdAndVersionId(
-                                              operation.tenantKey(), operation.versionId())
-                                          .orElseThrow();
-                                    })))
+    assertThatThrownBy(() ->
+            fixture
+                .transactionTemplate()
+                .executeWithoutResult(status ->
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .commitStorage(
+                            fixture.dsl(),
+                            fixture.versionRepository(),
+                            operation,
+                            () -> {
+                              insertRawSelectedFull(
+                                  fixture, version, operation, evidence, participants);
+                              return fixture
+                                  .releaseBundleRepository()
+                                  .findByTenantIdAndVersionId(
+                                      operation.tenantKey(), operation.versionId())
+                                  .orElseThrow();
+                            })))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining(rejectionMessage);
   }
@@ -760,20 +733,19 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             version.getIdentitySourceProvenanceKind());
     return fixture
         .transactionTemplate()
-        .execute(
-            status -> {
-              try {
-                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                    .retainFrozenSourceBackedSelectedFull(
-                        fixture.dsl(),
-                        target,
-                        version.getVersionStateEpoch(),
-                        "ISOLATED selected-full storage regression",
-                        java.util.List.of());
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        .execute(status -> {
+          try {
+            return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                .retainFrozenSourceBackedSelectedFull(
+                    fixture.dsl(),
+                    target,
+                    version.getVersionStateEpoch(),
+                    "ISOLATED selected-full storage regression",
+                    java.util.List.of());
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
   }
 
   private PublishedReleaseBundle selectedFullBundle(

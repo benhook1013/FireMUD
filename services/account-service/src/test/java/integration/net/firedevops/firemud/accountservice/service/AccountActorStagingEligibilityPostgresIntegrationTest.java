@@ -274,12 +274,11 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
     }
 
     private void seedTenantAndActiveEntitlement() {
-      transaction.executeWithoutResult(
-          status -> {
-            freshTenants.importVerified(tenantEvidence);
-            sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
-            generations.initializeTenantIfAbsent(tenantUuid);
-          });
+      transaction.executeWithoutResult(status -> {
+        freshTenants.importVerified(tenantEvidence);
+        sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+        generations.initializeTenantIfAbsent(tenantUuid);
+      });
       DemoTenantEntitlementRequest request =
           new DemoTenantEntitlementRequest(
               UUID.randomUUID(),
@@ -308,38 +307,36 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
     }
 
     private void seedMembershipOperation() {
-      transaction.executeWithoutResult(
-          status -> {
-            generations.initialize(
-                AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.getAccountUuid(), tenantUuid));
-            connectScopes.insertCanonical(account.getId(), scope, tenantProvenance);
-            joinOperations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
-            DemoTenantEntitlementSnapshot currentEntitlement = entitlements.readCurrent(tenantUuid);
-            joinOperations.bindCanonicalPolicyEvidence(
-                joinRequestId,
-                scope,
-                callerBinding,
-                currentEntitlement.allowPublicJoin(),
-                currentEntitlement.entitlementVersion());
-          });
+      transaction.executeWithoutResult(status -> {
+        generations.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.getAccountUuid(), tenantUuid));
+        connectScopes.insertCanonical(account.getId(), scope, tenantProvenance);
+        joinOperations.insertCanonicalIntent(joinRequestId, scope, callerBinding);
+        DemoTenantEntitlementSnapshot currentEntitlement = entitlements.readCurrent(tenantUuid);
+        joinOperations.bindCanonicalPolicyEvidence(
+            joinRequestId,
+            scope,
+            callerBinding,
+            currentEntitlement.allowPublicJoin(),
+            currentEntitlement.entitlementVersion());
+      });
     }
 
     private void createAndPublishMembershipEvent() {
-      transaction.executeWithoutResult(
-          status -> {
-            var membership =
-                memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
-            roles.replaceCanonical(
-                membership,
-                account.getAccountUuid(),
-                tenantUuid,
-                tenantProvenance,
-                2L,
-                java.util.List.of("player"));
-            membershipEvents.publishCanonicalFirstJoinMembershipChange(
-                scope, joinRequestId, callerBinding);
-          });
+      transaction.executeWithoutResult(status -> {
+        var membership =
+            memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
+        roles.replaceCanonical(
+            membership,
+            account.getAccountUuid(),
+            tenantUuid,
+            tenantProvenance,
+            2L,
+            java.util.List.of("player"));
+        membershipEvents.publishCanonicalFirstJoinMembershipChange(
+            scope, joinRequestId, callerBinding);
+      });
     }
 
     private AccountActorStagingEligibilityEvidence resolveStaging(UUID requestId) {
@@ -348,15 +345,14 @@ class AccountActorStagingEligibilityPostgresIntegrationTest {
               dsl, accounts, freshTenants, memberships, pairs);
       AccountActorStagingEligibilityService service =
           new AccountActorStagingEligibilityService(sourceRepository, TEST_NAMESPACE);
-      return readOnlySnapshot.execute(
-          status ->
-              service.resolve(
-                  AccountActorStagingEligibilityEvidence.SCHEMA_VERSION,
-                  TEST_NAMESPACE,
-                  requestId,
-                  account.getAccountUuid(),
-                  tenantUuid,
-                  Purpose.PUBLIC_PRODUCTION_STAGING_ONLY));
+      return readOnlySnapshot.execute(status ->
+          service.resolve(
+              AccountActorStagingEligibilityEvidence.SCHEMA_VERSION,
+              TEST_NAMESPACE,
+              requestId,
+              account.getAccountUuid(),
+              tenantUuid,
+              Purpose.PUBLIC_PRODUCTION_STAGING_ONLY));
     }
 
     private PairAuthority readPositivePair() {

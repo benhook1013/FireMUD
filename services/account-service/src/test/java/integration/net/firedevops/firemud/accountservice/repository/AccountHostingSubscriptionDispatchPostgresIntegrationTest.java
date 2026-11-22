@@ -300,15 +300,14 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     // Controlled retained state is inserted directly with the normal SQL guards enabled. The
     // existing production claim owner does not commit nonterminal work without its first attempt.
     f.tx()
-        .executeWithoutResult(
-            s ->
-                f.dsl()
-                    .execute(
-                        "INSERT INTO subscription_provisioning_work (request_id, subscription_id, phase, row_version, "
-                            + "attempt_count, max_attempts, max_stalled_attempts, lease_millis, backoff_millis, deadline_at, retry_at) "
-                            + "SELECT request_id, subscription_id, 'RECONCILING', 1, 0, 4, 3, 10000, 1000, "
-                            + "created_at + interval '1 hour', created_at FROM subscription_create_operations WHERE request_id = ?",
-                        f.creation().requestId()));
+        .executeWithoutResult(s ->
+            f.dsl()
+                .execute(
+                    "INSERT INTO subscription_provisioning_work (request_id, subscription_id, phase, row_version, "
+                        + "attempt_count, max_attempts, max_stalled_attempts, lease_millis, backoff_millis, deadline_at, retry_at) "
+                        + "SELECT request_id, subscription_id, 'RECONCILING', 1, 0, 4, 3, 10000, 1000, "
+                        + "created_at + interval '1 hour', created_at FROM subscription_create_operations WHERE request_id = ?",
+                    f.creation().requestId()));
     var retained =
         f.dsl()
             .fetch(
@@ -406,17 +405,15 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var start = new CountDownLatch(1);
     try (var executor = Executors.newFixedThreadPool(2)) {
       var first =
-          executor.submit(
-              () -> {
-                start.await();
-                return prepareAndRead(f, claim);
-              });
+          executor.submit(() -> {
+            start.await();
+            return prepareAndRead(f, claim);
+          });
       var second =
-          executor.submit(
-              () -> {
-                start.await();
-                return prepareAndRead(f, claim);
-              });
+          executor.submit(() -> {
+            start.await();
+            return prepareAndRead(f, claim);
+          });
       start.countDown();
       var results = List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
       assertThat(results)
@@ -431,15 +428,12 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   void uncommittedSameTransactionReadbackCannotProduceProviderPermission() {
     Fixture f = fixture("1032");
     var claim = claim(f, 1);
-    assertThatThrownBy(
-            () ->
-                f.tx()
-                    .execute(
-                        s -> {
-                          var uncommitted =
-                              f.owner().prepareProviderDispatch(claim, UUID.randomUUID());
-                          return f.owner().readProviderDispatch(uncommitted);
-                        }))
+    assertThatThrownBy(() ->
+            f.tx()
+                .execute(s -> {
+                  var uncommitted = f.owner().prepareProviderDispatch(claim, UUID.randomUUID());
+                  return f.owner().readProviderDispatch(uncommitted);
+                }))
         .hasMessageContaining("new transaction");
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
   }
@@ -478,12 +472,10 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     }
     var replacement = claim(f, original.subscriptionRowVersion());
     assertThat(replacement.attemptId()).isNotEqualTo(original.attemptId());
-    before.replaceAll(
-        (table, rows) ->
-            f.dsl()
-                .fetch(
-                    "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM " + table + " t")
-                .intoMaps());
+    before.replaceAll((table, rows) ->
+        f.dsl()
+            .fetch("SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM " + table + " t")
+            .intoMaps());
     // Replacement advanced the subscription version, so the original binding rejects this stale
     // worker before the later attempt-identity check can run.
     assertThatThrownBy(() -> f.tx().execute(status -> f.owner().deferUnresolved(original)))
@@ -668,13 +660,12 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
           refreshDisplay(f);
           var competing =
               f.tx()
-                  .execute(
-                      s ->
-                          f.owner()
-                              .claim(
-                                  f.creation().requestId(),
-                                  finalClaim.subscriptionRowVersion(),
-                                  UUID.randomUUID()));
+                  .execute(s ->
+                      f.owner()
+                          .claim(
+                              f.creation().requestId(),
+                              finalClaim.subscriptionRowVersion(),
+                              UUID.randomUUID()));
           assertThat(competing.disposition()).isEqualTo(Disposition.WAITING);
           assertThat(competing.claim()).isNull();
           assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox")))
@@ -757,10 +748,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var retry =
         Objects.requireNonNull(
             f.tx()
-                .execute(
-                    s ->
-                        f.owner()
-                            .claim(f.creation().requestId(), finalVersion, UUID.randomUUID())));
+                .execute(s ->
+                    f.owner().claim(f.creation().requestId(), finalVersion, UUID.randomUUID())));
     assertThat(retry.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
     assertThat(retry.claim()).isNull();
     assertThat(f.transport().searches).isEqualTo(3);
@@ -808,9 +797,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         f.dsl().fetch("SELECT * FROM subscription_instrument_reservations").intoMaps();
     refreshDisplay(f);
 
-    assertThatThrownBy(
-            () ->
-                f.tx().execute(s -> f.owner().prepareProviderDispatch(original, UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            f.tx().execute(s -> f.owner().prepareProviderDispatch(original, UUID.randomUUID())))
         .isInstanceOf(FenceRejectedException.class);
     var refused =
         (AccountHostingSubscriptionProvisioningService.Pending)
@@ -821,13 +809,12 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
             new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null));
     var waiting =
         f.tx()
-            .execute(
-                s ->
-                    f.owner()
-                        .claim(
-                            f.creation().requestId(),
-                            original.subscriptionRowVersion(),
-                            UUID.randomUUID()));
+            .execute(s ->
+                f.owner()
+                    .claim(
+                        f.creation().requestId(),
+                        original.subscriptionRowVersion(),
+                        UUID.randomUUID()));
     assertThat(waiting.disposition()).isEqualTo(Disposition.WAITING);
     assertThat(waiting.claim()).isNull();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isOne();
@@ -837,13 +824,12 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
     var terminal =
         f.tx()
-            .execute(
-                s ->
-                    f.owner()
-                        .claim(
-                            f.creation().requestId(),
-                            original.subscriptionRowVersion(),
-                            UUID.randomUUID()));
+            .execute(s ->
+                f.owner()
+                    .claim(
+                        f.creation().requestId(),
+                        original.subscriptionRowVersion(),
+                        UUID.randomUUID()));
     assertThat(terminal.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
     assertThat(terminal.claim()).isNull();
     assertThat(f.tx().<Disposition>execute(s -> f.owner().deferUnresolved(original)))
@@ -900,11 +886,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var refused =
         unclaimed
             .tx()
-            .execute(
-                s ->
-                    unclaimed
-                        .owner()
-                        .claim(unclaimed.creation().requestId(), 1, UUID.randomUUID()));
+            .execute(s ->
+                unclaimed.owner().claim(unclaimed.creation().requestId(), 1, UUID.randomUUID()));
     assertThat(Objects.requireNonNull(refused).disposition())
         .isEqualTo(Disposition.TERMINAL_FAILURE);
     assertThat(refused.claim()).isNull();
@@ -931,26 +914,24 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var original = claim(retained, 1);
     refreshDisplay(retained);
     // Exercise the unchanged V1032 insertion guard independently of the Java eligibility fence.
-    assertThatThrownBy(
-            () ->
-                retained
-                    .tx()
-                    .execute(
-                        s ->
-                            retained
-                                .dsl()
-                                .execute(
-                                    "INSERT INTO subscription_provider_dispatch_claim "
-                                        + "(creation_request_id, subscription_id, provider_operation_id, dispatch_id, "
-                                        + "classification, first_attempt_id, first_claimed_row_version, recorded_at) "
-                                        + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, ?::timestamptz)",
-                                    retained.creation().requestId(),
-                                    retained.creation().subscriptionId(),
-                                    retained.creation().subscriptionProvisioningRequestId(),
-                                    UUID.randomUUID(),
-                                    original.attemptId(),
-                                    original.subscriptionRowVersion(),
-                                    retained.clock().instant().atOffset(ZoneOffset.UTC))))
+    assertThatThrownBy(() ->
+            retained
+                .tx()
+                .execute(s ->
+                    retained
+                        .dsl()
+                        .execute(
+                            "INSERT INTO subscription_provider_dispatch_claim "
+                                + "(creation_request_id, subscription_id, provider_operation_id, dispatch_id, "
+                                + "classification, first_attempt_id, first_claimed_row_version, recorded_at) "
+                                + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, ?::timestamptz)",
+                            retained.creation().requestId(),
+                            retained.creation().subscriptionId(),
+                            retained.creation().subscriptionProvisioningRequestId(),
+                            UUID.randomUUID(),
+                            original.attemptId(),
+                            original.subscriptionRowVersion(),
+                            retained.clock().instant().atOffset(ZoneOffset.UTC))))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasMessageContaining("Provider dispatch lacks exact live original provisioning fence");
     assertThat(retained.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim")))
@@ -968,10 +949,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var before = f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps();
     assertThatThrownBy(() -> f.tx().execute(s -> f.owner().deferUnresolved(first)))
         .isInstanceOf(FenceRejectedException.class);
-    assertThatThrownBy(
-            () ->
-                f.tx()
-                    .execute(s -> f.owner().claim(f.creation().requestId(), 1, first.attemptId())))
+    assertThatThrownBy(() ->
+            f.tx().execute(s -> f.owner().claim(f.creation().requestId(), 1, first.attemptId())))
         .isInstanceOf(FenceRejectedException.class);
     assertThat(f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps())
         .isEqualTo(before);
@@ -988,17 +967,15 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .hasMessage("Exact retained provisioning settlement claim rejected");
     // The database also retains its existing owner-change guard; this component cannot invent an
     // unaudited transfer merely to manufacture a changed-current-owner state.
-    assertThatThrownBy(
-            () ->
-                f.tx()
-                    .execute(
-                        s ->
-                            f.dsl()
-                                .execute(
-                                    "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, "
-                                        + "owner_generation = ? WHERE tenant_uuid = ?",
-                                    UUID.randomUUID(),
-                                    f.creation().tenantId())))
+    assertThatThrownBy(() ->
+            f.tx()
+                .execute(s ->
+                    f.dsl()
+                        .execute(
+                            "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, "
+                                + "owner_generation = ? WHERE tenant_uuid = ?",
+                            UUID.randomUUID(),
+                            f.creation().tenantId())))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps())
         .isEqualTo(before);
@@ -1038,11 +1015,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     ProvisioningClaim claim =
         Objects.requireNonNull(
             f.tx()
-                .execute(
-                    s ->
-                        f.owner()
-                            .claim(f.creation().requestId(), version, UUID.randomUUID())
-                            .claim()));
+                .execute(s ->
+                    f.owner().claim(f.creation().requestId(), version, UUID.randomUUID()).claim()));
     // The controlled provider observation clock follows the real, newly issued DB lease.
     f.clock().now = claim.claimedAt();
     return claim;

@@ -47,10 +47,9 @@ class AccountHostingSubscriptionLifecycleServiceTest {
     assertThatThrownBy(() -> service.claimProvisioning(UUID.randomUUID(), 1, UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ambient SQL transaction");
-    assertThatThrownBy(
-            () ->
-                service.reconcile(
-                    UUID.randomUUID(), UUID.randomUUID(), 2, "sub_controlled", UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            service.reconcile(
+                UUID.randomUUID(), UUID.randomUUID(), 2, "sub_controlled", UUID.randomUUID()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ambient SQL transaction");
     assertThatThrownBy(() -> service.readCurrent(UUID.randomUUID()))

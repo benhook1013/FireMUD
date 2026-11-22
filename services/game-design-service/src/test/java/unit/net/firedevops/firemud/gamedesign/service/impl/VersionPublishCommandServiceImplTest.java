@@ -119,12 +119,11 @@ class VersionPublishCommandServiceImplTest {
     when(worldProducerProvider.getIfAvailable()).thenReturn(worldProducer);
     when(worldProducer.reconcile(
             any(String.class), any(String.class), any(Long.class), any(String.class), any()))
-        .thenAnswer(
-            invocation -> {
-              org.junit.jupiter.api.Assertions.assertFalse(
-                  ownerCommitActive.get(), "World handoff ran before owner commit returned");
-              return null;
-            });
+        .thenAnswer(invocation -> {
+          org.junit.jupiter.api.Assertions.assertFalse(
+              ownerCommitActive.get(), "World handoff ran before owner commit returned");
+          return null;
+        });
     when(publishedReleaseBundleService.findPublishedReleaseBundle(
             any(String.class), any(Long.class)))
         .thenReturn(Optional.empty());
@@ -134,20 +133,19 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(capturedWorldPublicationEvidence);
     when(versionAssetArtifactService.stageExport(
             any(String.class), any(Long.class), any(Integer.class), any(String.class)))
-        .thenAnswer(
-            invocation ->
-                new VersionAssetArtifactStateDto(
-                    invocation.getArgument(0),
-                    invocation.getArgument(1),
-                    invocation.getArgument(2),
-                    "STAGED",
-                    1L,
-                    null,
-                    invocation.getArgument(3),
-                    null,
-                    null,
-                    LocalDateTime.now(),
-                    List.of()));
+        .thenAnswer(invocation ->
+            new VersionAssetArtifactStateDto(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+                "STAGED",
+                1L,
+                null,
+                invocation.getArgument(3),
+                null,
+                null,
+                LocalDateTime.now(),
+                List.of()));
     org.mockito.Mockito.doAnswer(
             invocation -> {
               ownerCommitActive.set(true);
@@ -490,13 +488,12 @@ class VersionPublishCommandServiceImplTest {
         .getIfAvailable();
     when(authoredSelections.readByPublishRequest(
             fixture.request().intent().canonicalTenantId(), fixture.request().publishRequestId()))
-        .thenAnswer(
-            invocation -> {
-              if (handoffStarted.get()) {
-                throw readFailure;
-              }
-              return Optional.of(fixture.reservation());
-            });
+        .thenAnswer(invocation -> {
+          if (handoffStarted.get()) {
+            throw readFailure;
+          }
+          return Optional.of(fixture.reservation());
+        });
 
     VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
         assertThrows(
@@ -2338,20 +2335,19 @@ class VersionPublishCommandServiceImplTest {
     var legacySchemas = List.of(3, 2, 1, 5, 2);
     List<PublishParticipantDigestDto> legacyVector =
         java.util.stream.IntStream.range(0, fullVector.size())
-            .mapToObj(
-                index -> {
-                  var participant = fullVector.get(index);
-                  return new PublishParticipantDigestDto(
-                      participant.participantKey(),
-                      participant.scopeValue(),
-                      participant.baseVersionId(),
-                      participant.appliedCommitId(),
-                      participant.contentDigest(),
-                      legacySchemas.get(index),
-                      participant.abilitySchemaDigest(),
-                      participant.errorCode(),
-                      participant.errorMessage());
-                })
+            .mapToObj(index -> {
+              var participant = fullVector.get(index);
+              return new PublishParticipantDigestDto(
+                  participant.participantKey(),
+                  participant.scopeValue(),
+                  participant.baseVersionId(),
+                  participant.appliedCommitId(),
+                  participant.contentDigest(),
+                  legacySchemas.get(index),
+                  participant.abilitySchemaDigest(),
+                  participant.errorCode(),
+                  participant.errorMessage());
+            })
             .toList();
     when(publishGateService.collectSelectedFullVersionParticipantDigests(
             any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
@@ -3327,15 +3323,14 @@ class VersionPublishCommandServiceImplTest {
 
   private static List<PublishedArtifactDigest> artifactDigests(List<String> usageKeys) {
     return usageKeys.stream()
-        .map(
-            usageKey ->
-                new PublishedArtifactDigest(
-                    usageKey,
-                    "BINARY",
-                    "artifacts/sha256/" + ARTIFACT_DIGEST.substring("sha256:".length()),
-                    ARTIFACT_DIGEST,
-                    "manifest.json".equals(usageKey) ? "application/json" : "image/png",
-                    1))
+        .map(usageKey ->
+            new PublishedArtifactDigest(
+                usageKey,
+                "BINARY",
+                "artifacts/sha256/" + ARTIFACT_DIGEST.substring("sha256:".length()),
+                ARTIFACT_DIGEST,
+                "manifest.json".equals(usageKey) ? "application/json" : "image/png",
+                1))
         .toList();
   }
 

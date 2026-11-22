@@ -50,21 +50,18 @@ class AccountOriginalNewBoundGameplayCredentialOwnerTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () -> {
-              assertThatThrownBy(() -> owner.issue("unlogged-test-token", null))
-                  .isInstanceOf(StatusRuntimeException.class)
-                  .satisfies(
-                      failure ->
-                          assertThat(Status.fromThrowable(failure).getCode())
-                              .isEqualTo(Status.Code.FAILED_PRECONDITION));
-              assertThatThrownBy(() -> owner.issue(request))
-                  .isInstanceOf(StatusRuntimeException.class)
-                  .satisfies(
-                      failure ->
-                          assertThat(Status.fromThrowable(failure).getCode())
-                              .isEqualTo(Status.Code.FAILED_PRECONDITION));
-            });
+        .run(() -> {
+          assertThatThrownBy(() -> owner.issue("unlogged-test-token", null))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          assertThatThrownBy(() -> owner.issue(request))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        });
     verifyNoInteractions(dataSource, callerVerifier, signer, tokenRegistry, responseCryptography);
   }
 

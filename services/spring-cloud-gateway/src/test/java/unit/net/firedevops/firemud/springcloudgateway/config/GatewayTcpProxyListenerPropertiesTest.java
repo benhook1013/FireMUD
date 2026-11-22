@@ -51,12 +51,11 @@ class GatewayTcpProxyListenerPropertiesTest {
   void rejectsMalformedInstantDuringBinding() {
     StandardEnvironment environment = environmentWithExpiry("not-an-instant");
 
-    assertThatThrownBy(
-            () ->
-                Binder.get(environment)
-                    .bind(
-                        "firemud.gateway.tcp-proxy-listener",
-                        Bindable.ofInstance(new GatewayTcpProxyListenerProperties())))
+    assertThatThrownBy(() ->
+            Binder.get(environment)
+                .bind(
+                    "firemud.gateway.tcp-proxy-listener",
+                    Bindable.ofInstance(new GatewayTcpProxyListenerProperties())))
         .isInstanceOf(BindException.class)
         .hasMessageContaining("expires-at");
   }

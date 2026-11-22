@@ -129,14 +129,12 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         .isEqualTo("ABORTED");
     assertThatThrownBy(() -> tags.assignmentForTransition(fixture.transitionId()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
-    assertThatThrownBy(
-            () ->
-                capacity.readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacity.readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     String terminalRows = sqlImage();
-    assertThatThrownBy(
-            () ->
-                transfer.advance(original.source, original.status, transferClock.millis() + 5000L))
+    assertThatThrownBy(() ->
+            transfer.advance(original.source, original.status, transferClock.millis() + 5000L))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(terminalRows);
   }
@@ -292,10 +290,9 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
             .dsl()
             .fetchSingle("SELECT state, transfer_id FROM game_session_region_owner_transfer");
     assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
-    assertThatThrownBy(
-            () ->
-                successor.installForTransition(
-                    null, original.transitionId, original.worldRequest, transfer, deadline()))
+    assertThatThrownBy(() ->
+            successor.installForTransition(
+                null, original.transitionId, original.worldRequest, transfer, deadline()))
         .isInstanceOf(IllegalStateException.class);
     var recovered = successor.resumeCompletedTransfer(failure, deadline());
     assertThat(recovered.status).isEqualTo(durable);
@@ -329,10 +326,9 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     assertThatThrownBy(() -> restarted.resumeCompletedTransfer(failure, deadline()))
         .isInstanceOf(IllegalStateException.class);
     byte[] leaseKey = ascii(recovered.grant.key());
-    assertThatThrownBy(
-            () ->
-                restarted.installForTransition(
-                    null, original.transitionId, original.worldRequest, transfer, deadline()))
+    assertThatThrownBy(() ->
+            restarted.installForTransition(
+                null, original.transitionId, original.worldRequest, transfer, deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(completedSql);
     admin.pexpire(leaseKey, 0);
@@ -348,10 +344,9 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
                 ascii(UUID.randomUUID().toString()),
                 io.lettuce.core.SetArgs.Builder.nx().px(30_000)))
         .isEqualTo("OK");
-    assertThatThrownBy(
-            () ->
-                restarted.installForTransition(
-                    null, original.transitionId, original.worldRequest, transfer, deadline()))
+    assertThatThrownBy(() ->
+            restarted.installForTransition(
+                null, original.transitionId, original.worldRequest, transfer, deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(completedSql);
 
@@ -561,10 +556,9 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
             .beginFenceIntent(source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
     assertThat(fenceIntent.state().name()).isEqualTo("ACQUISITION_INTENT");
     assertThat(fenceIntent.cohortRows())
-        .filteredOn(
-            row ->
-                row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
-                    && row.sourceKey().equals(fixture.transitionId().toString()))
+        .filteredOn(row ->
+            row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                && row.sourceKey().equals(fixture.transitionId().toString()))
         .hasSize(1);
     String fencedControl =
         fixture
@@ -908,17 +902,16 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             observedSql, CLOCK, repository, capacityOwner(), receiver);
     admin.pexpire(ascii(original.grant.key()), 0);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    deadline()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                fixture.dsl(),
+                ownerClient,
+                ownerUri,
+                catalog,
+                original,
+                sources.resolver,
+                transfer,
+                deadline()))
         .isInstanceOf(RuntimeException.class);
     assertThat(failed).isTrue();
     var frozen = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
@@ -988,17 +981,16 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         .as("committed continuation grants no provisional bridge authority")
         .isNull();
     // The old epoch cannot reacquire the lease after the successor advances the timeline.
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    deadline()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                fixture.dsl(),
+                ownerClient,
+                ownerUri,
+                catalog,
+                original,
+                sources.resolver,
+                transfer,
+                deadline()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical Game Session region lease is unavailable");
     assertThat(

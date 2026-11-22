@@ -106,33 +106,29 @@ class CanonicalGameplayRosterReferenceOwnerTest {
   void controlledSource() {
     when(repository.find(request)).thenReturn(Optional.empty());
     when(repository.begin(request))
-        .thenAnswer(
-            ignored -> {
-              inside();
-              return reserved;
-            });
+        .thenAnswer(ignored -> {
+          inside();
+          return reserved;
+        });
     when(source.target()).thenReturn(target);
     when(source.sourceIdentity()).thenReturn(identity);
     when(source.route()).thenReturn(route);
     when(created.resolvePlayerCreatedRosterSource(any()))
-        .thenAnswer(
-            ignored -> {
-              outside();
-              return source;
-            });
+        .thenAnswer(ignored -> {
+          outside();
+          return source;
+        });
     when(admissions.readCurrentOpenSnapshotForRealm(
             "test", route.canonicalTenantId(), route.realmId()))
-        .thenAnswer(
-            ignored -> {
-              outside();
-              return snapshot;
-            });
+        .thenAnswer(ignored -> {
+          outside();
+          return snapshot;
+        });
     when(admissions.lockExactCurrentOpenSnapshot(snapshot))
-        .thenAnswer(
-            ignored -> {
-              inside();
-              return snapshot;
-            });
+        .thenAnswer(ignored -> {
+          inside();
+          return snapshot;
+        });
   }
 
   @Test
@@ -185,11 +181,10 @@ class CanonicalGameplayRosterReferenceOwnerTest {
             any(
                 net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
                     .class)))
-        .thenAnswer(
-            ignored -> {
-              outside();
-              throw stale;
-            });
+        .thenAnswer(ignored -> {
+          outside();
+          throw stale;
+        });
     assertThatThrownBy(() -> owner.begin(preseeded)).isSameAs(stale);
     verifyNoInteractions(created, admissions);
     verify(repository, never()).begin(any());
@@ -354,11 +349,10 @@ class CanonicalGameplayRosterReferenceOwnerTest {
             .setCreationOperationUuid(UUID.randomUUID().toString())
             .build();
     when(repository.recordPlayerCreated(request, roster))
-        .thenAnswer(
-            ignored -> {
-              inside();
-              return reserved;
-            });
+        .thenAnswer(ignored -> {
+          inside();
+          return reserved;
+        });
     doAnswer(
             ignored -> {
               inside();
@@ -384,18 +378,15 @@ class CanonicalGameplayRosterReferenceOwnerTest {
     try {
       TransactionSynchronizationManager.setActualTransactionActive(true);
       assertThatThrownBy(() -> owner.begin(request)).isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  owner.recordPlayerCreated(
-                      request, CanonicalPlayerCreatedRosterResponse.getDefaultInstance()))
+      assertThatThrownBy(() ->
+              owner.recordPlayerCreated(
+                  request, CanonicalPlayerCreatedRosterResponse.getDefaultInstance()))
           .isInstanceOf(IllegalStateException.class);
       TransactionSynchronizationManager.setActualTransactionActive(false);
       TransactionSynchronizationManager.initSynchronization();
-      assertThatThrownBy(
-              () ->
-                  owner.recordSelectedPlayerCreatedCharacter(
-                      request,
-                      CanonicalSelectedPlayerCreatedCharacterResponse.getDefaultInstance()))
+      assertThatThrownBy(() ->
+              owner.recordSelectedPlayerCreatedCharacter(
+                  request, CanonicalSelectedPlayerCreatedCharacterResponse.getDefaultInstance()))
           .isInstanceOf(IllegalStateException.class);
       verifyNoInteractions(repository, created, published, admissions);
     } finally {

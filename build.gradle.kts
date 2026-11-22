@@ -20,7 +20,7 @@ buildscript {
     dependencies {
         // The Flyway Gradle plugin resolves database support from the buildscript classpath,
         // not from each service's runtime dependencies.
-        classpath("org.flywaydb:flyway-database-postgresql:13.12.0")
+        classpath("org.flywaydb:flyway-database-postgresql:13.13.0")
         classpath("org.postgresql:postgresql:42.7.14")
     }
 }
@@ -31,7 +31,7 @@ plugins {
     alias(libs.plugins.protobuf) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.flyway) apply false
-    id("com.diffplug.spotless") version "8.10.4"
+    id("com.diffplug.spotless") version "8.12.0"
     id("checkstyle")
     id("com.github.spotbugs") version "6.5.13"
     jacoco
@@ -328,7 +328,8 @@ subprojects {
 
     spotless {
         java {
-            googleJavaFormat()
+            // Keep formatter upgrades limited to layout; do not rewrite Java syntax.
+            googleJavaFormat(libs.findVersion("google-java-format").get().requiredVersion).cleanup(false)
             targetExclude("build/generated/**", "build/generated-src/**")
         }
     }

@@ -282,9 +282,8 @@ class AccountControlUiCoordinationTest {
       when(commands.aclWhoami()).thenReturn("account_coord_app");
       when(catalog.require(AccountControlUiRegistryContract.SCRIPT_ID)).thenReturn(descriptor);
       when(commands.scriptLoad(any(byte[].class)))
-          .thenAnswer(
-              invocation ->
-                  AccountControlUiCoordination.digest("SHA-1", invocation.getArgument(0)));
+          .thenAnswer(invocation ->
+              AccountControlUiCoordination.digest("SHA-1", invocation.getArgument(0)));
       doReturn(1L)
           .when(commands)
           .evalsha(

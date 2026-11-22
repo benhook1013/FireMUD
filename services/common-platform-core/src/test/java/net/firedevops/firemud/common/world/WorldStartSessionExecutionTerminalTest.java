@@ -288,58 +288,55 @@ class WorldStartSessionExecutionTerminalTest {
             Outcome.COMMITTED),
         original);
 
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminal(
-                    tuple.canonicalBytes(),
-                    PARTICIPATION_ID,
-                    31L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    "another-runtime",
-                    TENANT,
-                    REQUEST_ID,
-                    GAME_INSTANCE_ID,
-                    digest(PREPARATION_INPUT),
-                    PREPARATION_INPUT,
-                    41L,
-                    Outcome.COMMITTED))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminal(
+                tuple.canonicalBytes(),
+                PARTICIPATION_ID,
+                31L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                "another-runtime",
+                TENANT,
+                REQUEST_ID,
+                GAME_INSTANCE_ID,
+                digest(PREPARATION_INPUT),
+                PREPARATION_INPUT,
+                41L,
+                Outcome.COMMITTED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("scope");
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminal(
-                    tuple.canonicalBytes(),
-                    PARTICIPATION_ID,
-                    31L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    NAMESPACE,
-                    uuid("d4053e2e-598d-47bd-b7d3-4288e702e276"),
-                    REQUEST_ID,
-                    GAME_INSTANCE_ID,
-                    digest(PREPARATION_INPUT),
-                    PREPARATION_INPUT,
-                    41L,
-                    Outcome.COMMITTED))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminal(
+                tuple.canonicalBytes(),
+                PARTICIPATION_ID,
+                31L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                NAMESPACE,
+                uuid("d4053e2e-598d-47bd-b7d3-4288e702e276"),
+                REQUEST_ID,
+                GAME_INSTANCE_ID,
+                digest(PREPARATION_INPUT),
+                PREPARATION_INPUT,
+                41L,
+                Outcome.COMMITTED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("scope");
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminal(
-                    tuple.canonicalBytes(),
-                    PARTICIPATION_ID,
-                    31L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    NAMESPACE,
-                    TENANT,
-                    "substituted-request-id",
-                    GAME_INSTANCE_ID,
-                    digest(PREPARATION_INPUT),
-                    PREPARATION_INPUT,
-                    41L,
-                    Outcome.COMMITTED))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminal(
+                tuple.canonicalBytes(),
+                PARTICIPATION_ID,
+                31L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                NAMESPACE,
+                TENANT,
+                "substituted-request-id",
+                GAME_INSTANCE_ID,
+                digest(PREPARATION_INPUT),
+                PREPARATION_INPUT,
+                41L,
+                Outcome.COMMITTED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("scope");
 
@@ -395,10 +392,9 @@ class WorldStartSessionExecutionTerminalTest {
             () -> WorldStartSessionExecutionTerminal.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("strict UTF-8");
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminal.fromStored(
-                    new byte[WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES + 1]))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminal.fromStored(
+                new byte[WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("byte limit");
 
@@ -449,40 +445,38 @@ class WorldStartSessionExecutionTerminalTest {
                 .worldExecutionFence())
         .isEqualTo(Long.MAX_VALUE);
 
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminal(
-                    originalTuple().canonicalBytes(),
-                    PARTICIPATION_ID,
-                    31L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    NAMESPACE,
-                    TENANT,
-                    REQUEST_ID,
-                    GAME_INSTANCE_ID,
-                    digest("changed input"),
-                    PREPARATION_INPUT,
-                    41L,
-                    Outcome.COMMITTED))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminal(
+                originalTuple().canonicalBytes(),
+                PARTICIPATION_ID,
+                31L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                NAMESPACE,
+                TENANT,
+                REQUEST_ID,
+                GAME_INSTANCE_ID,
+                digest("changed input"),
+                PREPARATION_INPUT,
+                41L,
+                Outcome.COMMITTED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("preparationInputDigest");
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminal(
-                    originalTuple().canonicalBytes(),
-                    PARTICIPATION_ID,
-                    31L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    NAMESPACE,
-                    TENANT,
-                    REQUEST_ID,
-                    GAME_INSTANCE_ID,
-                    digest(PREPARATION_INPUT),
-                    "{ \"selected\" : \"different exact bytes\" }",
-                    41L,
-                    Outcome.COMMITTED))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminal(
+                originalTuple().canonicalBytes(),
+                PARTICIPATION_ID,
+                31L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                NAMESPACE,
+                TENANT,
+                REQUEST_ID,
+                GAME_INSTANCE_ID,
+                digest(PREPARATION_INPUT),
+                "{ \"selected\" : \"different exact bytes\" }",
+                41L,
+                Outcome.COMMITTED))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("preparationInputDigest");
   }
@@ -578,10 +572,8 @@ class WorldStartSessionExecutionTerminalTest {
   }
 
   private static void assertInvalid(String value) {
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminal.fromStored(
-                    value.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminal.fromStored(value.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

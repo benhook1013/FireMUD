@@ -145,14 +145,13 @@ public final class AssetSourceRepository {
         .map(m -> Long.parseLong(m.assetRowId()))
         .distinct()
         .sorted()
-        .forEach(
-            id -> {
-              if (dsl.fetchOne(
-                      "SELECT id FROM game_assets WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                      binding.target().gameDesignVersionTenantKey(),
-                      id)
-                  == null) throw new IllegalStateException("ASSET_SOURCE_ROW_UNAVAILABLE");
-            });
+        .forEach(id -> {
+          if (dsl.fetchOne(
+                  "SELECT id FROM game_assets WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                  binding.target().gameDesignVersionTenantKey(),
+                  id)
+              == null) throw new IllegalStateException("ASSET_SOURCE_ROW_UNAVAILABLE");
+        });
     for (var mutation : mutations) {
       net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item item =
           mutation.operation() == AssetSource.OperationKind.UPSERT
@@ -315,19 +314,16 @@ public final class AssetSourceRepository {
               target.gameDesignVersionRowId());
       if (mappings.size() != snapshot.items().size()
           || mappings.stream()
-              .anyMatch(
-                  mapping ->
-                      mapping.get("usage_type") != null
-                          || snapshot.items().stream()
-                              .noneMatch(
-                                  item ->
-                                      item.reference()
-                                              .assetRowId()
-                                              .equals(
-                                                  mapping.get("asset_id", Long.class).toString())
-                                          && item.reference()
-                                              .usageKey()
-                                              .equals(mapping.get("usage_key", String.class))))) {
+              .anyMatch(mapping ->
+                  mapping.get("usage_type") != null
+                      || snapshot.items().stream()
+                          .noneMatch(item ->
+                              item.reference()
+                                      .assetRowId()
+                                      .equals(mapping.get("asset_id", Long.class).toString())
+                                  && item.reference()
+                                      .usageKey()
+                                      .equals(mapping.get("usage_key", String.class))))) {
         throw new IllegalStateException("ASSET_SOURCE_PROJECTION_READBACK_CONFLICT");
       }
     }

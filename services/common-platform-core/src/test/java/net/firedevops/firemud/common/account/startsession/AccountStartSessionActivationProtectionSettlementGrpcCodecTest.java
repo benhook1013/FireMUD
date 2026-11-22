@@ -29,40 +29,34 @@ class AccountStartSessionActivationProtectionSettlementGrpcCodecTest {
   @Test
   void rejectsDuplicateUnknownChangedAndNoncanonicalRequestFields() {
     var valid = AccountStartSessionActivationProtectionSettlementGrpcCodec.toRequest(input());
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
-                    valid.toBuilder().addAccountProtectionFence("18").build(), NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
+                valid.toBuilder().addAccountProtectionFence("18").build(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
-                    valid.toBuilder().setTargetNamespace(0, "other-runtime").build(), NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
+                valid.toBuilder().setTargetNamespace(0, "other-runtime").build(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
-                    valid.toBuilder().setAccountProtectionFence(0, "018").build(), NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
+                valid.toBuilder().setAccountProtectionFence(0, "018").build(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
-                    valid.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
+                valid.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
-                    valid.toBuilder()
-                        .setSettlementRequestId(0, "00000000-0000-0000-0000-000000000000")
-                        .build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
+                valid.toBuilder()
+                    .setSettlementRequestId(0, "00000000-0000-0000-0000-000000000000")
+                    .build(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -79,57 +73,49 @@ class AccountStartSessionActivationProtectionSettlementGrpcCodecTest {
             .addTerminalEvidenceCanonicalBytes(ByteString.copyFromUtf8("{}"))
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
-                    input,
-                    validShape.toBuilder()
-                        .setSettlementRequestId(0, UUID.randomUUID().toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
+                input,
+                validShape.toBuilder()
+                    .setSettlementRequestId(0, UUID.randomUUID().toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("identity");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
-                    input, validShape.toBuilder().setAccountProtectionFence(0, "19").build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
+                input, validShape.toBuilder().setAccountProtectionFence(0, "19").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("identity");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
-                    input,
-                    validShape.toBuilder()
-                        .setAccountProtectionId(0, UUID.randomUUID().toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
+                input,
+                validShape.toBuilder()
+                    .setAccountProtectionId(0, UUID.randomUUID().toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("identity");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
-                    input,
-                    validShape.toBuilder().addSettledAt("2026-10-11T00:00:00.000001Z").build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
+                input, validShape.toBuilder().addSettledAt("2026-10-11T00:00:00.000001Z").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("identity");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
-                    input,
-                    validShape.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
+                input,
+                validShape.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
-                    input,
-                    validShape.toBuilder()
-                        .setTerminalEvidenceCanonicalBytes(0, ByteString.EMPTY)
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionSettlementGrpcCodec.fromResponse(
+                input,
+                validShape.toBuilder()
+                    .setTerminalEvidenceCanonicalBytes(0, ByteString.EMPTY)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

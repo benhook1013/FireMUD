@@ -14,8 +14,10 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -292,67 +294,11 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
     try (Database database = database("1044");
         var workers = Executors.newFixedThreadPool(2)) {
       CapacityFixture capacity = populateCapacity(database.dsl(), database.transaction());
-      CountDownLatch start = new CountDownLatch(1);
-      var first =
-          workers.submit(
-              () -> {
-                await(start);
-                database
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          changeUsage(database.dsl(), capacity, 1, 0);
-                          insertReservation(database.dsl(), capacity, 1);
-                        });
-              });
-      var second =
-          workers.submit(
-              () -> {
-                await(start);
-                database
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          changeUsage(database.dsl(), capacity, 2, 0);
-                          insertReservation(database.dsl(), capacity, 2);
-                        });
-              });
-      start.countDown();
-      first.get(30, TimeUnit.SECONDS);
-      second.get(30, TimeUnit.SECONDS);
+      runContendedReservationPhase(database, capacity, workers, 2, true);
       assertUsage(database.dsl(), capacity, 6, 0);
       assertConserved(database.dsl());
 
-      CountDownLatch next = new CountDownLatch(1);
-      var balanced =
-          workers.submit(
-              () -> {
-                await(next);
-                database
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          changeUsage(database.dsl(), capacity, 1, 0);
-                          insertReservation(database.dsl(), capacity, 1);
-                        });
-              });
-      var unbalanced =
-          workers.submit(
-              () -> {
-                await(next);
-                assertThatThrownBy(
-                        () ->
-                            database
-                                .transaction()
-                                .executeWithoutResult(
-                                    status -> insertReservation(database.dsl(), capacity, 2)))
-                    .satisfies(
-                        AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
-                            ::assertConservationRefusal);
-              });
-      next.countDown();
-      balanced.get(30, TimeUnit.SECONDS);
-      unbalanced.get(30, TimeUnit.SECONDS);
+      runContendedReservationPhase(database, capacity, workers, 2, false);
       assertUsage(database.dsl(), capacity, 7, 0);
       assertConserved(database.dsl());
     }
@@ -658,6 +604,93 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
             "SELECT pg_get_triggerdef(oid) AS definition FROM pg_trigger WHERE NOT tgisinternal "
                 + "AND tgrelid IN ('account_tenant_capacity_usage'::regclass, 'account_tenant_capacity_reservations'::regclass) ORDER BY tgname")
         .getValues("definition", String.class);
+  }
+
+  private static void runContendedReservationPhase(
+      Database database,
+      CapacityFixture capacity,
+      ExecutorService workers,
+      int contenderAmount,
+      boolean balanced)
+      throws Exception {
+    CountDownLatch firstHoldsUsage = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    CountDownLatch contenderConnected = new CountDownLatch(1);
+    var firstPid = new AtomicInteger();
+    var contenderPid = new AtomicInteger();
+    DSLContext dsl = database.dsl();
+    var first =
+        workers.submit(
+            () ->
+                database
+                    .transaction()
+                    .executeWithoutResult(
+                        status -> {
+                          firstPid.set(backendPid(dsl));
+                          changeUsage(dsl, capacity, 1, 0);
+                          insertReservation(dsl, capacity, 1);
+                          firstHoldsUsage.countDown();
+                          await(releaseFirst);
+                        }));
+    try {
+      await(firstHoldsUsage);
+      Runnable contend =
+          () ->
+              database
+                  .transaction()
+                  .executeWithoutResult(
+                      status -> {
+                        contenderPid.set(backendPid(dsl));
+                        contenderConnected.countDown();
+                        if (balanced) {
+                          changeUsage(dsl, capacity, contenderAmount, 0);
+                        }
+                        insertReservation(dsl, capacity, contenderAmount);
+                        dsl.execute("SET CONSTRAINTS ALL IMMEDIATE");
+                      });
+      var second =
+          workers.submit(
+              () -> {
+                if (balanced) {
+                  contend.run();
+                } else {
+                  assertThatThrownBy(contend::run)
+                      .satisfies(
+                          AccountTenantCapacityIncrementalConservationPostgresIntegrationTest
+                              ::assertConservationRefusal);
+                }
+              });
+      try {
+        await(contenderConnected);
+        assertThat(contenderPid.get()).isNotEqualTo(firstPid.get());
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!blocks(dsl, firstPid.get(), contenderPid.get()) && System.nanoTime() < deadline) {
+          if (second.isDone()) {
+            break;
+          }
+          Thread.sleep(20);
+        }
+        assertThat(blocks(dsl, firstPid.get(), contenderPid.get()))
+            .as("the second PostgreSQL transaction is blocked by the first")
+            .isTrue();
+      } finally {
+        releaseFirst.countDown();
+      }
+      first.get(30, TimeUnit.SECONDS);
+      second.get(30, TimeUnit.SECONDS);
+    } finally {
+      releaseFirst.countDown();
+    }
+  }
+
+  private static int backendPid(DSLContext dsl) {
+    return Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()")).get(0, Integer.class);
+  }
+
+  private static boolean blocks(DSLContext dsl, int holder, int contender) {
+    return Boolean.TRUE.equals(
+        Objects.requireNonNull(dsl.fetchOne("SELECT ? = ANY(pg_blocking_pids(?))", holder, contender))
+            .get(0, Boolean.class));
   }
 
   private static void await(CountDownLatch latch) {

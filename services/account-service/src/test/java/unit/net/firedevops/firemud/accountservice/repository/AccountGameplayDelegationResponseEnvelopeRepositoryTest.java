@@ -122,23 +122,20 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     // The owner bundle and encrypted response are mocked components. This proves only local
     // binding/CAS/readback orchestration; it is not a source, signer, or successful-issuance proof.
     when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
-                return fixture.operationRow();
-              }
-              if (sql.contains("FROM accounts")) {
-                assertThat(sql).contains("FOR SHARE").doesNotContain("FOR UPDATE");
-                return fixture.accountRow();
-              }
-              if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
-                return fixture.envelopeReads().getAndIncrement() == 0
-                    ? null
-                    : fixture.envelopeRow();
-              }
-              throw new AssertionError("Unexpected SQL in component fixture");
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
+            return fixture.operationRow();
+          }
+          if (sql.contains("FROM accounts")) {
+            assertThat(sql).contains("FOR SHARE").doesNotContain("FOR UPDATE");
+            return fixture.accountRow();
+          }
+          if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
+            return fixture.envelopeReads().getAndIncrement() == 0 ? null : fixture.envelopeRow();
+          }
+          throw new AssertionError("Unexpected SQL in component fixture");
+        });
     when(fixture.dsl().execute(anyString(), any(Object[].class))).thenReturn(1);
     when(fixture.bundles().captureAndPersist(REQUEST_ID)).thenReturn(fixture.bundle());
     when(fixture.bundles().readStoredNonAuthorizingValue(OPERATION_ID))
@@ -147,17 +144,15 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
         .thenReturn(fixture.sealed());
 
     SealedCandidateObservation first =
-        inWritableOwnerTransaction(
-            () ->
-                fixture
-                    .repository()
-                    .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt()));
+        inWritableOwnerTransaction(() ->
+            fixture
+                .repository()
+                .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt()));
     SealedCandidateObservation retry =
-        inWritableOwnerTransaction(
-            () ->
-                fixture
-                    .repository()
-                    .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt()));
+        inWritableOwnerTransaction(() ->
+            fixture
+                .repository()
+                .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt()));
 
     assertThat(retry).isEqualTo(first);
     assertThat(first.operationId()).isEqualTo(OPERATION_ID);
@@ -193,36 +188,30 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
         .thenReturn(fixture.operationRow());
     CallerIdentity wrongCaller =
         new CallerIdentity("spiffe://firemud/ns/other/sa/game-session-service", CALLER_CONTEXT_ID);
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .sealPendingCandidate(REQUEST_ID, wrongCaller, fixture.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, wrongCaller, fixture.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
 
     CallerIdentity wrongContext =
         new CallerIdentity(WORKLOAD, UUID.fromString("c46b58cf-4204-468b-a499-2de0eb8ce5fc"));
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .sealPendingCandidate(REQUEST_ID, wrongContext, fixture.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, wrongContext, fixture.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .sealPendingCandidate(
-                                REQUEST_ID, fixture.caller(), fixture.compactJwt() + "A")))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .sealPendingCandidate(
+                        REQUEST_ID, fixture.caller(), fixture.compactJwt() + "A")))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
     verifyNoInteractions(fixture.sourceEvidence(), fixture.bundles(), fixture.crypto());
@@ -238,18 +227,17 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     ActiveCommittedIssuanceObservation active = activeObservation(fixture);
     when(fixture.operationRow().get("status", String.class)).thenReturn("COMMITTED");
     when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
-                return fixture.operationRow();
-              }
-              if (sql.contains("FROM accounts")) return fixture.accountRow();
-              if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
-                return fixture.envelopeRow();
-              }
-              throw new AssertionError("Unexpected recovery SQL in component fixture");
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
+            return fixture.operationRow();
+          }
+          if (sql.contains("FROM accounts")) return fixture.accountRow();
+          if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
+            return fixture.envelopeRow();
+          }
+          throw new AssertionError("Unexpected recovery SQL in component fixture");
+        });
     when(fixture
             .sourceEvidence()
             .readCurrentIssuerAccountSources(
@@ -267,10 +255,8 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
             fixture.dsl(), fixture.sourceEvidence(), fixture.bundles(), issuance, fixture.crypto());
 
     var recovered =
-        inWritableOwnerTransaction(
-            () ->
-                repository.recoverCommittedResponse(
-                    REQUEST_ID, ACCOUNT_ID, fixture.caller(), active));
+        inWritableOwnerTransaction(() ->
+            repository.recoverCommittedResponse(REQUEST_ID, ACCOUNT_ID, fixture.caller(), active));
 
     assertThat(recovered.compactJwtBytes())
         .containsExactly(fixture.compactJwt().getBytes(StandardCharsets.US_ASCII));
@@ -297,51 +283,41 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
         new AccountGameplayDelegationResponseEnvelopeRepository(
             fixture.dsl(), fixture.sourceEvidence(), fixture.bundles(), fixture.crypto());
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        repository.preflightCommittedRecovery(
-                            UUID.fromString("58102ea4-9245-4ddc-a68c-3ff41dcf96af"),
-                            ACCOUNT_ID,
-                            fixture.caller())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                repository.preflightCommittedRecovery(
+                    UUID.fromString("58102ea4-9245-4ddc-a68c-3ff41dcf96af"),
+                    ACCOUNT_ID,
+                    fixture.caller())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.OperationUnavailableException.class)
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        repository.preflightCommittedRecovery(
-                            REQUEST_ID,
-                            UUID.fromString("674cb504-8f4c-4d06-86c6-7b72f79cae74"),
-                            fixture.caller())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                repository.preflightCommittedRecovery(
+                    REQUEST_ID,
+                    UUID.fromString("674cb504-8f4c-4d06-86c6-7b72f79cae74"),
+                    fixture.caller())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class)
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        repository.preflightCommittedRecovery(
-                            REQUEST_ID,
-                            ACCOUNT_ID,
-                            new CallerIdentity(
-                                "spiffe://firemud/ns/other/sa/game-session-service",
-                                CALLER_CONTEXT_ID))))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                repository.preflightCommittedRecovery(
+                    REQUEST_ID,
+                    ACCOUNT_ID,
+                    new CallerIdentity(
+                        "spiffe://firemud/ns/other/sa/game-session-service", CALLER_CONTEXT_ID))))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class)
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        repository.preflightCommittedRecovery(
-                            REQUEST_ID,
-                            ACCOUNT_ID,
-                            new CallerIdentity(
-                                WORKLOAD,
-                                UUID.fromString("e46c59e8-4dd8-49a7-9d26-2db49f0d0ecb")))))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                repository.preflightCommittedRecovery(
+                    REQUEST_ID,
+                    ACCOUNT_ID,
+                    new CallerIdentity(
+                        WORKLOAD, UUID.fromString("e46c59e8-4dd8-49a7-9d26-2db49f0d0ecb")))))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class)
         .hasNoCause();
@@ -357,13 +333,11 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
         .thenReturn(fixture.operationRow());
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .preflightCommittedRecovery(REQUEST_ID, ACCOUNT_ID, fixture.caller())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .preflightCommittedRecovery(REQUEST_ID, ACCOUNT_ID, fixture.caller())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.ResponseRecoveryExpiredException
                 .class)
@@ -381,17 +355,12 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
             .crypto()
             .decrypt(any(EncryptedResponseEnvelope.class), any(Binding.class), any(Instant.class)))
         .thenReturn(alteredJwt);
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        digestHarness
-                            .repository()
-                            .recoverCommittedResponse(
-                                REQUEST_ID,
-                                ACCOUNT_ID,
-                                digestFixture.caller(),
-                                digestHarness.active())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                digestHarness
+                    .repository()
+                    .recoverCommittedResponse(
+                        REQUEST_ID, ACCOUNT_ID, digestFixture.caller(), digestHarness.active())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.StorageUnavailableException.class)
         .hasNoCause();
@@ -404,17 +373,15 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
             .crypto()
             .decrypt(any(EncryptedResponseEnvelope.class), any(Binding.class), any(Instant.class)))
         .thenThrow(missingKey);
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        missingKeyHarness
-                            .repository()
-                            .recoverCommittedResponse(
-                                REQUEST_ID,
-                                ACCOUNT_ID,
-                                missingKeyFixture.caller(),
-                                missingKeyHarness.active())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                missingKeyHarness
+                    .repository()
+                    .recoverCommittedResponse(
+                        REQUEST_ID,
+                        ACCOUNT_ID,
+                        missingKeyFixture.caller(),
+                        missingKeyHarness.active())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.StorageUnavailableException.class)
         .hasNoCause();
@@ -426,14 +393,12 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     RecoveryHarness harness = recoveryHarness(fixture);
     when(harness.active().tokenSha256()).thenReturn("f".repeat(64));
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        harness
-                            .repository()
-                            .recoverCommittedResponse(
-                                REQUEST_ID, ACCOUNT_ID, fixture.caller(), harness.active())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                harness
+                    .repository()
+                    .recoverCommittedResponse(
+                        REQUEST_ID, ACCOUNT_ID, fixture.caller(), harness.active())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.OwnerEvidenceUnavailableException
                 .class)
@@ -445,17 +410,15 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     RecoveryHarness envelopeHarness = recoveryHarness(envelopeFixture);
     when(envelopeFixture.envelopeRow().get("envelope_sha256", String.class))
         .thenReturn("f".repeat(64));
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        envelopeHarness
-                            .repository()
-                            .recoverCommittedResponse(
-                                REQUEST_ID,
-                                ACCOUNT_ID,
-                                envelopeFixture.caller(),
-                                envelopeHarness.active())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                envelopeHarness
+                    .repository()
+                    .recoverCommittedResponse(
+                        REQUEST_ID,
+                        ACCOUNT_ID,
+                        envelopeFixture.caller(),
+                        envelopeHarness.active())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.StorageUnavailableException.class)
         .hasNoCause();
@@ -468,14 +431,11 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     Fixture expired = fixture(NOW.minusSeconds(121L));
     when(expired.dsl().fetchOne(anyString(), any(Object[].class)))
         .thenReturn(expired.operationRow());
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        expired
-                            .repository()
-                            .sealPendingCandidate(
-                                REQUEST_ID, expired.caller(), expired.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                expired
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, expired.caller(), expired.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.ResponseRecoveryExpiredException
                 .class);
@@ -493,14 +453,11 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     when(missing.bundles().captureAndPersist(REQUEST_ID))
         .thenThrow(new AccountAuthEvidenceBundleRepository.OwnerEvidenceUnavailableException());
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        missing
-                            .repository()
-                            .sealPendingCandidate(
-                                REQUEST_ID, missing.caller(), missing.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                missing
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, missing.caller(), missing.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.OwnerEvidenceUnavailableException
                 .class);
@@ -513,27 +470,25 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
   void pendingCandidateResumeRejectsAlteredEncryptedEnvelopeBeforeDecryption() throws Exception {
     Fixture fixture = fixture(NOW);
     when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
-                return fixture.operationRow();
-              }
-              if (sql.contains("FROM accounts")) return fixture.accountRow();
-              if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
-                return fixture.envelopeRow();
-              }
-              throw new AssertionError("Unexpected pending-resume SQL in component fixture");
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
+            return fixture.operationRow();
+          }
+          if (sql.contains("FROM accounts")) return fixture.accountRow();
+          if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
+            return fixture.envelopeRow();
+          }
+          throw new AssertionError("Unexpected pending-resume SQL in component fixture");
+        });
     when(fixture.bundles().readStoredNonAuthorizingValue(OPERATION_ID))
         .thenReturn(fixture.bundle());
     when(fixture.envelopeRow().get("envelope_bytes", byte[].class))
         .thenReturn(new byte[] {9, 8, 7, 6, 5});
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () -> fixture.repository().openPendingCandidate(REQUEST_ID, fixture.caller())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(
+                () -> fixture.repository().openPendingCandidate(REQUEST_ID, fixture.caller())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.StorageUnavailableException.class)
         .hasNoCause();
@@ -548,18 +503,17 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     ActiveCommittedIssuanceObservation active = activeObservation(fixture);
     when(fixture.operationRow().get("status", String.class)).thenReturn("COMMITTED");
     when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
-                return fixture.operationRow();
-              }
-              if (sql.contains("FROM accounts")) return fixture.accountRow();
-              if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
-                return fixture.envelopeRow();
-              }
-              throw new AssertionError("Unexpected recovery SQL in component fixture");
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
+            return fixture.operationRow();
+          }
+          if (sql.contains("FROM accounts")) return fixture.accountRow();
+          if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
+            return fixture.envelopeRow();
+          }
+          throw new AssertionError("Unexpected recovery SQL in component fixture");
+        });
     when(fixture
             .sourceEvidence()
             .readCurrentIssuerAccountSources(
@@ -651,14 +605,11 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
                 GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
         .thenReturn(changed);
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .sealPendingCandidate(
-                                REQUEST_ID, fixture.caller(), fixture.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.AuthorityChangedException.class);
     verifyNoInteractions(fixture.bundles(), fixture.crypto());
@@ -678,14 +629,11 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     when(fixture.bundles().readStoredNonAuthorizingValue(OPERATION_ID))
         .thenReturn(bundle(fixture.digest(), "3".repeat(64)));
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .sealPendingCandidate(
-                                REQUEST_ID, fixture.caller(), fixture.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.OwnerEvidenceUnavailableException
                 .class);
@@ -704,10 +652,9 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     assertThat(AccountAuthEvidenceBundle.parseCanonical(bundle.canonicalBytes())).isEqualTo(bundle);
 
     for (Object invalidTokenGeneration : List.of(1L, "01", "2")) {
-      assertThatThrownBy(
-              () ->
-                  AccountAuthEvidenceBundle.parseCanonical(
-                      bundleBytesWithTokenGeneration(bundle, invalidTokenGeneration)))
+      assertThatThrownBy(() ->
+              AccountAuthEvidenceBundle.parseCanonical(
+                  bundleBytesWithTokenGeneration(bundle, invalidTokenGeneration)))
           .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
     }
   }
@@ -722,18 +669,17 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
             fixture.sealed().bytes(),
             NOW.getEpochSecond() + 119L);
     when(fixture.dsl().fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
-                return fixture.operationRow();
-              }
-              if (sql.contains("FROM accounts")) return fixture.accountRow();
-              if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
-                return mismatchedExpiry;
-              }
-              throw new AssertionError("Unexpected SQL in component fixture");
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM account_gameplay_delegation_issuance_operations")) {
+            return fixture.operationRow();
+          }
+          if (sql.contains("FROM accounts")) return fixture.accountRow();
+          if (sql.contains("FROM account_gameplay_delegation_response_envelopes")) {
+            return mismatchedExpiry;
+          }
+          throw new AssertionError("Unexpected SQL in component fixture");
+        });
     when(fixture
             .sourceEvidence()
             .readCurrentIssuerAccountSources(
@@ -743,14 +689,11 @@ class AccountGameplayDelegationResponseEnvelopeRepositoryTest {
     when(fixture.bundles().readStoredNonAuthorizingValue(OPERATION_ID))
         .thenReturn(fixture.bundle());
 
-    assertThatThrownBy(
-            () ->
-                inWritableOwnerTransaction(
-                    () ->
-                        fixture
-                            .repository()
-                            .sealPendingCandidate(
-                                REQUEST_ID, fixture.caller(), fixture.compactJwt())))
+    assertThatThrownBy(() ->
+            inWritableOwnerTransaction(() ->
+                fixture
+                    .repository()
+                    .sealPendingCandidate(REQUEST_ID, fixture.caller(), fixture.compactJwt())))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.StorageUnavailableException.class);
     verify(fixture.crypto(), never())

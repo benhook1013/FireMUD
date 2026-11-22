@@ -83,7 +83,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -428,7 +428,10 @@ jobs:
 
   dispatch-pr-base-refreshes:
     name: Dispatch PR Base Refreshes
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.status == 'completed' && (github.event.workflow_run.event == 'pull_request' || (github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop'))) && github.event.workflow_run.head_repository.full_name == github.repository }}
+    concurrency:
+      group: runtime-pr-refresh-dispatch
+      queue: max
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.status == 'completed' && (github.event.workflow_run.path == '.github/workflows/ci.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/ci.yml@')) && (github.event.workflow_run.event == 'pull_request' || (github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop'))) && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -437,7 +440,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -445,6 +448,25 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
+            const dispatcherStartedAt = Date.now();
+            // Reserve the final two minutes for shared visibility and one minute for runner overhead.
+            const fanoutDeadline = dispatcherStartedAt + 12 * 60 * 1000;
+            const withRequestDeadline = (options, deadline, phase) => {
+              const remainingMs = deadline - Date.now();
+              if (remainingMs <= 0) {
+                const error = new Error(`${phase} deadline reached; request not issued`);
+                error.code = "REQUEST_DEADLINE_EXPIRED";
+                throw error;
+              }
+              return {
+                ...options,
+                request: {
+                  ...options.request,
+                  signal: AbortSignal.timeout(remainingMs),
+                },
+              };
+            };
+            const fanoutOptions = options => withRequestDeadline(options, fanoutDeadline, "Runtime fan-out");
             const workflowRun = context.payload.workflow_run;
             const refreshBranch = workflowRun.head_branch;
             const refreshSha = workflowRun.head_sha;
@@ -495,17 +517,19 @@ jobs:
             const runtimeRunLookbackMilliseconds = 7 * 24 * 60 * 60 * 1000;
 
             const waitForMergeRefresh = async () => {
-              await new Promise((resolve) => setTimeout(resolve, 2000));
+              const remainingMs = fanoutDeadline - Date.now();
+              if (remainingMs <= 0) throw new Error("Runtime fan-out deadline reached during merge refresh");
+              await new Promise((resolve) => setTimeout(resolve, Math.min(2000, remainingMs)));
             };
 
             const hasRuntimeChange = async (pullRequest) => {
               const files = await github.paginate(
                 github.rest.pulls.listFiles,
-                {
+                fanoutOptions({
                   ...context.repo,
                   pull_number: pullRequest.number,
                   per_page: 100,
-                },
+                }),
                 (response) => response.data
               );
               const expectedFileCount = pullRequest.changed_files;
@@ -549,10 +573,10 @@ jobs:
 
             const resolveExactMerge = async (number, baseBranch = refreshBranch, baseSha = refreshSha, expectedHeadSha = null) => {
               for (let attempt = 1; attempt <= 5; attempt += 1) {
-                const response = await github.rest.pulls.get({
+                const response = await github.rest.pulls.get(fanoutOptions({
                   ...context.repo,
                   pull_number: number,
-                });
+                }));
                 const pullRequest = response.data;
                 const currentHeadSha = pullRequest.head?.sha;
                 const currentBaseRef = pullRequest.base?.ref;
@@ -600,10 +624,10 @@ jobs:
                 }
 
                 try {
-                  const commit = await github.rest.repos.getCommit({
+                  const commit = await github.rest.repos.getCommit(fanoutOptions({
                     ...context.repo,
                     ref: mergeSha,
-                  });
+                  }));
                   const parents = commit.data.parents?.map((parent) => parent.sha) || [];
                   if (commit.data.sha !== mergeSha ||
                     parents.length !== 2 ||
@@ -617,6 +641,7 @@ jobs:
                     return null;
                   }
                 } catch (error) {
+                  if (Date.now() >= fanoutDeadline) throw error;
                   if (attempt < 5) {
                     await waitForMergeRefresh();
                     continue;
@@ -639,40 +664,54 @@ jobs:
               return null;
             };
 
-            const loadExistingRuntimeRuns = async () => {
-              const readInventory = async (createdSince) => {
-                const inventory = [];
-                let complete = true;
-                let incompleteReason = null;
-                for (const event of runtimeRunEvents) {
-                  const response = await github.rest.actions.listWorkflowRuns({
-                    ...context.repo,
-                    workflow_id: "runtime-images.yml",
-                    event,
-                    created: `${createdSince}..*`,
-                    per_page: runtimeRunPageSize,
-                    page: 1,
-                  });
+            const validTimestamp = (value) => typeof value === "string" &&
+              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
+              Number.isFinite(Date.parse(value));
+
+            const readInventory = async (createdSince, events = runtimeRunEvents, deadline = fanoutDeadline, phase = "Runtime fan-out") => {
+              const inventory = [];
+              let complete = true;
+              let incompleteReason = null;
+              for (const event of events) {
+                let total;
+                const eventRuns = [], ids = new Set();
+                for (let page = 1; page <= 10; page += 1) {
+                  const response = await github.rest.actions.listWorkflowRuns(withRequestDeadline({
+                    ...context.repo, workflow_id: "runtime-images.yml", event,
+                    created: `${createdSince}..*`, per_page: runtimeRunPageSize, page,
+                  }, deadline, phase));
                   const payload = response?.data;
-                  if (!payload || !Number.isInteger(payload.total_count) ||
-                    payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
-                    throw new Error(`runtime-images ${event} recent run inventory is malformed`);
-                  }
-                  if (payload.total_count > runtimeRunPageSize) {
+                  total ??= payload?.total_count;
+                  if (!Number.isInteger(total) || total < 0 || !Array.isArray(payload?.workflow_runs) ||
+                      payload.total_count !== total) throw new Error(`runtime-images ${event} inventory shifted or is malformed`);
+                  if (total >= 1000) {
                     complete = false;
-                    incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} runs since ${createdSince}`;
+                    incompleteReason ??= `runtime-images ${event} exceeds 1000-run bound`;
+                    // Retain this untrusted sample only for the existing conservative in-flight refinement.
+                    // It is never treated as a complete inventory or dispatch authority.
+                    eventRuns.push(...payload.workflow_runs);
+                    break;
                   }
-                  const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
-                  if (payload.workflow_runs.length !== expectedPageLength) {
+                  if (payload.workflow_runs.length !== Math.min(runtimeRunPageSize, total - eventRuns.length)) {
                     throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
                   }
-                  inventory.push(...payload.workflow_runs);
+                  for (const run of payload.workflow_runs) {
+                    if (!Number.isSafeInteger(run.id) || run.id <= 0 || ids.has(run.id)) {
+                      throw new Error(`runtime-images ${event} inventory has duplicate or invalid run IDs`);
+                    }
+                    ids.add(run.id); eventRuns.push(run);
+                  }
+                  if (eventRuns.length === total) break;
                 }
-                return {complete, runs: inventory, reason: incompleteReason};
-              };
+                inventory.push(...eventRuns);
+              }
+              return {complete, runs: inventory, reason: incompleteReason};
+            };
 
+
+            const loadExistingRuntimeRuns = async () => {
               const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
-              const initial = await readInventory(createdSince);
+              const initial = await readInventory(createdSince, runtimeRunEvents, fanoutDeadline, "Runtime fan-out");
               if (initial.complete) {
                 return initial;
               }
@@ -683,9 +722,6 @@ jobs:
                 return initial;
               }
 
-              const validTimestamp = (value) => typeof value === "string" &&
-                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
-                Number.isFinite(Date.parse(value));
               if (inFlightRuns.some((run) => !runtimeRunEvents.includes(run.event) ||
                 !Number.isSafeInteger(run.id) || run.id <= 0 || !validTimestamp(run.created_at))) {
                 return {
@@ -694,11 +730,12 @@ jobs:
                 };
               }
 
-              const refinementSince = inFlightRuns
-                .map((run) => run.created_at)
-                .sort()[0];
-              // The inclusive created lower bound makes the refined pages a complete candidate set without relying on API ordering.
-              const refined = await readInventory(refinementSince);
+              const ciCompletedAt = workflowRun.updated_at;
+              if (!validTimestamp(ciCompletedAt)) return initial;
+              const refinementSince = [...inFlightRuns.map(run => run.created_at), ciCompletedAt]
+                .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+              // Refinement can confirm a producer, but cannot prove absence outside its narrower range.
+              const refined = await readInventory(refinementSince, runtimeRunEvents, fanoutDeadline, "Runtime fan-out");
               if (!refined.complete) {
                 return {
                   ...refined,
@@ -713,32 +750,34 @@ jobs:
                   reason: "refined inventory did not retain every initially observed in-flight run",
                 };
               }
-              return refined;
+              return {...refined, absenceProven: false};
             };
 
+            const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
+            const validWorkflowRef = ref => {
+              if (typeof ref !== "string" || ref.length === 0 || ref === "@" ||
+                  ref.includes("..") || ref.includes("@{") || ref.includes("//") ||
+                  ref.startsWith("/") || ref.endsWith("/") || ref.endsWith(".")) return false;
+              const forbidden = new Set(["~", "^", ":", "?", "*", "[", "\\"]);
+              if ([...ref].some(character => {
+                const code = character.charCodeAt(0);
+                return code <= 32 || code === 127 || forbidden.has(character);
+              })) return false;
+              return ref.split("/").every(part => part.length > 0 && !part.startsWith(".") &&
+                !part.endsWith(".lock"));
+            };
+            const workflowPathMatches = (path, expected = expectedWorkflowPath) => {
+              if (path === expected) {
+                return true;
+              }
+              const prefix = `${expected}@`;
+              if (typeof path !== "string" || !path.startsWith(prefix)) {
+                return false;
+              }
+              const ref = path.slice(prefix.length);
+              return validWorkflowRef(ref);
+            };
             const findExactExistingProducer = (tuple, inventory) => {
-              const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
-              const workflowPathMatches = (path) => {
-                if (path === expectedWorkflowPath) {
-                  return true;
-                }
-                const prefix = `${expectedWorkflowPath}@`;
-                if (typeof path !== "string" || !path.startsWith(prefix)) {
-                  return false;
-                }
-                const ref = path.slice(prefix.length);
-                if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
-                  /[\u0000-\u0020\u007f]/.test(ref) ||
-                  ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
-                  ref.includes("..") || ref.includes("@{")) {
-                  return false;
-                }
-                return ref.split("/").every((part) =>
-                  part.length > 0 && part !== "." && part !== ".." &&
-                  !part.startsWith(".") &&
-                  !part.endsWith(".lock")
-                );
-              };
               const expectedTitle =
                 `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
                 `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
@@ -774,8 +813,8 @@ jobs:
                   }
                 }
               }
-              ordered.sort((left, right) => right.created_at.localeCompare(left.created_at));
-              if (ordered.length > 1 && ordered[0].created_at === ordered[1].created_at) {
+              ordered.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+              if (ordered.length > 1 && Date.parse(ordered[0].created_at) === Date.parse(ordered[1].created_at)) {
                 throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
               }
               const newest = ordered[0];
@@ -789,7 +828,14 @@ jobs:
                 return [newest];
               }
               if (newest.status === "completed") {
-                // Completed source success does not prove publication remains usable; preserve recovery dispatch.
+                // Same-second or incomparable completion evidence is ambiguous and
+                // suppresses a duplicate; only a valid, strictly older producer may recover.
+                const ciCompleted = Date.parse(workflowRun.updated_at || "");
+                if (newest.event === "repository_dispatch" &&
+                    (!Number.isFinite(ciCompleted) ||
+                     Math.floor(Date.parse(newest.created_at) / 1000) >= Math.floor(ciCompleted / 1000))) {
+                  return [newest];
+                }
                 return [];
               }
               throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
@@ -819,18 +865,17 @@ jobs:
                 run.head_branch === refreshBranch && run.head_sha === refreshSha &&
                 run.display_title === workflowRun.display_title &&
                 [ciName, workflowRun.display_title].includes(run.name) &&
-                (run.path === ciPath || (typeof run.path === "string" &&
-                  run.path.startsWith(`${ciPath}@`) && run.path.length > ciPath.length + 1));
+                workflowPathMatches(run.path, ciPath) && run.path === workflowRun.path;
               if (!titleMatch || titleMatch[3] !== refreshSha) {
                 core.warning("Skipping PR runtime reconciliation: callback lacks exact CI PR/base/head title metadata.");
                 return;
               }
-              const {data: ciWorkflow} = await github.rest.actions.getWorkflow({
+              const {data: ciWorkflow} = await github.rest.actions.getWorkflow(fanoutOptions({
                 ...context.repo, workflow_id: "ci.yml",
-              });
-              const {data: source} = await github.rest.actions.getWorkflowRun({
+              }));
+              const {data: source} = await github.rest.actions.getWorkflowRun(fanoutOptions({
                 ...context.repo, run_id: workflowRun.id,
-              });
+              }));
               if (ciWorkflow.id !== workflowRun.workflow_id || ciWorkflow.path !== ciPath ||
                 ciWorkflow.name !== ciName || !matchesSource(source)) {
                 core.warning("Skipping PR runtime reconciliation: current CI workflow/run identity differs from callback.");
@@ -838,7 +883,7 @@ jobs:
               }
               const jobs = await github.paginate(
                 "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
-                {...context.repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100}
+                fanoutOptions({...context.repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100})
               );
               const gates = jobs.filter((job) => job.name === "Validation Gate");
               const gate = gates.length === 1 ? gates[0] : null;
@@ -857,9 +902,9 @@ jobs:
                 core.info("Skipping PR runtime reconciliation: exact CI attempt is metadata-only or lacks substantive native gate evidence.");
                 return;
               }
-              const {data: latest} = await github.rest.actions.getWorkflowRun({
+              const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({
                 ...context.repo, run_id: source.id,
-              });
+              }));
               if (!matchesSource(latest)) {
                 core.warning("Skipping PR runtime reconciliation: CI attempt was superseded during classification.");
                 return;
@@ -868,10 +913,10 @@ jobs:
             }
             let currentBranch;
             try {
-              currentBranch = await github.rest.git.getRef({
+              currentBranch = await github.rest.git.getRef(fanoutOptions({
                 ...context.repo,
                 ref: `heads/${refreshBranch}`,
-              });
+              }));
             } catch (error) {
               if (error.status !== 404) throw error;
               core.info(`Skipping obsolete CI callback: branch ${refreshBranch} no longer exists.`);
@@ -888,23 +933,42 @@ jobs:
               ["main", "develop"].includes(refreshBranch);
             const pullRequests = protectedPrHead ? [] : await github.paginate(
               github.rest.pulls.list,
-              {
+              fanoutOptions({
                 ...context.repo,
                 state: "open",
                 base: refreshBranch,
                 per_page: 100,
-              },
+              }),
               (response) => response.data
             );
             const refreshTargets = [];
-            for (const listedPullRequest of pullRequests) {
+            for (let pullRequestIndex = 0; pullRequestIndex < pullRequests.length; pullRequestIndex += 1) {
+              const listedPullRequest = pullRequests[pullRequestIndex];
               if (listedPullRequest.state !== "open" ||
                 listedPullRequest.base?.ref !== refreshBranch ||
                 listedPullRequest.head?.repo?.full_name !== context.payload.repository.full_name ||
                 listedPullRequest.base?.repo?.full_name !== context.payload.repository.full_name) {
                 continue;
               }
-              const resolved = await resolveExactMerge(listedPullRequest.number);
+              let resolved;
+              try {
+                resolved = await resolveExactMerge(listedPullRequest.number);
+              } catch (error) {
+                if (Date.now() >= fanoutDeadline) {
+                  const incompleteTargets = pullRequests.slice(pullRequestIndex)
+                    .map(({number}) => `#${number}`).join(", ");
+                  core.setFailed(
+                    `Runtime fan-out cutoff reached during initial PR target merge resolution; ` +
+                    `PR targets ${incompleteTargets} remain incomplete: ${error.message || error}`
+                  );
+                  break;
+                }
+                core.setFailed(
+                  `Cannot verify runtime target tuple for PR #${listedPullRequest.number}; ` +
+                  `no dispatch issued: ${error.message || error}`
+                );
+                continue;
+              }
               if (resolved) {
                 refreshTargets.push(resolved);
               }
@@ -914,12 +978,12 @@ jobs:
               // is only a reconcile signal: re-read its source's current exact tuple.
               const sourcePullRequests = await github.paginate(
                 github.rest.pulls.list,
-                {
+                fanoutOptions({
                   ...context.repo,
                   state: "open",
                   head: `${context.repo.owner}:${refreshBranch}`,
                   per_page: 100,
-                },
+                }),
                 (response) => response.data
               );
               for (const source of sourcePullRequests) {
@@ -932,10 +996,10 @@ jobs:
                   source.base.ref.length === 0) {
                   continue;
                 }
-                const sourceBase = await github.rest.git.getRef({
+                const sourceBase = await github.rest.git.getRef(fanoutOptions({
                   ...context.repo,
                   ref: `heads/${source.base.ref}`,
-                });
+                }));
                 const sourceBaseSha = sourceBase.data.object?.sha;
                 if (!shaPattern.test(sourceBaseSha || "")) {
                   core.warning(`Skipping source PR #${source.number}: current base ref SHA is invalid.`);
@@ -947,14 +1011,40 @@ jobs:
                 }
               }
             }
+            const pendingVisibility = [];
+            let visibilitySince;
             let runtimeInventoryPromise;
             let runtimeInventoryError = null;
-            for (const resolved of refreshTargets) {
+            const reportFanoutCutoff = (targetIndex, stage) => {
+              const incompleteTargets = refreshTargets.slice(targetIndex)
+                .map(({tuple: targetTuple}) => `#${targetTuple.prNumber}`).join(", ");
+              core.setFailed(
+                `Runtime fan-out cutoff reached ${stage}; PR targets ${incompleteTargets} remain incomplete. ` +
+                "Already sent runtime handoffs will still be observed."
+              );
+            };
+            for (let targetIndex = 0; targetIndex < refreshTargets.length; targetIndex += 1) {
+              if (Date.now() >= fanoutDeadline) {
+                reportFanoutCutoff(targetIndex, "at a target boundary");
+                break;
+              }
+              const resolved = refreshTargets[targetIndex];
               const {tuple, pullRequest} = resolved;
-              if (await hasRuntimeChange(pullRequest)) {
+              let runtimeChanges;
+              try {
+                runtimeChanges = await hasRuntimeChange(pullRequest);
+              } catch (error) {
+                if (Date.now() >= fanoutDeadline) {
+                  reportFanoutCutoff(targetIndex, "during changed-file proof");
+                  break;
+                }
+                core.setFailed(`Cannot verify runtime changed files for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
+              }
+              runtimeRefresh: if (runtimeChanges) {
                 let existingProducers = [];
                 let fallbackReason = null;
                 let inventory;
+                const reusingInventory = runtimeInventoryPromise !== undefined;
                 if (runtimeInventoryError) {
                   fallbackReason = runtimeInventoryError;
                 } else {
@@ -969,19 +1059,33 @@ jobs:
                 if (!fallbackReason) {
                   try {
                     existingProducers = findExactExistingProducer(tuple, inventory);
+                    // A cache hit can prove that an exact producer exists. Refresh
+                    // a miss after earlier targets so it cannot hide a new producer.
+                    if (reusingInventory && inventory.complete && existingProducers.length === 0) {
+                      runtimeInventoryPromise = loadExistingRuntimeRuns();
+                      inventory = await runtimeInventoryPromise;
+                      existingProducers = findExactExistingProducer(tuple, inventory);
+                    }
                     if (!inventory.complete) {
                       // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
                       existingProducers = [];
                       fallbackReason = inventory.reason || "recent run inventory is incomplete";
+                    } else if (existingProducers.length === 0 && inventory.absenceProven === false) {
+                      fallbackReason = "truncated initial inventory cannot prove exact producer absence from a narrower refinement";
                     }
                   } catch (error) {
                     fallbackReason = error.message || String(error);
                   }
                 }
                 if (fallbackReason) {
-                  core.warning(
-                    `Cannot verify recent runtime producer evidence for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}); falling back to the required refresh dispatch: ${fallbackReason}`
-                  );
+                  if (Date.now() >= fanoutDeadline) {
+                    reportFanoutCutoff(targetIndex, "during runtime inventory");
+                    break;
+                  }
+                  core.setFailed(`Cannot verify exact runtime producer inventory for PR #${tuple.prNumber}; no dispatch issued: ${fallbackReason}`);
+                  runtimeInventoryPromise = undefined;
+                  runtimeInventoryError = null;
+                  break runtimeRefresh;
                 }
                 if (existingProducers.length > 0) {
                   const producer = existingProducers[0];
@@ -990,39 +1094,232 @@ jobs:
                   );
                 } else {
                   core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-                  await github.rest.repos.createDispatchEvent({
-                    ...context.repo,
-                    event_type: "pr-runtime-base-refresh",
-                    client_payload: {
-                      pr_number: tuple.prNumber,
-                      base_ref: tuple.baseRef,
-                      base_sha: tuple.baseSha,
-                      head_sha: tuple.headSha,
-                      merge_sha: tuple.mergeSha,
-                    },
-                  });
+                  // Refresh tuple custody after preceding fan-out/API work under the shared dispatcher lock.
+                  let current;
+                  try {
+                    current = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+                  } catch (error) {
+                    if (Date.now() >= fanoutDeadline) {
+                      reportFanoutCutoff(targetIndex, "during runtime tuple proof");
+                      break;
+                    }
+                    core.setFailed(`Cannot verify runtime tuple for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
+                    break runtimeRefresh;
+                  }
+                  if (!current || current.tuple.mergeSha !== tuple.mergeSha) {
+                    core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
+                    continue;
+                  }
+                  let currentBase;
+                  try {
+                    ({data: currentBase} = await github.rest.git.getRef(fanoutOptions({
+                      ...context.repo, ref: `heads/${tuple.baseRef}`,
+                    })));
+                  } catch (error) {
+                    if (Date.now() >= fanoutDeadline) {
+                      reportFanoutCutoff(targetIndex, "during runtime base proof");
+                      break;
+                    }
+                    core.setFailed(`Cannot read current base for PR #${tuple.prNumber}: ${error.message || error}`);
+                    break runtimeRefresh;
+                  }
+                  if (currentBase.object?.sha !== tuple.baseSha) {
+                    core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
+                    continue;
+                  }
+                  if (Date.now() >= fanoutDeadline) {
+                    reportFanoutCutoff(targetIndex, `before the runtime POST for PR #${tuple.prNumber}`);
+                    break;
+                  }
+                  const previousIds = new Set(inventory.runs.map(run => run.id));
+                  // Actions run timestamps may omit sub-second precision. Inventory
+                  // from the start of this second so a handoff created in the POST's
+                  // timestamp second remains observable.
+                  const dispatchSince = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
+                  const pending = {tuple, previousIds, dispatchSince, responseUnknown: false};
+                  visibilitySince ??= dispatchSince;
+                  pendingVisibility.push(pending);
+                  try {
+                    await github.rest.repos.createDispatchEvent(fanoutOptions({
+                      ...context.repo,
+                      event_type: "pr-runtime-base-refresh",
+                      client_payload: {
+                        pr_number: tuple.prNumber,
+                        base_ref: tuple.baseRef,
+                        base_sha: tuple.baseSha,
+                        head_sha: tuple.headSha,
+                        merge_sha: tuple.mergeSha,
+                      },
+                      request: {retries: 0},
+                    }));
+                  } catch (error) {
+                    // Repository dispatch documents 404 and 422 as rejected requests; 401 is invalid authentication.
+                    // A transport error or retryable response is not proof of rejection.
+                    if (error?.code === "REQUEST_DEADLINE_EXPIRED") {
+                      pendingVisibility.pop();
+                      if (!pendingVisibility.length) visibilitySince = undefined;
+                      core.setFailed(`Runtime refresh POST cutoff for PR #${tuple.prNumber}; request was not issued.`);
+                      break runtimeRefresh;
+                    }
+                    if ([401, 404, 422].includes(error?.status) && error.response?.status === error.status &&
+                        !error.response.headers?.["retry-after"] && error.response.headers?.["x-ratelimit-remaining"] !== "0") {
+                      pendingVisibility.pop();
+                      if (!pendingVisibility.length) visibilitySince = undefined;
+                      core.setFailed(`Runtime refresh POST rejected for PR #${tuple.prNumber}; no retry issued: ${error.message || error}`);
+                      break runtimeRefresh;
+                    }
+                    pending.responseUnknown = true;
+                    core.warning(`Runtime refresh handoff for PR #${tuple.prNumber} is uncertain; no retry issued: ${error.message || error}`);
+                    runtimeInventoryPromise = undefined;
+                    break runtimeRefresh;
+                  }
+                  runtimeInventoryPromise = undefined;
                 }
-              } else {
+              } else if (runtimeChanges === false) {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
-              if (!isPreviewEligible(pullRequest)) {
+              // Preview has its own exact-image proof. An uncertain runtime handoff must not suppress it.
+              let previewCurrent;
+              try {
+                previewCurrent = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+              } catch (error) {
+                if (Date.now() >= fanoutDeadline) {
+                  reportFanoutCutoff(targetIndex, "during preview tuple proof");
+                  break;
+                }
+                core.setFailed(`Cannot verify preview tuple for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
+                continue;
+              }
+              if (!previewCurrent || previewCurrent.tuple.mergeSha !== tuple.mergeSha) continue;
+              if (!isPreviewEligible(previewCurrent.pullRequest)) {
                 core.info(`Skipping preview deploy reconciliation for #${tuple.prNumber}: target is not preview-eligible.`);
                 continue;
               }
+              if (Date.now() >= fanoutDeadline) {
+                reportFanoutCutoff(targetIndex, `before the preview POST for PR #${tuple.prNumber}`);
+                break;
+              }
               core.info(`Dispatching preview deploy reconciliation for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-              await github.rest.repos.createDispatchEvent({
-                ...context.repo,
-                event_type: "preview-deploy",
-                client_payload: {
-                  action: "deploy",
-                  pr_number: tuple.prNumber,
-                  base_ref: tuple.baseRef,
-                  base_sha: tuple.baseSha,
-                  head_sha: tuple.headSha,
-                  merge_sha: tuple.mergeSha,
-                  preview_domain: "preview.firedevops.net",
-                },
-              });
+              try {
+                await github.rest.repos.createDispatchEvent(fanoutOptions({
+                  ...context.repo,
+                  event_type: "preview-deploy",
+                  client_payload: {
+                    action: "deploy",
+                    pr_number: tuple.prNumber,
+                    base_ref: tuple.baseRef,
+                    base_sha: tuple.baseSha,
+                    head_sha: tuple.headSha,
+                    merge_sha: tuple.mergeSha,
+                    preview_domain: "preview.firedevops.net",
+                  },
+                  request: {retries: 0},
+                }));
+              } catch (error) {
+                if (error?.code === "REQUEST_DEADLINE_EXPIRED") {
+                  core.setFailed(`Preview handoff cutoff for PR #${tuple.prNumber}; request was not issued.`);
+                  continue;
+                }
+                core.setFailed(`Preview reconciliation handoff for PR #${tuple.prNumber} is uncertain; no retry issued: ${error.message || error}`);
+              }
+            }
+            // One shared bounded observation window, not 120 seconds multiplied by the fan-out size.
+            // The dispatcher lock remains held; no POST is retried even when visibility is uncertain.
+            const visibilityDeadline = Date.now() + 120000;
+            const expectedRepository = `${context.repo.owner}/${context.repo.repo}`;
+            const defaultBranch = context.payload.repository?.default_branch;
+            let runtimeWorkflow = null;
+            const isTransientVisibilityError = error => {
+              const status = error?.status ?? error?.response?.status;
+              const code = error?.code ?? error?.cause?.code;
+              return [408, 425, 429, 500, 502, 503, 504].includes(status) ||
+                (status == null && (["ABORT_ERR", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
+                  "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code) ||
+                  ["AbortError", "TimeoutError"].includes(error?.name)));
+            };
+            if (pendingVisibility.length > 0) {
+              try {
+                if (context.payload.repository?.full_name !== expectedRepository ||
+                    typeof defaultBranch !== "string" || !defaultBranch) {
+                  throw new Error("Repository identity or default branch is unavailable");
+                }
+                while (!runtimeWorkflow && Date.now() < visibilityDeadline) {
+                  try {
+                    const {data: workflow} = await github.rest.actions.getWorkflow(withRequestDeadline({
+                      ...context.repo, workflow_id: "runtime-images.yml",
+                    }, visibilityDeadline, "Runtime visibility observation"));
+                    if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
+                        workflow.path !== expectedWorkflowPath || workflow.name !== "Build Runtime Images") {
+                      throw new Error("Current runtime workflow identity is not trusted");
+                    }
+                    runtimeWorkflow = workflow;
+                  } catch (error) {
+                    if (!isTransientVisibilityError(error)) throw error;
+                    core.warning("Producer workflow identity lookup is temporarily unavailable; retrying within the existing visibility deadline without retrying any POST.");
+                    const remaining = visibilityDeadline - Date.now();
+                    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(5000, remaining)));
+                  }
+                }
+                if (!runtimeWorkflow) {
+                  throw new Error("Producer workflow identity remained unavailable until the visibility deadline");
+                }
+              } catch (error) {
+                core.setFailed(`Runtime refresh visibility is unconfirmed because the producer workflow identity could not be trusted; no retry issued: ${error.message || error}`);
+              }
+            }
+            while (pendingVisibility.length > 0 && runtimeWorkflow) {
+              if (Date.now() >= visibilityDeadline) {
+                const dispatchState = pendingVisibility.some(item => item.responseUnknown) ? "attempted" : "accepted";
+                core.setFailed(`Refresh dispatch ${dispatchState} but visibility is unknown for PRs ${pendingVisibility.map(item => item.tuple.prNumber).join(", ")}; no retry issued`);
+                break;
+              }
+              try {
+                const observed = await readInventory(
+                  visibilitySince,
+                  ["repository_dispatch"],
+                  visibilityDeadline,
+                  "Runtime visibility observation"
+                );
+                if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
+                for (let index = pendingVisibility.length - 1; index >= 0; index--) {
+                  const {tuple, previousIds, dispatchSince, responseUnknown} = pendingVisibility[index];
+                  const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+                  // The floor includes this POST's second; the complete pre-POST ID
+                  // snapshot distinguishes new candidates from already-visible runs.
+                  const unseenExactRuns = observed.runs.filter(run => run.event === "repository_dispatch" &&
+                    run.display_title === exactTitle && !previousIds.has(run.id));
+                  for (const run of unseenExactRuns) {
+                    if (!Number.isSafeInteger(run.id) || run.id <= 0 || run.workflow_id !== runtimeWorkflow.id ||
+                        !workflowPathMatches(run.path) ||
+                        ![runtimeWorkflow.name, exactTitle].includes(run.name) ||
+                        run.repository?.full_name !== expectedRepository ||
+                        run.head_repository?.full_name !== expectedRepository ||
+                        run.head_branch !== defaultBranch ||
+                        typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
+                        !validTimestamp(run.created_at)) {
+                      throw new Error(`run ${run.id} has the exact PR tuple title but untrusted native workflow identity`);
+                    }
+                  }
+                  const dispatchSecond = Math.floor(Date.parse(dispatchSince) / 1000) * 1000;
+                  const freshExactRuns = unseenExactRuns.filter(run => Date.parse(run.created_at) >= dispatchSecond);
+                  if (freshExactRuns.length > 1) {
+                    throw new Error(`multiple new exact runtime handoffs are visible for PR #${tuple.prNumber}`);
+                  }
+                  if (freshExactRuns.length > 0) {
+                    pendingVisibility.splice(index, 1);
+                    if (responseUnknown) core.info(`Runtime refresh for PR #${tuple.prNumber} became visible after an unknown POST response.`);
+                  }
+                }
+              } catch (error) {
+                if (!isTransientVisibilityError(error)) {
+                  core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
+                  break;
+                }
+                core.warning("Runtime refresh visibility read is temporarily unavailable; keep observing without retrying any POST.");
+              }
+              if (pendingVisibility.length === 0) break;
+              const remaining = visibilityDeadline - Date.now();
+              if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(5000, remaining)));
             }
 
   build-base-image:
@@ -1038,7 +1335,7 @@ jobs:
       packages: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1052,7 +1349,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1147,7 +1444,7 @@ jobs:
           - world-management-service
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1158,7 +1455,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: 'temurin'
           java-version: '25'
@@ -1183,7 +1480,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1244,7 +1541,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1315,7 +1612,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1349,7 +1646,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1385,7 +1682,7 @@ jobs:
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1396,7 +1693,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: 'temurin'
           java-version: '25'
@@ -1410,7 +1707,7 @@ jobs:
           cache-read-only: false
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1479,7 +1776,7 @@ jobs:
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1513,7 +1810,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1564,7 +1861,7 @@ jobs:
       BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1585,7 +1882,7 @@ jobs:
           requirements: smoke
 
       - name: Set up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: 'temurin'
           java-version: '25'
@@ -1867,7 +2164,7 @@ jobs:
       CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1878,7 +2175,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: 'temurin'
           java-version: '25'
@@ -1937,7 +2234,7 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1982,7 +2279,7 @@ jobs:
       CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1999,7 +2296,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

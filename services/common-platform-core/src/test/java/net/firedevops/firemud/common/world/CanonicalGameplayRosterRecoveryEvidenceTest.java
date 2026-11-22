@@ -41,10 +41,9 @@ class CanonicalGameplayRosterRecoveryEvidenceTest {
         .isEqualTo(owner);
     assertThatThrownBy(() -> CanonicalGameplayRosterReferenceEvidence.requireDereference(owner))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterRecoveryEvidence.response(
-                    request, UUID.randomUUID(), 1L, UUID.randomUUID(), null))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterRecoveryEvidence.response(
+                request, UUID.randomUUID(), 1L, UUID.randomUUID(), null))
         .isInstanceOf(IllegalArgumentException.class);
     var noCapture =
         CanonicalGameplayRosterRecoveryEvidence.playerCreatedResponse(
@@ -96,34 +95,29 @@ class CanonicalGameplayRosterRecoveryEvidenceTest {
     int maximumRosterEnvelope = 66 * 1024 + 4096 + 256;
     assertThat(maximumRosterEnvelope)
         .isLessThanOrEqualTo(CanonicalGameplayRosterRecoveryEvidence.MAX_RESPONSE_BYTES);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterRecoveryEvidence.requireResponse(
-                    request,
-                    response.toBuilder()
-                        .setCanonicalPlayerCreatedRosterReceipt(
-                            CanonicalGameplayRosterReferenceEvidenceTest.logicalBytes(
-                                66 * 1024 + 1))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterRecoveryEvidence.requireResponse(
+                request,
+                response.toBuilder()
+                    .setCanonicalPlayerCreatedRosterReceipt(
+                        CanonicalGameplayRosterReferenceEvidenceTest.logicalBytes(66 * 1024 + 1))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterRecoveryEvidence.requireResponse(
-                    request,
-                    response.toBuilder()
-                        .setCanonicalPlayerCreatedRosterReceipt(
-                            CanonicalGameplayRosterReferenceEvidenceTest.logicalBytes(
-                                128 * 1024 + 1))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterRecoveryEvidence.requireResponse(
+                request,
+                response.toBuilder()
+                    .setCanonicalPlayerCreatedRosterReceipt(
+                        CanonicalGameplayRosterReferenceEvidenceTest.logicalBytes(128 * 1024 + 1))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var unknown =
         UnknownFieldSet.newBuilder()
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterRecoveryEvidence.requireResponse(
-                    request, response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterRecoveryEvidence.requireResponse(
+                request, response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var oldTarget =
         CanonicalGameplayRosterReferenceEvidence.target(fixture.original()).toBuilder()
@@ -147,18 +141,16 @@ class CanonicalGameplayRosterRecoveryEvidenceTest {
             oldRequest, UUID.randomUUID(), 1L, UUID.randomUUID(), oldReceipt);
     assertThat(CanonicalGameplayRosterRecoveryEvidence.requireResponse(oldRequest, oldResponse))
         .isEqualTo(oldResponse);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterRecoveryEvidence.requireResponse(
-                    oldRequest,
-                    oldResponse.toBuilder()
-                        .setCanonicalPlayerCreatedRosterReceipt(fixture.roster().toByteString())
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterRecoveryEvidence.requireResponse(
+                oldRequest,
+                oldResponse.toBuilder()
+                    .setCanonicalPlayerCreatedRosterReceipt(fixture.roster().toByteString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRosterRecoveryEvidence.playerCreatedResponse(
-                    oldRequest, UUID.randomUUID(), 1L, UUID.randomUUID(), null))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRosterRecoveryEvidence.playerCreatedResponse(
+                oldRequest, UUID.randomUUID(), 1L, UUID.randomUUID(), null))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

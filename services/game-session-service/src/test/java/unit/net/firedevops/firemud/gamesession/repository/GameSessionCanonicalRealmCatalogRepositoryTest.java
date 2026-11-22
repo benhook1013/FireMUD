@@ -60,21 +60,20 @@ class GameSessionCanonicalRealmCatalogRepositoryTest {
     assertThatThrownBy(() -> request("realm", "Display", "policy", true, true, "PRIVATE"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("stateScope");
-    assertThatThrownBy(
-            () ->
-                new CreateCanonicalRealmCatalogRequest(
-                    CREATE_REQUEST_ID,
-                    NAMESPACE,
-                    TENANT_ID,
-                    INTAKE_OPERATION_ID,
-                    "realm",
-                    "Display",
-                    true,
-                    true,
-                    "SHARED",
-                    "policy",
-                    uuid(5),
-                    null))
+    assertThatThrownBy(() ->
+            new CreateCanonicalRealmCatalogRequest(
+                CREATE_REQUEST_ID,
+                NAMESPACE,
+                TENANT_ID,
+                INTAKE_OPERATION_ID,
+                "realm",
+                "Display",
+                true,
+                true,
+                "SHARED",
+                "policy",
+                uuid(5),
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("private/playtest");
     String malformedUtf8 = "bad" + (char) 0xD800;
@@ -122,26 +121,25 @@ class GameSessionCanonicalRealmCatalogRepositoryTest {
   @Test
   void snapshotRejectsTenantAndWorldSelectorsThatDifferFromPersistedSource() {
     IntakeReceipt source = sourceReceipt();
-    assertThatThrownBy(
-            () ->
-                new CanonicalRealmCatalogSnapshot(
-                    NAMESPACE,
-                    TENANT_ID,
-                    "different-tenant",
-                    "authored-world",
-                    uuid(7),
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    "SHARED",
-                    uuid(8),
-                    "policy",
-                    1,
-                    CREATE_REQUEST_ID,
-                    "sha256:" + "a".repeat(64),
-                    "sha256:" + "b".repeat(64),
-                    source))
+    assertThatThrownBy(() ->
+            new CanonicalRealmCatalogSnapshot(
+                NAMESPACE,
+                TENANT_ID,
+                "different-tenant",
+                "authored-world",
+                uuid(7),
+                "realm",
+                "Realm",
+                true,
+                true,
+                "SHARED",
+                uuid(8),
+                "policy",
+                1,
+                CREATE_REQUEST_ID,
+                "sha256:" + "a".repeat(64),
+                "sha256:" + "b".repeat(64),
+                source))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("do not match");
   }

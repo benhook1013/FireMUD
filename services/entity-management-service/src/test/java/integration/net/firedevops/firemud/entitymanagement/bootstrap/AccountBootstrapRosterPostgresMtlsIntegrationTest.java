@@ -419,14 +419,13 @@ class AccountBootstrapRosterPostgresMtlsIntegrationTest {
                   target.playableStateScope()));
       var result =
           new TransactionTemplate(manager)
-              .execute(
-                  ignored ->
-                      characters.assignPreseededActor(
-                          request,
-                          evidence,
-                          new RuntimeAccountIdentityEvidence(
-                              1, "test", operation, account, rowId, "ACCOUNT_DATABASE_INSERT"),
-                          request.mutationIntentDigest()));
+              .execute(ignored ->
+                  characters.assignPreseededActor(
+                      request,
+                      evidence,
+                      new RuntimeAccountIdentityEvidence(
+                          1, "test", operation, account, rowId, "ACCOUNT_DATABASE_INSERT"),
+                      request.mutationIntentDigest()));
       assertThat(result.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
       return result.characterUuid();
     }

@@ -170,63 +170,61 @@ public final class AccountJwtSignerBootstrapCoordinator {
     InventorySnapshot liveInventory = observeCurrentValidatorInventory(sources, request);
     requireUnchangedProtectedBindings(sources);
     PreparedPromotion prepared =
-        accountTransaction.execute(
-            status -> {
-              requireUnchangedProtectedBindings(sources);
-              var proof =
-                  readinessRepository.readCurrentPromotionPrerequisites(
-                      sources.materializerBinding().accountBinding(),
-                      trustFence(sources.materializerBinding()),
-                      request.operationId(),
-                      liveInventory);
-              if (proof.isEmpty()) {
-                return null;
-              }
-              ReadinessPromotionProof verifiedProof = proof.orElseThrow();
-              DesiredState state =
-                  desiredStateRepository.read(sources.materializerBinding().accountBinding());
-              EnrollmentIdentity enrollment =
-                  state
-                      .enrollmentIdentity()
-                      .orElseThrow(
-                          () ->
-                              new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS));
-              var publication = verifiedProof.publication();
-              PromotionPreparation preparation =
-                  new PromotionPreparation(
-                      verifiedProof.generationResult().operationId(),
-                      verifiedProof.generationResult(),
-                      enrollment,
-                      publication.intent().apiBindingDigest(),
-                      publication.intent().apiConfigRevision(),
-                      publication.intent().configMapUid(),
-                      publication.receipt().observedResourceVersion(),
-                      publication.intent().intentDigest(),
-                      publication.receipt().receiptDigest(),
-                      publication.mountedCorrespondence().observationDigest(),
-                      verifiedProof.plan().planDigest(),
-                      verifiedProof.readinessEvidenceDigest(),
-                      publication.intent().jwksJson());
-              PreparedPromotion persisted =
-                  desiredStateRepository.prepareCurrentGeneration(
-                      sources.materializerBinding().accountBinding(),
-                      trustFence(sources.materializerBinding()),
-                      preparation,
-                      verifiedProof);
-              PreparedGenerationEvidence readback =
-                  desiredStateRepository.readPreparedGenerationForRecovery(
-                      sources.materializerBinding().accountBinding(),
-                      trustFence(sources.materializerBinding()));
-              if (!readback.promotion().operationId().equals(persisted.operationId())
-                  || !readback.promotion().requestDigest().equals(persisted.requestDigest())
-                  || !readback.promotion().generationOperationId().equals(request.operationId())
-                  || !readback.generationResult().equals(verifiedProof.generationResult())
-                  || !"PREPARED".equals(persisted.status())) {
-                throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
-              }
-              requireUnchangedProtectedBindings(sources);
-              return persisted;
-            });
+        accountTransaction.execute(status -> {
+          requireUnchangedProtectedBindings(sources);
+          var proof =
+              readinessRepository.readCurrentPromotionPrerequisites(
+                  sources.materializerBinding().accountBinding(),
+                  trustFence(sources.materializerBinding()),
+                  request.operationId(),
+                  liveInventory);
+          if (proof.isEmpty()) {
+            return null;
+          }
+          ReadinessPromotionProof verifiedProof = proof.orElseThrow();
+          DesiredState state =
+              desiredStateRepository.read(sources.materializerBinding().accountBinding());
+          EnrollmentIdentity enrollment =
+              state
+                  .enrollmentIdentity()
+                  .orElseThrow(
+                      () -> new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS));
+          var publication = verifiedProof.publication();
+          PromotionPreparation preparation =
+              new PromotionPreparation(
+                  verifiedProof.generationResult().operationId(),
+                  verifiedProof.generationResult(),
+                  enrollment,
+                  publication.intent().apiBindingDigest(),
+                  publication.intent().apiConfigRevision(),
+                  publication.intent().configMapUid(),
+                  publication.receipt().observedResourceVersion(),
+                  publication.intent().intentDigest(),
+                  publication.receipt().receiptDigest(),
+                  publication.mountedCorrespondence().observationDigest(),
+                  verifiedProof.plan().planDigest(),
+                  verifiedProof.readinessEvidenceDigest(),
+                  publication.intent().jwksJson());
+          PreparedPromotion persisted =
+              desiredStateRepository.prepareCurrentGeneration(
+                  sources.materializerBinding().accountBinding(),
+                  trustFence(sources.materializerBinding()),
+                  preparation,
+                  verifiedProof);
+          PreparedGenerationEvidence readback =
+              desiredStateRepository.readPreparedGenerationForRecovery(
+                  sources.materializerBinding().accountBinding(),
+                  trustFence(sources.materializerBinding()));
+          if (!readback.promotion().operationId().equals(persisted.operationId())
+              || !readback.promotion().requestDigest().equals(persisted.requestDigest())
+              || !readback.promotion().generationOperationId().equals(request.operationId())
+              || !readback.generationResult().equals(verifiedProof.generationResult())
+              || !"PREPARED".equals(persisted.status())) {
+            throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
+          }
+          requireUnchangedProtectedBindings(sources);
+          return persisted;
+        });
     if (prepared == null) {
       return Optional.empty();
     }
@@ -298,18 +296,17 @@ public final class AccountJwtSignerBootstrapCoordinator {
             promotion.expectedPublicJwksJson(),
             promotion.expectedActiveMarkerJson());
     ActiveJwksPromotionReceipt activeReceipt =
-        accountTransaction.execute(
-            status -> {
-              PrivatePromotionReceipt currentPrivateReceipt =
-                  desiredStateRepository.recordPrivatePromotionResult(
-                      binding.accountBinding(), trustFence(binding), observation);
-              if (!expectedReceipt.equals(currentPrivateReceipt)) {
-                throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
-                    "Original private promotion receipt changed before ACTIVE readback recording");
-              }
-              return desiredStateRepository.recordActiveJwksPromotionResult(
-                  binding.accountBinding(), trustFence(binding), activeObservation);
-            });
+        accountTransaction.execute(status -> {
+          PrivatePromotionReceipt currentPrivateReceipt =
+              desiredStateRepository.recordPrivatePromotionResult(
+                  binding.accountBinding(), trustFence(binding), observation);
+          if (!expectedReceipt.equals(currentPrivateReceipt)) {
+            throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
+                "Original private promotion receipt changed before ACTIVE readback recording");
+          }
+          return desiredStateRepository.recordActiveJwksPromotionResult(
+              binding.accountBinding(), trustFence(binding), activeObservation);
+        });
     if (activeReceipt == null) {
       throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
           "Account ACTIVE JWKS receipt is unavailable");
@@ -329,10 +326,9 @@ public final class AccountJwtSignerBootstrapCoordinator {
     }
 
     PreparedGenerationEvidence afterActiveReceipt =
-        accountTransaction.execute(
-            status ->
-                desiredStateRepository.readPreparedGenerationForRecovery(
-                    binding.accountBinding(), trustFence(binding)));
+        accountTransaction.execute(status ->
+            desiredStateRepository.readPreparedGenerationForRecovery(
+                binding.accountBinding(), trustFence(binding)));
     if (afterActiveReceipt == null) {
       throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
           "Prepared Account promotion evidence is unavailable after ACTIVE readback");
@@ -383,45 +379,43 @@ public final class AccountJwtSignerBootstrapCoordinator {
       PrivatePromotionReceipt expectedReceipt) {
     TrustFence trust = trustFence(binding);
     PromotionOwnerSnapshot snapshot =
-        accountTransaction.execute(
-            status -> {
-              PrivatePromotionReceipt receipt =
-                  desiredStateRepository.recordPrivatePromotionResult(
-                      binding.accountBinding(), trust, observation);
-              if (!expectedReceipt.equals(receipt)) {
-                throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
-                    "Private promotion receipt changed before Account reconciliation");
-              }
-              try {
-                PreparedGenerationEvidence prepared =
-                    desiredStateRepository.readPreparedGenerationForRecovery(
-                        binding.accountBinding(), trust);
-                requirePreparedReceipt(prepared, observation, receipt);
-                return new PromotionOwnerSnapshot(prepared, null, receipt);
-              } catch (AccountJwtSignerDesiredStateRepository.NoPreparedPromotionException done) {
-                CommittedSignerEvidence committed =
-                    desiredStateRepository
-                        .readCurrentCommittedSigner(
-                            binding.accountBinding(),
-                            trust,
-                            apiIdentity.bindingDigest(),
-                            apiIdentity.configRevision())
-                        .orElseThrow(
-                            () ->
-                                new AccountJwtSignerDesiredStateRepository
-                                    .PromotionPrerequisitesIncompleteException(
-                                    "Private promotion is neither PREPARED nor currently committed"));
-                if (!committed.privateReceipt().equals(receipt)
-                    || !committed
-                        .promotion()
-                        .operationId()
-                        .equals(observation.promotionOperationId())) {
-                  throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
-                      "Committed private promotion retry differs from Account evidence");
-                }
-                return new PromotionOwnerSnapshot(null, committed, receipt);
-              }
-            });
+        accountTransaction.execute(status -> {
+          PrivatePromotionReceipt receipt =
+              desiredStateRepository.recordPrivatePromotionResult(
+                  binding.accountBinding(), trust, observation);
+          if (!expectedReceipt.equals(receipt)) {
+            throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
+                "Private promotion receipt changed before Account reconciliation");
+          }
+          try {
+            PreparedGenerationEvidence prepared =
+                desiredStateRepository.readPreparedGenerationForRecovery(
+                    binding.accountBinding(), trust);
+            requirePreparedReceipt(prepared, observation, receipt);
+            return new PromotionOwnerSnapshot(prepared, null, receipt);
+          } catch (AccountJwtSignerDesiredStateRepository.NoPreparedPromotionException done) {
+            CommittedSignerEvidence committed =
+                desiredStateRepository
+                    .readCurrentCommittedSigner(
+                        binding.accountBinding(),
+                        trust,
+                        apiIdentity.bindingDigest(),
+                        apiIdentity.configRevision())
+                    .orElseThrow(() ->
+                        new AccountJwtSignerDesiredStateRepository
+                            .PromotionPrerequisitesIncompleteException(
+                            "Private promotion is neither PREPARED nor currently committed"));
+            if (!committed.privateReceipt().equals(receipt)
+                || !committed
+                    .promotion()
+                    .operationId()
+                    .equals(observation.promotionOperationId())) {
+              throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
+                  "Committed private promotion retry differs from Account evidence");
+            }
+            return new PromotionOwnerSnapshot(null, committed, receipt);
+          }
+        });
     if (snapshot == null) {
       throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
           "Account signer promotion evidence is unavailable");
@@ -438,31 +432,29 @@ public final class AccountJwtSignerBootstrapCoordinator {
       InventorySnapshot liveInventory) {
     TrustFence trust = trustFence(binding);
     ReadinessPromotionProof proof =
-        accountTransaction.execute(
-            status -> {
-              PrivatePromotionReceipt receipt =
-                  desiredStateRepository.recordPrivatePromotionResult(
-                      binding.accountBinding(), trust, observation);
-              if (!expectedReceipt.equals(receipt)) {
-                throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
-                    "Private promotion receipt changed before ACTIVE publication");
-              }
-              PreparedGenerationEvidence current =
-                  desiredStateRepository.readPreparedGenerationForRecovery(
-                      binding.accountBinding(), trust);
-              requireSamePreparedPromotion(current, expectedPromotion, observation, receipt);
-              return readinessRepository
-                  .readPromotionProof(
-                      binding.accountBinding(),
-                      trust,
-                      expectedPromotion.generationOperationId(),
-                      liveInventory)
-                  .orElseThrow(
-                      () ->
-                          new AccountJwtSignerDesiredStateRepository
-                              .PromotionPrerequisitesIncompleteException(
-                              "Fresh complete Account readiness proof is unavailable"));
-            });
+        accountTransaction.execute(status -> {
+          PrivatePromotionReceipt receipt =
+              desiredStateRepository.recordPrivatePromotionResult(
+                  binding.accountBinding(), trust, observation);
+          if (!expectedReceipt.equals(receipt)) {
+            throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
+                "Private promotion receipt changed before ACTIVE publication");
+          }
+          PreparedGenerationEvidence current =
+              desiredStateRepository.readPreparedGenerationForRecovery(
+                  binding.accountBinding(), trust);
+          requireSamePreparedPromotion(current, expectedPromotion, observation, receipt);
+          return readinessRepository
+              .readPromotionProof(
+                  binding.accountBinding(),
+                  trust,
+                  expectedPromotion.generationOperationId(),
+                  liveInventory)
+              .orElseThrow(() ->
+                  new AccountJwtSignerDesiredStateRepository
+                      .PromotionPrerequisitesIncompleteException(
+                      "Fresh complete Account readiness proof is unavailable"));
+        });
     if (proof == null) {
       throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
           "Account readiness proof is unavailable");
@@ -480,34 +472,32 @@ public final class AccountJwtSignerBootstrapCoordinator {
       InventorySnapshot liveInventory) {
     TrustFence trust = trustFence(binding);
     CommittedSignerEvidence committed =
-        accountTransaction.execute(
-            status -> {
-              PrivatePromotionReceipt receipt =
-                  desiredStateRepository.recordPrivatePromotionResult(
-                      binding.accountBinding(), trust, observation);
-              if (!expectedReceipt.equals(receipt)) {
-                throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
-                    "Original private promotion observation no longer matches Account evidence");
-              }
-              PreparedGenerationEvidence current =
-                  desiredStateRepository.readPreparedGenerationForRecovery(
-                      binding.accountBinding(), trust);
-              requireSamePreparedPromotion(current, expectedPromotion, observation, receipt);
-              ReadinessPromotionProof proof =
-                  readinessRepository
-                      .readPromotionProof(
-                          binding.accountBinding(),
-                          trust,
-                          expectedPromotion.generationOperationId(),
-                          liveInventory)
-                      .orElseThrow(
-                          () ->
-                              new AccountJwtSignerDesiredStateRepository
-                                  .PromotionPrerequisitesIncompleteException(
-                                  "Post-CAS complete Account readiness proof is unavailable"));
-              return desiredStateRepository.commitPreparedPromotion(
-                  binding.accountBinding(), trust, expectedPromotion.operationId(), proof);
-            });
+        accountTransaction.execute(status -> {
+          PrivatePromotionReceipt receipt =
+              desiredStateRepository.recordPrivatePromotionResult(
+                  binding.accountBinding(), trust, observation);
+          if (!expectedReceipt.equals(receipt)) {
+            throw new AccountJwtSignerDesiredStateRepository.IdempotencyConflictException(
+                "Original private promotion observation no longer matches Account evidence");
+          }
+          PreparedGenerationEvidence current =
+              desiredStateRepository.readPreparedGenerationForRecovery(
+                  binding.accountBinding(), trust);
+          requireSamePreparedPromotion(current, expectedPromotion, observation, receipt);
+          ReadinessPromotionProof proof =
+              readinessRepository
+                  .readPromotionProof(
+                      binding.accountBinding(),
+                      trust,
+                      expectedPromotion.generationOperationId(),
+                      liveInventory)
+                  .orElseThrow(() ->
+                      new AccountJwtSignerDesiredStateRepository
+                          .PromotionPrerequisitesIncompleteException(
+                          "Post-CAS complete Account readiness proof is unavailable"));
+          return desiredStateRepository.commitPreparedPromotion(
+              binding.accountBinding(), trust, expectedPromotion.operationId(), proof);
+        });
     if (committed == null) {
       throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
           "Account signer promotion commit is unavailable");
@@ -676,17 +666,16 @@ public final class AccountJwtSignerBootstrapCoordinator {
         throw new BootstrapOperationException(FailureCode.VALIDATOR_INVENTORY_UNAVAILABLE);
       }
       ObservationContext context =
-          accountTransaction.execute(
-              status -> {
-                requireUnchangedProtectedBindings(sources);
-                ObservationContext selected =
-                    readinessRepository.readCurrentInventoryObservationContext(
-                        sources.materializerBinding().accountBinding(),
-                        trustFence(sources.materializerBinding()),
-                        request.operationId());
-                requireUnchangedProtectedBindings(sources);
-                return selected;
-              });
+          accountTransaction.execute(status -> {
+            requireUnchangedProtectedBindings(sources);
+            ObservationContext selected =
+                readinessRepository.readCurrentInventoryObservationContext(
+                    sources.materializerBinding().accountBinding(),
+                    trustFence(sources.materializerBinding()),
+                    request.operationId());
+            requireUnchangedProtectedBindings(sources);
+            return selected;
+          });
       if (context == null) {
         throw new BootstrapOperationException(FailureCode.VALIDATOR_INVENTORY_UNAVAILABLE);
       }
@@ -759,14 +748,13 @@ public final class AccountJwtSignerBootstrapCoordinator {
         sources.materializerBinding().accountBinding();
     try {
       DesiredState initialized =
-          accountTransaction.execute(
-              status -> {
-                requireUnchangedProtectedBindings(sources);
-                DesiredState persisted =
-                    desiredStateRepository.initialize(accountBinding, sources.enrollmentIdentity());
-                requireUnchangedProtectedBindings(sources);
-                return persisted;
-              });
+          accountTransaction.execute(status -> {
+            requireUnchangedProtectedBindings(sources);
+            DesiredState persisted =
+                desiredStateRepository.initialize(accountBinding, sources.enrollmentIdentity());
+            requireUnchangedProtectedBindings(sources);
+            return persisted;
+          });
       if (initialized == null) {
         throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
       }
@@ -784,14 +772,13 @@ public final class AccountJwtSignerBootstrapCoordinator {
         sources.materializerBinding().accountBinding();
     try {
       Optional<DesiredState> state =
-          accountTransaction.execute(
-              status -> {
-                requireUnchangedProtectedBindings(sources);
-                Optional<DesiredState> current =
-                    desiredStateRepository.readEnrollmentState(accountBinding);
-                requireUnchangedProtectedBindings(sources);
-                return current;
-              });
+          accountTransaction.execute(status -> {
+            requireUnchangedProtectedBindings(sources);
+            Optional<DesiredState> current =
+                desiredStateRepository.readEnrollmentState(accountBinding);
+            requireUnchangedProtectedBindings(sources);
+            return current;
+          });
       if (state == null || state.isEmpty()) {
         throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
       }
@@ -832,14 +819,13 @@ public final class AccountJwtSignerBootstrapCoordinator {
     TrustFence trustFence = trustFence(sources.materializerBinding());
     try {
       GenerationRequest request =
-          accountTransaction.execute(
-              status -> {
-                requireUnchangedProtectedBindings(sources);
-                GenerationRequest current =
-                    desiredStateRepository.readCurrentGenerationRequest(accountBinding, trustFence);
-                requireUnchangedProtectedBindings(sources);
-                return current;
-              });
+          accountTransaction.execute(status -> {
+            requireUnchangedProtectedBindings(sources);
+            GenerationRequest current =
+                desiredStateRepository.readCurrentGenerationRequest(accountBinding, trustFence);
+            requireUnchangedProtectedBindings(sources);
+            return current;
+          });
       if (request == null) {
         throw new BootstrapOperationException(FailureCode.ACCOUNT_STATE_AMBIGUOUS);
       }

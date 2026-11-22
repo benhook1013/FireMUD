@@ -71,40 +71,35 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
         .when(harness.repository)
         .readFinalAuthorization(ORIGINAL);
     when(harness.repository.findSettlement(ORIGINAL))
-        .thenAnswer(
-            ignored -> {
-              assertWritableReadCommittedTransaction();
-              int read = settlementReads.incrementAndGet();
-              harness.steps.add(read == 1 ? "prior-settlement-lookup" : "post-commit-readback");
-              return read == 1 ? Optional.empty() : Optional.of(stored.get());
-            });
+        .thenAnswer(ignored -> {
+          assertWritableReadCommittedTransaction();
+          int read = settlementReads.incrementAndGet();
+          harness.steps.add(read == 1 ? "prior-settlement-lookup" : "post-commit-readback");
+          return read == 1 ? Optional.empty() : Optional.of(stored.get());
+        });
     when(harness.automationClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertNoSql();
-              harness.steps.add("remote-automation-terminal-read");
-              AutomationSelectedSourceIntakeTerminalReadEvidence.Request request =
-                  invocation.getArgument(0);
-              assertThat(request.binding().canonicalBytes())
-                  .containsExactly(ORIGINAL.canonicalBytes());
-              assertThat(request.readRequestId())
-                  .isNotIn(ORIGINAL.operationId(), ORIGINAL.fenceId(), ORIGINAL.intakeRequestId());
-              return new AutomationSelectedSourceIntakeTerminalReadEvidence(request, ownerReceipt);
-            });
+        .thenAnswer(invocation -> {
+          assertNoSql();
+          harness.steps.add("remote-automation-terminal-read");
+          AutomationSelectedSourceIntakeTerminalReadEvidence.Request request =
+              invocation.getArgument(0);
+          assertThat(request.binding().canonicalBytes()).containsExactly(ORIGINAL.canonicalBytes());
+          assertThat(request.readRequestId())
+              .isNotIn(ORIGINAL.operationId(), ORIGINAL.fenceId(), ORIGINAL.intakeRequestId());
+          return new AutomationSelectedSourceIntakeTerminalReadEvidence(request, ownerReceipt);
+        });
     when(harness.repository.settleCommittedEmpty(any()))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              harness.steps.add("commit-exact-terminal-settlement");
-              AutomationSelectedSourceIntakeTerminalReadEvidence evidence =
-                  invocation.getArgument(0);
-              assertThat(evidence.request().binding().canonicalBytes())
-                  .containsExactly(ORIGINAL.canonicalBytes());
-              AccountSelectedOwnerIntakeSettlementReceipt receipt =
-                  AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
-              stored.set(receipt);
-              return receipt;
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          harness.steps.add("commit-exact-terminal-settlement");
+          AutomationSelectedSourceIntakeTerminalReadEvidence evidence = invocation.getArgument(0);
+          assertThat(evidence.request().binding().canonicalBytes())
+              .containsExactly(ORIGINAL.canonicalBytes());
+          AccountSelectedOwnerIntakeSettlementReceipt receipt =
+              AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+          stored.set(receipt);
+          return receipt;
+        });
 
     AccountSelectedOwnerIntakeSettlementReceipt actual =
         asGameDesign(() -> harness.service.settle(ORIGINAL));
@@ -164,28 +159,24 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
         AccountSelectedOwnerIntakeSettlementReceipt.create(
             new AutomationSelectedSourceIntakeTerminalReadEvidence(winnerRequest, ownerReceipt));
     when(harness.repository.findSettlement(ORIGINAL))
-        .thenAnswer(
-            ignored ->
-                settlementReads.incrementAndGet() == 1 ? Optional.empty() : Optional.of(winner));
+        .thenAnswer(ignored ->
+            settlementReads.incrementAndGet() == 1 ? Optional.empty() : Optional.of(winner));
     when(harness.automationClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertNoSql();
-              AutomationSelectedSourceIntakeTerminalReadEvidence.Request request =
-                  invocation.getArgument(0);
-              remoteRequest.set(request);
-              return new AutomationSelectedSourceIntakeTerminalReadEvidence(request, ownerReceipt);
-            });
+        .thenAnswer(invocation -> {
+          assertNoSql();
+          AutomationSelectedSourceIntakeTerminalReadEvidence.Request request =
+              invocation.getArgument(0);
+          remoteRequest.set(request);
+          return new AutomationSelectedSourceIntakeTerminalReadEvidence(request, ownerReceipt);
+        });
     when(harness.repository.settleCommittedEmpty(any()))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              AutomationSelectedSourceIntakeTerminalReadEvidence evidence =
-                  invocation.getArgument(0);
-              assertThat(evidence.request().readRequestId())
-                  .isEqualTo(remoteRequest.get().readRequestId());
-              return winner;
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          AutomationSelectedSourceIntakeTerminalReadEvidence evidence = invocation.getArgument(0);
+          assertThat(evidence.request().readRequestId())
+              .isEqualTo(remoteRequest.get().readRequestId());
+          return winner;
+        });
 
     AccountSelectedOwnerIntakeSettlementReceipt recovered =
         asGameDesign(() -> harness.service.settle(ORIGINAL));
@@ -219,19 +210,18 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     AutomationEmptySelectedSourceIntakeReceipt ownerReceipt =
         ownerReceipt(ORIGINAL, "changed-echo");
     when(changedEcho.automationClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  (AutomationSelectedSourceIntakeTerminalReadEvidence.Request)
-                      invocation.getArgument(0);
-              var changed =
-                  new AutomationSelectedSourceIntakeTerminalReadEvidence.Request(
-                      request.schemaVersion(),
-                      request.targetNamespace(),
-                      UUID.randomUUID(),
-                      request.binding());
-              return new AutomationSelectedSourceIntakeTerminalReadEvidence(changed, ownerReceipt);
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              (AutomationSelectedSourceIntakeTerminalReadEvidence.Request)
+                  invocation.getArgument(0);
+          var changed =
+              new AutomationSelectedSourceIntakeTerminalReadEvidence.Request(
+                  request.schemaVersion(),
+                  request.targetNamespace(),
+                  UUID.randomUUID(),
+                  request.binding());
+          return new AutomationSelectedSourceIntakeTerminalReadEvidence(changed, ownerReceipt);
+        });
     assertStatus(
         Status.Code.FAILED_PRECONDITION,
         () -> asGameDesign(() -> changedEcho.service.settle(ORIGINAL)));
@@ -242,10 +232,9 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
         ownerReceipt(ORIGINAL, "corrupt-digest");
     when(badReceipt.receiptDigest()).thenReturn("sha256:" + "f".repeat(64));
     when(corruptReceipt.automationClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new AutomationSelectedSourceIntakeTerminalReadEvidence(
-                    invocation.getArgument(0), badReceipt));
+        .thenAnswer(invocation ->
+            new AutomationSelectedSourceIntakeTerminalReadEvidence(
+                invocation.getArgument(0), badReceipt));
     assertStatus(
         Status.Code.FAILED_PRECONDITION,
         () -> asGameDesign(() -> corruptReceipt.service.settle(ORIGINAL)));
@@ -263,16 +252,13 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     AutomationEmptySelectedSourceIntakeReceipt ownerReceipt =
         ownerReceipt(ORIGINAL, "commit-failure");
     when(harness.automationClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new AutomationSelectedSourceIntakeTerminalReadEvidence(
-                    invocation.getArgument(0), ownerReceipt));
+        .thenAnswer(invocation ->
+            new AutomationSelectedSourceIntakeTerminalReadEvidence(
+                invocation.getArgument(0), ownerReceipt));
     when(harness.repository.settleCommittedEmpty(any()))
-        .thenAnswer(
-            invocation ->
-                AccountSelectedOwnerIntakeSettlementReceipt.create(
-                    (AutomationSelectedSourceIntakeTerminalReadEvidence)
-                        invocation.getArgument(0)));
+        .thenAnswer(invocation ->
+            AccountSelectedOwnerIntakeSettlementReceipt.create(
+                (AutomationSelectedSourceIntakeTerminalReadEvidence) invocation.getArgument(0)));
     harness.transactions.failCommitAt = 2;
 
     assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(ORIGINAL)))
@@ -297,10 +283,9 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
                     NAMESPACE, ORIGINAL),
                 ownerReceipt));
     when(missing.automationClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new AutomationSelectedSourceIntakeTerminalReadEvidence(
-                    invocation.getArgument(0), ownerReceipt));
+        .thenAnswer(invocation ->
+            new AutomationSelectedSourceIntakeTerminalReadEvidence(
+                invocation.getArgument(0), ownerReceipt));
     when(missing.repository.settleCommittedEmpty(any())).thenReturn(committed);
     when(missing.repository.findSettlement(ORIGINAL))
         .thenReturn(Optional.empty(), Optional.empty());
@@ -321,10 +306,9 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
         AccountSelectedOwnerIntakeSettlementReceipt.create(
             new AutomationSelectedSourceIntakeTerminalReadEvidence(otherRequest, ownerReceipt));
     when(changed.automationClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new AutomationSelectedSourceIntakeTerminalReadEvidence(
-                    invocation.getArgument(0), ownerReceipt));
+        .thenAnswer(invocation ->
+            new AutomationSelectedSourceIntakeTerminalReadEvidence(
+                invocation.getArgument(0), ownerReceipt));
     when(changed.repository.settleCommittedEmpty(any())).thenReturn(exactCommit);
     when(changed.repository.findSettlement(ORIGINAL))
         .thenReturn(Optional.empty(), Optional.of(substitutedReadback));
@@ -352,22 +336,18 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     SessionContext.clear();
 
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    asGameDesign(
-        () ->
-            assertStatus(Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(ORIGINAL)));
+    asGameDesign(() ->
+        assertStatus(Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(ORIGINAL)));
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.initSynchronization();
-    asGameDesign(
-        () ->
-            assertStatus(Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(ORIGINAL)));
+    asGameDesign(() ->
+        assertStatus(Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(ORIGINAL)));
     TransactionSynchronizationManager.clear();
 
     SelectedOwnerIntakeAuthorizationBinding entityBinding =
         AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(Owner.ENTITY_MANAGEMENT);
-    asGameDesign(
-        () ->
-            assertStatus(
-                Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(entityBinding)));
+    asGameDesign(() ->
+        assertStatus(Status.Code.FAILED_PRECONDITION, () -> harness.service.settle(entityBinding)));
 
     Harness wrongBindingNamespace = new Harness("other-runtime");
     asPeer(
@@ -394,30 +374,27 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     when(harness.repository.findSettlement(binding))
         .thenAnswer(ignored -> Optional.ofNullable(stored.get()));
     when(harness.entityClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertNoSql();
-              EntitySelectedSourceIntakeTerminalReadEvidence.Request request =
-                  invocation.getArgument(0);
-              return new EntitySelectedSourceIntakeTerminalReadEvidence(request, owner);
-            });
+        .thenAnswer(invocation -> {
+          assertNoSql();
+          EntitySelectedSourceIntakeTerminalReadEvidence.Request request =
+              invocation.getArgument(0);
+          return new EntitySelectedSourceIntakeTerminalReadEvidence(request, owner);
+        });
     when(harness.repository.settleEntityCommittedEmpty(any()))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              EntitySelectedSourceIntakeTerminalReadEvidence evidence = invocation.getArgument(0);
-              var receipt = AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
-              stored.set(receipt);
-              return receipt;
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          EntitySelectedSourceIntakeTerminalReadEvidence evidence = invocation.getArgument(0);
+          var receipt = AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+          stored.set(receipt);
+          return receipt;
+        });
     // The first post-commit lookup is absent even though the immutable writer committed.
     AtomicInteger reads = new AtomicInteger();
     when(harness.repository.findSettlement(binding))
-        .thenAnswer(
-            ignored -> {
-              assertWritableReadCommittedTransaction();
-              return reads.incrementAndGet() <= 2 ? Optional.empty() : Optional.of(stored.get());
-            });
+        .thenAnswer(ignored -> {
+          assertWritableReadCommittedTransaction();
+          return reads.incrementAndGet() <= 2 ? Optional.empty() : Optional.of(stored.get());
+        });
     try (var decoder = Mockito.mockStatic(EntityEmptySelectedSourceIntakeReceipt.class)) {
       decoder
           .when(() -> EntityEmptySelectedSourceIntakeReceipt.fromStored(owner.canonicalBytes()))
@@ -476,12 +453,10 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     Harness changed = new Harness(NAMESPACE, true);
     when(changed.repository.findSettlement(binding)).thenReturn(Optional.empty());
     when(changed.entityClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new EntitySelectedSourceIntakeTerminalReadEvidence(
-                    EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(
-                        NAMESPACE, binding),
-                    entityReceipt(binding)));
+        .thenAnswer(invocation ->
+            new EntitySelectedSourceIntakeTerminalReadEvidence(
+                EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(NAMESPACE, binding),
+                entityReceipt(binding)));
     assertStatus(
         Status.Code.FAILED_PRECONDITION, () -> asGameDesign(() -> changed.service.settle(binding)));
     verify(changed.repository, never()).settleEntityCommittedEmpty(any());
@@ -532,14 +507,13 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
             || downstreamCode == Status.Code.DATA_LOSS) {
           assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(binding)))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure -> {
-                    StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
-                    assertThat(statusFailure.getStatus().getCode()).isEqualTo(downstreamCode);
-                    assertThat(statusFailure.getStatus().getDescription()).isNull();
-                    assertThat(statusFailure.getCause()).isNull();
-                    assertThat(statusFailure.getTrailers()).isNull();
-                  });
+              .satisfies(failure -> {
+                StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+                assertThat(statusFailure.getStatus().getCode()).isEqualTo(downstreamCode);
+                assertThat(statusFailure.getStatus().getDescription()).isNull();
+                assertThat(statusFailure.getCause()).isNull();
+                assertThat(statusFailure.getTrailers()).isNull();
+              });
         } else {
           Status.Code expectedCode =
               downstreamCode == Status.Code.FAILED_PRECONDITION
@@ -555,15 +529,14 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
                       : "Entity terminal evidence is unavailable";
           assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(binding)))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure -> {
-                    StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
-                    assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
-                    assertThat(statusFailure.getStatus().getDescription())
-                        .isEqualTo(expectedDescription);
-                    assertThat(statusFailure.getCause()).isNull();
-                    assertThat(statusFailure.getTrailers()).isNull();
-                  });
+              .satisfies(failure -> {
+                StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+                assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
+                assertThat(statusFailure.getStatus().getDescription())
+                    .isEqualTo(expectedDescription);
+                assertThat(statusFailure.getCause()).isNull();
+                assertThat(statusFailure.getTrailers()).isNull();
+              });
         }
         verify(harness.repository, never()).settleCommittedEmpty(any());
         verify(harness.repository, never()).settleEntityCommittedEmpty(any());

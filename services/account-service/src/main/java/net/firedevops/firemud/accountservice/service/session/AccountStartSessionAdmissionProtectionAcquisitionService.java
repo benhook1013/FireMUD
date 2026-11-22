@@ -98,18 +98,16 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
               StoredParticipation exactParticipation =
                   participationRepository
                       .findHistoricalForOriginalTuple(tupleBytes)
-                      .orElseThrow(
-                          () ->
-                              failedPrecondition(
-                                  "Exact original Account participation is unavailable"));
+                      .orElseThrow(() ->
+                          failedPrecondition(
+                              "Exact original Account participation is unavailable"));
               requireSameParticipation(initial.participation(), exactParticipation);
               StoredEvidence retainedAttempt =
                   attemptRepository
                       .findHistoricalExact(exactParticipation, currentAttemptRequest)
-                      .orElseThrow(
-                          () ->
-                              failedPrecondition(
-                                  "Exact original Account attempt evidence is unavailable"));
+                      .orElseThrow(() ->
+                          failedPrecondition(
+                              "Exact original Account attempt evidence is unavailable"));
               requireSameAttempt(retainedAttempt.result(), observed);
               return protectionRepository.acquireOrReadExact(request, capture, exactParticipation);
             });
@@ -117,17 +115,15 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
     requireNoAmbientTransaction();
     StoredProtection readback =
         Objects.requireNonNull(
-            readbackTransaction.execute(
-                ignored ->
-                    protectionRepository
-                        .findCurrentExact(
-                            committed.evidence().accountProtectionId(),
-                            committed.evidence().accountProtectionFence(),
-                            request.canonicalBytes())
-                        .orElseThrow(
-                            () ->
-                                failedPrecondition(
-                                    "Committed current admission protection is not readable"))),
+            readbackTransaction.execute(ignored ->
+                protectionRepository
+                    .findCurrentExact(
+                        committed.evidence().accountProtectionId(),
+                        committed.evidence().accountProtectionFence(),
+                        request.canonicalBytes())
+                    .orElseThrow(() ->
+                        failedPrecondition(
+                            "Committed current admission protection is not readable"))),
             "Account admission protection readback transaction returned no value");
     if (!Arrays.equals(
         committed.evidence().canonicalBytes(), readback.evidence().canonicalBytes())) {
@@ -142,29 +138,24 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
       AccountStartSessionAdmissionProtectionRequest request) {
     requireNoAmbientTransaction();
     return Objects.requireNonNull(
-        lookupTransaction.execute(
-            ignored -> {
-              StoredParticipation participation =
-                  participationRepository
-                      .findHistoricalForOriginalTuple(tupleBytes)
-                      .orElseThrow(
-                          () ->
-                              failedPrecondition(
-                                  "Exact original Account participation is unavailable"));
-              requireParticipationBinding(request, participation);
-              // World preparation is already COMMITTED, so its Account participation is settled.
-              // Read the immutable original witness here; currentness comes from the fresh
-              // authenticated Game Session observation and the Account callback below.
-              StoredEvidence attempt =
-                  attemptRepository
-                      .findHistoricalExact(participation, currentAttemptRequest)
-                      .orElseThrow(
-                          () ->
-                              failedPrecondition(
-                                  "Exact original Account attempt evidence is unavailable"));
-              requireStoredAttemptBinding(request, currentAttemptRequest, attempt.result());
-              return new InitialOwnerState(participation, attempt);
-            }),
+        lookupTransaction.execute(ignored -> {
+          StoredParticipation participation =
+              participationRepository
+                  .findHistoricalForOriginalTuple(tupleBytes)
+                  .orElseThrow(() ->
+                      failedPrecondition("Exact original Account participation is unavailable"));
+          requireParticipationBinding(request, participation);
+          // World preparation is already COMMITTED, so its Account participation is settled.
+          // Read the immutable original witness here; currentness comes from the fresh
+          // authenticated Game Session observation and the Account callback below.
+          StoredEvidence attempt =
+              attemptRepository
+                  .findHistoricalExact(participation, currentAttemptRequest)
+                  .orElseThrow(() ->
+                      failedPrecondition("Exact original Account attempt evidence is unavailable"));
+          requireStoredAttemptBinding(request, currentAttemptRequest, attempt.result());
+          return new InitialOwnerState(participation, attempt);
+        }),
         "Account initial owner-state transaction returned no value");
   }
 

@@ -140,12 +140,11 @@ class GameSessionFreshTenantHistoryPostgresIntegrationTest {
                 .class)
         .hasMessageContaining("complete_source_evidence");
     verifyNoInteractions(client);
-    assertThatThrownBy(
-            () ->
-                sql.execute(
-                    "UPDATE game_session_fresh_tenant_association SET complete_source_evidence = '{}'::jsonb "
-                        + "WHERE canonical_tenant_id = ?",
-                    tenantId))
+    assertThatThrownBy(() ->
+            sql.execute(
+                "UPDATE game_session_fresh_tenant_association SET complete_source_evidence = '{}'::jsonb "
+                    + "WHERE canonical_tenant_id = ?",
+                tenantId))
         .isInstanceOf(DataAccessException.class);
     assertThat(snapshot(sql, originalColumns)).isEqualTo(before);
     assertThat(history(sql, lastOriginalRank)).isEqualTo(originalHistory);
@@ -172,22 +171,21 @@ class GameSessionFreshTenantHistoryPostgresIntegrationTest {
   private static Map<String, List<Map<String, Object>>> snapshot(
       DSLContext sql, Map<String, List<String>> columns) {
     Map<String, List<Map<String, Object>>> rows = new LinkedHashMap<>();
-    columns.forEach(
-        (table, names) -> {
-          String projection =
-              names.stream()
-                  .map(GameSessionFreshTenantHistoryPostgresIntegrationTest::quote)
-                  .collect(Collectors.joining(", "));
-          rows.put(
-              table,
-              sql.fetch(
-                      "SELECT jsonb_build_array("
-                          + projection
-                          + ")::text AS original_bytes, xmin::text AS physical_version FROM "
-                          + quote(table)
-                          + " ORDER BY original_bytes")
-                  .intoMaps());
-        });
+    columns.forEach((table, names) -> {
+      String projection =
+          names.stream()
+              .map(GameSessionFreshTenantHistoryPostgresIntegrationTest::quote)
+              .collect(Collectors.joining(", "));
+      rows.put(
+          table,
+          sql.fetch(
+                  "SELECT jsonb_build_array("
+                      + projection
+                      + ")::text AS original_bytes, xmin::text AS physical_version FROM "
+                      + quote(table)
+                      + " ORDER BY original_bytes")
+              .intoMaps());
+    });
     return rows;
   }
 

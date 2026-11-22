@@ -399,53 +399,52 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             metaDigest,
             java.sql.Timestamp.from(now),
             initializationId));
-    dsl.transaction(
-        configuration -> {
-          var transaction = DSL.using(configuration);
-          BigInteger revision =
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BigInteger next = revision.add(BigInteger.ONE);
-          BigInteger prior = evidence.transition().inventoryRevision();
-          historicalWriteRegionRevisionRows(transaction, evidence, prior, next);
-          historicalRequireOne(
-              transaction.execute(
-                  """
-          UPDATE game_session_canonical_binding_region_bridge_obligation
-          SET bridge_operation_id = ?, bridge_preimage_state = 'ABSENT', runtime_entity_id = ?,
-              entity_projection_generation = ?, entity_projection_fence = ?, entity_workload_namespace = ?,
-              assignment_uuid = ?, assignment_intent_digest = ?, entity_reference_digest = ?,
-              world_source_digest = ?, canonical_region_id = ?, world_lifecycle_epoch = ?,
-              world_lifecycle_row_version = ?, world_capture_id = ?, world_graph_sha256 = ?,
-              world_preparation_input_digest = ?, executor_fence = ?, lease_token_correlation = ?, inventory_revision = ?
-          WHERE transition_id = ? AND bridge_operation_id IS NULL AND inventory_revision = ?
-          """,
-                  UUID.randomUUID(),
-                  reference.runtimeEntityId().value(),
-                  reference.projectionGeneration(),
-                  reference.projectionFence(),
-                  reference.workloadNamespace(),
-                  UUID.fromString(worldRequest.getAssignmentUuid()),
-                  worldRequest.getAssignmentIntentDigest(),
-                  parentEntityReferenceDigest,
-                  worldDigest,
-                  source.canonicalRegionId(),
-                  source.lifecycleEpoch(),
-                  source.lifecycleRowVersion(),
-                  source.captureId(),
-                  source.graphSha256(),
-                  source.preparationInputDigest(),
-                  new BigDecimal(status.executorFence()),
-                  grantCorrelation,
-                  new BigDecimal(next),
-                  transitionId,
-                  new BigDecimal(prior)));
-          historicalRequireOne(
-              transaction.execute(
-                  "UPDATE game_session_canonical_binding_inventory_clock SET inventory_revision = ?"
-                      + " WHERE singleton_id = 1 AND inventory_revision = ?",
-                  new BigDecimal(next),
-                  new BigDecimal(revision)));
-        });
+    dsl.transaction(configuration -> {
+      var transaction = DSL.using(configuration);
+      BigInteger revision =
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      BigInteger next = revision.add(BigInteger.ONE);
+      BigInteger prior = evidence.transition().inventoryRevision();
+      historicalWriteRegionRevisionRows(transaction, evidence, prior, next);
+      historicalRequireOne(
+          transaction.execute(
+              """
+              UPDATE game_session_canonical_binding_region_bridge_obligation
+              SET bridge_operation_id = ?, bridge_preimage_state = 'ABSENT', runtime_entity_id = ?,
+                  entity_projection_generation = ?, entity_projection_fence = ?, entity_workload_namespace = ?,
+                  assignment_uuid = ?, assignment_intent_digest = ?, entity_reference_digest = ?,
+                  world_source_digest = ?, canonical_region_id = ?, world_lifecycle_epoch = ?,
+                  world_lifecycle_row_version = ?, world_capture_id = ?, world_graph_sha256 = ?,
+                  world_preparation_input_digest = ?, executor_fence = ?, lease_token_correlation = ?, inventory_revision = ?
+              WHERE transition_id = ? AND bridge_operation_id IS NULL AND inventory_revision = ?
+              """,
+              UUID.randomUUID(),
+              reference.runtimeEntityId().value(),
+              reference.projectionGeneration(),
+              reference.projectionFence(),
+              reference.workloadNamespace(),
+              UUID.fromString(worldRequest.getAssignmentUuid()),
+              worldRequest.getAssignmentIntentDigest(),
+              parentEntityReferenceDigest,
+              worldDigest,
+              source.canonicalRegionId(),
+              source.lifecycleEpoch(),
+              source.lifecycleRowVersion(),
+              source.captureId(),
+              source.graphSha256(),
+              source.preparationInputDigest(),
+              new BigDecimal(status.executorFence()),
+              grantCorrelation,
+              new BigDecimal(next),
+              transitionId,
+              new BigDecimal(prior)));
+      historicalRequireOne(
+          transaction.execute(
+              "UPDATE game_session_canonical_binding_inventory_clock SET inventory_revision = ?"
+                  + " WHERE singleton_id = 1 AND inventory_revision = ?",
+              new BigDecimal(next),
+              new BigDecimal(revision)));
+    });
     return transitionId;
   }
 
@@ -1363,18 +1362,13 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       byte[] secondMetaTickState =
           redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       Objects.requireNonNull(firstTimelineAfter, "retained timeline source row");
-      // Reinstallation refreshes only the current grant and update timestamp. Compare every
-      // other column, including the first actor/origin, source, phase and initial Redis digest.
-      Set<String> refreshedPreparationColumns =
-          Set.of("executor_fence", "lease_token_correlation", "updated_at");
-      List<String> changedImmutableColumns =
+      // Same-grant reuse must preserve the complete row, including its update timestamp.
+      List<String> changedPreparationColumns =
           Arrays.stream(firstTimelineBefore.fields())
               .map(field -> field.getName())
-              .filter(column -> !refreshedPreparationColumns.contains(column))
-              .filter(
-                  column ->
-                      !Objects.deepEquals(
-                          firstTimelineBefore.get(column), firstTimelineAfter.get(column)))
+              .filter(column ->
+                  !Objects.deepEquals(
+                      firstTimelineBefore.get(column), firstTimelineAfter.get(column)))
               .toList();
       boolean preparationGrantMatchesCurrent =
           Objects.equals(
@@ -1384,7 +1378,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   firstTimelineAfter.get("lease_token_correlation", String.class),
                   secondStatus.leaseTokenCorrelation());
       boolean unchangedTimeline =
-          changedImmutableColumns.isEmpty()
+          changedPreparationColumns.isEmpty()
               && firstTimelineOperationId.equals(
                   Objects.requireNonNull(
                           firstTimelineAfter.get("initialization_operation_id", UUID.class),
@@ -1407,16 +1401,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               && secondStatus.lastCommittedTickId() == -1L;
       if (!unchangedTimeline
           || !preparationGrantMatchesCurrent
-          || (secondBinding.freshGrant()
-              ? status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
-                  || secondStatus.executorFence().compareTo(status.executorFence()) <= 0
-              : !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation()))
+          || !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
+          || !status.executorFence().equals(secondStatus.executorFence())
           || redis.admin().pttl(redisKey) <= 0L
           || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
         throw new IllegalStateException(
             "Second binding changed first timeline provenance or lost the live region grant; "
-                + "changed immutable preparation columns="
-                + changedImmutableColumns
+                + "changed preparation columns="
+                + changedPreparationColumns
                 + ", preparation grant matches current="
                 + preparationGrantMatchesCurrent);
       }
@@ -1683,10 +1675,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 CanonicalGameplayIssuerCohortSql.cohortBindings(
                     GameSessionAccountDelegationProfile.ISSUER, revision))
             .stream()
-            .filter(
-                row ->
-                    "REGION_OBLIGATION".equals(row.get("source_kind", String.class))
-                        && transitionId.toString().equals(row.get("source_key", String.class)))
+            .filter(row ->
+                "REGION_OBLIGATION".equals(row.get("source_kind", String.class))
+                    && transitionId.toString().equals(row.get("source_key", String.class)))
             .toList();
     if (captured.size() != 1
         || !Objects.equals(exactRow, captured.getFirst().get("source_row_json", String.class))) {

@@ -94,29 +94,21 @@ class FreshTenantCreatorDigestTest {
   void rejectsUnsupportedVersionNilIdentityAndMalformedDigest() {
     FreshTenantCreationEvidence creation = creationEvidence(42L, "legacy-α");
 
-    assertThatThrownBy(
-            () ->
-                FreshTenantCreatorDigest.evidenceDigest(
-                    2, creation, ACCOUNT_ID, AUTHORIZATION_OPERATION_ID, AUTHORIZATION_DIGEST))
+    assertThatThrownBy(() ->
+            FreshTenantCreatorDigest.evidenceDigest(
+                2, creation, ACCOUNT_ID, AUTHORIZATION_OPERATION_ID, AUTHORIZATION_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                FreshTenantCreatorDigest.evidenceDigest(
-                    1,
-                    creation,
-                    new UUID(0L, 0L),
-                    AUTHORIZATION_OPERATION_ID,
-                    AUTHORIZATION_DIGEST))
+    assertThatThrownBy(() ->
+            FreshTenantCreatorDigest.evidenceDigest(
+                1, creation, new UUID(0L, 0L), AUTHORIZATION_OPERATION_ID, AUTHORIZATION_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                FreshTenantCreatorDigest.evidenceDigest(
-                    1, creation, ACCOUNT_ID, new UUID(0L, 0L), AUTHORIZATION_DIGEST))
+    assertThatThrownBy(() ->
+            FreshTenantCreatorDigest.evidenceDigest(
+                1, creation, ACCOUNT_ID, new UUID(0L, 0L), AUTHORIZATION_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                FreshTenantCreatorDigest.evidenceDigest(
-                    1, creation, ACCOUNT_ID, AUTHORIZATION_OPERATION_ID, "not-a-digest"))
+    assertThatThrownBy(() ->
+            FreshTenantCreatorDigest.evidenceDigest(
+                1, creation, ACCOUNT_ID, AUTHORIZATION_OPERATION_ID, "not-a-digest"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

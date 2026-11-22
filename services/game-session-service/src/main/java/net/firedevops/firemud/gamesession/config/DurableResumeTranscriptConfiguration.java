@@ -27,9 +27,8 @@ public class DurableResumeTranscriptConfiguration {
       MeterRegistry meterRegistry) {
     ScreenBufferService hotCache =
         Optional.ofNullable(redisTemplateProvider.getIfAvailable())
-            .<ScreenBufferService>map(
-                redisTemplate ->
-                    new RedisScreenBufferService(redisTemplate, objectMapper, settingsResolver))
+            .<ScreenBufferService>map(redisTemplate ->
+                new RedisScreenBufferService(redisTemplate, objectMapper, settingsResolver))
             .orElseGet(NoopScreenBufferService::new);
     return new DurableScreenBufferService(repository, settingsResolver, hotCache, meterRegistry);
   }

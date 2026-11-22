@@ -100,25 +100,21 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
     when(f.routes.readCurrentTarget(TENANT)).thenReturn(route);
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
-                      request))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(request))
           .thenReturn(f.selector);
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
-                      eq(f.selector), any()))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                  eq(f.selector), any()))
           .thenReturn(response);
       f.service.resolvePublishedRealmAdmissionTarget(request, f.resolverObserver);
       var encoded =
           org.mockito.ArgumentCaptor.forClass(
               CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
-      codec.verify(
-          () ->
-              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
-                  eq(f.selector), encoded.capture()));
+      codec.verify(() ->
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+              eq(f.selector), encoded.capture()));
       assertThat(encoded.getValue())
           .usingRecursiveComparison()
           .withComparatorForFields(
@@ -126,10 +122,9 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
               "initialAdmissionOriginKind",
               "ownerProofOutcome")
           .isEqualTo(route);
-      codec.verify(
-          () ->
-              CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
-                  eq(f.selector), eq(encoded.getValue())));
+      codec.verify(() ->
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
+              eq(f.selector), eq(encoded.getValue())));
     }
     verify(f.routes, times(2)).readCurrentTarget(TENANT);
     verify(f.resolverObserver).onNext(response);
@@ -155,10 +150,9 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
       }
       try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
         codec
-            .when(
-                () ->
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
-                        request))
+            .when(() ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
+                    request))
             .thenReturn(f.selector);
         f.service.resolvePublishedRealmAdmissionTarget(request, f.resolverObserver);
       }
@@ -195,22 +189,18 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
     var encodedWorld = ArgumentCaptor.forClass(WorldCanonicalInstanceLifecycleEvidence.class);
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                      request))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request))
           .thenReturn(parsed);
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-                      eq(parsed), eq(source), any(), any()))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+                  eq(parsed), eq(source), any(), any()))
           .thenReturn(response);
       f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
-      codec.verify(
-          () ->
-              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-                  eq(parsed), eq(source), encodedTarget.capture(), encodedWorld.capture()));
+      codec.verify(() ->
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+              eq(parsed), eq(source), encodedTarget.capture(), encodedWorld.capture()));
     }
     assertThat(encodedTarget.getValue())
         .usingRecursiveComparison()
@@ -322,10 +312,8 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
       }
       try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
         codec
-            .when(
-                () ->
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                        request))
+            .when(() ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request))
             .thenReturn(parsed);
         f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
       }
@@ -377,10 +365,8 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
       }
       try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
         codec
-            .when(
-                () ->
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                        request))
+            .when(() ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request))
             .thenReturn(parsed);
         f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
       }
@@ -466,10 +452,8 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
     }
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                      request))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request))
           .thenReturn(parsed);
       f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
     }
@@ -497,10 +481,8 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
             mock(CanonicalGameplayRosterOwnerReadEvidence.class));
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                      request))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request))
           .thenReturn(parsed);
       f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
     }
@@ -658,12 +640,11 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
       when(published.readCurrent(selector))
           .thenReturn(mock(CanonicalGameplayRosterOwnerReadEvidence.class));
       when(world.read(any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                return worldEvidence(invocation.getArgument(0), "ACTIVE", 7);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+            return worldEvidence(invocation.getArgument(0), "ACTIVE", 7);
+          });
       return current;
     }
 

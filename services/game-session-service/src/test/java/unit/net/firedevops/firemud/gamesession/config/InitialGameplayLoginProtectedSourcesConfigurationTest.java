@@ -40,14 +40,12 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
           new ApplicationContextRunner()
               .withUserConfiguration(InitialGameplayLoginProtectedSourcesConfiguration.class);
       if (!enabled.isEmpty()) runner = runner.withPropertyValues(enabled);
-      runner.run(
-          context -> {
-            assertThat(context).hasNotFailed();
-            assertThat(context).doesNotHaveBean(AccountAsymmetricJwtVerifier.class);
-            assertThat(context).doesNotHaveBean(InitialGameplayLoginRedisBinding.class);
-            assertThat(context)
-                .doesNotHaveBean(LettuceInitialGameplayLoginConnectionProvider.class);
-          });
+      runner.run(context -> {
+        assertThat(context).hasNotFailed();
+        assertThat(context).doesNotHaveBean(AccountAsymmetricJwtVerifier.class);
+        assertThat(context).doesNotHaveBean(InitialGameplayLoginRedisBinding.class);
+        assertThat(context).doesNotHaveBean(LettuceInitialGameplayLoginConnectionProvider.class);
+      });
     }
   }
 
@@ -95,9 +93,8 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
         "rediss://gamesession_coord_app:secret@coordination.example.invalid:6380/0 bad"
       })
   void rejectsAmbientPlaintextChangedOrAmbiguousCoordinationSources(String uri) {
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(uri, 875))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(uri, 875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected Game Session initial LOGIN sources required")
         .hasNoCause();
@@ -106,10 +103,9 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
   @ParameterizedTest
   @ValueSource(ints = {-1, 0, 60_001})
   void rejectsUnboundedCommandDeadlines(int timeoutMillis) {
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
-                    COORDINATION_URI, timeoutMillis))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginProtectedSourcesConfiguration.requiredCoordinationUri(
+                COORDINATION_URI, timeoutMillis))
         .isInstanceOf(IllegalArgumentException.class)
         .hasNoCause();
   }
@@ -117,31 +113,27 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
   @Test
   void sourceBindingRequiresExplicitProfileIdentityAndAcknowledgements() {
     var connections = mock(LettuceInitialGameplayLoginConnectionProvider.class);
-    assertThatThrownBy(
-            () ->
-                configuration.initialGameplayLoginRedisBinding(
-                    connections, "", "REPLICATED", 1, 1, 875))
+    assertThatThrownBy(() ->
+            configuration.initialGameplayLoginRedisBinding(
+                connections, "", "REPLICATED", 1, 1, 875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected Coordination binding identity required")
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                configuration.initialGameplayLoginRedisBinding(
-                    connections, "delivered-binding", "", 1, 1, 875))
+    assertThatThrownBy(() ->
+            configuration.initialGameplayLoginRedisBinding(
+                connections, "delivered-binding", "", 1, 1, 875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected Coordination profile is invalid")
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                configuration.initialGameplayLoginRedisBinding(
-                    connections, "delivered-binding", "REPLICATED", 1, 0, 875))
+    assertThatThrownBy(() ->
+            configuration.initialGameplayLoginRedisBinding(
+                connections, "delivered-binding", "REPLICATED", 1, 0, 875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Explicit Coordination ACK policy is invalid")
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                configuration.initialGameplayLoginRedisBinding(
-                    connections, "delivered-binding", "SINGLE_NODE_NO_FAILOVER", 1, 1, 875))
+    assertThatThrownBy(() ->
+            configuration.initialGameplayLoginRedisBinding(
+                connections, "delivered-binding", "SINGLE_NODE_NO_FAILOVER", 1, 1, 875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Explicit Coordination ACK policy is invalid")
         .hasNoCause();
@@ -151,22 +143,20 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
   @Test
   void invalidBindingDiagnosticsDoNotRetainDeliveredValuesOrCauses() {
     var connections = mock(LettuceInitialGameplayLoginConnectionProvider.class);
-    assertThatThrownBy(
-            () ->
-                configuration.initialGameplayLoginRedisBinding(
-                    connections,
-                    "delivered-binding",
-                    "rediss://user:do-not-log@private.example.invalid:6380/0",
-                    1,
-                    1,
-                    875))
+    assertThatThrownBy(() ->
+            configuration.initialGameplayLoginRedisBinding(
+                connections,
+                "delivered-binding",
+                "rediss://user:do-not-log@private.example.invalid:6380/0",
+                1,
+                1,
+                875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected Coordination profile is invalid")
         .hasNoCause();
-    assertThatThrownBy(
-            () ->
-                configuration.initialGameplayLoginRedisBinding(
-                    connections, "do-not-log-binding\n", "REPLICATED", 1, 1, 875))
+    assertThatThrownBy(() ->
+            configuration.initialGameplayLoginRedisBinding(
+                connections, "do-not-log-binding\n", "REPLICATED", 1, 1, 875))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected Coordination binding identity required")
         .hasNoCause();
@@ -183,20 +173,19 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
               InitialGameplayLoginProtectedSourcesConfiguration.class,
               AuthenticatedGameplayRuntimeConfiguration.class)
           .withPropertyValues(completeProperties())
-          .run(
-              context -> {
-                assertThat(context).hasNotFailed();
-                assertThat(context).doesNotHaveBean(GameSessionJwtReadinessProbeOwnerClient.class);
-                assertThat(context).doesNotHaveBean(AccountPublicJwksCache.class);
-                assertThat(context).doesNotHaveBean(AccountAsymmetricJwtVerifier.class);
-                assertThat(context).hasSingleBean(InitialGameplayLoginRedisBinding.class);
-                assertThat(context)
-                    .doesNotHaveBean(InitialGameplayLoginCoordinationQualification.class);
-                assertThat(context).doesNotHaveBean(InitialGameplayLoginOwner.class);
-                var binding = context.getBean(InitialGameplayLoginRedisBinding.class);
-                assertThat(binding.protectedBindingId()).isEqualTo("delivered-binding");
-                assertThat(binding.acknowledgementPolicy().requiredReplicaAofCount()).isEqualTo(1);
-              });
+          .run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(GameSessionJwtReadinessProbeOwnerClient.class);
+            assertThat(context).doesNotHaveBean(AccountPublicJwksCache.class);
+            assertThat(context).doesNotHaveBean(AccountAsymmetricJwtVerifier.class);
+            assertThat(context).hasSingleBean(InitialGameplayLoginRedisBinding.class);
+            assertThat(context)
+                .doesNotHaveBean(InitialGameplayLoginCoordinationQualification.class);
+            assertThat(context).doesNotHaveBean(InitialGameplayLoginOwner.class);
+            var binding = context.getBean(InitialGameplayLoginRedisBinding.class);
+            assertThat(binding.protectedBindingId()).isEqualTo("delivered-binding");
+            assertThat(binding.acknowledgementPolicy().requiredReplicaAofCount()).isEqualTo(1);
+          });
       verify(client, times(1)).shutdown();
     }
   }

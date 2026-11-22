@@ -119,10 +119,9 @@ class WorldCanonicalInitialAdmissionHoldOwnerTest {
 
     assertThatThrownBy(() -> owner.settleFromAuthenticatedOwnerRead(identity))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
     verifyNoInteractions(repository);
 
     HoldIdentity otherIdentity = identity(request("e"));

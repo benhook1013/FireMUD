@@ -2,6 +2,8 @@ package net.firedevops.firemud.common.grpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.spy;
 
 import io.grpc.CallOptions;
 import io.grpc.HandlerRegistry;
@@ -14,8 +16,10 @@ import io.grpc.Status;
 import io.grpc.TlsServerCredentials;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.ClientCalls;
 import io.grpc.stub.ServerCalls;
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -24,19 +28,50 @@ import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.InOrder;
 
 class BoundedGrpcServerFactoryTest {
   private static final int ORDINARY = GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES;
 
   @Test
+  void canonicalServerKeepAliveDefaultsPrecedeSupportedCustomizers() {
+    var builder = spy(NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0)));
+    var factory =
+        new BoundedGrpcServerFactory(
+            "127.0.0.1:0",
+            List.of(customizer ->
+                customizer
+                    .keepAliveTime(45, TimeUnit.SECONDS)
+                    .keepAliveTimeout(7, TimeUnit.SECONDS)
+                    .permitKeepAliveWithoutCalls(false)
+                    .permitKeepAliveTime(60, TimeUnit.SECONDS)),
+            null,
+            null,
+            TlsServerCredentials.ClientAuth.NONE,
+            new GrpcRequestBytePolicy(List.of()),
+            ORDINARY);
+
+    factory.configure(builder, List.of());
+
+    InOrder calls = inOrder(builder);
+    calls.verify(builder).keepAliveTime(30, TimeUnit.SECONDS);
+    calls.verify(builder).keepAliveTimeout(5, TimeUnit.SECONDS);
+    calls.verify(builder).permitKeepAliveWithoutCalls(true);
+    calls.verify(builder).permitKeepAliveTime(30, TimeUnit.SECONDS);
+    calls.verify(builder).keepAliveTime(45, TimeUnit.SECONDS);
+    calls.verify(builder).keepAliveTimeout(7, TimeUnit.SECONDS);
+    calls.verify(builder).permitKeepAliveWithoutCalls(false);
+    calls.verify(builder).permitKeepAliveTime(60, TimeUnit.SECONDS);
+  }
+
+  @Test
   void rejectsDuplicateUnknownAndNonidenticalDescriptorConfiguration() {
     var method = method("test.Owner/Read", new AtomicInteger());
-    assertThatThrownBy(
-            () ->
-                new GrpcRequestBytePolicy(
-                    List.of(
-                        new GrpcRequestBytePolicy.MethodBound(method, 1024),
-                        new GrpcRequestBytePolicy.MethodBound(method, 1024))))
+    assertThatThrownBy(() ->
+            new GrpcRequestBytePolicy(
+                List.of(
+                    new GrpcRequestBytePolicy.MethodBound(method, 1024),
+                    new GrpcRequestBytePolicy.MethodBound(method, 1024))))
         .isInstanceOf(IllegalArgumentException.class);
     var policy =
         new GrpcRequestBytePolicy(
@@ -53,9 +88,8 @@ class BoundedGrpcServerFactoryTest {
     var factory =
         new BoundedGrpcServerFactory(
             "127.0.0.1:0",
-            List.of(
-                builder ->
-                    builder.addService(service(method("test.Bypass/Read", new AtomicInteger())))),
+            List.of(builder ->
+                builder.addService(service(method("test.Bypass/Read", new AtomicInteger())))),
             null,
             null,
             TlsServerCredentials.ClientAuth.NONE,
@@ -123,18 +157,17 @@ class BoundedGrpcServerFactoryTest {
     var factory =
         new BoundedGrpcServerFactory(
             "127.0.0.1:0",
-            List.of(
-                builder -> {
-                  builder.fallbackHandlerRegistry(
-                      new HandlerRegistry() {
-                        @Override
-                        public ServerMethodDefinition<?, ?> lookupMethod(
-                            String method, String authority) {
-                          fallbackCalls.incrementAndGet();
-                          return service(unknown).getMethod(method);
-                        }
-                      });
-                }),
+            List.of(builder -> {
+              builder.fallbackHandlerRegistry(
+                  new HandlerRegistry() {
+                    @Override
+                    public ServerMethodDefinition<?, ?> lookupMethod(
+                        String method, String authority) {
+                      fallbackCalls.incrementAndGet();
+                      return service(unknown).getMethod(method);
+                    }
+                  });
+            }),
             pki.keyManagerFactory(serverIdentity),
             pki.trustManagerFactory(),
             TlsServerCredentials.ClientAuth.REQUIRE,
@@ -183,13 +216,12 @@ class BoundedGrpcServerFactoryTest {
           new byte[policy.transportMaximumBytes() + 1],
           Status.Code.RESOURCE_EXHAUSTED);
       assertThat(exceptionalParses).hasValue(1);
-      assertThatThrownBy(
-              () ->
-                  ClientCalls.blockingUnaryCall(
-                      noCertificate,
-                      ordinary,
-                      CallOptions.DEFAULT.withDeadlineAfter(3, TimeUnit.SECONDS),
-                      new byte[0]))
+      assertThatThrownBy(() ->
+              ClientCalls.blockingUnaryCall(
+                  noCertificate,
+                  ordinary,
+                  CallOptions.DEFAULT.withDeadlineAfter(3, TimeUnit.SECONDS),
+                  new byte[0]))
           .satisfies(failure -> assertThat(Status.fromThrowable(failure).isOk()).isFalse());
       assertThat(ordinaryParses).hasValue(1);
     } finally {
@@ -248,11 +280,10 @@ class BoundedGrpcServerFactoryTest {
   }
 
   private static io.grpc.ServerCallHandler<byte[], byte[]> handler() {
-    return ServerCalls.asyncUnaryCall(
-        (request, observer) -> {
-          observer.onNext(new byte[0]);
-          observer.onCompleted();
-        });
+    return ServerCalls.asyncUnaryCall((request, observer) -> {
+      observer.onNext(new byte[0]);
+      observer.onCompleted();
+    });
   }
 
   private static ServerServiceDefinition service(MethodDescriptor<byte[], byte[]> method) {

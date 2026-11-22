@@ -71,65 +71,56 @@ class GameLogicIntakeAuthorizationGrpcCodecTest {
         GameLogicIntakeAuthorizationGrpcCodec.toResponse(
             GameLogicIntakeAuthorizationEvidence.Result.authorized(
                 request, authorization(request)));
-    assertThatThrownBy(
-            () ->
-                GameLogicIntakeAuthorizationGrpcCodec.fromRequest(
-                    wireRequest.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicIntakeAuthorizationGrpcCodec.fromRequest(
+                wireRequest.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicIntakeAuthorizationGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            wireRequest.toBuilder()
-                                .setTransportRequestId(UUID.randomUUID().toString())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicIntakeAuthorizationGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        wireRequest.toBuilder()
+                            .setTransportRequestId(UUID.randomUUID().toString())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicIntakeAuthorizationGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            wireRequest.toBuilder()
-                                .setSelectedDraftBinding(ByteString.copyFromUtf8("{}"))
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicIntakeAuthorizationGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        wireRequest.toBuilder()
+                            .setSelectedDraftBinding(ByteString.copyFromUtf8("{}"))
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicIntakeAuthorizationGrpcCodec.fromResponse(
-                    request, response.toBuilder().setOutcomeValue(99).build()))
+    assertThatThrownBy(() ->
+            GameLogicIntakeAuthorizationGrpcCodec.fromResponse(
+                request, response.toBuilder().setOutcomeValue(99).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicIntakeAuthorizationGrpcCodec.fromRequest(
-                    wireRequest.toBuilder()
-                        .setSelectedDraftBinding(
-                            ByteString.copyFrom(
-                                new byte
-                                    [GameLogicIntakeAuthorizationEvidence.MAX_SELECTION_BYTES + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicIntakeAuthorizationGrpcCodec.fromRequest(
+                wireRequest.toBuilder()
+                    .setSelectedDraftBinding(
+                        ByteString.copyFrom(
+                            new byte[GameLogicIntakeAuthorizationEvidence.MAX_SELECTION_BYTES + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeAuthorizationCredentials.Credential.of("contains whitespace"))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeAuthorizationCredentials.Credential.of("contains whitespace"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GameLogicIntakeAuthorizationEvidence.Result(
-                    request,
-                    GameLogicIntakeAuthorizationEvidence.Outcome.FINALIZED,
-                    Optional.of(scope(request)),
-                    Optional.of(authorization(request))))
+    assertThatThrownBy(() ->
+            new GameLogicIntakeAuthorizationEvidence.Result(
+                request,
+                GameLogicIntakeAuthorizationEvidence.Outcome.FINALIZED,
+                Optional.of(scope(request)),
+                Optional.of(authorization(request))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

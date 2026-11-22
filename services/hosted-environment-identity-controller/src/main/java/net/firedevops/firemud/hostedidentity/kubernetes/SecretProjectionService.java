@@ -310,11 +310,10 @@ public class SecretProjectionService {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       data.entrySet().stream()
           .sorted(Map.Entry.comparingByKey())
-          .forEach(
-              entry -> {
-                updateLengthPrefixed(digest, entry.getKey().getBytes(StandardCharsets.UTF_8));
-                updateLengthPrefixed(digest, Base64.getDecoder().decode(entry.getValue()));
-              });
+          .forEach(entry -> {
+            updateLengthPrefixed(digest, entry.getKey().getBytes(StandardCharsets.UTF_8));
+            updateLengthPrefixed(digest, Base64.getDecoder().decode(entry.getValue()));
+          });
       return "sha256:" + HexFormat.of().formatHex(digest.digest());
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("unable to calculate material revision", exception);

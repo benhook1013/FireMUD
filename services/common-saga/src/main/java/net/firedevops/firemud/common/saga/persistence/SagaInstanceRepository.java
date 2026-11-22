@@ -55,31 +55,29 @@ public class SagaInstanceRepository {
     return dsl.select(ID, SAGA_NAME, STATE, CREATED_AT, UPDATED_AT)
         .from(sagaInstance)
         .orderBy(ID.desc())
-        .fetch(
-            record -> {
-              SagaInstance entity = new SagaInstance();
-              entity.setId(record.get(ID));
-              entity.setSagaName(record.get(SAGA_NAME));
-              entity.setState(record.get(STATE));
-              entity.setCreatedAt(JooqPersistenceSupport.toInstant(record.get(CREATED_AT)));
-              entity.setUpdatedAt(JooqPersistenceSupport.toInstant(record.get(UPDATED_AT)));
-              return entity;
-            });
+        .fetch(record -> {
+          SagaInstance entity = new SagaInstance();
+          entity.setId(record.get(ID));
+          entity.setSagaName(record.get(SAGA_NAME));
+          entity.setState(record.get(STATE));
+          entity.setCreatedAt(JooqPersistenceSupport.toInstant(record.get(CREATED_AT)));
+          entity.setUpdatedAt(JooqPersistenceSupport.toInstant(record.get(UPDATED_AT)));
+          return entity;
+        });
   }
 
   public Optional<SagaInstance> findById(Long id) {
     return dsl.select(ID, SAGA_NAME, STATE, CREATED_AT, UPDATED_AT)
         .from(sagaInstance)
         .where(ID.eq(id))
-        .fetchOptional(
-            record -> {
-              SagaInstance entity = new SagaInstance();
-              entity.setId(record.get(ID));
-              entity.setSagaName(record.get(SAGA_NAME));
-              entity.setState(record.get(STATE));
-              entity.setCreatedAt(JooqPersistenceSupport.toInstant(record.get(CREATED_AT)));
-              entity.setUpdatedAt(JooqPersistenceSupport.toInstant(record.get(UPDATED_AT)));
-              return entity;
-            });
+        .fetchOptional(record -> {
+          SagaInstance entity = new SagaInstance();
+          entity.setId(record.get(ID));
+          entity.setSagaName(record.get(SAGA_NAME));
+          entity.setState(record.get(STATE));
+          entity.setCreatedAt(JooqPersistenceSupport.toInstant(record.get(CREATED_AT)));
+          entity.setUpdatedAt(JooqPersistenceSupport.toInstant(record.get(UPDATED_AT)));
+          return entity;
+        });
   }
 }

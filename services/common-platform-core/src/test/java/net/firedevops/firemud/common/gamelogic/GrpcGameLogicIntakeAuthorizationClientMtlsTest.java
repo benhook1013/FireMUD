@@ -148,10 +148,9 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     client.init();
     assertThatThrownBy(() -> client.authorize(request(selected(1)), CREDENTIAL))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.PERMISSION_DENIED));
     assertThat(calls).hasValue(0);
   }
 
@@ -182,10 +181,9 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     client.init();
     assertThatThrownBy(() -> client.authorize(original, CREDENTIAL))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
   }
 
   @Test
@@ -193,27 +191,21 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcGameLogicIntakeAuthorizationClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcGameLogicIntakeAuthorizationClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GrpcGameLogicIntakeAuthorizationClient(
-                    endpoints,
-                    new CommonGrpcClientProperties(),
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcGameLogicIntakeAuthorizationClient(
+                endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     var classpathMaterial = new CommonGrpcClientProperties();
     classpathMaterial.setCertChain("classpath:account.crt");
     classpathMaterial.setPrivateKey("classpath:account.key");
     classpathMaterial.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new GrpcGameLogicIntakeAuthorizationClient(
-                    endpoints, classpathMaterial, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcGameLogicIntakeAuthorizationClient(
+                endpoints, classpathMaterial, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -259,11 +251,10 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     assertThatThrownBy(() -> client.authorize(request, CREDENTIAL))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Account returned invalid Game Logic intake authorization evidence")
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause()).isNull();
-              assertThat(failure.getMessage()).doesNotContain(sensitive);
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause()).isNull();
+          assertThat(failure.getMessage()).doesNotContain(sensitive);
+        });
     assertThat(calls).hasValue(1);
   }
 
@@ -381,13 +372,11 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
       org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
     assertThatThrownBy(call)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(Status.fromThrowable(failure).getDescription()).isNull();
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(Status.fromThrowable(failure).getDescription()).isNull();
+          assertThat(failure.getCause()).isNull();
+        });
   }
 
   private static GameLogicIntakeAuthorizationEvidence.Request request(DraftCommitBinding selected) {

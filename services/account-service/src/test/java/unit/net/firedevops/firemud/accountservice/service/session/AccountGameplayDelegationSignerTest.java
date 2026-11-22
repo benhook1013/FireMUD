@@ -148,11 +148,10 @@ class AccountGameplayDelegationSignerTest {
 
   private static Map<String, Object> castClaims(Map<?, ?> claims) {
     Map<String, Object> copy = new LinkedHashMap<>();
-    claims.forEach(
-        (key, value) -> {
-          if (!(key instanceof String text)) throw new AssertionError("JWT claim key is not text");
-          copy.put(text, value);
-        });
+    claims.forEach((key, value) -> {
+      if (!(key instanceof String text)) throw new AssertionError("JWT claim key is not text");
+      copy.put(text, value);
+    });
     return copy;
   }
 
@@ -415,11 +414,10 @@ class AccountGameplayDelegationSignerTest {
 
     TransactionTemplate writable = new TransactionTemplate(fixture.transactionManager);
     int loadsBeforeOwnerCheck = fixture.publicSourceLoadCount.get();
-    writable.execute(
-        status -> {
-          fixture.signer.requireCurrentCommittedSigner(proof);
-          return null;
-        });
+    writable.execute(status -> {
+      fixture.signer.requireCurrentCommittedSigner(proof);
+      return null;
+    });
     assertEquals(loadsBeforeOwnerCheck, fixture.publicSourceLoadCount.get());
 
     TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
@@ -427,11 +425,10 @@ class AccountGameplayDelegationSignerTest {
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
-            readOnly.execute(
-                status -> {
-                  fixture.signer.requireCurrentCommittedSigner(proof);
-                  return null;
-                }));
+            readOnly.execute(status -> {
+              fixture.signer.requireCurrentCommittedSigner(proof);
+              return null;
+            }));
   }
 
   @Test
@@ -447,11 +444,10 @@ class AccountGameplayDelegationSignerTest {
 
     int loadsBeforeOwnerCheck = fixture.publicSourceLoadCount.get();
     new TransactionTemplate(fixture.transactionManager)
-        .execute(
-            status -> {
-              fixture.signer.requireCurrentCommittedSigner(committed);
-              return null;
-            });
+        .execute(status -> {
+          fixture.signer.requireCurrentCommittedSigner(committed);
+          return null;
+        });
     assertEquals(loadsBeforeOwnerCheck, fixture.publicSourceLoadCount.get());
 
     TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
@@ -459,11 +455,10 @@ class AccountGameplayDelegationSignerTest {
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
-            readOnly.execute(
-                status -> {
-                  fixture.signer.requireCurrentCommittedSigner(committed);
-                  return null;
-                }));
+            readOnly.execute(status -> {
+              fixture.signer.requireCurrentCommittedSigner(committed);
+              return null;
+            }));
   }
 
   @Test
@@ -476,11 +471,10 @@ class AccountGameplayDelegationSignerTest {
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
             new TransactionTemplate(changedOwner.transactionManager)
-                .execute(
-                    status -> {
-                      changedOwner.signer.requireCurrentCommittedSigner(changedSnapshot);
-                      return null;
-                    }));
+                .execute(status -> {
+                  changedOwner.signer.requireCurrentCommittedSigner(changedSnapshot);
+                  return null;
+                }));
 
     Fixture withdrawnTrust = new Fixture(temporaryDirectory, false);
     var trustProof = withdrawnTrust.signer.signPendingCandidate(REQUEST_ID).verificationProof();
@@ -490,11 +484,10 @@ class AccountGameplayDelegationSignerTest {
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
             new TransactionTemplate(withdrawnTrust.transactionManager)
-                .execute(
-                    status -> {
-                      withdrawnTrust.signer.requireCurrentCommittedSigner(trustSnapshot);
-                      return null;
-                    }));
+                .execute(status -> {
+                  withdrawnTrust.signer.requireCurrentCommittedSigner(trustSnapshot);
+                  return null;
+                }));
   }
 
   private static CommittedCandidateVerificationData committedData(
@@ -542,11 +535,10 @@ class AccountGameplayDelegationSignerTest {
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
-            writable.execute(
-                status -> {
-                  changedOwner.signer.requireCurrentCommittedSigner(proof);
-                  return null;
-                }));
+            writable.execute(status -> {
+              changedOwner.signer.requireCurrentCommittedSigner(proof);
+              return null;
+            }));
 
     Fixture withdrawnTrust = new Fixture(temporaryDirectory, false);
     var trustProof = withdrawnTrust.signer.signPendingCandidate(REQUEST_ID).verificationProof();
@@ -556,11 +548,10 @@ class AccountGameplayDelegationSignerTest {
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
-            trustTransaction.execute(
-                status -> {
-                  withdrawnTrust.signer.requireCurrentCommittedSigner(trustProof);
-                  return null;
-                }));
+            trustTransaction.execute(status -> {
+              withdrawnTrust.signer.requireCurrentCommittedSigner(trustProof);
+              return null;
+            }));
   }
 
   @Test
@@ -576,11 +567,10 @@ class AccountGameplayDelegationSignerTest {
     Files.writeString(fixture.privateRoot.resolve("current.key"), "unavailable private material");
 
     new TransactionTemplate(fixture.transactionManager)
-        .execute(
-            status -> {
-              fixture.signer.requireCurrentCommittedRecoverySigner(committed);
-              return null;
-            });
+        .execute(status -> {
+          fixture.signer.requireCurrentCommittedRecoverySigner(committed);
+          return null;
+        });
     fixture.signer.requireRetainedCommittedPublicKey(committed);
 
     assertTrue(fixture.sourceLoadsWereOutsideTransactions.get());
@@ -589,11 +579,10 @@ class AccountGameplayDelegationSignerTest {
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
             new TransactionTemplate(fixture.transactionManager)
-                .execute(
-                    status -> {
-                      fixture.signer.requireCurrentCommittedSigner(committed);
-                      return null;
-                    }));
+                .execute(status -> {
+                  fixture.signer.requireCurrentCommittedSigner(committed);
+                  return null;
+                }));
   }
 
   @Test
@@ -605,11 +594,10 @@ class AccountGameplayDelegationSignerTest {
     missingKey.sourceJwks.set(
         jwksJson(mismatchedPair, "account-key-43").getBytes(StandardCharsets.UTF_8));
     new TransactionTemplate(missingKey.transactionManager)
-        .execute(
-            status -> {
-              missingKey.signer.requireCurrentCommittedRecoverySigner(missingCommitted);
-              return null;
-            });
+        .execute(status -> {
+          missingKey.signer.requireCurrentCommittedRecoverySigner(missingCommitted);
+          return null;
+        });
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () -> missingKey.signer.requireRetainedCommittedPublicKey(missingCommitted));
@@ -623,11 +611,10 @@ class AccountGameplayDelegationSignerTest {
         jwksJson(mismatchedPair, KID, mismatchedPair, "account-key-43")
             .getBytes(StandardCharsets.UTF_8));
     new TransactionTemplate(substitutedKey.transactionManager)
-        .execute(
-            status -> {
-              substitutedKey.signer.requireCurrentCommittedRecoverySigner(substitutedCommitted);
-              return null;
-            });
+        .execute(status -> {
+          substitutedKey.signer.requireCurrentCommittedRecoverySigner(substitutedCommitted);
+          return null;
+        });
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () -> substitutedKey.signer.requireRetainedCommittedPublicKey(substitutedCommitted));
@@ -654,11 +641,10 @@ class AccountGameplayDelegationSignerTest {
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
             new TransactionTemplate(expired.transactionManager)
-                .execute(
-                    status -> {
-                      expired.signer.requireCurrentCommittedRecoverySigner(expiredCommitted);
-                      return null;
-                    }));
+                .execute(status -> {
+                  expired.signer.requireCurrentCommittedRecoverySigner(expiredCommitted);
+                  return null;
+                }));
 
     Fixture withdrawnTrust = new Fixture(temporaryDirectory, false);
     var trustProof = withdrawnTrust.signer.signPendingCandidate(REQUEST_ID).verificationProof();
@@ -668,11 +654,10 @@ class AccountGameplayDelegationSignerTest {
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
             new TransactionTemplate(withdrawnTrust.transactionManager)
-                .execute(
-                    status -> {
-                      withdrawnTrust.signer.requireCurrentCommittedRecoverySigner(trustCommitted);
-                      return null;
-                    }));
+                .execute(status -> {
+                  withdrawnTrust.signer.requireCurrentCommittedRecoverySigner(trustCommitted);
+                  return null;
+                }));
   }
 
   @Test
@@ -685,11 +670,10 @@ class AccountGameplayDelegationSignerTest {
     assertThrows(
         AccountGameplayDelegationSigner.SigningUnavailableException.class,
         () ->
-            writable.execute(
-                status -> {
-                  fixture.signer.requireCurrentCommittedSigner(proof);
-                  return null;
-                }));
+            writable.execute(status -> {
+              fixture.signer.requireCurrentCommittedSigner(proof);
+              return null;
+            }));
   }
 
   @Test
@@ -1100,28 +1084,26 @@ class AccountGameplayDelegationSignerTest {
 
     private void configureTrustedJwksSource() {
       when(trustedJwksSource.sourceIdentity())
-          .thenAnswer(
-              invocation -> {
-                if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                  sourceLoadsWereOutsideTransactions.set(false);
-                }
-                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-                return sourceIdentity;
-              });
+          .thenAnswer(invocation -> {
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+              sourceLoadsWereOutsideTransactions.set(false);
+            }
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            return sourceIdentity;
+          });
       when(trustedJwksSource.load())
-          .thenAnswer(
-              invocation -> {
-                if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                  sourceLoadsWereOutsideTransactions.set(false);
-                }
-                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-                int load = publicSourceLoadCount.incrementAndGet();
-                byte[] bytes =
-                    load >= mutateSourceOnLoad && changedSourceBytes != null
-                        ? changedSourceBytes
-                        : sourceJwks.get();
-                return new PublicJwksSnapshot(sourceIdentity, bytes);
-              });
+          .thenAnswer(invocation -> {
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+              sourceLoadsWereOutsideTransactions.set(false);
+            }
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            int load = publicSourceLoadCount.incrementAndGet();
+            byte[] bytes =
+                load >= mutateSourceOnLoad && changedSourceBytes != null
+                    ? changedSourceBytes
+                    : sourceJwks.get();
+            return new PublicJwksSnapshot(sourceIdentity, bytes);
+          });
     }
 
     private void configureCommittedSigner(CommittedSignerEvidence evidence) {
@@ -1157,63 +1139,60 @@ class AccountGameplayDelegationSignerTest {
       when(issuance.readPendingSigningIdentity(REQUEST_ID))
           .thenReturn(pendingSigningIdentity, pendingSigningIdentity);
       when(issuance.bindSignedCandidate(eq(REQUEST_ID), anyString(), eq(GENERATION)))
-          .thenAnswer(
-              invocation -> {
-                String jwt = invocation.getArgument(1);
-                transientJwt.set(jwt);
-                GameSessionAccountDelegationRegistryRecord record =
-                    GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
-                        jwt,
-                        GENERATION,
-                        new IssuanceBinding(
-                            ISSUANCE_OPERATION_ID.toString(),
-                            REQUEST_ID.toString(),
-                            REQUEST_DIGEST,
-                            ACCOUNT_ID.toString()),
-                        authoritySnapshot,
-                        evidenceReference,
-                        NOW.getEpochSecond(),
-                        GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES);
-                boundRecord.set(record);
-                return new BoundTokenCandidate(
-                    REQUEST_ID, record.tokenHash(), record.kid(), record.signerGeneration());
-              });
-      when(issuance.readPendingRegistryCandidate(REQUEST_ID))
-          .thenAnswer(
-              invocation -> {
-                GameSessionAccountDelegationRegistryRecord record = boundRecord.get();
-                assertNotNull(record);
-                return new PendingRegistryCandidate(
-                    pendingIdentity,
-                    record.tokenHash(),
-                    record.kid(),
-                    record.signerGeneration(),
-                    record.expiresAtEpochSecond(),
-                    record.toCanonicalJsonBytes(
-                        GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES),
+          .thenAnswer(invocation -> {
+            String jwt = invocation.getArgument(1);
+            transientJwt.set(jwt);
+            GameSessionAccountDelegationRegistryRecord record =
+                GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
+                    jwt,
+                    GENERATION,
+                    new IssuanceBinding(
+                        ISSUANCE_OPERATION_ID.toString(),
+                        REQUEST_ID.toString(),
+                        REQUEST_DIGEST,
+                        ACCOUNT_ID.toString()),
                     authoritySnapshot,
-                    evidenceReference);
-              });
+                    evidenceReference,
+                    NOW.getEpochSecond(),
+                    GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES);
+            boundRecord.set(record);
+            return new BoundTokenCandidate(
+                REQUEST_ID, record.tokenHash(), record.kid(), record.signerGeneration());
+          });
+      when(issuance.readPendingRegistryCandidate(REQUEST_ID))
+          .thenAnswer(invocation -> {
+            GameSessionAccountDelegationRegistryRecord record = boundRecord.get();
+            assertNotNull(record);
+            return new PendingRegistryCandidate(
+                pendingIdentity,
+                record.tokenHash(),
+                record.kid(),
+                record.signerGeneration(),
+                record.expiresAtEpochSecond(),
+                record.toCanonicalJsonBytes(
+                    GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES),
+                authoritySnapshot,
+                evidenceReference);
+          });
     }
 
     private void configureEnvelopeService() {
       when(envelopeService.sealPendingCandidate(
               eq(REQUEST_ID), any(CallerIdentity.class), anyString()))
-          .thenAnswer(
-              invocation -> {
-                assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-                CallerIdentity caller = invocation.getArgument(1);
-                String jwt = invocation.getArgument(2);
-                assertEquals(WORKLOAD, caller.workload());
-                assertEquals(CALLER_CONTEXT_ID, caller.contextId());
-                assertEquals(transientJwt.get(), jwt);
-                return sealedObservation(
-                    ISSUANCE_OPERATION_ID,
-                    REQUEST_ID,
-                    evidenceBundle,
-                    Math.multiplyExact(pendingIdentity.expiresAtEpochSecond(), 1_000L)
-                        + sealedExpiryDeltaMillis);
-              });
+          .thenAnswer(invocation -> {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+            CallerIdentity caller = invocation.getArgument(1);
+            String jwt = invocation.getArgument(2);
+            assertEquals(WORKLOAD, caller.workload());
+            assertEquals(CALLER_CONTEXT_ID, caller.contextId());
+            assertEquals(transientJwt.get(), jwt);
+            return sealedObservation(
+                ISSUANCE_OPERATION_ID,
+                REQUEST_ID,
+                evidenceBundle,
+                Math.multiplyExact(pendingIdentity.expiresAtEpochSecond(), 1_000L)
+                    + sealedExpiryDeltaMillis);
+          });
     }
 
     private void returnMissingCommittedEvidence() {
@@ -1266,26 +1245,24 @@ class AccountGameplayDelegationSignerTest {
 
     private void returnMismatchedBoundCandidate() {
       when(issuance.bindSignedCandidate(eq(REQUEST_ID), anyString(), eq(GENERATION)))
-          .thenAnswer(
-              invocation -> {
-                transientJwt.set(invocation.getArgument(1));
-                return new BoundTokenCandidate(REQUEST_ID, "f".repeat(64), KID, GENERATION);
-              });
+          .thenAnswer(invocation -> {
+            transientJwt.set(invocation.getArgument(1));
+            return new BoundTokenCandidate(REQUEST_ID, "f".repeat(64), KID, GENERATION);
+          });
     }
 
     private void returnMismatchedEnvelopeReadback() {
       when(envelopeService.sealPendingCandidate(
               eq(REQUEST_ID), any(CallerIdentity.class), anyString()))
-          .thenAnswer(
-              invocation -> {
-                assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
-                transientJwt.set(invocation.getArgument(2));
-                return sealedObservation(
-                    UUID.fromString("3a7c3d0c-ab15-4f86-b5af-9e29bc7d3543"),
-                    REQUEST_ID,
-                    evidenceBundle,
-                    Math.multiplyExact(pendingIdentity.expiresAtEpochSecond(), 1_000L));
-              });
+          .thenAnswer(invocation -> {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+            transientJwt.set(invocation.getArgument(2));
+            return sealedObservation(
+                UUID.fromString("3a7c3d0c-ab15-4f86-b5af-9e29bc7d3543"),
+                REQUEST_ID,
+                evidenceBundle,
+                Math.multiplyExact(pendingIdentity.expiresAtEpochSecond(), 1_000L));
+          });
     }
 
     private void returnMismatchedSealedExpiry() {

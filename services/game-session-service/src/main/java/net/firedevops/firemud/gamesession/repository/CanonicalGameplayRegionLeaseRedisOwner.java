@@ -615,51 +615,49 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         worker =
             Thread.ofVirtual()
                 .name("game-session-region-timeline-retained-read")
-                .unstarted(
-                    () -> {
-                      Context previous = null;
-                      T value = null;
-                      Throwable failure = null;
+                .unstarted(() -> {
+                  Context previous = null;
+                  T value = null;
+                  Throwable failure = null;
+                  try {
+                    previous = workerContext.attach();
+                    retainedBudget.check();
+                    value = operation.apply(retainedBudget);
+                    retainedBudget.check();
+                  } catch (RuntimeException | Error operationFailure) {
+                    failure = operationFailure;
+                  } finally {
+                    try {
+                      retainedBudget.releaseRetainedWorkConnections();
+                    } catch (RuntimeException | Error cleanupFailure) {
+                      if (failure == null) failure = cleanupFailure;
+                      else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+                    }
+                    // The worker owns any produced capability until the caller acknowledges
+                    // delivery. Timeout/cancellation never silently discards an issued claim.
+                    if (failure == null) result.complete(value);
+                    else result.completeExceptionally(failure);
+                    if (!delivered.join() && value != null) {
                       try {
-                        previous = workerContext.attach();
-                        retainedBudget.check();
-                        value = operation.apply(retainedBudget);
-                        retainedBudget.check();
-                      } catch (RuntimeException | Error operationFailure) {
-                        failure = operationFailure;
-                      } finally {
-                        try {
-                          retainedBudget.releaseRetainedWorkConnections();
-                        } catch (RuntimeException | Error cleanupFailure) {
-                          if (failure == null) failure = cleanupFailure;
-                          else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
-                        }
-                        // The worker owns any produced capability until the caller acknowledges
-                        // delivery. Timeout/cancellation never silently discards an issued claim.
-                        if (failure == null) result.complete(value);
-                        else result.completeExceptionally(failure);
-                        if (!delivered.join() && value != null) {
-                          try {
-                            undelivered.accept(value);
-                          } catch (RuntimeException | Error recoveryFailure) {
-                            if (failure == null) failure = recoveryFailure;
-                            else if (failure != recoveryFailure)
-                              failure.addSuppressed(recoveryFailure);
-                          }
-                        }
-                        try {
-                          if (previous != null) workerContext.detach(previous);
-                        } finally {
-                          synchronized (PreparedTimelineInitialization.this) {
-                            retainedWorkInFlight = false;
-                          }
-                          // Keep readiness separate from externally registered lifetime callbacks:
-                          // a joining caller may otherwise help execute a blocked callback.
-                          readyForInitialization.complete(null);
-                          workLifetime.complete(null);
-                        }
+                        undelivered.accept(value);
+                      } catch (RuntimeException | Error recoveryFailure) {
+                        if (failure == null) failure = recoveryFailure;
+                        else if (failure != recoveryFailure) failure.addSuppressed(recoveryFailure);
                       }
-                    });
+                    }
+                    try {
+                      if (previous != null) workerContext.detach(previous);
+                    } finally {
+                      synchronized (PreparedTimelineInitialization.this) {
+                        retainedWorkInFlight = false;
+                      }
+                      // Keep readiness separate from externally registered lifetime callbacks:
+                      // a joining caller may otherwise help execute a blocked callback.
+                      readyForInitialization.complete(null);
+                      workLifetime.complete(null);
+                    }
+                  }
+                });
         workerReference.set(worker);
         caller.addListener(listener, Runnable::run);
         listenerRegistered = true;
@@ -818,11 +816,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       if (boundedClose == null) {
         boundedClose =
             CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
-        boundedClose.whenComplete(
-            (ignored, failure) -> {
-              if (failure == null) disposal.complete(null);
-              else disposal.completeExceptionally(failure);
-            });
+        boundedClose.whenComplete((ignored, failure) -> {
+          if (failure == null) disposal.complete(null);
+          else disposal.completeExceptionally(failure);
+        });
       }
       return boundedClose;
     }

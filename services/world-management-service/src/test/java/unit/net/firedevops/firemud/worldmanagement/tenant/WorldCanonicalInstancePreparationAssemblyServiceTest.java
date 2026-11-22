@@ -97,16 +97,15 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     verify(launchBindings).read(NAMESPACE, TENANT_ID, CONTROL_REQUEST_ID);
     verifyNoInteractions(
         sourceIntakes, versionIdentities, frozenTopologies, gameSession, gameDesign);
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInstancePreparationAssemblyService(
-                    "not a namespace",
-                    launchBindings,
-                    sourceIntakes,
-                    versionIdentities,
-                    frozenTopologies,
-                    gameSession,
-                    gameDesign))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInstancePreparationAssemblyService(
+                "not a namespace",
+                launchBindings,
+                sourceIntakes,
+                versionIdentities,
+                frozenTopologies,
+                gameSession,
+                gameDesign))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical DNS label");
   }
@@ -246,10 +245,9 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
 
     var changedInstanceRequest = gameSessionRequest(stored, UUID.randomUUID());
     var changedInstanceResult = gameSessionResult(changedInstanceRequest, stored);
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
-                    request, changedInstanceResult, stored))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
+                request, changedInstanceResult, stored))
         .isInstanceOf(
             WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
         .hasMessageContaining("Game Session association differs");
@@ -257,10 +255,9 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     var changedPair = binding('b');
     var changedPairRequest = gameSessionRequest(changedPair, INSTANCE_ID);
     var changedPairResult = gameSessionResult(changedPairRequest, changedPair);
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
-                    request, changedPairResult, stored))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
+                request, changedPairResult, stored))
         .isInstanceOf(
             WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
         .hasMessageContaining("Game Session association differs");
@@ -276,20 +273,18 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     when(invalid.publicProduction()).thenReturn(true);
     when(invalid.launchBindingEvidence()).thenReturn(stored);
 
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
-                    request, invalid, stored))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
+                request, invalid, stored))
         .isInstanceOf(
             WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
         .hasMessageContaining("Game Session association differs");
 
     when(invalid.playableStateScope()).thenReturn(RealmEntryPolicy.StateScope.SHARED);
     when(invalid.publicProduction()).thenReturn(false);
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
-                    request, invalid, stored))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstancePreparationAssemblyService.requireGameSessionBinding(
+                request, invalid, stored))
         .isInstanceOf(
             WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
         .hasMessageContaining("Game Session association differs");
@@ -300,10 +295,9 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     var stored = binding('a');
     WorldCanonicalInstancePreparationAssemblyService.requireSameCompletePair(stored, binding('a'));
 
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstancePreparationAssemblyService.requireSameCompletePair(
-                    stored, binding('b')))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstancePreparationAssemblyService.requireSameCompletePair(
+                stored, binding('b')))
         .isInstanceOf(
             WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException.class)
         .hasMessageContaining("Authenticated Game Design complete launch pair differs");
@@ -383,19 +377,17 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
     String commitId = BINDING_COMMIT_ID;
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        commitId,
-                        String.valueOf(digestCharacter).repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "1".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    commitId,
+                    String.valueOf(digestCharacter).repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(owner),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "1".repeat(64) : null))
             .toList();
     var release =
         AuthoredWorldReleaseAttestationEvidence.create(

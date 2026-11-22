@@ -89,8 +89,7 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
   @AfterEach
   void stopTransportAndClearAuthContext() throws Exception {
     if (noCertificateChannel != null) {
-      noCertificateChannel.shutdownNow();
-      assertThat(noCertificateChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(noCertificateChannel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       noCertificateChannel = null;
     }
     if (server != null) {
@@ -112,10 +111,9 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
         client.init();
         assertThatThrownBy(() -> client.read(REQUEST))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
       }
     }
     org.mockito.Mockito.verify(owner, org.mockito.Mockito.times(2))
@@ -131,10 +129,9 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
         client.init();
         assertThatThrownBy(() -> client.read(REQUEST))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       }
     }
 
@@ -151,10 +148,9 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
         client.init();
         assertThatThrownBy(() -> client.read(REQUEST))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
       }
       stopReceiver();
     }
@@ -173,17 +169,15 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
                     .build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                HistoricalOriginalStartSessionOwnerEvidenceReadServiceGrpc.newBlockingStub(
-                        noCertificateChannel)
-                    .withDeadlineAfter(5, TimeUnit.SECONDS)
-                    .readHistoricalOriginalStartSessionOwnerEvidence(toWireRequest()))
-        .satisfies(
-            failure ->
-                assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
-                    .as("server requires a trusted client certificate")
-                    .isTrue());
+    assertThatThrownBy(() ->
+            HistoricalOriginalStartSessionOwnerEvidenceReadServiceGrpc.newBlockingStub(
+                    noCertificateChannel)
+                .withDeadlineAfter(5, TimeUnit.SECONDS)
+                .readHistoricalOriginalStartSessionOwnerEvidence(toWireRequest()))
+        .satisfies(failure ->
+            assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
+                .as("server requires a trusted client certificate")
+                .isTrue());
 
     verifyNoInteractions(owner);
   }
@@ -196,10 +190,9 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
       client.init();
       assertThatThrownBy(() -> client.read(REQUEST))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
 
     verifyNoInteractions(owner);

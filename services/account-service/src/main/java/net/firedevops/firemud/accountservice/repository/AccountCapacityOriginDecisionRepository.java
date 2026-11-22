@@ -28,14 +28,8 @@ public final class AccountCapacityOriginDecisionRepository {
   /** Read only. Missing row is not a refusal. */
   public Record find(Request request) {
     transaction();
-    Record row =
-        dsl.fetchOne(
-            "SELECT * FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND capacity_rearm_fence = ?",
-            request.identity().tenantId(),
-            request.identity().requestId(),
-            request.identity().admissionId(),
-            request.capacityRearmFence());
-    if (row != null) requireExact(request, row);
+    Record row = findRow(request);
+    if (row != null) requireExact(request, row, CapacityAdmissionDigest.preimage(request));
     return row;
   }
 
@@ -64,25 +58,69 @@ public final class AccountCapacityOriginDecisionRepository {
   }
 
   private Record retain(Request request, String decision, String refusalCode) {
-    Record existing = find(request);
+    transaction();
+    byte[] canonicalPayload = CapacityAdmissionDigest.preimage(request);
+    Record existing = find(request, canonicalPayload);
     if (existing != null) return requireOutcome(existing, decision, refusalCode);
+    requireFreshAttemptBinding(request, canonicalPayload);
     int inserted =
         dsl.execute(
-            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tenant_uuid, request_id, admission_id, capacity_rearm_fence) DO NOTHING",
+            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
             request.identity().tenantId(),
             request.identity().requestId(),
             request.identity().admissionId(),
             request.capacityRearmFence(),
             request.admissionAttemptId(),
             request.mutationDigest(),
-            CapacityAdmissionDigest.preimage(request),
+            canonicalPayload,
             decision,
             UUID.randomUUID(),
             refusalCode);
     if (inserted != 0 && inserted != 1) throw unavailable();
-    Record row = find(request);
-    if (row == null) throw unavailable();
+    Record row = find(request, canonicalPayload);
+    if (row == null) {
+      requireFreshAttemptBinding(request, canonicalPayload);
+      throw unavailable();
+    }
     return requireOutcome(row, decision, refusalCode);
+  }
+
+  /** SERIALIZABLE caller: include pre-origin reservations and retained rearm history. */
+  public void requireFreshAttemptBinding(Request request) {
+    requireFreshAttemptBinding(request, CapacityAdmissionDigest.preimage(request));
+  }
+
+  private void requireFreshAttemptBinding(Request request, byte[] canonicalPayload) {
+    Record conflict =
+        dsl.fetchOne(
+            "SELECT 1 FROM ("
+                + "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload FROM account_capacity_origin_decisions "
+                + "UNION ALL SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload FROM account_tenant_capacity_reservations "
+                + "UNION ALL SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload FROM account_tenant_capacity_attempt_history"
+                + ") retained_attempt WHERE admission_attempt_id = ? AND (tenant_uuid <> ? OR request_id <> ? OR admission_id <> ? OR capacity_rearm_fence <> ? OR mutation_digest <> ? OR canonical_payload <> ?) LIMIT 1",
+            request.admissionAttemptId(),
+            request.identity().tenantId(),
+            request.identity().requestId(),
+            request.identity().admissionId(),
+            request.capacityRearmFence(),
+            request.mutationDigest(),
+            canonicalPayload);
+    if (conflict != null) throw conflict();
+  }
+
+  private Record find(Request request, byte[] canonicalPayload) {
+    Record row = findRow(request);
+    if (row != null) requireExact(request, row, canonicalPayload);
+    return row;
+  }
+
+  private Record findRow(Request request) {
+    return dsl.fetchOne(
+        "SELECT * FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND capacity_rearm_fence = ?",
+        request.identity().tenantId(),
+        request.identity().requestId(),
+        request.identity().admissionId(),
+        request.capacityRearmFence());
   }
 
   private static Record requireOutcome(Record row, String decision, String refusalCode) {
@@ -93,11 +131,10 @@ public final class AccountCapacityOriginDecisionRepository {
     return row;
   }
 
-  private static void requireExact(Request request, Record row) {
+  private static void requireExact(Request request, Record row, byte[] canonicalPayload) {
     if (!request.admissionAttemptId().equals(row.get("admission_attempt_id", UUID.class))
         || !request.mutationDigest().equals(row.get("mutation_digest", String.class))
-        || !Arrays.equals(
-            CapacityAdmissionDigest.preimage(request), row.get("canonical_payload", byte[].class))
+        || !Arrays.equals(canonicalPayload, row.get("canonical_payload", byte[].class))
         || row.get("decision_id", UUID.class) == null
         || !("ACCEPTED".equals(row.get("decision", String.class))
             || "NO_ACCEPT".equals(row.get("decision", String.class)))) throw conflict();

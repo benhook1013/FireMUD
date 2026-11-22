@@ -29,27 +29,24 @@ public final class GameDesignLaunchReadProjectionMapper {
             .addAllCommandDefinitions(bundle.commandDefinitions())
             .addAllParticipantDigests(
                 bundle.participantDigests().stream()
-                    .map(
-                        digest -> {
-                          ParticipantDigest.Builder participant =
-                              ParticipantDigest.newBuilder()
-                                  .setParticipantKey(digest.participantKey())
-                                  .setScopeValue(digest.scopeValue())
-                                  .setAppliedCommitId(
-                                      digest.appliedCommitId() == null
-                                          ? ""
-                                          : digest.appliedCommitId())
-                                  .setContentDigest(
-                                      digest.contentDigest() == null ? "" : digest.contentDigest())
-                                  .setDigestSchemaVersion(
-                                      digest.digestSchemaVersion() == null
-                                          ? 0
-                                          : digest.digestSchemaVersion());
-                          if (digest.abilitySchemaDigest() != null) {
-                            participant.setAbilitySchemaDigest(digest.abilitySchemaDigest());
-                          }
-                          return participant.build();
-                        })
+                    .map(digest -> {
+                      ParticipantDigest.Builder participant =
+                          ParticipantDigest.newBuilder()
+                              .setParticipantKey(digest.participantKey())
+                              .setScopeValue(digest.scopeValue())
+                              .setAppliedCommitId(
+                                  digest.appliedCommitId() == null ? "" : digest.appliedCommitId())
+                              .setContentDigest(
+                                  digest.contentDigest() == null ? "" : digest.contentDigest())
+                              .setDigestSchemaVersion(
+                                  digest.digestSchemaVersion() == null
+                                      ? 0
+                                      : digest.digestSchemaVersion());
+                      if (digest.abilitySchemaDigest() != null) {
+                        participant.setAbilitySchemaDigest(digest.abilitySchemaDigest());
+                      }
+                      return participant.build();
+                    })
                     .toList())
             .setGenerationConfigRevision(bundle.generationConfigRevision())
             .setIsScriptOnly(bundle.scriptOnly())

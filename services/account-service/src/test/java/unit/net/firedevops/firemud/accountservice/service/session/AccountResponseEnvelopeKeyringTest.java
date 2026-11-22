@@ -90,10 +90,9 @@ class AccountResponseEnvelopeKeyringTest {
   void failsClosedForMissingAndMalformedMounts() throws IOException {
     assertThatThrownBy(() -> new AccountResponseEnvelopeKeyring("").readCurrent())
         .isInstanceOf(AccountResponseEnvelopeKeyring.KeyUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountResponseEnvelopeKeyring(temporaryDirectory.resolve("missing").toString())
-                    .readCurrent())
+    assertThatThrownBy(() ->
+            new AccountResponseEnvelopeKeyring(temporaryDirectory.resolve("missing").toString())
+                .readCurrent())
         .isInstanceOf(AccountResponseEnvelopeKeyring.KeyUnavailableException.class);
 
     Path malformedMount = Files.createDirectory(temporaryDirectory.resolve("malformed"));

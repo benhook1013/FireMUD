@@ -43,13 +43,12 @@ public class AdmissionPointerController {
       @PathVariable String tenantId,
       @PathVariable String worldSlug,
       @PathVariable String realmSlug) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  admissionPointerService.listPointerAudit(parsedTenantId, worldSlug, realmSlug)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              admissionPointerService.listPointerAudit(parsedTenantId, worldSlug, realmSlug)));
+    });
   }
 
   @GetMapping("/runtime-state/{tenantId}/{gameInstanceId}")
@@ -58,15 +57,14 @@ public class AdmissionPointerController {
       description = "Read canonical current runtime state and current admission pointers")
   public ResponseEntity<ApiResponse<GameInstanceRuntimeStateDto>> getRuntimeState(
       @PathVariable String tenantId, @PathVariable String gameInstanceId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          long parsedGameInstanceId =
-              LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  admissionPointerService.getRuntimeState(parsedTenantId, parsedGameInstanceId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      long parsedGameInstanceId =
+          LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              admissionPointerService.getRuntimeState(parsedTenantId, parsedGameInstanceId)));
+    });
   }
 
   @GetMapping("/version-upgrades/{tenantId}/{preparationId}")
@@ -75,14 +73,12 @@ public class AdmissionPointerController {
       description = "Read a prepared version upgrade compatibility proof")
   public ResponseEntity<ApiResponse<PreparedVersionUpgradeDto>> getPreparedVersionUpgrade(
       @PathVariable String tenantId, @PathVariable String preparationId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  admissionPointerService.getPreparedVersionUpgrade(
-                      parsedTenantId, preparationId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              admissionPointerService.getPreparedVersionUpgrade(parsedTenantId, preparationId)));
+    });
   }
 
   @GetMapping("/version-upgrades/{tenantId}/{sourceGameInstanceId}/compatibility/{targetVersionId}")
@@ -95,18 +91,17 @@ public class AdmissionPointerController {
           @PathVariable String tenantId,
           @PathVariable String sourceGameInstanceId,
           @PathVariable String targetVersionId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          long parsedSourceGameInstanceId =
-              LoggingAdminRequestReaders.requirePositiveLong(
-                  sourceGameInstanceId, "sourceGameInstanceId");
-          long parsedTargetVersionId =
-              LoggingAdminRequestReaders.requirePositiveLong(targetVersionId, "targetVersionId");
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  admissionPointerService.validateInstanceCutoverCompatibility(
-                      parsedTenantId, parsedSourceGameInstanceId, parsedTargetVersionId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      long parsedSourceGameInstanceId =
+          LoggingAdminRequestReaders.requirePositiveLong(
+              sourceGameInstanceId, "sourceGameInstanceId");
+      long parsedTargetVersionId =
+          LoggingAdminRequestReaders.requirePositiveLong(targetVersionId, "targetVersionId");
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              admissionPointerService.validateInstanceCutoverCompatibility(
+                  parsedTenantId, parsedSourceGameInstanceId, parsedTargetVersionId)));
+    });
   }
 }

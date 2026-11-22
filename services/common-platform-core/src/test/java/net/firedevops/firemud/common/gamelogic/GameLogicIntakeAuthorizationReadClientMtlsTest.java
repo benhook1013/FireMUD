@@ -125,10 +125,9 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
     client.init();
     assertThatThrownBy(() -> client.read(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.PERMISSION_DENIED));
     assertThat(calls).hasValue(0);
   }
 
@@ -310,12 +309,10 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
   private static void assertUnavailable(ThrowingCallable call) {
     assertThatThrownBy(call)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(Status.fromThrowable(failure).getDescription()).isNull();
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(Status.fromThrowable(failure).getDescription()).isNull();
+          assertThat(failure.getCause()).isNull();
+        });
   }
 }

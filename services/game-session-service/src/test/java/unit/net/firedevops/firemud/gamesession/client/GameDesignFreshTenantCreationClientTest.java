@@ -81,10 +81,9 @@ class GameDesignFreshTenantCreationClientTest {
       throws Exception {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
 
-    assertThatThrownBy(
-            () ->
-                new GameDesignFreshTenantCreationClient(
-                    new ServiceEndpointsProperties(), tls(directory), channelFactory, " "))
+    assertThatThrownBy(() ->
+            new GameDesignFreshTenantCreationClient(
+                new ServiceEndpointsProperties(), tls(directory), channelFactory, " "))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
 

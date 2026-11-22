@@ -159,18 +159,17 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           // Stream the entire frozen inventory through bounded pages under this one absolute
           // operation budget. Earlier page receipts cannot hide a subsequently lost marker.
           // An inventory that cannot be currently proved inside the deadline stays frozen.
-          owner.withTransferReadback(
-              reader -> {
-                var page = first;
-                while (!page.isEmpty()) {
-                  budget.check();
-                  for (var item : page) {
-                    var actual = reader.readTransferFence(item, budget.absoluteDeadlineMillis());
-                    repository.requireRetainedPhysical(item, actual);
-                  }
-                  page = repository.page(transferId, page.getLast().ordinal());
-                }
-              });
+          owner.withTransferReadback(reader -> {
+            var page = first;
+            while (!page.isEmpty()) {
+              budget.check();
+              for (var item : page) {
+                var actual = reader.readTransferFence(item, budget.absoluteDeadlineMillis());
+                repository.requireRetainedPhysical(item, actual);
+              }
+              page = repository.page(transferId, page.getLast().ordinal());
+            }
+          });
           var after = observe(first.getFirst(), budget);
           var proof =
               repository.qualify(transferId, before, after, budget.absoluteDeadlineMillis());
@@ -214,18 +213,17 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           var before = observe(first, budget);
           if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
           var owner = capacity.forTransferBudget(budget);
-          owner.withTransferReadback(
-              reader -> {
-                var page = firstPage;
-                while (!page.isEmpty()) {
-                  for (var item : page) {
-                    budget.check();
-                    repository.requireRetainedPhysical(
-                        item, reader.readTransferFence(item, budget.absoluteDeadlineMillis()));
-                  }
-                  page = repository.completedPage(transferId, page.getLast().ordinal());
-                }
-              });
+          owner.withTransferReadback(reader -> {
+            var page = firstPage;
+            while (!page.isEmpty()) {
+              for (var item : page) {
+                budget.check();
+                repository.requireRetainedPhysical(
+                    item, reader.readTransferFence(item, budget.absoluteDeadlineMillis()));
+              }
+              page = repository.completedPage(transferId, page.getLast().ordinal());
+            }
+          });
           var after = observe(first, budget);
           if (!after.incarnationDigest().equals(completed.incarnationDigest())
               || !completed.equals(

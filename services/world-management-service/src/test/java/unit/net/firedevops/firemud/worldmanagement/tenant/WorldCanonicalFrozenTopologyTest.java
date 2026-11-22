@@ -37,15 +37,14 @@ class WorldCanonicalFrozenTopologyTest {
     var owner = plan.ownerBinding();
     var affected =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     return new CaptureRequest(
         owner.targetNamespace(),

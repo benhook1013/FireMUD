@@ -28,17 +28,16 @@ public class RecordedParticipantDigestServiceImpl implements RecordedParticipant
       String tenantId,
       PublishType publishType,
       List<PublishParticipantDigestDto> participantDigests) {
-    participantDigests.forEach(
-        digest ->
-            repository
-                .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
-                    tenantId,
-                    publishType,
-                    PublishParticipantKey.valueOf(digest.participantKey()),
-                    digest.baseVersionId(),
-                    digest.scopeValue(),
-                    digest.appliedCommitId())
-                .ifPresent(recorded -> assertMatchesRecordedDigest(recorded, digest)));
+    participantDigests.forEach(digest ->
+        repository
+            .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+                tenantId,
+                publishType,
+                PublishParticipantKey.valueOf(digest.participantKey()),
+                digest.baseVersionId(),
+                digest.scopeValue(),
+                digest.appliedCommitId())
+            .ifPresent(recorded -> assertMatchesRecordedDigest(recorded, digest)));
   }
 
   @Override
@@ -49,36 +48,34 @@ public class RecordedParticipantDigestServiceImpl implements RecordedParticipant
       String publishWorkflowId,
       List<PublishParticipantDigestDto> participantDigests) {
     LocalDateTime now = LocalDateTime.now();
-    participantDigests.forEach(
-        digest -> {
-          PublishParticipantKey participantKey =
-              PublishParticipantKey.valueOf(digest.participantKey());
-          RecordedParticipantDigest recorded =
-              repository
-                  .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
-                      tenantId,
-                      publishType,
-                      participantKey,
-                      digest.baseVersionId(),
-                      digest.scopeValue(),
-                      digest.appliedCommitId())
-                  .orElseGet(RecordedParticipantDigest::new);
-          recorded.setTenantId(tenantId);
-          recorded.setPublishType(publishType);
-          recorded.setParticipantKey(participantKey);
-          recorded.setScopeValue(digest.scopeValue());
-          recorded.setBaseVersionId(digest.baseVersionId());
-          recorded.setAppliedCommitId(digest.appliedCommitId());
-          recorded.setContentDigest(digest.contentDigest());
-          recorded.setDigestSchemaVersion(digest.digestSchemaVersion());
-          if (recorded.getRecordedFromPublishWorkflowId() == null) {
-            recorded.setRecordedFromPublishWorkflowId(publishWorkflowId);
-            recorded.setRecordedAt(now);
-          }
-          recorded.setLastVerifiedPublishWorkflowId(publishWorkflowId);
-          recorded.setLastVerifiedAt(now);
-          repository.save(recorded);
-        });
+    participantDigests.forEach(digest -> {
+      PublishParticipantKey participantKey = PublishParticipantKey.valueOf(digest.participantKey());
+      RecordedParticipantDigest recorded =
+          repository
+              .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+                  tenantId,
+                  publishType,
+                  participantKey,
+                  digest.baseVersionId(),
+                  digest.scopeValue(),
+                  digest.appliedCommitId())
+              .orElseGet(RecordedParticipantDigest::new);
+      recorded.setTenantId(tenantId);
+      recorded.setPublishType(publishType);
+      recorded.setParticipantKey(participantKey);
+      recorded.setScopeValue(digest.scopeValue());
+      recorded.setBaseVersionId(digest.baseVersionId());
+      recorded.setAppliedCommitId(digest.appliedCommitId());
+      recorded.setContentDigest(digest.contentDigest());
+      recorded.setDigestSchemaVersion(digest.digestSchemaVersion());
+      if (recorded.getRecordedFromPublishWorkflowId() == null) {
+        recorded.setRecordedFromPublishWorkflowId(publishWorkflowId);
+        recorded.setRecordedAt(now);
+      }
+      recorded.setLastVerifiedPublishWorkflowId(publishWorkflowId);
+      recorded.setLastVerifiedAt(now);
+      repository.save(recorded);
+    });
   }
 
   private void assertMatchesRecordedDigest(

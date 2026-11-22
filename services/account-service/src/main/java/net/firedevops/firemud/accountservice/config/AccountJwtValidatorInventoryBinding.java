@@ -435,10 +435,9 @@ public final class AccountJwtValidatorInventoryBinding {
     try {
       List<Map<String, Object>> profileValues =
           profiles.stream()
-              .map(
-                  profile ->
-                      Map.<String, Object>of(
-                          "tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
+              .map(profile ->
+                  Map.<String, Object>of(
+                      "tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
               .toList();
       Map<String, Object> runtime =
           Map.of(

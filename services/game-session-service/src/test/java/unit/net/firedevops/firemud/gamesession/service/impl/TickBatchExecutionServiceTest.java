@@ -71,14 +71,13 @@ class TickBatchExecutionServiceTest {
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     AtomicLong commandIds = new AtomicLong();
     when(gameplayCommandRepository.save(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              if (command.getId() == null) {
-                command.setId(commandIds.incrementAndGet());
-              }
-              return command;
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          if (command.getId() == null) {
+            command.setId(commandIds.incrementAndGet());
+          }
+          return command;
+        });
     tickBatchRepository = mock(TickBatchRepository.class);
     when(tickBatchRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     tickEffectRepository = mock(TickEffectRepository.class);
@@ -86,12 +85,11 @@ class TickBatchExecutionServiceTest {
     when(tickEffectRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.commitDrainedBatch(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              RuntimeRegionStatus expected = invocation.getArgument(0);
-              expected.setLastCommittedTickBatchId(invocation.getArgument(1));
-              return Optional.of(expected);
-            });
+        .thenAnswer(invocation -> {
+          RuntimeRegionStatus expected = invocation.getArgument(0);
+          expected.setLastCommittedTickBatchId(invocation.getArgument(1));
+          return Optional.of(expected);
+        });
     remoteFollowupDrainService = mock(RemoteFollowupDrainService.class);
     durableGameplayCommandExecutionService = mock(DurableGameplayCommandExecutionService.class);
     durableRemoteFollowupExecutionService = mock(DurableRemoteFollowupExecutionService.class);
@@ -525,17 +523,15 @@ class TickBatchExecutionServiceTest {
             Optional.of(currentOwnership));
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
             "tb-stale-mid-batch", "DRAINED"))
-        .thenAnswer(
-            invocation ->
-                List.of(appliedEffect, staleEffect).stream()
-                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
-                    .toList());
+        .thenAnswer(invocation ->
+            List.of(appliedEffect, staleEffect).stream()
+                .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                .toList());
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-subsequent", "DRAINED"))
-        .thenAnswer(
-            invocation ->
-                List.of(subsequentEffect).stream()
-                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
-                    .toList());
+        .thenAnswer(invocation ->
+            List.of(subsequentEffect).stream()
+                .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                .toList());
     when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
             1L, 2L, "cmd-applied"))
         .thenReturn(Optional.of(appliedCommand));
@@ -700,11 +696,10 @@ class TickBatchExecutionServiceTest {
         .thenReturn(List.of(appliedEffect, remainingEffect));
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
             "tb-remote-partial", "DRAINED"))
-        .thenAnswer(
-            invocation ->
-                List.of(appliedEffect, remainingEffect).stream()
-                    .filter(effect -> "DRAINED".equals(effect.getStatus()))
-                    .toList());
+        .thenAnswer(invocation ->
+            List.of(appliedEffect, remainingEffect).stream()
+                .filter(effect -> "DRAINED".equals(effect.getStatus()))
+                .toList());
     when(durableRemoteFollowupExecutionService.execute(appliedEffect))
         .thenReturn(
             new DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult(
@@ -953,10 +948,9 @@ class TickBatchExecutionServiceTest {
         .when(gameplayCommandRepository)
         .findByTenantIdAndGameInstanceIdAndCommandIdIn(1L, 2L, List.of("cmd-2"));
 
-    assertDoesNotThrow(
-        () ->
-            service.restorePendingProjection(
-                activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
+    assertDoesNotThrow(() ->
+        service.restorePendingProjection(
+            activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
 
     verify(redisTemplate).execute(any(), any(), any(Object[].class));
     assertEquals(
@@ -1059,10 +1053,9 @@ class TickBatchExecutionServiceTest {
     assertTrue(
         meterRegistry.getMeters().stream()
             .filter(meter -> "tick_requeued_action_total".equals(meter.getId().getName()))
-            .allMatch(
-                meter ->
-                    java.util.Set.of("player", "automation", "remote_followup", "unknown")
-                        .contains(meter.getId().getTag("source"))));
+            .allMatch(meter ->
+                java.util.Set.of("player", "automation", "remote_followup", "unknown")
+                    .contains(meter.getId().getTag("source"))));
   }
 
   @Test

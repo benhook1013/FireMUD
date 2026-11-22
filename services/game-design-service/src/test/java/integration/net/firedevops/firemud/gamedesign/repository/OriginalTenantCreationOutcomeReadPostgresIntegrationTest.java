@@ -65,15 +65,14 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
     Fixture fixture = fixture();
     Binding binding = binding();
     Created original =
-        fixture.inTransaction(
-            () -> {
-              fixture.outcomes.claimLocked(binding);
-              FreshTenantCreationEvidence receipt =
-                  fixture.creation.createCandidate(
-                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-              fixture.outcomes.markCreatedLocked(binding, receipt);
-              return new Created(receipt, rowState(fixture.dsl, binding));
-            });
+        fixture.inTransaction(() -> {
+          fixture.outcomes.claimLocked(binding);
+          FreshTenantCreationEvidence receipt =
+              fixture.creation.createCandidate(
+                  NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+          fixture.outcomes.markCreatedLocked(binding, receipt);
+          return new Created(receipt, rowState(fixture.dsl, binding));
+        });
 
     ResolveOriginalTenantCreationOutcomeRequest request = request(binding);
     ReadObserver observer = resolve(fixture.service, request, ACCOUNT_URI);
@@ -100,11 +99,10 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
     Fixture fixture = fixture();
     Binding binding = binding();
     String tombstoneState =
-        fixture.inTransaction(
-            () -> {
-              fixture.outcomes.closeNotCreatedLocked(binding);
-              return rowState(fixture.dsl, binding);
-            });
+        fixture.inTransaction(() -> {
+          fixture.outcomes.closeNotCreatedLocked(binding);
+          return rowState(fixture.dsl, binding);
+        });
 
     ResolveOriginalTenantCreationOutcomeRequest request = request(binding);
     ReadObserver observer = resolve(fixture.service, request, ACCOUNT_URI);
@@ -147,19 +145,18 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
     for (boolean created : new boolean[] {true, false}) {
       Fixture fixture = fixture();
       Binding original = binding();
-      fixture.inTransaction(
-          () -> {
-            if (created) {
-              fixture.outcomes.claimLocked(original);
-              FreshTenantCreationEvidence receipt =
-                  fixture.creation.createCandidate(
-                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-              fixture.outcomes.markCreatedLocked(original, receipt);
-            } else {
-              fixture.outcomes.closeNotCreatedLocked(original);
-            }
-            return true;
-          });
+      fixture.inTransaction(() -> {
+        if (created) {
+          fixture.outcomes.claimLocked(original);
+          FreshTenantCreationEvidence receipt =
+              fixture.creation.createCandidate(
+                  NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+          fixture.outcomes.markCreatedLocked(original, receipt);
+        } else {
+          fixture.outcomes.closeNotCreatedLocked(original);
+        }
+        return true;
+      });
       String before = rowState(fixture.dsl, original);
       Binding changed =
           new Binding(
@@ -285,16 +282,15 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
       OriginalTenantCreationOutcomeReadGrpcService service,
       TransactionTemplate transactionTemplate) {
     private <T> T inTransaction(java.util.concurrent.Callable<T> work) {
-      return transactionTemplate.execute(
-          status -> {
-            try {
-              return work.call();
-            } catch (RuntimeException exception) {
-              throw exception;
-            } catch (Exception exception) {
-              throw new IllegalStateException(exception);
-            }
-          });
+      return transactionTemplate.execute(status -> {
+        try {
+          return work.call();
+        } catch (RuntimeException exception) {
+          throw exception;
+        } catch (Exception exception) {
+          throw new IllegalStateException(exception);
+        }
+      });
     }
   }
 

@@ -114,20 +114,18 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
             "world_canonical_instance_execution")) {
       assertThat(sql.fetchCount(DSL.table(DSL.name(table)))).as(table).isZero();
     }
-    assertThatThrownBy(
-            () ->
-                sql.execute(
-                    "UPDATE region_instance SET operational_region_id = ? WHERE id = ?",
-                    UUID.randomUUID(),
-                    regionId))
+    assertThatThrownBy(() ->
+            sql.execute(
+                "UPDATE region_instance SET operational_region_id = ? WHERE id = ?",
+                UUID.randomUUID(),
+                regionId))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("operational assignment tuple is immutable");
-    assertThatThrownBy(
-            () ->
-                sql.execute(
-                    "UPDATE world_instance SET canonical_realm_id = ?, catalog_revision = 1 WHERE id = ?",
-                    UUID.randomUUID(),
-                    worldId))
+    assertThatThrownBy(() ->
+            sql.execute(
+                "UPDATE world_instance SET canonical_realm_id = ?, catalog_revision = 1 WHERE id = ?",
+                UUID.randomUUID(),
+                worldId))
         .isInstanceOf(DataAccessException.class);
     assertThat(row(sql, "world_instance", worldId)).isEqualTo(currentWorld);
     assertThat(row(sql, "region_instance", regionId)).isEqualTo(currentRegion);

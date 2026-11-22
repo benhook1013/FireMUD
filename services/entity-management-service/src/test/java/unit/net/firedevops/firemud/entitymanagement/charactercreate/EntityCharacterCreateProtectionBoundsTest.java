@@ -43,10 +43,8 @@ class EntityCharacterCreateProtectionBoundsTest {
 
   @Test
   void eachExactOneMebibyteSnapshotIsAccepted() {
-    assertThatCode(
-            () ->
-                EntityCharacterCreateBindings.requireAccountProtection(
-                    REQUEST, ORIGINAL, protection()))
+    assertThatCode(() ->
+            EntityCharacterCreateBindings.requireAccountProtection(REQUEST, ORIGINAL, protection()))
         .doesNotThrowAnyException();
   }
 

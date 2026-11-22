@@ -106,23 +106,20 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
             outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
                 ? "PUBLISHED"
                 : "ABORTED";
-        assertThatThrownBy(
-                () ->
-                    f.tx(
-                        () -> {
-                          repository.settle(operation, terminal, phase, terminal.canonicalBytes());
-                          throw new IllegalStateException("rollback before owner commit");
-                        }))
+        assertThatThrownBy(() ->
+                f.tx(() -> {
+                  repository.settle(operation, terminal, phase, terminal.canonicalBytes());
+                  throw new IllegalStateException("rollback before owner commit");
+                }))
             .isInstanceOf(IllegalStateException.class);
         assertThat(
                 f.dsl.fetchCount(
                     org.jooq.impl.DSL.table("account_selected_publication_settlements")))
             .isZero();
-        f.tx(
-            () -> {
-              repository.readHeld(order);
-              return null;
-            });
+        f.tx(() -> {
+          repository.readHeld(order);
+          return null;
+        });
         assertThatThrownBy(() -> f.tx(f::changeRoleToAdmin))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
             .hasMessageContaining("selected-publication");
@@ -149,30 +146,25 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                         order.operationId())
                     .get("binding", byte[].class))
             .isEqualTo(originalBinding);
-        assertThatThrownBy(
-                () ->
-                    f.tx(
-                        () -> {
-                          repository.readHeld(order);
-                          return null;
-                        }))
+        assertThatThrownBy(() ->
+                f.tx(() -> {
+                  repository.readHeld(order);
+                  return null;
+                }))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("already settled");
         var readOwner =
             new AccountPublicationAuthorizationReadService(repository, f.manager, "test");
-        assertThatThrownBy(
-                () ->
-                    asGameDesign(
-                        () ->
-                            readOwner.requireHeld(
-                                net.firedevops.firemud.common.publication
-                                    .AccountPublicationAuthorizationReadEvidence.Request.create(
-                                    "test", order))))
+        assertThatThrownBy(() ->
+                asGameDesign(() ->
+                    readOwner.requireHeld(
+                        net.firedevops.firemud.common.publication
+                            .AccountPublicationAuthorizationReadEvidence.Request.create(
+                            "test", order))))
             .isInstanceOf(io.grpc.StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
         assertThat(f.tx(f::changeRoleToAdmin).getRole()).isEqualTo("admin");
         // Even after the source changes, the original committed issuance and receipt replay.
         assertThat(
@@ -236,43 +228,33 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                               wrongOperation,
                               GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION)
                           .canonicalBytes()))) {
-        assertThatThrownBy(
-                () ->
-                    f.tx(
-                        () -> {
-                          rejected.run();
-                          return null;
-                        }))
+        assertThatThrownBy(() ->
+                f.tx(() -> {
+                  rejected.run();
+                  return null;
+                }))
             .isInstanceOf(RuntimeException.class);
       }
-      f.tx(
-          () -> {
-            repository.readHeld(order);
-            return null;
-          });
+      f.tx(() -> {
+        repository.readHeld(order);
+        return null;
+      });
       assertThat(
               f.dsl.fetchCount(org.jooq.impl.DSL.table("account_selected_publication_settlements")))
           .isZero();
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                              f.account.getId())))
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
 
       byte[] receipt =
-          f.tx(
-              () ->
-                  repository.settle(
-                      operation, noPublication, "ABORTED", noPublication.canonicalBytes()));
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          repository.settle(
-                              operation, published, "PUBLISHED", published.canonicalBytes())))
+          f.tx(() ->
+              repository.settle(
+                  operation, noPublication, "ABORTED", noPublication.canonicalBytes()));
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  repository.settle(operation, published, "PUBLISHED", published.canonicalBytes())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Changed original");
       assertThat(
@@ -302,24 +284,19 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var terminal =
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       f.tx(() -> repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes()));
-      f.tx(
-          () -> {
-            repository.readHeld(second);
-            return null;
-          });
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                              f.account.getId())))
+      f.tx(() -> {
+        repository.readHeld(second);
+        return null;
+      });
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("selected-publication");
       var captured =
-          f.tx(
-              () ->
-                  f.authority.capture(f.account.getAccountUuid(), f.tenant, issued.environment()));
+          f.tx(() ->
+              f.authority.capture(f.account.getAccountUuid(), f.tenant, issued.environment()));
       var change =
           new DraftAuthorizationFenceRepository.SourceChange(
               UUID.randomUUID(), captured.sources(), new byte[] {1});
@@ -338,25 +315,19 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
     var request = operation.world().request();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        owner,
-                        Long.toString(
-                            operation
-                                .account()
-                                .input()
-                                .selection()
-                                .target()
-                                .gameDesignVersionRowId()),
-                        null,
-                        request.appliedCommitId(),
-                        request.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "a".repeat(64) : null,
-                        null,
-                        null))
+            .map(owner ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    owner,
+                    Long.toString(
+                        operation.account().input().selection().target().gameDesignVersionRowId()),
+                    null,
+                    request.appliedCommitId(),
+                    request.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "a".repeat(64) : null,
+                    null,
+                    null))
             .toList();
     var release =
         new GameDesignPublicationTerminalEvidence.ReleaseContent(
@@ -591,10 +562,9 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         receipt
       };
       assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(insert, unsortedRegionSettlement)))
-          .satisfies(
-              failure ->
-                  assertSqlFailure(
-                      failure, "23514", "Unsupported or unordered region generator input"));
+          .satisfies(failure ->
+              assertSqlFailure(
+                  failure, "23514", "Unsupported or unordered region generator input"));
       String unsortedSpawnInputs =
           "["
               + inventorySpawnBindingInput(
@@ -642,10 +612,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         receipt
       };
       assertThatThrownBy(() -> f.tx(() -> f.dsl.execute(insert, unsortedSpawnSettlement)))
-          .satisfies(
-              failure ->
-                  assertSqlFailure(
-                      failure, "23514", "Unsupported or unordered scoped spawn input"));
+          .satisfies(failure ->
+              assertSqlFailure(failure, "23514", "Unsupported or unordered scoped spawn input"));
       List<byte[]> invalidOperations =
           List.of(
               rawOperation(
@@ -674,38 +642,32 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                   null),
               java.util.Arrays.copyOf(validOperation, validOperation.length + 1));
       for (byte[] invalidOperation : invalidOperations) {
-        assertThatThrownBy(
-                () ->
-                    f.tx(
-                        () ->
-                            f.dsl.execute(
-                                insert,
-                                order.operationId(),
-                                order.fenceId(),
-                                order.canonicalBytes(),
-                                invalidOperation,
-                                "NO_PUBLICATION",
-                                terminal.canonicalBytes(),
-                                "ABORTED",
-                                terminal.canonicalBytes(),
-                                receipt)))
+        assertThatThrownBy(() ->
+                f.tx(() ->
+                    f.dsl.execute(
+                        insert,
+                        order.operationId(),
+                        order.fenceId(),
+                        order.canonicalBytes(),
+                        invalidOperation,
+                        "NO_PUBLICATION",
+                        terminal.canonicalBytes(),
+                        "ABORTED",
+                        terminal.canonicalBytes(),
+                        receipt)))
             .satisfies(failure -> assertSqlState(failure, "23514"));
       }
       assertThat(
               f.dsl.fetchCount(org.jooq.impl.DSL.table("account_selected_publication_settlements")))
           .isZero();
-      f.tx(
-          () -> {
-            repository.readHeld(order);
-            return null;
-          });
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                              f.account.getId())))
+      f.tx(() -> {
+        repository.readHeld(order);
+        return null;
+      });
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
     }
   }
@@ -725,32 +687,29 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
           terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
       var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
       try {
-        f.tx(
-            () -> {
-              repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes());
-              int settlementPid =
-                  f.dsl.fetchSingle("SELECT pg_backend_pid() AS pid").get("pid", Integer.class);
-              var writer =
-                  executor.submit(
-                      () ->
-                          f.tx(
-                              () -> {
-                                int writerPid =
-                                    f.dsl
-                                        .fetchSingle("SELECT pg_backend_pid() AS pid")
-                                        .get("pid", Integer.class);
-                                assertThat(writerPid).isNotEqualTo(settlementPid);
-                                // The actual source trigger takes the same source locks NOWAIT. A
-                                // pending
-                                // transaction cannot release its protection to a different writer
-                                // connection.
-                                return f.changeRoleToAdmin();
-                              }));
-              assertThatThrownBy(() -> writer.get(10, java.util.concurrent.TimeUnit.SECONDS))
-                  .isInstanceOf(java.util.concurrent.ExecutionException.class)
-                  .hasCauseInstanceOf(org.jooq.exception.DataAccessException.class);
-              return null;
-            });
+        f.tx(() -> {
+          repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes());
+          int settlementPid =
+              f.dsl.fetchSingle("SELECT pg_backend_pid() AS pid").get("pid", Integer.class);
+          var writer =
+              executor.submit(() ->
+                  f.tx(() -> {
+                    int writerPid =
+                        f.dsl
+                            .fetchSingle("SELECT pg_backend_pid() AS pid")
+                            .get("pid", Integer.class);
+                    assertThat(writerPid).isNotEqualTo(settlementPid);
+                    // The actual source trigger takes the same source locks NOWAIT. A
+                    // pending
+                    // transaction cannot release its protection to a different writer
+                    // connection.
+                    return f.changeRoleToAdmin();
+                  }));
+          assertThatThrownBy(() -> writer.get(10, java.util.concurrent.TimeUnit.SECONDS))
+              .isInstanceOf(java.util.concurrent.ExecutionException.class)
+              .hasCauseInstanceOf(org.jooq.exception.DataAccessException.class);
+          return null;
+        });
         assertThat(f.tx(f::changeRoleToAdmin).getRole()).isEqualTo("admin");
       } finally {
         executor.shutdownNow();
@@ -806,27 +765,22 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
           new net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding(
               UUID.randomUUID(), original.fenceId(), original.input(), original.sources());
       for (var rejected : List.of(mismatched, unknown)) {
-        assertThatThrownBy(
-                () ->
-                    asGameDesign(
-                        () ->
-                            readOwner.requireHeld(
-                                net.firedevops.firemud.common.publication
-                                    .AccountPublicationAuthorizationReadEvidence.Request.create(
-                                    "test", rejected))))
+        assertThatThrownBy(() ->
+                asGameDesign(() ->
+                    readOwner.requireHeld(
+                        net.firedevops.firemud.common.publication
+                            .AccountPublicationAuthorizationReadEvidence.Request.create(
+                            "test", rejected))))
             .isInstanceOf(io.grpc.StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(io.grpc.Status.fromThrowable(failure).getCode())
-                        .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                    .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
       }
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        f.fences.requireDisclosurePreparation(original.sources());
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                f.fences.requireDisclosurePreparation(original.sources());
+                return null;
+              }))
           .hasMessageContaining("selected-publication");
       var change =
           new DraftAuthorizationFenceRepository.SourceChange(
@@ -840,22 +794,17 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                   .canonicalBytes())
           .isEqualTo(original.canonicalBytes());
       asGameDesign(() -> readOwner.requireHeld(readRequest));
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE accounts SET role = 'admin' WHERE id = ?",
-                              f.account.getId())))
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE accounts SET role = 'admin' WHERE id = ?", f.account.getId())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("selected-publication");
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE account_selected_publication_authorizations SET fence_id = ?",
-                              UUID.randomUUID())))
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE account_selected_publication_authorizations SET fence_id = ?",
+                      UUID.randomUUID())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThatThrownBy(
               () -> f.tx(() -> f.dsl.execute("DELETE FROM account_selected_publication_sources")))
@@ -863,26 +812,21 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var changed = selection(proof.selection().selectedCommit(), "changed notes");
       assertThatThrownBy(() -> service.authorize(issued.compact(), changed, issued.environment()))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  service.authorize(
-                      issued.compact() + "changed", proof.selection(), issued.environment()))
+      assertThatThrownBy(() ->
+              service.authorize(
+                  issued.compact() + "changed", proof.selection(), issued.environment()))
           .isInstanceOf(RuntimeException.class);
       // Original source/issuance identity is immutable even if a privileged SQL caller tries it.
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE account_selected_publication_authorizations SET issuance_fence = issuance_fence + 1")))
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE account_selected_publication_authorizations SET issuance_fence = issuance_fence + 1")))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () ->
-                          f.dsl.execute(
-                              "UPDATE account_selected_publication_sources SET source_evidence = ?",
-                              new byte[] {9})))
+      assertThatThrownBy(() ->
+              f.tx(() ->
+                  f.dsl.execute(
+                      "UPDATE account_selected_publication_sources SET source_evidence = ?",
+                      new byte[] {9})))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
     }
   }
@@ -894,9 +838,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var f = issued.sources();
       var proof = proof(f, issued.environment());
       var source =
-          f.tx(
-              () ->
-                  f.authority.capture(f.account.getAccountUuid(), f.tenant, issued.environment()));
+          f.tx(() ->
+              f.authority.capture(f.account.getAccountUuid(), f.tenant, issued.environment()));
       var change =
           new DraftAuthorizationFenceRepository.SourceChange(
               UUID.randomUUID(), source.sources(), new byte[] {2});
@@ -908,10 +851,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
               () -> service.authorize(issued.compact(), proof.selection(), issued.environment()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("source change is waiting");
-      assertThatThrownBy(
-              () ->
-                  service.authorize(
-                      "unsigned-caller-claim", proof.selection(), issued.environment()))
+      assertThatThrownBy(() ->
+              service.authorize("unsigned-caller-claim", proof.selection(), issued.environment()))
           .isInstanceOf(RuntimeException.class);
       assertThat(
               f.dsl.fetchCount(
@@ -935,63 +876,59 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
       var attempt =
           new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();
       try {
-        f.tx(
-            () -> {
-              int blockerPid =
-                  java.util.Objects.requireNonNull(
-                          f.dsl.fetchOne("SELECT pg_backend_pid() AS pid"),
-                          "Expected PostgreSQL source-writer connection")
-                      .get("pid", Integer.class);
-              var account =
-                  java.util.Objects.requireNonNull(
-                      accounts.findByIdForUpdate(f.account.getId()).orElseThrow(),
-                      "Expected locked Account source before canonical role mutation");
-              assertThat(account.getRole()).isNotEqualTo("player");
-              attempt.set(
-                  executor.submit(
-                      () ->
-                          service.authorize(
-                              issued.compact(), proof.selection(), issued.environment())));
-              long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
-              Integer blockedPid = null;
-              while (System.nanoTime() < deadline && blockedPid == null) {
-                if (attempt.get().isDone()) {
-                  try {
-                    attempt.get().get();
-                  } catch (java.util.concurrent.ExecutionException failure) {
-                    throw new AssertionError(
-                        "Creator authorization failed before the Account-row wait was observed",
-                        failure.getCause());
-                  } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError(
-                        "Interrupted while diagnosing completed creator authorization",
-                        interrupted);
-                  }
-                  throw new AssertionError(
-                      "Creator authorization succeeded before the source writer committed");
-                }
-                // Activity snapshots are otherwise frozen for this blocker transaction.
-                f.dsl.fetch("SELECT pg_stat_clear_snapshot()");
-                var blocked =
-                    f.dsl.fetchOne(
-                        "SELECT pid FROM pg_stat_activity WHERE datname = current_database()"
-                            + " AND ? = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock' LIMIT 1",
-                        blockerPid);
-                if (blocked != null) blockedPid = blocked.get("pid", Integer.class);
-                else Thread.onSpinWait();
+        f.tx(() -> {
+          int blockerPid =
+              java.util.Objects.requireNonNull(
+                      f.dsl.fetchOne("SELECT pg_backend_pid() AS pid"),
+                      "Expected PostgreSQL source-writer connection")
+                  .get("pid", Integer.class);
+          var account =
+              java.util.Objects.requireNonNull(
+                  accounts.findByIdForUpdate(f.account.getId()).orElseThrow(),
+                  "Expected locked Account source before canonical role mutation");
+          assertThat(account.getRole()).isNotEqualTo("player");
+          attempt.set(
+              executor.submit(() ->
+                  service.authorize(issued.compact(), proof.selection(), issued.environment())));
+          long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+          Integer blockedPid = null;
+          while (System.nanoTime() < deadline && blockedPid == null) {
+            if (attempt.get().isDone()) {
+              try {
+                attempt.get().get();
+              } catch (java.util.concurrent.ExecutionException failure) {
+                throw new AssertionError(
+                    "Creator authorization failed before the Account-row wait was observed",
+                    failure.getCause());
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(
+                    "Interrupted while diagnosing completed creator authorization", interrupted);
               }
-              assertThat(blockedPid)
-                  .as("Distinct creator connection physically waits on source-writer Account row")
-                  .isNotNull();
-              assertThat(blockedPid).isNotEqualTo(blockerPid);
-              assertThat(attempt.get().isDone()).isFalse();
-              // Actual guarded source write, held until this transaction commits. The old signed
-              // credential cannot authorize a publication from the newly changed Account state.
-              account.setRole("player");
-              assertThat(accounts.save(account).getRole()).isEqualTo("player");
-              return null;
-            });
+              throw new AssertionError(
+                  "Creator authorization succeeded before the source writer committed");
+            }
+            // Activity snapshots are otherwise frozen for this blocker transaction.
+            f.dsl.fetch("SELECT pg_stat_clear_snapshot()");
+            var blocked =
+                f.dsl.fetchOne(
+                    "SELECT pid FROM pg_stat_activity WHERE datname = current_database()"
+                        + " AND ? = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock' LIMIT 1",
+                    blockerPid);
+            if (blocked != null) blockedPid = blocked.get("pid", Integer.class);
+            else Thread.onSpinWait();
+          }
+          assertThat(blockedPid)
+              .as("Distinct creator connection physically waits on source-writer Account row")
+              .isNotNull();
+          assertThat(blockedPid).isNotEqualTo(blockerPid);
+          assertThat(attempt.get().isDone()).isFalse();
+          // Actual guarded source write, held until this transaction commits. The old signed
+          // credential cannot authorize a publication from the newly changed Account state.
+          account.setRole("player");
+          assertThat(accounts.save(account).getRole()).isEqualTo("player");
+          return null;
+        });
         assertThatThrownBy(() -> attempt.get().get(10, java.util.concurrent.TimeUnit.SECONDS))
             .isInstanceOf(java.util.concurrent.ExecutionException.class)
             .hasCauseInstanceOf(RuntimeException.class);
@@ -1202,13 +1139,12 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                         "GENERATION_RULE",
                         "WORLD_ENTITY_SPAWN_BINDING")
                     .stream()
-                    .map(
-                        family ->
-                            Map.of(
-                                "family",
-                                "WORLD_DESIGN_AGGREGATE_TYPE_" + family,
-                                "count",
-                                families.contains(family) ? 1 : 0))
+                    .map(family ->
+                        Map.of(
+                            "family",
+                            "WORLD_DESIGN_AGGREGATE_TYPE_" + family,
+                            "count",
+                            families.contains(family) ? 1 : 0))
                     .toList()));
       revisions.add(
           new DraftCommitBinding.RevisionPayload(
@@ -1319,21 +1255,20 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
     applied.put(
         "appliedEpochs",
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                u ->
-                    Map.of(
-                        "aggregateType",
-                        u.aggregateType(),
-                        "aggregateId",
-                        u.aggregateId(),
-                        "scopeType",
-                        u.scopeType(),
-                        "scopeId",
-                        u.scopeId(),
-                        "expectedEpoch",
-                        "0",
-                        "resultingEpoch",
-                        "1"))
+            .map(u ->
+                Map.of(
+                    "aggregateType",
+                    u.aggregateType(),
+                    "aggregateId",
+                    u.aggregateId(),
+                    "scopeType",
+                    u.scopeType(),
+                    "scopeId",
+                    u.scopeId(),
+                    "expectedEpoch",
+                    "0",
+                    "resultingEpoch",
+                    "1"))
             .toList());
     var worldRequest =
         new WorldPublishedStartLocationEvidence.Request(
@@ -1352,15 +1287,14 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
             "b".repeat(64),
             3,
             draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    u ->
-                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                            u.owner().name(),
-                            u.aggregateType(),
-                            u.aggregateId(),
-                            u.scopeType(),
-                            u.scopeId(),
-                            u.expectedEpoch()))
+                .map(u ->
+                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                        u.owner().name(),
+                        u.aggregateType(),
+                        u.aggregateId(),
+                        u.scopeType(),
+                        u.scopeId(),
+                        u.expectedEpoch()))
                 .toList());
     return new Proof(
         selection,

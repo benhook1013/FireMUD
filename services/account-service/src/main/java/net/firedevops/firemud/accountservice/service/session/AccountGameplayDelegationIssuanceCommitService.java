@@ -108,12 +108,11 @@ public final class AccountGameplayDelegationIssuanceCommitService {
       CommitProof commitProof = CommitProof.create(proof, registration, projection);
 
       CommittedIssuanceReadback transactionReadback =
-          accountTransaction.execute(
-              status -> {
-                signer.requireCurrentCommittedSigner(proof);
-                return issuanceRepository.commitPendingCandidate(
-                    requestId, proof, registration, projection, commitProof);
-              });
+          accountTransaction.execute(status -> {
+            signer.requireCurrentCommittedSigner(proof);
+            return issuanceRepository.commitPendingCandidate(
+                requestId, proof, registration, projection, commitProof);
+          });
       if (transactionReadback == null
           || !transactionReadback.proofSha256().equals(commitProof.sha256())) {
         throw unavailable();

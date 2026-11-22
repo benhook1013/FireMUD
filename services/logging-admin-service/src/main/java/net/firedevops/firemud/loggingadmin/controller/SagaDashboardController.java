@@ -50,11 +50,10 @@ public class SagaDashboardController {
               ApiResponse.error(
                   new ErrorDetail("SAGA_DASHBOARD_UNAVAILABLE", "Saga dashboard is unavailable")));
     }
-    return LoggingAdminRequestReaders.withBadRequest(
-        () ->
-            ResponseEntity.ok(
-                ApiResponse.success(
-                    sagaDashboardService.listSteps(
-                        LoggingAdminRequestReaders.requirePositiveLong(id, "id")))));
+    return LoggingAdminRequestReaders.withBadRequest(() ->
+        ResponseEntity.ok(
+            ApiResponse.success(
+                sagaDashboardService.listSteps(
+                    LoggingAdminRequestReaders.requirePositiveLong(id, "id")))));
   }
 }

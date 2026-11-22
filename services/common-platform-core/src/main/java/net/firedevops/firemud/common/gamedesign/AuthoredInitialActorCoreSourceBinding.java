@@ -170,10 +170,9 @@ public final class AuthoredInitialActorCoreSourceBinding {
     List<RealmPolicySource.Policy> authoredActorPolicies =
         policySnapshot.policies().stream()
             .filter(value -> value.policy().worldSlug().equals(expectedWorldSlug))
-            .filter(
-                value ->
-                    value.policy().schemaVersion()
-                        == RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION)
+            .filter(value ->
+                value.policy().schemaVersion()
+                    == RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION)
             .toList();
     if (authoredActorPolicies.isEmpty()) {
       return List.of();
@@ -189,49 +188,46 @@ public final class AuthoredInitialActorCoreSourceBinding {
 
     List<AuthoredInitialActorCoreSourceBinding> result =
         authoredActorPolicies.stream()
-            .map(
-                policy -> {
-                  AuthoredInitialActorCore core = policy.policy().initialActorCore();
-                  List<GameplayRuleSource.Entry> dispositions =
-                      gameplayEntries.stream()
-                          .filter(value -> value.family() == Family.DISPOSITIONS)
-                          .filter(value -> value.definition().key().equals(core.dispositionKey()))
-                          .toList();
-                  if (dispositions.size() != 1
-                      || !(dispositions.getFirst().definition()
-                          instanceof Disposition disposition)) {
-                    throw new IllegalArgumentException(
-                        "Selected authored disposition is absent or ambiguous");
-                  }
-                  List<GameplayRuleSource.Entry> feedbackEntries =
-                      gameplayEntries.stream()
-                          .filter(value -> value.family() == Family.FEEDBACK)
-                          .filter(
-                              value ->
-                                  value.definition().key().equals(disposition.safeFeedbackKey()))
-                          .toList();
-                  if (feedbackEntries.size() != 1
-                      || !(feedbackEntries.getFirst().definition() instanceof Feedback feedback)) {
-                    throw new IllegalArgumentException(
-                        "Disposition safeFeedbackKey is absent or ambiguous");
-                  }
-                  return new AuthoredInitialActorCoreSourceBinding(
-                      worldSourceOperationId,
-                      worldSourceEvidenceDigest,
-                      expectedWorldSlug,
-                      publicationWorkflowId,
-                      publicationOperationBytes,
-                      publicationTerminalEvidenceBytes,
-                      selectedCommit,
-                      policySnapshotBytes,
-                      policy,
-                      gameplaySnapshotBytes,
-                      manifest,
-                      dispositions.getFirst(),
-                      disposition,
-                      feedbackEntries.getFirst(),
-                      feedback);
-                })
+            .map(policy -> {
+              AuthoredInitialActorCore core = policy.policy().initialActorCore();
+              List<GameplayRuleSource.Entry> dispositions =
+                  gameplayEntries.stream()
+                      .filter(value -> value.family() == Family.DISPOSITIONS)
+                      .filter(value -> value.definition().key().equals(core.dispositionKey()))
+                      .toList();
+              if (dispositions.size() != 1
+                  || !(dispositions.getFirst().definition() instanceof Disposition disposition)) {
+                throw new IllegalArgumentException(
+                    "Selected authored disposition is absent or ambiguous");
+              }
+              List<GameplayRuleSource.Entry> feedbackEntries =
+                  gameplayEntries.stream()
+                      .filter(value -> value.family() == Family.FEEDBACK)
+                      .filter(
+                          value -> value.definition().key().equals(disposition.safeFeedbackKey()))
+                      .toList();
+              if (feedbackEntries.size() != 1
+                  || !(feedbackEntries.getFirst().definition() instanceof Feedback feedback)) {
+                throw new IllegalArgumentException(
+                    "Disposition safeFeedbackKey is absent or ambiguous");
+              }
+              return new AuthoredInitialActorCoreSourceBinding(
+                  worldSourceOperationId,
+                  worldSourceEvidenceDigest,
+                  expectedWorldSlug,
+                  publicationWorkflowId,
+                  publicationOperationBytes,
+                  publicationTerminalEvidenceBytes,
+                  selectedCommit,
+                  policySnapshotBytes,
+                  policy,
+                  gameplaySnapshotBytes,
+                  manifest,
+                  dispositions.getFirst(),
+                  disposition,
+                  feedbackEntries.getFirst(),
+                  feedback);
+            })
             .toList();
     return List.copyOf(result);
   }

@@ -94,35 +94,30 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     var binding = frozen(c, false);
     var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
     try {
-      c.tx(
-          () -> {
-            insertAdmission(c, binding);
-            java.util.concurrent.CompletableFuture.runAsync(
-                    () ->
-                        assertThatThrownBy(
-                                () ->
-                                    c.tx(
-                                        () -> {
-                                          c.dsl.execute("SET LOCAL lock_timeout = '100ms'");
-                                          var issuer =
-                                              new AccountControlUiIssuanceRepository(c.dsl);
-                                          return issuer.beginRecoveryFailure(
-                                              issuer.findToken(binding.tokenHash()));
-                                        }))
-                            .isInstanceOf(DataAccessException.class),
-                    executor)
-                .join();
-            return null;
-          });
+      c.tx(() -> {
+        insertAdmission(c, binding);
+        java.util.concurrent.CompletableFuture.runAsync(
+                () ->
+                    assertThatThrownBy(() ->
+                            c.tx(() -> {
+                              c.dsl.execute("SET LOCAL lock_timeout = '100ms'");
+                              var issuer = new AccountControlUiIssuanceRepository(c.dsl);
+                              return issuer.beginRecoveryFailure(
+                                  issuer.findToken(binding.tokenHash()));
+                            }))
+                        .isInstanceOf(DataAccessException.class),
+                executor)
+            .join();
+        return null;
+      });
       var issuer = new AccountControlUiIssuanceRepository(c.dsl);
       assertThat(
               c.tx(() -> issuer.beginRecoveryFailure(issuer.findToken(binding.tokenHash()))).status)
           .isEqualTo("REVOKING");
       assertThat(
-              c.tx(
-                  () ->
-                      new AccountTenantCreationAdmissionRepository(c.dsl)
-                          .readAdmitted(binding.creationOperationId())))
+              c.tx(() ->
+                  new AccountTenantCreationAdmissionRepository(c.dsl)
+                      .readAdmitted(binding.creationOperationId())))
           .isPresent();
     } finally {
       executor.shutdownNow();
@@ -139,12 +134,11 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
         Objects.requireNonNull(c.dsl.fetchOne(query, binding.creationOperationId()))
             .get("xmin", String.class);
     assertThat(
-            c.tx(
-                () ->
-                    c.dsl.execute(
-                        "INSERT INTO account_tenant_creation_admission_requests SELECT * FROM account_tenant_creation_admission_requests "
-                            + "WHERE creation_operation_id = ? ON CONFLICT DO NOTHING",
-                        binding.creationOperationId())))
+            c.tx(() ->
+                c.dsl.execute(
+                    "INSERT INTO account_tenant_creation_admission_requests SELECT * FROM account_tenant_creation_admission_requests "
+                        + "WHERE creation_operation_id = ? ON CONFLICT DO NOTHING",
+                    binding.creationOperationId())))
         .isZero();
     assertThat(
             Objects.requireNonNull(c.dsl.fetchOne(query, binding.creationOperationId()))
@@ -155,25 +149,22 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
             "token_hash", "target_namespace", "intent_digest", "reauthentication_evidence_id")) {
       String changed =
           field.equals("reauthentication_evidence_id") ? UUID.randomUUID().toString() : "changed";
-      assertThatThrownBy(
-              () ->
-                  c.tx(
-                      () ->
-                          c.dsl.execute(
-                              "INSERT INTO account_tenant_creation_admission_requests "
-                                  + "SELECT (jsonb_populate_record(NULL::account_tenant_creation_admission_requests, "
-                                  + "to_jsonb(r) || jsonb_build_object(?::text, ?::text))).* "
-                                  + "FROM account_tenant_creation_admission_requests r WHERE creation_operation_id = ?",
-                              field,
-                              changed,
-                              binding.creationOperationId())))
+      assertThatThrownBy(() ->
+              c.tx(() ->
+                  c.dsl.execute(
+                      "INSERT INTO account_tenant_creation_admission_requests "
+                          + "SELECT (jsonb_populate_record(NULL::account_tenant_creation_admission_requests, "
+                          + "to_jsonb(r) || jsonb_build_object(?::text, ?::text))).* "
+                          + "FROM account_tenant_creation_admission_requests r WHERE creation_operation_id = ?",
+                      field,
+                      changed,
+                      binding.creationOperationId())))
           .isInstanceOf(DataAccessException.class);
     }
     assertThat(
-            c.tx(
-                    () ->
-                        new AccountTenantCreationAdmissionRepository(c.dsl)
-                            .readPrepared(binding.creationOperationId()))
+            c.tx(() ->
+                    new AccountTenantCreationAdmissionRepository(c.dsl)
+                        .readPrepared(binding.creationOperationId()))
                 .orElseThrow()
                 .binding())
         .isEqualTo(binding);
@@ -190,10 +181,9 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
         .containsExactly(active);
     assertThatThrownBy(() -> insertAdmission(c, binding)).isInstanceOf(DataAccessException.class);
     assertThat(
-            c.tx(
-                () ->
-                    new AccountTenantCreationAdmissionRepository(c.dsl)
-                        .readAdmitted(binding.creationOperationId())))
+            c.tx(() ->
+                new AccountTenantCreationAdmissionRepository(c.dsl)
+                    .readAdmitted(binding.creationOperationId())))
         .isEmpty();
   }
 
@@ -209,28 +199,24 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
   void directSqlCannotChangeBindingTupleReceiptOrRetainedRows() {
     Context c = context();
     var binding = frozen(c, false);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "INSERT INTO account_tenant_creation_admissions "
-                                + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, protected_binding_id, qualification_fence) "
-                                + "VALUES (?, ?, ?, 1, 1, 'test-stipulated', 1)",
-                            binding.creationOperationId(),
-                            "changed".getBytes(StandardCharsets.UTF_8),
-                            AccountControlUiCoordination.digest(
-                                "SHA-256", "changed".getBytes(StandardCharsets.UTF_8)))))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "INSERT INTO account_tenant_creation_admissions "
+                        + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, protected_binding_id, qualification_fence) "
+                        + "VALUES (?, ?, ?, 1, 1, 'test-stipulated', 1)",
+                    binding.creationOperationId(),
+                    "changed".getBytes(StandardCharsets.UTF_8),
+                    AccountControlUiCoordination.digest(
+                        "SHA-256", "changed".getBytes(StandardCharsets.UTF_8)))))
         .isInstanceOf(DataAccessException.class);
     for (String field : List.of("token_hash", "target_namespace", "intent_digest")) {
-      assertThatThrownBy(
-              () ->
-                  c.tx(
-                      () ->
-                          c.dsl.execute(
-                              "UPDATE account_tenant_creation_admission_requests SET "
-                                  + field
-                                  + " = 'changed'")))
+      assertThatThrownBy(() ->
+              c.tx(() ->
+                  c.dsl.execute(
+                      "UPDATE account_tenant_creation_admission_requests SET "
+                          + field
+                          + " = 'changed'")))
           .isInstanceOf(DataAccessException.class);
     }
     insertAdmission(c, binding);
@@ -242,12 +228,10 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
       assertThatThrownBy(() -> c.tx(() -> c.dsl.execute("TRUNCATE " + table + " CASCADE")))
           .isInstanceOf(DataAccessException.class);
     }
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_tenant_creation_admissions SET qualification_fence = qualification_fence + 1")))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_tenant_creation_admissions SET qualification_fence = qualification_fence + 1")))
         .isInstanceOf(DataAccessException.class);
   }
 
@@ -267,10 +251,9 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     insertAdmission(c, admittedBinding);
     String admittedXmin = xmin(c, admittedBinding.creationOperationId());
     byte[] admittedReceipt =
-        c.tx(
-                () ->
-                    new AccountTenantCreationAdmissionRepository(c.dsl)
-                        .readAdmitted(admittedBinding.creationOperationId()))
+        c.tx(() ->
+                new AccountTenantCreationAdmissionRepository(c.dsl)
+                    .readAdmitted(admittedBinding.creationOperationId()))
             .orElseThrow()
             .receiptPayload();
     long requestRowsBefore =
@@ -328,17 +311,16 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
 
   private static void insertAdmission(
       Context c, AccountTenantCreationAdmissionBinding binding, int localAof, int replicaAof) {
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "INSERT INTO account_tenant_creation_admissions "
-                    + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, protected_binding_id, qualification_fence) "
-                    + "VALUES (?, ?, ?, ?, ?, 'test-stipulated-physical-evidence', 7)",
-                binding.creationOperationId(),
-                binding.canonicalReceipt(),
-                AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()),
-                localAof,
-                replicaAof));
+    c.tx(() ->
+        c.dsl.execute(
+            "INSERT INTO account_tenant_creation_admissions "
+                + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, protected_binding_id, qualification_fence) "
+                + "VALUES (?, ?, ?, ?, ?, 'test-stipulated-physical-evidence', 7)",
+            binding.creationOperationId(),
+            binding.canonicalReceipt(),
+            AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()),
+            localAof,
+            replicaAof));
   }
 
   private record AofCounts(int local, int replicas) {}
@@ -349,24 +331,23 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     var evidence =
         c.service.reauthenticate(c.request(account, UUID.randomUUID(), creation, PASSWORD));
     var intent =
-        c.tx(
-            () ->
-                new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository)
-                    .claim(
-                        new AccountTenantCreationIntentRepository.Request(
-                            UUID.randomUUID(),
-                            creation,
-                            UUID.randomUUID(),
-                            account.getAccountUuid(),
-                            "test-game",
-                            "source-game",
-                            "Game",
-                            null,
-                            evidence.evidenceId(),
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            1,
-                            true)));
+        c.tx(() ->
+            new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository)
+                .claim(
+                    new AccountTenantCreationIntentRepository.Request(
+                        UUID.randomUUID(),
+                        creation,
+                        UUID.randomUUID(),
+                        account.getAccountUuid(),
+                        "test-game",
+                        "source-game",
+                        "Game",
+                        null,
+                        evidence.evidenceId(),
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        1,
+                        true)));
     UUID issuance = UUID.randomUUID();
     String tokenHash =
         AccountControlUiCoordination.digest(
@@ -375,52 +356,48 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     long issued = Instant.now().getEpochSecond() - (expired ? 301 : 0);
     long expiry = (issued + 300) * 1000;
     long prepared = issued * 1000;
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "INSERT INTO account_control_ui_issuance_operations "
-                    + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, authorization_scope, caller_workload, "
-                    + "caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, "
-                    + "issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
-                    + "VALUES (?, ?, ?, ?, NULL, 'ACCOUNT', 'spiffe://test-only/creation', ?, 'test-mac', ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
-                UUID.randomUUID(),
-                issuance,
-                UUID.randomUUID(),
-                account.getAccountUuid(),
-                UUID.randomUUID(),
-                "c".repeat(64),
-                active,
-                active,
-                active,
-                active,
-                issued,
-                issued + 300,
-                expiry + 300000,
-                OffsetDateTime.ofInstant(Instant.ofEpochSecond(issued + 60), ZoneOffset.UTC)));
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
-                    + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
-                tokenHash,
-                active,
-                active,
-                issuance));
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "INSERT INTO account_control_ui_response_envelopes (operation_id, encrypted_response, owner_binding, recovery_expires_at) "
-                    + "SELECT operation_id, ?, ?, recovery_expires_at FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-                active,
-                active,
-                issuance));
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', pending_receipt = ?, "
-                    + "committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
-                active,
-                issuance));
+    c.tx(() ->
+        c.dsl.execute(
+            "INSERT INTO account_control_ui_issuance_operations "
+                + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, authorization_scope, caller_workload, "
+                + "caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, "
+                + "issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
+                + "VALUES (?, ?, ?, ?, NULL, 'ACCOUNT', 'spiffe://test-only/creation', ?, 'test-mac', ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
+            UUID.randomUUID(),
+            issuance,
+            UUID.randomUUID(),
+            account.getAccountUuid(),
+            UUID.randomUUID(),
+            "c".repeat(64),
+            active,
+            active,
+            active,
+            active,
+            issued,
+            issued + 300,
+            expiry + 300000,
+            OffsetDateTime.ofInstant(Instant.ofEpochSecond(issued + 60), ZoneOffset.UTC)));
+    c.tx(() ->
+        c.dsl.execute(
+            "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
+                + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
+            tokenHash,
+            active,
+            active,
+            issuance));
+    c.tx(() ->
+        c.dsl.execute(
+            "INSERT INTO account_control_ui_response_envelopes (operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+                + "SELECT operation_id, ?, ?, recovery_expires_at FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+            active,
+            active,
+            issuance));
+    c.tx(() ->
+        c.dsl.execute(
+            "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', pending_receipt = ?, "
+                + "committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+            active,
+            issuance));
     var binding =
         new AccountTenantCreationAdmissionBinding(
             intent.requestId(),
@@ -439,33 +416,32 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
             prepared,
             expiry,
             expiry + 86400000);
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "INSERT INTO account_tenant_creation_admission_requests "
-                    + "(creation_operation_id, intent_request_id, issuance_operation_id, actor_account_id, target_namespace, "
-                    + "game_design_creation_request_id, game_design_request_digest, intent_digest, active_registry_digest, "
-                    + "reauthentication_evidence_id, token_hash, token_cleanup_deadline_epoch_millis, token_expires_at_epoch_millis, "
-                    + "prepared_at_epoch_millis, operation_deadline_epoch_millis, receipt_cleanup_deadline_epoch_millis, binding_payload, binding_digest) "
-                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                creation,
-                intent.requestId(),
-                issuance,
-                account.getAccountUuid(),
-                binding.targetNamespace(),
-                binding.gameDesignCreationRequestId(),
-                binding.gameDesignRequestDigest(),
-                binding.intentDigest(),
-                binding.activeRegistryDigest(),
-                evidence.evidenceId(),
-                tokenHash,
-                binding.tokenCleanupDeadlineEpochMillis(),
-                expiry,
-                prepared,
-                expiry,
-                binding.receiptCleanupDeadlineEpochMillis(),
-                binding.canonicalReceipt(),
-                AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt())));
+    c.tx(() ->
+        c.dsl.execute(
+            "INSERT INTO account_tenant_creation_admission_requests "
+                + "(creation_operation_id, intent_request_id, issuance_operation_id, actor_account_id, target_namespace, "
+                + "game_design_creation_request_id, game_design_request_digest, intent_digest, active_registry_digest, "
+                + "reauthentication_evidence_id, token_hash, token_cleanup_deadline_epoch_millis, token_expires_at_epoch_millis, "
+                + "prepared_at_epoch_millis, operation_deadline_epoch_millis, receipt_cleanup_deadline_epoch_millis, binding_payload, binding_digest) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            creation,
+            intent.requestId(),
+            issuance,
+            account.getAccountUuid(),
+            binding.targetNamespace(),
+            binding.gameDesignCreationRequestId(),
+            binding.gameDesignRequestDigest(),
+            binding.intentDigest(),
+            binding.activeRegistryDigest(),
+            evidence.evidenceId(),
+            tokenHash,
+            binding.tokenCleanupDeadlineEpochMillis(),
+            expiry,
+            prepared,
+            expiry,
+            binding.receiptCleanupDeadlineEpochMillis(),
+            binding.canonicalReceipt(),
+            AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt())));
     return binding;
   }
 
@@ -487,16 +463,15 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    transaction.executeWithoutResult(
-        ignored -> {
-          dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
-          dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_current "
-                  + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
-        });
+    transaction.executeWithoutResult(ignored -> {
+      dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
+      dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_current "
+              + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
+    });
     var generations = new AccountAuthorityGenerationRepository(dsl);
     var outbox = new AccountAuthorityOutboxRepository(dsl);
     var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);

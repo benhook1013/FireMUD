@@ -173,12 +173,12 @@ public final class AccountRecentReauthenticationService {
                   throw conflict();
                 }
 
-                evidenceRepository.lockCreationOperation(request.creationOperationId);
-                if (evidenceRepository
-                    .findByCreationOperation(request.creationOperationId)
-                    .isPresent()) {
-                  throw conflict();
-                }
+            evidenceRepository.lockCreationOperation(request.creationOperationId);
+            if (evidenceRepository
+                .findByCreationOperation(request.creationOperationId)
+                .isPresent()) {
+              throw conflict();
+            }
 
                 // Resolve and lock the current policy before primary authentication. Missing policy
                 // therefore cannot consume an OTP or commit a new authentication grant.
@@ -255,12 +255,11 @@ public final class AccountRecentReauthenticationService {
       }
       var expected = Objects.requireNonNull(attempt.evidence);
       Attempt readback =
-          transaction.execute(
-              ignored -> {
-                evidenceRepository.lockRequest(expected.requestId());
-                var retained = evidenceRepository.readExactOriginal(expected);
-                return replayAttempt(retained, credentialRequest);
-              });
+          transaction.execute(ignored -> {
+            evidenceRepository.lockRequest(expected.requestId());
+            var retained = evidenceRepository.readExactOriginal(expected);
+            return replayAttempt(retained, credentialRequest);
+          });
       if (readback == null) throw unavailable();
       if (readback.denial != null) {
         throw new AuthenticationException(readback.denial.code, readback.denial.message);

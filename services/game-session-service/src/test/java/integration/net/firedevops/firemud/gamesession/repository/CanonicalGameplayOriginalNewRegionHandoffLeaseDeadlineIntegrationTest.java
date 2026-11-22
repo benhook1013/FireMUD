@@ -78,24 +78,39 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var rawTemplate = credential.template();
         var template = rawTemplate.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  stoppingOwner.authorize(
-                      source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              stoppingOwner.authorize(
+                  source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
           .isInstanceOf(RuntimeException.class);
+      assertThat(stoppedAfterCommit).isTrue();
+      String originalKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
+      assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("INSTALL_DISPATCHED");
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(
+                      source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .isNotInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class)
+          .hasMessage("Original NEW capacity execution is indeterminate");
+      assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("INSTALL_DISPATCHED");
     }
-    assertThat(stoppedAfterCommit).isTrue();
-    String originalKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
-    assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
-    assertThat(
-            fixture
-                .dsl()
-                .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
-                        + " execution_digest=?",
-                    controlledCapacity.digest())
-                .get(0, String.class))
-        .isEqualTo("INSTALL_DISPATCHED");
     var original = regionBinding.installation();
     admin.pexpire(ascii(original.grant.key()), 0);
     var successor = actualTransferHandoff();
@@ -114,16 +129,14 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
                     controlledCapacity.digest())
                 .get(0, String.class))
         .isEqualTo("INSTALL_DISPATCHED");
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -279,7 +292,8 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     bridge();
     var original = regionBinding.installation();
     String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
-    java.util.concurrent.CompletableFuture<Boolean> handoff = null;
+    record HandoffResult(boolean failedClosed, long elapsedNanos) {}
+    java.util.concurrent.CompletableFuture<HandoffResult> handoff = null;
     try (var lock =
         java.sql.DriverManager.getConnection(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -295,17 +309,17 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
       }
 
       handoff =
-          java.util.concurrent.CompletableFuture.supplyAsync(
-              () -> {
-                try {
-                  actualTransferHandoff();
-                  return false;
-                } catch (IllegalStateException unavailable) {
-                  return true;
-                } catch (Exception failure) {
-                  throw new IllegalStateException(failure);
-                }
-              });
+          java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            long started = System.nanoTime();
+            try {
+              actualTransferHandoff();
+              return new HandoffResult(false, System.nanoTime() - started);
+            } catch (IllegalStateException unavailable) {
+              return new HandoffResult(true, System.nanoTime() - started);
+            } catch (Exception failure) {
+              throw new IllegalStateException(failure);
+            }
+          });
       long blockedDeadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
       boolean statusReadBlocked = false;
       while (System.nanoTime() < blockedDeadline && !statusReadBlocked && !handoff.isDone()) {
@@ -320,12 +334,15 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
                 != null;
         if (!statusReadBlocked) Thread.sleep(20L);
       }
-      boolean failedClosed = handoff.get(7, java.util.concurrent.TimeUnit.SECONDS);
+      var result = handoff.get(7, java.util.concurrent.TimeUnit.SECONDS);
       assertThat(statusReadBlocked).as("handoff reached the blocked region status read").isTrue();
-      assertThat(failedClosed).as("bounded status read fails closed").isTrue();
+      assertThat(result.failedClosed()).as("bounded status read fails closed").isTrue();
+      assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(result.elapsedNanos()))
+          .as("five-second handoff cap plus 750 ms scheduling allowance")
+          .isLessThanOrEqualTo(5750);
     } finally {
       if (handoff != null && !handoff.isDone()) {
-        assertThat(handoff.get(7, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(handoff.get(7, java.util.concurrent.TimeUnit.SECONDS).failedClosed()).isTrue();
       }
     }
 
@@ -357,17 +374,16 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     admin.del(ascii(key));
     String retained = sqlImage();
     admin.pexpire(ascii(original.grant.key()), 0);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    deadline()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                fixture.dsl(),
+                ownerClient,
+                ownerUri,
+                catalog,
+                original,
+                sources.resolver,
+                transfer,
+                deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(admin.type(ascii(key))).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(retained);
@@ -420,17 +436,16 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
             capacityOwner(),
             attestor.receiver(repository, tags, "storage-2"));
     admin.pexpire(ascii(original.grant.key()), 0);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    changed,
-                    deadline()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                fixture.dsl(),
+                ownerClient,
+                ownerUri,
+                catalog,
+                original,
+                sources.resolver,
+                changed,
+                deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(retained);
     assertThat(
@@ -504,23 +519,24 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, transferRepository, capacityOwner(), receiver);
-    admin.pexpire(ascii(original.grant.key()), 0);
+    var regionLeaseKey = ascii(original.grant.key());
+    assertThat(admin.pexpire(regionLeaseKey, 0)).isTrue();
+    assertThat(admin.get(regionLeaseKey)).isNull();
     String beforeSql = sqlImage();
     Map<String, String> beforeRedis = physicalImage();
     sources.withholdWorldRead = stalledRead;
     long started = System.nanoTime();
     long handoffDeadline = CLOCK.millis() + 1500;
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    handoffDeadline))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                fixture.dsl(),
+                ownerClient,
+                ownerUri,
+                catalog,
+                original,
+                sources.resolver,
+                transfer,
+                handoffDeadline))
         .isInstanceOfSatisfying(
             io.grpc.StatusRuntimeException.class,
             failure ->
@@ -531,6 +547,7 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         .isLessThan(3500);
     assertThat(sqlImage()).isEqualTo(beforeSql);
     assertThat(physicalImage()).isEqualTo(beforeRedis);
+    assertThat(admin.get(regionLeaseKey)).isNull();
     assertThat(
             fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
         .isZero();
@@ -625,17 +642,16 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
       long started = System.nanoTime();
       long handoffDeadline = CLOCK.millis() + 4000;
       try {
-        assertThatThrownBy(
-                () ->
-                    CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                        successorSql,
-                        ownerClient,
-                        ownerUri,
-                        catalog,
-                        original,
-                        sources.resolver,
-                        transfer,
-                        handoffDeadline))
+        assertThatThrownBy(() ->
+                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                    successorSql,
+                    ownerClient,
+                    ownerUri,
+                    catalog,
+                    original,
+                    sources.resolver,
+                    transfer,
+                    handoffDeadline))
             .isInstanceOf(IllegalStateException.class);
         assertThat(blocked).as("exact committed inventory read reached").isTrue();
         assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
@@ -702,10 +718,9 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
                 ascii(capacityKey(tags.assignmentForTransition(fixture.transitionId()))),
                 ascii("state")))
         .containsExactly(ascii("COMMITTED"));
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -743,24 +758,21 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     assertThat(admin.del(ascii(installation.sessionKey()))).isEqualTo(1L);
     String rows = sqlImage();
     var physical = physicalImage();
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .retainCommittedBeforeCleanup(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-with-missing-committed-evidence"))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
@@ -781,10 +793,9 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
         var bound = raw.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(source, bound, account, issuer, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(source, bound, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(sqlImage()).isEqualTo(rows);
@@ -799,20 +810,18 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     admin.pexpire(ascii(regionBinding.installation().grant.key()), 0);
     String rows = sqlImage();
     var physical = physicalImage();
-    assertThatThrownBy(
-            () ->
-                regionBinding
-                    .owner()
-                    .revalidateOriginalNewFinalBinding(regionBinding.installation(), source))
+    assertThatThrownBy(() ->
+            regionBinding
+                .owner()
+                .revalidateOriginalNewFinalBinding(regionBinding.installation(), source))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-closure"))
         .isInstanceOf(IllegalStateException.class);
     // The positive continuation cannot turn an unexecuted/missing final result into proof.
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .retainCommittedBeforeCleanup(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
@@ -857,17 +866,16 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
     String retained = sqlImage();
     admin.pexpire(ascii(original.grant.key()), 0);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    deadline()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                fixture.dsl(),
+                ownerClient,
+                ownerUri,
+                catalog,
+                original,
+                sources.resolver,
+                transfer,
+                deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
         .containsExactly(physical);
@@ -950,17 +958,16 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     String action = installAction ? "INSTALL" : "FINAL";
     RedisClient delayed = mock(RedisClient.class);
     when(delayed.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            ignored ->
-                delayedConnection(
-                    ownerClient.connect(ByteArrayCodec.INSTANCE),
-                    oldSha,
-                    action,
-                    entered,
-                    release,
-                    calls,
-                    redisReply,
-                    dispatchedAt));
+        .thenAnswer(ignored ->
+            delayedConnection(
+                ownerClient.connect(ByteArrayCodec.INSTANCE),
+                oldSha,
+                action,
+                entered,
+                release,
+                calls,
+                redisReply,
+                dispatchedAt));
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -969,31 +976,28 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
       var issuer = issuerOpen();
       long frozenDeadline = CLOCK.millis() + 5000L;
       var old =
-          java.util.concurrent.CompletableFuture.runAsync(
-              () -> {
-                if (installAction) {
-                  new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                          fixture.dsl(), delayed, catalog, CLOCK, tags)
-                      .authorize(
-                          source, template, account, issuer, controlledCapacity, frozenDeadline);
-                } else {
-                  var owner =
-                      new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                          delayed,
-                          catalog,
-                          CLOCK,
-                          tags,
-                          () -> delayed.connect(ByteArrayCodec.INSTANCE),
-                          () -> frozenDeadline - CLOCK.millis(),
-                          java.util.concurrent.CompletableFuture::join);
-                  try (var ignored =
-                      owner.finalizeOriginalNewOnce(
-                          source, template, account, issuer, controlledCapacity, frozenDeadline)) {
-                    throw new AssertionError(
-                        "Delayed old FINAL must not produce an admission receipt");
-                  }
-                }
-              });
+          java.util.concurrent.CompletableFuture.runAsync(() -> {
+            if (installAction) {
+              new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                      fixture.dsl(), delayed, catalog, CLOCK, tags)
+                  .authorize(source, template, account, issuer, controlledCapacity, frozenDeadline);
+            } else {
+              var owner =
+                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      delayed,
+                      catalog,
+                      CLOCK,
+                      tags,
+                      () -> delayed.connect(ByteArrayCodec.INSTANCE),
+                      () -> frozenDeadline - CLOCK.millis(),
+                      java.util.concurrent.CompletableFuture::join);
+              try (var ignored =
+                  owner.finalizeOriginalNewOnce(
+                      source, template, account, issuer, controlledCapacity, frozenDeadline)) {
+                throw new AssertionError("Delayed old FINAL must not produce an admission receipt");
+              }
+            }
+          });
       try {
         assertThat(entered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         var original = regionBinding.installation();
@@ -1068,11 +1072,10 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
                   dispatchedAt.set(CLOCK.millis());
                   var reply = (io.lettuce.core.RedisFuture<Long>) method.invoke(commands, original);
                   calls.incrementAndGet();
-                  reply.whenComplete(
-                      (value, failure) -> {
-                        if (failure == null) redisReply.complete(value);
-                        else redisReply.completeExceptionally(failure);
-                      });
+                  reply.whenComplete((value, failure) -> {
+                    if (failure == null) redisReply.complete(value);
+                    else redisReply.completeExceptionally(failure);
+                  });
                   return reply;
                 } catch (java.lang.reflect.InvocationTargetException failure) {
                   throw failure.getCause();

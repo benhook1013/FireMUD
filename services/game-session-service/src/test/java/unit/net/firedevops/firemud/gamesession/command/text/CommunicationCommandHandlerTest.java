@@ -120,12 +120,11 @@ class CommunicationCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(sessionContext),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "SAY".equals(gameplayCommand.getCommandName())
-                        && "say hello travelers".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("comm-")));
+            Mockito.argThat(gameplayCommand ->
+                "SAY".equals(gameplayCommand.getCommandName())
+                    && "say hello travelers".equals(gameplayCommand.getCommandText())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("comm-")));
   }
 
   @Test
@@ -317,11 +316,10 @@ class CommunicationCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(sessionContext),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "SAY".equals(gameplayCommand.getCommandName())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("comm-")));
+            Mockito.argThat(gameplayCommand ->
+                "SAY".equals(gameplayCommand.getCommandName())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("comm-")));
   }
 
   @Test
@@ -354,10 +352,9 @@ class CommunicationCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(sessionContext),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "SAY".equals(gameplayCommand.getCommandName())
-                        && "effect-1:communication:say".equals(gameplayCommand.getCommandId())));
+            Mockito.argThat(gameplayCommand ->
+                "SAY".equals(gameplayCommand.getCommandName())
+                    && "effect-1:communication:say".equals(gameplayCommand.getCommandId())));
   }
 
   @Test
@@ -380,12 +377,10 @@ class CommunicationCommandHandlerTest {
             sessionContext.pointerVersion(),
             null);
 
-    assertThatThrownBy(
-            () ->
-                handler.handle(
-                    missingScope,
-                    new TextCommand(
-                        TextCommandType.TELL, List.of("Sora", "hello"), "TELL Sora hello")))
+    assertThatThrownBy(() ->
+            handler.handle(
+                missingScope,
+                new TextCommand(TextCommandType.TELL, List.of("Sora", "hello"), "TELL Sora hello")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Missing admitted playableStateScope");
   }

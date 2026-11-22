@@ -86,13 +86,12 @@ class AccountBillingCustomerProvisioningServiceTest {
       prepare(inserted);
       int commitsBefore = transactions.commits;
       when(provider.reconcile(any(), eq(inserted)))
-          .thenAnswer(
-              call -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                assertThat(transactions.commits).isEqualTo(commitsBefore + 2);
-                return new StripeBillingCustomerProvisioner.Unresolved(null);
-              });
+          .thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+            assertThat(transactions.commits).isEqualTo(commitsBefore + 2);
+            return new StripeBillingCustomerProvisioner.Unresolved(null);
+          });
       assertThat(service.provision(ACCOUNT, OPERATION))
           .isInstanceOf(AccountBillingCustomerProvisioningService.PendingCustomer.class);
     }
@@ -306,11 +305,10 @@ class AccountBillingCustomerProvisioningServiceTest {
     when(stripeCustomers.search(any(com.stripe.param.CustomerSearchParams.class)))
         .thenReturn(search);
     when(stripeCustomers.retrieve("cus_exact"))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return customer;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return customer;
+        });
     when(repository.recordObservation(
             eq(ACCOUNT),
             eq(OPERATION),
@@ -319,34 +317,32 @@ class AccountBillingCustomerProvisioningServiceTest {
             eq(Observation.CONFIRMED),
             eq("cus_exact"),
             anyString()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(transactions.commits).isEqualTo(2);
-              var saved =
-                  new AccountBillingCustomerRecord(
-                      ACCOUNT,
-                      OPERATION,
-                      KEY,
-                      2,
-                      State.CONFIRMED,
-                      "cus_exact",
-                      call.getArgument(3),
-                      Observation.CONFIRMED,
-                      call.getArgument(6),
-                      NOW,
-                      NOW);
-              receipt.set(saved);
-              return saved;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(transactions.commits).isEqualTo(2);
+          var saved =
+              new AccountBillingCustomerRecord(
+                  ACCOUNT,
+                  OPERATION,
+                  KEY,
+                  2,
+                  State.CONFIRMED,
+                  "cus_exact",
+                  call.getArgument(3),
+                  Observation.CONFIRMED,
+                  call.getArgument(6),
+                  NOW,
+                  NOW);
+          receipt.set(saved);
+          return saved;
+        });
     when(repository.findObservationByRequestId(any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(transactions.commits).isEqualTo(3);
-              assertThat(call.<UUID>getArgument(0)).isEqualTo(receipt.get().changeRequestId());
-              return Optional.of(receipt.get());
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(transactions.commits).isEqualTo(3);
+          assertThat(call.<UUID>getArgument(0)).isEqualTo(receipt.get().changeRequestId());
+          return Optional.of(receipt.get());
+        });
     var actual =
         new AccountBillingCustomerProvisioningService(
             repository,

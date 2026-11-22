@@ -25,17 +25,16 @@ public class RetainedSubscriptionEvidenceRepository {
     return dsl.selectFrom(evidence)
         .where(evidence.ACCOUNT_ID.eq(accountId))
         .orderBy(evidence.ID.asc())
-        .fetch(
-            row ->
-                new RetainedSubscriptionEvidence(
-                    row.get(evidence.ID),
-                    row.get(evidence.ACCOUNT_ID),
-                    row.get(evidence.PLAN_ID),
-                    row.get(evidence.STATUS),
-                    row.get(evidence.STARTED_AT),
-                    row.get(evidence.ENDED_AT),
-                    row.get(evidence.TENANT_ID),
-                    row.get(evidence.ENTITLEMENT_VERSION),
-                    row.get(evidence.TENANT_AUTHORITY_GENERATION)));
+        .fetch(row ->
+            new RetainedSubscriptionEvidence(
+                row.get(evidence.ID),
+                row.get(evidence.ACCOUNT_ID),
+                row.get(evidence.PLAN_ID),
+                row.get(evidence.STATUS),
+                row.get(evidence.STARTED_AT),
+                row.get(evidence.ENDED_AT),
+                row.get(evidence.TENANT_ID),
+                row.get(evidence.ENTITLEMENT_VERSION),
+                row.get(evidence.TENANT_AUTHORITY_GENERATION)));
   }
 }

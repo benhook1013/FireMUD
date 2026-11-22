@@ -341,10 +341,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
           net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
               JSON.writeValueAsString(changedFields));
       int changedBytesConnection = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.registerPending(
-                      pending.record().tokenHash(), changedRecord, pending.absoluteExpiryMillis()))
+      assertThatThrownBy(() ->
+              redis.registerPending(
+                  pending.record().tokenHash(), changedRecord, pending.absoluteExpiryMillis()))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(changedBytesConnection))
@@ -354,12 +353,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(admin.pexpiretime(ascii(pendingKey))).isEqualTo(pending.absoluteExpiryMillis());
 
       int changedDeadlineConnection = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.registerPending(
-                      pending.record().tokenHash(),
-                      pending.recordBytes(),
-                      Math.addExact(pending.absoluteExpiryMillis(), 1_000L)))
+      assertThatThrownBy(() ->
+              redis.registerPending(
+                  pending.record().tokenHash(),
+                  pending.recordBytes(),
+                  Math.addExact(pending.absoluteExpiryMillis(), 1_000L)))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(changedDeadlineConnection))
@@ -371,12 +369,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
       int insufficientReplicaAofConnection = writerProvider.openedConnections();
       AccountGameplayDelegationRedisClient insufficientReplicaAofClient =
           redisClient(writerProvider, new AcknowledgementRequirements(1, 2, 250));
-      assertThatThrownBy(
-              () ->
-                  insufficientReplicaAofClient.registerPending(
-                      pending.record().tokenHash(),
-                      pending.recordBytes(),
-                      pending.absoluteExpiryMillis()))
+      assertThatThrownBy(() ->
+              insufficientReplicaAofClient.registerPending(
+                  pending.record().tokenHash(),
+                  pending.recordBytes(),
+                  pending.absoluteExpiryMillis()))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(insufficientReplicaAofConnection))
@@ -431,10 +428,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
           projectionPair(accountId, 6L, 8L, "issuer-stale", "account-newer");
       byte[] accountBeforeIssuerRegression = admin.get(ascii(accountKey));
       int issuerRegressionConnection = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.publishAuthorityProjections(
-                      accountId, regressedProjection[0], regressedProjection[1]))
+      assertThatThrownBy(() ->
+              redis.publishAuthorityProjections(
+                  accountId, regressedProjection[0], regressedProjection[1]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(issuerRegressionConnection))
@@ -446,10 +442,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
       byte[][] equalIssuerConflict =
           projectionPair(accountId, 7L, 7L, "issuer-conflict", "account-base");
       int equalIssuerConflictConnection = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.publishAuthorityProjections(
-                      accountId, equalIssuerConflict[0], equalIssuerConflict[1]))
+      assertThatThrownBy(() ->
+              redis.publishAuthorityProjections(
+                  accountId, equalIssuerConflict[0], equalIssuerConflict[1]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(equalIssuerConflictConnection))
@@ -459,10 +454,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
       byte[][] equalAccountConflict =
           projectionPair(accountId, 7L, 7L, "issuer-base", "account-conflict");
       int equalAccountConflictConnection = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.publishAuthorityProjections(
-                      accountId, equalAccountConflict[0], equalAccountConflict[1]))
+      assertThatThrownBy(() ->
+              redis.publishAuthorityProjections(
+                  accountId, equalAccountConflict[0], equalAccountConflict[1]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(equalAccountConflictConnection))
@@ -496,10 +490,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
               "issuer-below-max",
               "account-below-max");
       int boundaryRegressionConnection = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.publishAuthorityProjections(
-                      accountId, belowSignedBigintBoundary[0], belowSignedBigintBoundary[1]))
+      assertThatThrownBy(() ->
+              redis.publishAuthorityProjections(
+                  accountId, belowSignedBigintBoundary[0], belowSignedBigintBoundary[1]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(boundaryRegressionConnection))
@@ -509,10 +502,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
       TrackedProvider wrongRoleProvider = new TrackedProvider(fixtureAdmin);
       AccountGameplayDelegationRedisClient wrongRoleClient = redisClient(wrongRoleProvider);
       int wrongRoleConnection = wrongRoleProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  wrongRoleClient.publishAuthorityProjections(
-                      accountId, signedBigintBoundary[0], signedBigintBoundary[1]))
+      assertThatThrownBy(() ->
+              wrongRoleClient.publishAuthorityProjections(
+                  accountId, signedBigintBoundary[0], signedBigintBoundary[1]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(wrongRoleProvider.trace(wrongRoleConnection))
@@ -552,21 +544,19 @@ class AccountGameplayDelegationRedisIntegrationTest {
       byte[] membershipSequenceTwo =
           membershipProjectionFixture(accountId, selectedTenant, "2", "3", "1");
       int beforeFirstPublicationAboveOne = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, selectedTenant, false, null, membershipSequenceTwo))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, null, membershipSequenceTwo))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.openedConnections()).isEqualTo(beforeFirstPublicationAboveOne);
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId,
-                      selectedTenant,
-                      false,
-                      selected[3],
-                      membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1")))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId,
+                  selectedTenant,
+                  false,
+                  selected[3],
+                  membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1")))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(
@@ -585,34 +575,30 @@ class AccountGameplayDelegationRedisIntegrationTest {
               redis.publishSelectedAuthorityEvent(
                   accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
           .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, selectedTenant, false, null, membershipSequenceTwo))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, null, membershipSequenceTwo))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId,
-                      selectedTenant,
-                      false,
-                      selected[3],
-                      membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1")))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId,
+                  selectedTenant,
+                  false,
+                  selected[3],
+                  membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1")))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       admin.del(ascii(tenantKey));
       admin.del(ascii(memberKey));
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, selectedTenant, true, selected[2], tenantSequenceTwo))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, true, selected[2], tenantSequenceTwo))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(
@@ -633,16 +619,14 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
       assertThat(admin.get(ascii(tenantKey))).containsExactly(tenantSequenceTwo);
       assertThat(admin.get(ascii(memberKey))).containsExactly(membershipSequenceTwo);
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, selectedTenant, false, null, selected[3]))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, null, selected[3]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, selectedTenant, true, null, selected[2]))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, true, null, selected[2]))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       byte[][] gap = selected.clone();
@@ -824,10 +808,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(redis.publishSelectedAuthorityEvent(accountId, tenantId, false, null, sequenceOne))
           .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      assertThatThrownBy(
-              () ->
-                  redis.publishSelectedAuthorityEvent(
-                      accountId, tenantId, false, sequenceTwo, sequenceThree))
+      assertThatThrownBy(() ->
+              redis.publishSelectedAuthorityEvent(
+                  accountId, tenantId, false, sequenceTwo, sequenceThree))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(admin.get(ascii(redisKey))).containsExactly(sequenceOne);
@@ -1027,25 +1010,23 @@ class AccountGameplayDelegationRedisIntegrationTest {
                           identity.operationId())
                       .get("row_version", String.class))
               .isEqualTo(pendingRevocationXmin);
-          assertThatThrownBy(
-                  () ->
-                      inTransaction(
-                          database,
-                          () ->
-                              new net.firedevops.firemud.accountservice.repository
-                                      .AccountGameplayTokenIdentityFenceRepository(dsl)
-                                  .requireActiveForUpdate(identity)))
+          assertThatThrownBy(() ->
+                  inTransaction(
+                      database,
+                      () ->
+                          new net.firedevops.firemud.accountservice.repository
+                                  .AccountGameplayTokenIdentityFenceRepository(dsl)
+                              .requireActiveForUpdate(identity)))
               .isInstanceOf(
                   net.firedevops.firemud.accountservice.repository
                       .AccountGameplayTokenIdentityFenceRepository.TokenRevokedException.class);
         }
-        assertThatThrownBy(
-                () ->
-                    redis.registerPending(
-                        candidate.tokenHash(),
-                        candidate.canonicalRecordBytes(),
-                        Math.addExact(
-                            Math.multiplyExact(candidate.expiresAtEpochSecond(), 1000L), 30_000L)))
+        assertThatThrownBy(() ->
+                redis.registerPending(
+                    candidate.tokenHash(),
+                    candidate.canonicalRecordBytes(),
+                    Math.addExact(
+                        Math.multiplyExact(candidate.expiresAtEpochSecond(), 1000L), 30_000L)))
             .isInstanceOf(
                 AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
         assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
@@ -1056,21 +1037,19 @@ class AccountGameplayDelegationRedisIntegrationTest {
                     .Disposition.PENDING);
       }
       assertThatThrownBy(() -> signer.preparePendingCandidate(request))
-          .satisfies(
-              failure ->
-                  assertThat(failure.getClass().getName())
-                      .isEqualTo(
-                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
+          .satisfies(failure ->
+              assertThat(failure.getClass().getName())
+                  .isEqualTo(
+                      "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       assertThatThrownBy(
               () -> inTransaction(database, () -> issuance.readCurrentGameplayLoginReplay(request)))
           .isInstanceOf(
               AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
-      assertThatThrownBy(
-              () ->
-                  disposal.retire(
-                      new net.firedevops.firemud.accountservice.dto
-                          .InitialGameplayLoginDisposalRequest(request, UUID.randomUUID(), null),
-                      CALLER_WORKLOAD))
+      assertThatThrownBy(() ->
+              disposal.retire(
+                  new net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalRequest(
+                      request, UUID.randomUUID(), null),
+                  CALLER_WORKLOAD))
           .isInstanceOf(
               net.firedevops.firemud.accountservice.repository
                   .AccountInitialGameplayLoginDisposalRepository.DisposalConflictException.class);
@@ -1149,11 +1128,10 @@ class AccountGameplayDelegationRedisIntegrationTest {
               pausedManager,
               Clock.systemUTC());
       assertThatThrownBy(() -> signer.preparePendingCandidate(request))
-          .satisfies(
-              failure ->
-                  assertThat(failure.getClass().getName())
-                      .isEqualTo(
-                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
+          .satisfies(failure ->
+              assertThat(failure.getClass().getName())
+                  .isEqualTo(
+                      "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       assertThat(
               dsl.fetchSingle(
                       "SELECT token_hash FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
@@ -1180,27 +1158,25 @@ class AccountGameplayDelegationRedisIntegrationTest {
     assertThat(inTransaction(database, () -> disposals.readUnqualifiedNoBinding(intent)))
         .isEqualTo(first);
     for (UUID resolvedAccount : List.of(account, otherAccount)) {
-      assertThatThrownBy(
-              () ->
-                  inTransaction(
-                      database,
-                      () ->
-                          issuance.beginPendingForAccount(
-                              request,
-                              resolvedAccount,
-                              CALLER_WORKLOAD,
-                              context,
-                              net.firedevops.firemud.accountservice.repository
-                                  .AccountGameplayCredentialRequestBindingFixture.binding())))
+      assertThatThrownBy(() ->
+              inTransaction(
+                  database,
+                  () ->
+                      issuance.beginPendingForAccount(
+                          request,
+                          resolvedAccount,
+                          CALLER_WORKLOAD,
+                          context,
+                          net.firedevops.firemud.accountservice.repository
+                              .AccountGameplayCredentialRequestBindingFixture.binding())))
           .isInstanceOf(
               AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
     }
-    assertThatThrownBy(
-            () ->
-                owner.retire(
-                    new net.firedevops.firemud.accountservice.dto
-                        .InitialGameplayLoginDisposalRequest(request, UUID.randomUUID(), null),
-                    CALLER_WORKLOAD))
+    assertThatThrownBy(() ->
+            owner.retire(
+                new net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalRequest(
+                    request, UUID.randomUUID(), null),
+                CALLER_WORKLOAD))
         .isInstanceOf(
             net.firedevops.firemud.accountservice.repository
                 .AccountInitialGameplayLoginDisposalRepository.DisposalConflictException.class);
@@ -1210,17 +1186,16 @@ class AccountGameplayDelegationRedisIntegrationTest {
             net.firedevops.firemud.accountservice.repository
                 .AccountInitialGameplayLoginDisposalRepository.DisposalConflictException.class);
     // A syntactically complete requested terminal proof cannot invent intact binding history.
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    database,
-                    () ->
-                        dsl.execute(
-                            "UPDATE account_initial_gameplay_login_disposals SET state = 'NO_TOKEN', owner_proof_kind = 'NO_ISSUANCE_BINDING',"
-                                + " owner_proof_canonical_bytes = ?, owner_proof_sha256 = ? WHERE request_id = ?",
-                            "{}".getBytes(StandardCharsets.UTF_8),
-                            "a".repeat(64),
-                            request)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                database,
+                () ->
+                    dsl.execute(
+                        "UPDATE account_initial_gameplay_login_disposals SET state = 'NO_TOKEN', owner_proof_kind = 'NO_ISSUANCE_BINDING',"
+                            + " owner_proof_canonical_bytes = ?, owner_proof_sha256 = ? WHERE request_id = ?",
+                        "{}".getBytes(StandardCharsets.UTF_8),
+                        "a".repeat(64),
+                        request)))
         .isInstanceOf(AssertionError.class)
         .hasMessageContaining("exceptionClass=PSQLException; sqlState=23514");
     org.mockito.Mockito.verifyNoInteractions(registry);
@@ -1232,20 +1207,18 @@ class AccountGameplayDelegationRedisIntegrationTest {
     var rolledBackIntent =
         database
             .transaction()
-            .execute(
-                status -> {
-                  var pending = disposals.begin(rollbackIdentity, CALLER_WORKLOAD);
-                  status.setRollbackOnly();
-                  return pending;
-                });
+            .execute(status -> {
+              var pending = disposals.begin(rollbackIdentity, CALLER_WORKLOAD);
+              status.setRollbackOnly();
+              return pending;
+            });
     assertThat(
             dsl.fetchOne(
                 "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
                 rolledBackRequest))
         .isNull();
-    assertThatThrownBy(
-            () ->
-                inTransaction(database, () -> disposals.readUnqualifiedNoBinding(rolledBackIntent)))
+    assertThatThrownBy(() ->
+            inTransaction(database, () -> disposals.readUnqualifiedNoBinding(rolledBackIntent)))
         .isInstanceOf(
             net.firedevops.firemud.accountservice.repository
                 .AccountInitialGameplayLoginDisposalRepository.DisposalUnavailableException.class);
@@ -1304,11 +1277,10 @@ class AccountGameplayDelegationRedisIntegrationTest {
               manager,
               Clock.systemUTC());
       assertThatThrownBy(() -> signer.preparePendingCandidate(request))
-          .satisfies(
-              failure ->
-                  assertThat(failure.getClass().getName())
-                      .isEqualTo(
-                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
+          .satisfies(failure ->
+              assertThat(failure.getClass().getName())
+                  .isEqualTo(
+                      "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       var original =
           dsl.fetchOne(
               "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
@@ -1365,11 +1337,10 @@ class AccountGameplayDelegationRedisIntegrationTest {
         assertThat(provider.openedConnections()).isZero();
       }
       assertThatThrownBy(() -> signer.preparePendingCandidate(request))
-          .satisfies(
-              failure ->
-                  assertThat(failure.getClass().getName())
-                      .isEqualTo(
-                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
+          .satisfies(failure ->
+              assertThat(failure.getClass().getName())
+                  .isEqualTo(
+                      "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       assertThat(
               dsl.fetchOne(
                   "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
@@ -1719,12 +1690,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
                   sourceSnapshot
                       .account()
                       .accountSecurityCutoff()
-                      .map(
-                          cutoff ->
-                              new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                                  cutoff.accountAuthorityGeneration(),
-                                  cutoff.outboxStreamKey(),
-                                  cutoff.outboxSequence()))),
+                      .map(cutoff ->
+                          new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                              cutoff.accountAuthorityGeneration(),
+                              cutoff.outboxStreamKey(),
+                              cutoff.outboxSequence()))),
               net.firedevops.firemud.accountservice.repository
                   .AccountGameplayCredentialRequestBindingFixture.binding());
       inTransaction(database, () -> issuance.beginPending(pending));
@@ -1864,19 +1834,17 @@ class AccountGameplayDelegationRedisIntegrationTest {
       CallerIdentity caller = new CallerIdentity(CALLER_WORKLOAD, callerContextId);
 
       int connectionsBeforeCallerMismatch = writerProvider.openedConnections();
-      assertThatThrownBy(
-              () ->
-                  recoveryOwner.recoverInitialLoginResponse(
-                      requestId, accountId, new CallerIdentity(CALLER_WORKLOAD, UUID.randomUUID())))
+      assertThatThrownBy(() ->
+              recoveryOwner.recoverInitialLoginResponse(
+                  requestId, accountId, new CallerIdentity(CALLER_WORKLOAD, UUID.randomUUID())))
           .isInstanceOf(IdempotencyConflictException.class)
           .hasNoCause();
-      assertThatThrownBy(
-              () ->
-                  recoveryOwner.recoverInitialLoginResponse(
-                      requestId,
-                      accountId,
-                      new CallerIdentity(
-                          "spiffe://firemud/ns/other/sa/game-session-service", callerContextId)))
+      assertThatThrownBy(() ->
+              recoveryOwner.recoverInitialLoginResponse(
+                  requestId,
+                  accountId,
+                  new CallerIdentity(
+                      "spiffe://firemud/ns/other/sa/game-session-service", callerContextId)))
           .isInstanceOf(IdempotencyConflictException.class)
           .hasNoCause();
       assertThatThrownBy(
@@ -2296,10 +2264,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
         assertThatThrownBy(() -> login.authenticate(changed, CALLER_WORKLOAD, verifier))
             .isInstanceOf(IdempotencyConflictException.class);
       }
-      assertThatThrownBy(
-              () ->
-                  login.authenticate(
-                      request, "spiffe://firemud/ns/other/sa/game-session-service", verifier))
+      assertThatThrownBy(() ->
+              login.authenticate(
+                  request, "spiffe://firemud/ns/other/sa/game-session-service", verifier))
           .isInstanceOf(IdempotencyConflictException.class);
       assertThat(writerProvider.openedConnections()).isEqualTo(beforeConflicts);
       assertThat(
@@ -2351,10 +2318,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
                   discarded.tokenSha256(),
                   Long.parseLong(discarded.tokenGeneration()),
                   Long.parseLong(discarded.issuanceFence())));
-      assertThatThrownBy(
-              () ->
-                  disposalOwner.retire(
-                      disposalRequest, "spiffe://firemud/ns/other/sa/game-session-service"))
+      assertThatThrownBy(() ->
+              disposalOwner.retire(
+                  disposalRequest, "spiffe://firemud/ns/other/sa/game-session-service"))
           .isInstanceOf(
               net.firedevops.firemud.accountservice.repository
                   .AccountInitialGameplayLoginDisposalRepository.DisposalConflictException.class);
@@ -2367,12 +2333,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThatThrownBy(() -> committedOwner.activateCommittedIssuance(requestId))
           .isInstanceOf(
               AccountGameplayDelegationCommittedIssuanceOwner.OwnerUnavailableException.class);
-      assertThatThrownBy(
-              () ->
-                  recoveryOwner.recoverInitialLoginResponse(
-                      requestId,
-                      accountId,
-                      new CallerIdentity(CALLER_WORKLOAD, context.contextId())))
+      assertThatThrownBy(() ->
+              recoveryOwner.recoverInitialLoginResponse(
+                  requestId, accountId, new CallerIdentity(CALLER_WORKLOAD, context.contextId())))
           .isInstanceOf(
               AccountGameplayDelegationResponseRecoveryOwner.OwnerUnavailableException.class);
       // Unknown physical state must preserve PENDING and never delete somebody else's bytes.
@@ -2393,10 +2356,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
       tokenRegistry.disposeInitialLogin(intent);
       assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
       assertThat(admin.pttl(ascii(tokenKey))).isEqualTo(-1L);
-      assertThatThrownBy(
-              () ->
-                  GameSessionAccountDelegationRegistryRecord.decode(
-                      admin.get(ascii(tokenKey)), REGISTRY_BYTES))
+      assertThatThrownBy(() ->
+              GameSessionAccountDelegationRegistryRecord.decode(
+                  admin.get(ascii(tokenKey)), REGISTRY_BYTES))
           .as(
               "purpose-specific denied tombstone cannot be read as an authorizing registry projection")
           .isInstanceOf(GameSessionAccountDelegationRegistryRecord.InvalidRecordException.class);
@@ -2417,10 +2379,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
                   requestId))
           .isEqualTo(storedEnvelope);
       // A captured pre-disposal physical registration cannot resurrect, even after SQL completion.
-      assertThatThrownBy(
-              () ->
-                  redis.registerPending(
-                      committed.tokenSha256(), intent.pendingBytes(), originalDeadline))
+      assertThatThrownBy(() ->
+              redis.registerPending(
+                  committed.tokenSha256(), intent.pendingBytes(), originalDeadline))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
@@ -3024,36 +2985,35 @@ class AccountGameplayDelegationRedisIntegrationTest {
     dsl.configuration()
         .setAppending(
             new DefaultExecuteListenerProvider(
-                ExecuteListener.onException(
-                    context -> {
-                      java.sql.SQLException sqlException = context.sqlException();
-                      if (sqlException == null) return;
-                      String exceptionClass = sqlException.getClass().getSimpleName();
-                      if (!exceptionClass.matches("[A-Za-z0-9_$]+")) {
-                        exceptionClass = "SQLException";
-                      }
-                      String sqlState = sqlException.getSQLState();
-                      if (sqlState == null || !sqlState.matches("[A-Z0-9]{5}")) {
-                        sqlState = "unknown";
-                      }
-                      String constraint = "unknown";
-                      if (sqlException instanceof PSQLException postgresException) {
-                        var serverError = postgresException.getServerErrorMessage();
-                        String candidateConstraint =
-                            serverError == null ? null : serverError.getConstraint();
-                        if (candidateConstraint != null
-                            && candidateConstraint.matches("[a-z][a-z0-9_]{0,62}")) {
-                          constraint = candidateConstraint;
-                        }
-                      }
-                      throw new AssertionError(
-                          "Physical Account PostgreSQL failure: exceptionClass="
-                              + exceptionClass
-                              + "; sqlState="
-                              + sqlState
-                              + "; constraint="
-                              + constraint);
-                    })));
+                ExecuteListener.onException(context -> {
+                  java.sql.SQLException sqlException = context.sqlException();
+                  if (sqlException == null) return;
+                  String exceptionClass = sqlException.getClass().getSimpleName();
+                  if (!exceptionClass.matches("[A-Za-z0-9_$]+")) {
+                    exceptionClass = "SQLException";
+                  }
+                  String sqlState = sqlException.getSQLState();
+                  if (sqlState == null || !sqlState.matches("[A-Z0-9]{5}")) {
+                    sqlState = "unknown";
+                  }
+                  String constraint = "unknown";
+                  if (sqlException instanceof PSQLException postgresException) {
+                    var serverError = postgresException.getServerErrorMessage();
+                    String candidateConstraint =
+                        serverError == null ? null : serverError.getConstraint();
+                    if (candidateConstraint != null
+                        && candidateConstraint.matches("[a-z][a-z0-9_]{0,62}")) {
+                      constraint = candidateConstraint;
+                    }
+                  }
+                  throw new AssertionError(
+                      "Physical Account PostgreSQL failure: exceptionClass="
+                          + exceptionClass
+                          + "; sqlState="
+                          + sqlState
+                          + "; constraint="
+                          + constraint);
+                })));
     DataSourceTransactionManager manager = new DataSourceTransactionManager(dataSource);
     return new TestContext(dsl, manager, new TransactionTemplate(manager));
   }

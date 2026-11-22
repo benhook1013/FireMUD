@@ -277,10 +277,9 @@ public class ScriptEventAuditRepository {
         .doUpdate()
         .set(SCRIPT_EVENT_AUDIT.ID, SCRIPT_EVENT_AUDIT.ID)
         .returningResult(returningFields)
-        .fetchOptional(
-            returned ->
-                new HandlerIdentityInsertResult(
-                    toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))));
+        .fetchOptional(returned ->
+            new HandlerIdentityInsertResult(
+                toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))));
   }
 
   private record HandlerIdentityInsertResult(ScriptEventAudit audit, boolean inserted) {}
@@ -412,10 +411,9 @@ public class ScriptEventAuditRepository {
     requireCoherentPluginFence(entity);
     ScriptEventAudit persisted =
         findById(entity.getId())
-            .orElseThrow(
-                () ->
-                    AutomationScriptingJooqRepositorySupport.staleWrite(
-                        "script_event_audit", entity.getId()));
+            .orElseThrow(() ->
+                AutomationScriptingJooqRepositorySupport.staleWrite(
+                    "script_event_audit", entity.getId()));
     requireMatchingImmutableIdentity(entity, persisted);
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =

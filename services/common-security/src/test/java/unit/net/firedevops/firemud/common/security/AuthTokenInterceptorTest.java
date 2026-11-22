@@ -386,16 +386,15 @@ class AuthTokenInterceptorTest {
     assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
 
     seedStaleCallerContext();
-    assertThatThrownBy(
-            () ->
-                interceptor.interceptCall(
-                    call,
-                    new Metadata(),
-                    (serverCall, headers) -> {
-                      assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
-                      seedStaleCallerContext();
-                      throw new IllegalStateException("failed startCall");
-                    }))
+    assertThatThrownBy(() ->
+            interceptor.interceptCall(
+                call,
+                new Metadata(),
+                (serverCall, headers) -> {
+                  assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+                  seedStaleCallerContext();
+                  throw new IllegalStateException("failed startCall");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("failed startCall");
     assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();

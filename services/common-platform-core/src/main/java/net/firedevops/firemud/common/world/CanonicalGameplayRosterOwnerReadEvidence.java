@@ -51,10 +51,9 @@ public record CanonicalGameplayRosterOwnerReadEvidence(
 
   public PublishedRealmEntryPolicyEvidence selectedPolicyEvidence() {
     return publishedPolicySetEvidence.policies().stream()
-        .filter(
-            evidence ->
-                evidence.policy().worldSlug().equals(request.worldSlug())
-                    && evidence.policy().realmSlug().equals(request.realmSlug()))
+        .filter(evidence ->
+            evidence.policy().worldSlug().equals(request.worldSlug())
+                && evidence.policy().realmSlug().equals(request.realmSlug()))
         .findFirst()
         .orElseThrow(() -> new IllegalStateException("Exact published policy is unavailable"));
   }
@@ -90,10 +89,9 @@ public record CanonicalGameplayRosterOwnerReadEvidence(
     }
     List<PublishedRealmEntryPolicyEvidence> matches =
         evidence.policies().stream()
-            .filter(
-                policy ->
-                    policy.policy().worldSlug().equals(request.worldSlug())
-                        && policy.policy().realmSlug().equals(request.realmSlug()))
+            .filter(policy ->
+                policy.policy().worldSlug().equals(request.worldSlug())
+                    && policy.policy().realmSlug().equals(request.realmSlug()))
             .toList();
     if (matches.size() != 1) {
       throw new IllegalArgumentException(

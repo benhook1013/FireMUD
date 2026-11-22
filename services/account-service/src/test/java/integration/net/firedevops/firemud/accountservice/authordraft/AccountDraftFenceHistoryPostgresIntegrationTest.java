@@ -112,42 +112,38 @@ class AccountDraftFenceHistoryPostgresIntegrationTest {
     assertThat(historyRank(dsl)).isGreaterThan(rank76);
     assertThat(history(dsl, rank76)).isEqualTo(history76);
     Map<String, List<String>> currentRows = rows(dsl, queries);
-    rows.forEach(
-        (table, originalRows) -> {
-          if (table.equals("account_draft_authorization_source_locks")) {
-            // V87 adds a serialization lock from the real Account scope, never authority evidence.
-            assertThat(currentRows.get(table))
-                .containsAll(originalRows)
-                .hasSize(originalRows.size() + 1);
-          } else {
-            assertThat(currentRows.get(table)).isEqualTo(originalRows);
-          }
-        });
+    rows.forEach((table, originalRows) -> {
+      if (table.equals("account_draft_authorization_source_locks")) {
+        // V87 adds a serialization lock from the real Account scope, never authority evidence.
+        assertThat(currentRows.get(table))
+            .containsAll(originalRows)
+            .hasSize(originalRows.size() + 1);
+      } else {
+        assertThat(currentRows.get(table)).isEqualTo(originalRows);
+      }
+    });
     assertThat(
             dsl.fetch("SELECT source_key FROM account_draft_authorization_source_locks")
                 .getValues(0, String.class))
         .containsExactlyInAnyOrder(
             binding.sources().get(0).key(), legacyKey.key(), "GLOBAL_ROLES:" + account);
     assertRetained(dsl, transaction, binding, world, change, legacyKey);
-    transaction.executeWithoutResult(
-        ignored ->
-            assertThat(new DraftAuthorizationFenceRepository(dsl).sourceMutationPermitted(change))
-                .isFalse());
+    transaction.executeWithoutResult(ignored ->
+        assertThat(new DraftAuthorizationFenceRepository(dsl).sourceMutationPermitted(change))
+            .isFalse());
     assertThat(rows(dsl, queries)).isEqualTo(currentRows);
     assertHistoricalProvenance(dsl, account);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE account_draft_authorization_fences SET binding = ? WHERE operation_id = ?",
-                    new byte[] {99},
-                    binding.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE account_draft_authorization_fences SET binding = ? WHERE operation_id = ?",
+                new byte[] {99},
+                binding.operationId()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM account_draft_authorization_owner_readbacks WHERE operation_id = ?",
-                    binding.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM account_draft_authorization_owner_readbacks WHERE operation_id = ?",
+                binding.operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThat(rows(dsl, queries)).isEqualTo(currentRows);
   }
@@ -160,23 +156,18 @@ class AccountDraftFenceHistoryPostgresIntegrationTest {
       SourceChange change,
       SourceEvidence legacyKey) {
     var repository = new DraftAuthorizationFenceRepository(dsl);
-    transaction.executeWithoutResult(
-        ignored -> {
-          assertThat(
-                  repository
-                      .readOriginalBinding(binding.operationId())
-                      .orElseThrow()
-                      .canonicalBytes())
-              .containsExactly(binding.canonicalBytes());
-          assertThat(repository.reserve(binding).binding())
-              .containsExactly(binding.canonicalBytes());
-          assertThat(repository.read(binding).ordering()).isEqualTo(Ordering.COMMIT_ORDER);
-          assertThat(repository.readOwnerResult(binding, Owner.WORLD).orElseThrow().readback())
-              .containsExactly(world.canonicalBytes());
-          assertThat(repository.readOwnerResult(binding, Owner.GAME_DESIGN)).isEmpty();
-          assertThat(repository.readSettlement(binding)).isEqualTo(Settlement.PENDING);
-          assertThat(repository.readSourceChange(change).status()).isEqualTo("WAITING");
-        });
+    transaction.executeWithoutResult(ignored -> {
+      assertThat(
+              repository.readOriginalBinding(binding.operationId()).orElseThrow().canonicalBytes())
+          .containsExactly(binding.canonicalBytes());
+      assertThat(repository.reserve(binding).binding()).containsExactly(binding.canonicalBytes());
+      assertThat(repository.read(binding).ordering()).isEqualTo(Ordering.COMMIT_ORDER);
+      assertThat(repository.readOwnerResult(binding, Owner.WORLD).orElseThrow().readback())
+          .containsExactly(world.canonicalBytes());
+      assertThat(repository.readOwnerResult(binding, Owner.GAME_DESIGN)).isEmpty();
+      assertThat(repository.readSettlement(binding)).isEqualTo(Settlement.PENDING);
+      assertThat(repository.readSourceChange(change).status()).isEqualTo("WAITING");
+    });
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
@@ -194,45 +185,44 @@ class AccountDraftFenceHistoryPostgresIntegrationTest {
       SourceChange change) {
     // Preserve V75's actual guarded insert/order lifecycle. Current source-change APIs also
     // inspect later publication owners, which do not exist in this predecessor schema.
-    transaction.executeWithoutResult(
-        ignored -> {
-          for (SourceEvidence evidence : binding.sources()) {
-            dsl.execute(
-                "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?) ON CONFLICT DO NOTHING",
-                evidence.key());
-          }
-          dsl.execute(
-              "INSERT INTO account_draft_authorization_fences (operation_id, request_id, commit_id, fence_id, binding, ordering) VALUES (?, ?, ?, ?, ?, 'RESERVED')",
-              binding.operationId(),
-              binding.requestId(),
-              binding.commitId(),
-              binding.fenceId(),
-              binding.canonicalBytes());
-          for (SourceEvidence evidence : binding.sources()) {
-            dsl.execute(
-                "INSERT INTO account_draft_authorization_sources (operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
-                binding.operationId(),
-                evidence.key(),
-                evidence.canonicalBytes());
-          }
-          dsl.execute(
-              "UPDATE account_draft_authorization_fences SET ordering = 'COMMIT_ORDER', ordered_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
-              binding.operationId());
-          dsl.execute(
-              "INSERT INTO account_draft_authorization_owner_readbacks (operation_id, owner, outcome, readback) VALUES (?, 'WORLD', 'COMMITTED', ?)",
-              binding.operationId(),
-              world.canonicalBytes());
-          dsl.execute(
-              "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status) VALUES (?, ?, 'WAITING')",
-              change.changeId(),
-              change.canonicalBytes());
-          for (SourceEvidence evidence : change.sources()) {
-            dsl.execute(
-                "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
-                change.changeId(),
-                evidence.key());
-          }
-        });
+    transaction.executeWithoutResult(ignored -> {
+      for (SourceEvidence evidence : binding.sources()) {
+        dsl.execute(
+            "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?) ON CONFLICT DO NOTHING",
+            evidence.key());
+      }
+      dsl.execute(
+          "INSERT INTO account_draft_authorization_fences (operation_id, request_id, commit_id, fence_id, binding, ordering) VALUES (?, ?, ?, ?, ?, 'RESERVED')",
+          binding.operationId(),
+          binding.requestId(),
+          binding.commitId(),
+          binding.fenceId(),
+          binding.canonicalBytes());
+      for (SourceEvidence evidence : binding.sources()) {
+        dsl.execute(
+            "INSERT INTO account_draft_authorization_sources (operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+            binding.operationId(),
+            evidence.key(),
+            evidence.canonicalBytes());
+      }
+      dsl.execute(
+          "UPDATE account_draft_authorization_fences SET ordering = 'COMMIT_ORDER', ordered_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+          binding.operationId());
+      dsl.execute(
+          "INSERT INTO account_draft_authorization_owner_readbacks (operation_id, owner, outcome, readback) VALUES (?, 'WORLD', 'COMMITTED', ?)",
+          binding.operationId(),
+          world.canonicalBytes());
+      dsl.execute(
+          "INSERT INTO account_draft_authorization_source_changes (change_id, binding, status) VALUES (?, ?, 'WAITING')",
+          change.changeId(),
+          change.canonicalBytes());
+      for (SourceEvidence evidence : change.sources()) {
+        dsl.execute(
+            "INSERT INTO account_draft_authorization_changed_scopes (change_id, source_key) VALUES (?, ?)",
+            change.changeId(),
+            evidence.key());
+      }
+    });
   }
 
   private static UUID insertHistoricalAccount(DSLContext dsl) {

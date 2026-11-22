@@ -11,6 +11,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.ExecuteContext;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -44,16 +49,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
 
   @Test
   void initializesOnlyAnAbsentRegionAtItsFirstEpochAndFirstTick() {
-    assertThatThrownBy(
-            () ->
-                repository.installOwner(
-                    source,
-                    2L,
-                    null,
-                    FIRST_LEASE_CORRELATION,
-                    "game-session-service",
-                    "instance-a",
-                    Instant.parse("2026-10-26T00:00:00Z")))
+    assertThatThrownBy(() ->
+            repository.installOwner(
+                source,
+                2L,
+                null,
+                FIRST_LEASE_CORRELATION,
+                "game-session-service",
+                "instance-a",
+                Instant.parse("2026-10-26T00:00:00Z")))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.find(source)).isEmpty();
 
@@ -138,16 +142,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
     assertThat(retry.ownerInstanceId()).isEqualTo("instance-b");
     assertThat(retry.lastCommittedTickId()).isEqualTo(7L);
     assertThat(retry.lastCommittedTickBatchId()).isEqualTo("batch-7");
-    assertThatThrownBy(
-            () ->
-                repository.installOwner(
-                    source,
-                    1L,
-                    initial,
-                    FIRST_LEASE_CORRELATION,
-                    "game-session-service",
-                    "instance-a",
-                    Instant.parse("2026-10-26T00:00:03Z")))
+    assertThatThrownBy(() ->
+            repository.installOwner(
+                source,
+                1L,
+                initial,
+                FIRST_LEASE_CORRELATION,
+                "game-session-service",
+                "instance-a",
+                Instant.parse("2026-10-26T00:00:03Z")))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.find(source)).contains(retry);
   }
@@ -163,12 +166,10 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
         "instance-a",
         Instant.parse("2026-10-26T00:00:01Z"));
 
-    assertThatThrownBy(
-            () ->
-                repository.find(
-                    source(
-                        source.gameInstanceId(),
-                        new UUID(0x6666666666666666L, 0x8666666666666666L))))
+    assertThatThrownBy(() ->
+            repository.find(
+                source(
+                    source.gameInstanceId(), new UUID(0x6666666666666666L, 0x8666666666666666L))))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -252,6 +253,49 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
   }
 
   @Test
+  void databaseFailureDoesNotCountAsAReplacementRefusal() {
+    var prior =
+        repository.installOwner(
+            source,
+            1L,
+            null,
+            FIRST_LEASE_CORRELATION,
+            "game-session-service",
+            "instance-prior",
+            Instant.parse("2026-10-26T00:00:01Z"));
+    long sequenceBefore = fenceSequenceValue();
+    var failOwnerRead =
+        new DefaultExecuteListener() {
+          @Override
+          public void executeStart(ExecuteContext context) {
+            String statement = context.sql();
+            if (statement != null
+                && statement.contains("game_session_region_runtime_status")
+                && statement.contains("FOR UPDATE")) {
+              throw new DataAccessException("Injected owner-row database failure");
+            }
+          }
+        };
+    var failingRepository =
+        new CanonicalGameplayRegionRuntimeStatusRepository(
+            DSL.using(
+                dsl.configuration().derive(new DefaultExecuteListenerProvider(failOwnerRead))));
+    assertThatThrownBy(() ->
+            installAfterBarrier(
+                failingRepository,
+                prior,
+                SECOND_LEASE_CORRELATION,
+                "instance-failure",
+                new CountDownLatch(1),
+                new CountDownLatch(0)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical Game Session region ownership is unavailable")
+        .hasRootCauseMessage("Injected owner-row database failure");
+    assertThat(repository.find(source)).contains(prior);
+    assertThat(fenceSequenceValue()).isEqualTo(sequenceBefore);
+  }
+
+  @Test
   void concurrentNewGrantsFromOnePriorOwnerInstallOnlyOneNewFence() throws Exception {
     var prior =
         repository.installOwner(
@@ -286,6 +330,20 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
       assertThat(committed.regionEpoch()).isEqualTo(prior.regionEpoch());
       assertThat(fenceSequenceValue()).isEqualTo(sequenceBefore + 1L);
       assertThat(committed).isEqualTo(firstResult == null ? secondResult : firstResult);
+      assertThat(committed.lastCommittedTickId()).isEqualTo(prior.lastCommittedTickId());
+      assertThat(committed.lastCommittedTickBatchId()).isEqualTo(prior.lastCommittedTickBatchId());
+
+      var currentGrantRetry =
+          repository.installOwner(
+              source,
+              committed.regionEpoch(),
+              prior,
+              committed.leaseTokenCorrelation(),
+              committed.ownerService(),
+              committed.ownerInstanceId(),
+              Instant.parse("2026-10-26T00:00:03Z"));
+      assertThat(currentGrantRetry).isEqualTo(committed);
+      assertThat(fenceSequenceValue()).isEqualTo(sequenceBefore + 1L);
     }
   }
 }

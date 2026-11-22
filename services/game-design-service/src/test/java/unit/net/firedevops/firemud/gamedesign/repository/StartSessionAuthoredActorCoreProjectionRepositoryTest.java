@@ -68,20 +68,18 @@ class StartSessionAuthoredActorCoreProjectionRepositoryTest {
     AuthoredInitialActorCoreProjection projection =
         AuthoredInitialActorCoreProjection.fromValidatedBinding(BINDING_ID, source);
 
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
-                    List.of(), List.of(source), owner()))
+    assertThatThrownBy(() ->
+            StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
+                List.of(), List.of(source), owner()))
         .isInstanceOf(
             StartSessionAuthoredActorCoreProjectionRepository.MissingRetainedProjectionException
                 .class);
 
     AuthoredInitialActorCoreSourceBinding changed =
         sourceBinding("different but internally well-formed terminal evidence");
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
-                    List.of(retained(owner(), source, projection, 0)), List.of(changed), owner()))
+    assertThatThrownBy(() ->
+            StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
+                List.of(retained(owner(), source, projection, 0)), List.of(changed), owner()))
         .isInstanceOf(
             StartSessionAuthoredActorCoreProjectionRepository.RetainedProjectionConflictException
                 .class)
@@ -95,21 +93,19 @@ class StartSessionAuthoredActorCoreProjectionRepositoryTest {
         AuthoredInitialActorCoreProjection.fromValidatedBinding(BINDING_ID, source);
     RetainedProjection wrongOrder = retained(owner(), source, projection, 1);
 
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
-                    List.of(wrongOrder), List.of(source), owner()))
+    assertThatThrownBy(() ->
+            StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
+                List.of(wrongOrder), List.of(source), owner()))
         .isInstanceOf(
             StartSessionAuthoredActorCoreProjectionRepository.RetainedProjectionConflictException
                 .class)
         .hasMessageContaining("owner identity or order changed");
 
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
-                    List.of(retained(owner(), source, projection, 0)),
-                    List.of(source, source),
-                    owner()))
+    assertThatThrownBy(() ->
+            StartSessionAuthoredActorCoreProjectionRepository.validateReplay(
+                List.of(retained(owner(), source, projection, 0)),
+                List.of(source, source),
+                owner()))
         .isInstanceOf(
             StartSessionAuthoredActorCoreProjectionRepository.RetainedProjectionConflictException
                 .class)
@@ -277,15 +273,14 @@ class StartSessionAuthoredActorCoreProjectionRepositoryTest {
     snapshot.put(
         "entries",
         entries.stream()
-            .map(
-                entry ->
-                    Map.of(
-                        "family", entry.family().name(),
-                        "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
-                        "sourceBindingJson", entry.sourceBinding().canonicalJson(),
-                        "sourceBindingDigest", entry.sourceBinding().digest(),
-                        "revisionOrder", entry.revisionOrder(),
-                        "revisionId", entry.revisionId().toString()))
+            .map(entry ->
+                Map.of(
+                    "family", entry.family().name(),
+                    "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
+                    "sourceBindingJson", entry.sourceBinding().canonicalJson(),
+                    "sourceBindingDigest", entry.sourceBinding().digest(),
+                    "revisionOrder", entry.revisionOrder(),
+                    "revisionId", entry.revisionId().toString()))
             .toList());
     return new GameplayRuleSelectedSource(CommandSource.canonical(snapshot));
   }

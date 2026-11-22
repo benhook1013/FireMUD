@@ -502,21 +502,18 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
             any(UUID.class),
             anyLong(),
             eq(StartSessionReservationEvidenceClient.Purpose.ISSUE)))
-        .thenAnswer(
-            invocation -> {
-              var tuple =
-                  invocation.getArgument(0, StartSessionPreAuthorizationReservationTuple.class);
-              UUID reservationOwnerId = invocation.getArgument(1, UUID.class);
-              long reservationClaimFence = invocation.getArgument(2, Long.class);
-              UUID claimOwnerId = invocation.getArgument(3, UUID.class);
-              long claimFence = invocation.getArgument(4, Long.class);
-              if (!reservationOwnerId.equals(claimOwnerId) || reservationClaimFence != claimFence) {
-                throw new IllegalArgumentException(
-                    "Stipulated ISSUE claim must retain the original owner and fence");
-              }
-              return stipulatedClaim(
-                  tuple, reservationOwnerId, reservationClaimFence, Instant.now());
-            });
+        .thenAnswer(invocation -> {
+          var tuple = invocation.getArgument(0, StartSessionPreAuthorizationReservationTuple.class);
+          UUID reservationOwnerId = invocation.getArgument(1, UUID.class);
+          long reservationClaimFence = invocation.getArgument(2, Long.class);
+          UUID claimOwnerId = invocation.getArgument(3, UUID.class);
+          long claimFence = invocation.getArgument(4, Long.class);
+          if (!reservationOwnerId.equals(claimOwnerId) || reservationClaimFence != claimFence) {
+            throw new IllegalArgumentException(
+                "Stipulated ISSUE claim must retain the original owner and fence");
+          }
+          return stipulatedClaim(tuple, reservationOwnerId, reservationClaimFence, Instant.now());
+        });
     return client;
   }
 

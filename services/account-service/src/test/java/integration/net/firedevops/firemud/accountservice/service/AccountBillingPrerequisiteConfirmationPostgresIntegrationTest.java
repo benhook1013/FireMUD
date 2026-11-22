@@ -265,15 +265,13 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
 
     try {
       Future<Result> first =
-          executor.submit(
-              () ->
-                  service(context, firstTransport, providerClock, ownerClock, MAX_OBSERVATION_AGE)
-                      .confirm(request));
+          executor.submit(() ->
+              service(context, firstTransport, providerClock, ownerClock, MAX_OBSERVATION_AGE)
+                  .confirm(request));
       Future<Result> second =
-          executor.submit(
-              () ->
-                  service(context, secondTransport, providerClock, ownerClock, MAX_OBSERVATION_AGE)
-                      .confirm(request));
+          executor.submit(() ->
+              service(context, secondTransport, providerClock, ownerClock, MAX_OBSERVATION_AGE)
+                  .confirm(request));
 
       assertThat(paymentMethodReadsReady.await(10, TimeUnit.SECONDS))
           .as("both exact retries pass preflight before either provider read completes")
@@ -318,18 +316,17 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        context
-                            .customers()
-                            .recordObservation(
-                                context.account(),
-                                intent.customerProvisioningRequestId(),
-                                intent.rowVersion(),
-                                UUID.randomUUID(),
-                                Observation.AMBIGUOUS,
-                                null,
-                                EVIDENCE_DIGEST)));
+                .execute(status ->
+                    context
+                        .customers()
+                        .recordObservation(
+                            context.account(),
+                            intent.customerProvisioningRequestId(),
+                            intent.rowVersion(),
+                            UUID.randomUUID(),
+                            Observation.AMBIGUOUS,
+                            null,
+                            EVIDENCE_DIGEST)));
     ConfirmationRequest request = request(context, advancedIntent);
     var firstTransport =
         new ControlledStripeTransport(
@@ -343,19 +340,18 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        context
-                            .instruments()
-                            .recordAvailability(
-                                new AccountPaymentInstrumentRepository.AvailabilityObservation(
-                                    UUID.randomUUID(),
-                                    request.instrumentUuid(),
-                                    context.account(),
-                                    first.instrument().rowVersion(),
-                                    AccountPaymentInstrumentRecord.State.UNAVAILABLE,
-                                    first.instrument().display(),
-                                    "sha256:" + "b".repeat(64)))));
+                .execute(status ->
+                    context
+                        .instruments()
+                        .recordAvailability(
+                            new AccountPaymentInstrumentRepository.AvailabilityObservation(
+                                UUID.randomUUID(),
+                                request.instrumentUuid(),
+                                context.account(),
+                                first.instrument().rowVersion(),
+                                AccountPaymentInstrumentRecord.State.UNAVAILABLE,
+                                first.instrument().display(),
+                                "sha256:" + "b".repeat(64)))));
     assertThat(advancedInstrument.rowVersion()).isEqualTo(2);
     assertThat(advancedInstrument.state())
         .isEqualTo(AccountPaymentInstrumentRecord.State.UNAVAILABLE);
@@ -443,18 +439,17 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
         () ->
             context
                 .transaction()
-                .execute(
-                    status ->
-                        context
-                            .customers()
-                            .recordObservation(
-                                context.account(),
-                                intent.customerProvisioningRequestId(),
-                                intent.rowVersion(),
-                                concurrentObservationId,
-                                Observation.AMBIGUOUS,
-                                null,
-                                EVIDENCE_DIGEST));
+                .execute(status ->
+                    context
+                        .customers()
+                        .recordObservation(
+                            context.account(),
+                            intent.customerProvisioningRequestId(),
+                            intent.rowVersion(),
+                            concurrentObservationId,
+                            Observation.AMBIGUOUS,
+                            null,
+                            EVIDENCE_DIGEST));
     ControlledStripeTransport transport =
         new ControlledStripeTransport(
             customerResponse(context.account(), intent.customerProvisioningRequestId()),
@@ -483,18 +478,17 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
     ConfirmationRequest request = request(context, intent);
     context
         .transaction()
-        .execute(
-            status ->
-                context
-                    .customers()
-                    .recordObservation(
-                        context.account(),
-                        intent.customerProvisioningRequestId(),
-                        intent.rowVersion(),
-                        request.customerObservationRequestId(),
-                        Observation.CONFIRMED,
-                        PROVIDER_CUSTOMER_ID,
-                        EVIDENCE_DIGEST));
+        .execute(status ->
+            context
+                .customers()
+                .recordObservation(
+                    context.account(),
+                    intent.customerProvisioningRequestId(),
+                    intent.rowVersion(),
+                    request.customerObservationRequestId(),
+                    Observation.CONFIRMED,
+                    PROVIDER_CUSTOMER_ID,
+                    EVIDENCE_DIGEST));
     ControlledStripeTransport transport =
         new ControlledStripeTransport(
             customerResponse(context.account(), intent.customerProvisioningRequestId()),
@@ -516,34 +510,32 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
     ConfirmationRequest request = request(context, intent);
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context
-                  .customers()
-                  .recordObservation(
-                      context.account(),
-                      intent.customerProvisioningRequestId(),
-                      intent.rowVersion(),
-                      request.customerObservationRequestId(),
-                      Observation.CONFIRMED,
+        .executeWithoutResult(status -> {
+          context
+              .customers()
+              .recordObservation(
+                  context.account(),
+                  intent.customerProvisioningRequestId(),
+                  intent.rowVersion(),
+                  request.customerObservationRequestId(),
+                  Observation.CONFIRMED,
+                  PROVIDER_CUSTOMER_ID,
+                  EVIDENCE_DIGEST);
+          context
+              .instruments()
+              .retainAttachment(
+                  new AccountPaymentInstrumentRepository.Attachment(
+                      request.attachmentRequestId(),
+                      request.instrumentUuid(),
+                      request.accountUuid(),
+                      request.customerProvisioningRequestId(),
                       PROVIDER_CUSTOMER_ID,
-                      EVIDENCE_DIGEST);
-              context
-                  .instruments()
-                  .retainAttachment(
-                      new AccountPaymentInstrumentRepository.Attachment(
-                          request.attachmentRequestId(),
-                          request.instrumentUuid(),
-                          request.accountUuid(),
-                          request.customerProvisioningRequestId(),
-                          PROVIDER_CUSTOMER_ID,
-                          PROVIDER_PAYMENT_METHOD_ID,
-                          AccountPaymentInstrumentRecord.State.ATTACHABLE,
-                          new AccountPaymentInstrumentRecord.DisplayMetadata(
-                              "visa", "4242", 12, 2030),
-                          EVIDENCE_DIGEST));
-              status.setRollbackOnly();
-            });
+                      PROVIDER_PAYMENT_METHOD_ID,
+                      AccountPaymentInstrumentRecord.State.ATTACHABLE,
+                      new AccountPaymentInstrumentRecord.DisplayMetadata("visa", "4242", 12, 2030),
+                      EVIDENCE_DIGEST));
+          status.setRollbackOnly();
+        });
 
     assertThat(context.customers().findByAccount(context.account())).contains(intent);
     assertThat(context.customers().readHistory(context.account())).containsExactly(intent);
@@ -700,18 +692,17 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
 
   @Test
   void expectedCustomerVersionCannotOverflowOriginalReceiptVersionCheck() {
-    assertThatThrownBy(
-            () ->
-                new ConfirmationRequest(
-                    UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d001"),
-                    UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d002"),
-                    UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d003"),
-                    Long.MAX_VALUE,
-                    UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d004"),
-                    PROVIDER_CUSTOMER_ID,
-                    UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d005"),
-                    UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d006"),
-                    PROVIDER_PAYMENT_METHOD_ID))
+    assertThatThrownBy(() ->
+            new ConfirmationRequest(
+                UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d001"),
+                UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d002"),
+                UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d003"),
+                Long.MAX_VALUE,
+                UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d004"),
+                PROVIDER_CUSTOMER_ID,
+                UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d005"),
+                UUID.fromString("8a0f13b5-2189-4085-9aa9-bebd30e1d006"),
+                PROVIDER_PAYMENT_METHOD_ID))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -873,11 +864,10 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
     return Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        context
-                            .customers()
-                            .retainIntent(context.account(), UUID.randomUUID(), UUID.randomUUID())))
+                .execute(status ->
+                    context
+                        .customers()
+                        .retainIntent(context.account(), UUID.randomUUID(), UUID.randomUUID())))
         .customer();
   }
 
@@ -887,11 +877,11 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
           "This is a JSON test fixture whose text block intentionally retains LF characters independent of the host console line separator.")
   private static String customerResponse(UUID accountUuid, UUID customerOperationId) {
     return """
-        {"id":"%s","object":"customer","deleted":false,"livemode":false,
-         "metadata":{"firemud_metadata_schema_version":"1",
-          "firemud_operation_type":"customer_provisioning",
-          "firemud_operation_id":"%s","firemud_account_id":"%s"}}
-        """
+    {"id":"%s","object":"customer","deleted":false,"livemode":false,
+     "metadata":{"firemud_metadata_schema_version":"1",
+      "firemud_operation_type":"customer_provisioning",
+      "firemud_operation_id":"%s","firemud_account_id":"%s"}}
+    """
         .formatted(PROVIDER_CUSTOMER_ID, customerOperationId, accountUuid);
   }
 
@@ -901,10 +891,10 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
           "This is a JSON test fixture whose text block intentionally retains LF characters independent of the host console line separator.")
   private static String paymentMethodResponse(String methodId, String customerId) {
     return """
-        {"id":"%s","object":"payment_method","type":"card","livemode":false,
-         "customer":"%s","card":{"brand":"visa","last4":"4242",
-          "exp_month":12,"exp_year":2030}}
-        """
+    {"id":"%s","object":"payment_method","type":"card","livemode":false,
+     "customer":"%s","card":{"brand":"visa","last4":"4242",
+      "exp_month":12,"exp_year":2030}}
+    """
         .formatted(methodId, customerId);
   }
 

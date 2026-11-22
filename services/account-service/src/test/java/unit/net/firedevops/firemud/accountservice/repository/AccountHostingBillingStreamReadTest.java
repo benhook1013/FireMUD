@@ -106,10 +106,9 @@ class AccountHostingBillingStreamReadTest {
             fields -> fields.put("receipt", Map.of("hardCutoff", false)))) {
       Map<String, Object> fields = JSON.readValue(original, new TypeReference<>() {});
       mutation.accept(fields);
-      assertThatThrownBy(
-              () ->
-                  AccountHostingSubscriptionLifecycleEvidence.verifyBilling(
-                      AccountHostingSubscriptionLifecycleEvidence.encode(fields)))
+      assertThatThrownBy(() ->
+              AccountHostingSubscriptionLifecycleEvidence.verifyBilling(
+                  AccountHostingSubscriptionLifecycleEvidence.encode(fields)))
           .isInstanceOf(IllegalArgumentException.class);
     }
     String text = new String(original, StandardCharsets.UTF_8);

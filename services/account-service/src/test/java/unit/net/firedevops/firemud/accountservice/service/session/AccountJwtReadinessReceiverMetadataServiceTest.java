@@ -139,23 +139,20 @@ class AccountJwtReadinessReceiverMetadataServiceTest {
   @Test
   void selectsCurrentProtectedOperationAndReturnsOnlyRecheckedMetadataWithoutCreatingPlan() {
     when(inventorySource.observe(context))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return inventory;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return inventory;
+        });
     when(trustedJwksSource.sourceIdentity())
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return sourceIdentity;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return sourceIdentity;
+        });
     when(trustedJwksSource.load())
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new PublicJwksSnapshot(sourceIdentity, PUBLIC_JWKS_BYTES);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new PublicJwksSnapshot(sourceIdentity, PUBLIC_JWKS_BYTES);
+        });
 
     var response = service.getCurrentReadinessReceiverMetadata(request().build());
 
@@ -220,17 +217,15 @@ class AccountJwtReadinessReceiverMetadataServiceTest {
         .thenReturn(context);
     when(repository.readCurrentPlan(accountBinding, trustFence, OPERATION_ID)).thenReturn(plan);
     when(inventorySource.observe(context))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return inventory;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return inventory;
+        });
     when(trustedJwksSource.load())
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new PublicJwksSnapshot(sourceIdentity, PUBLIC_JWKS_BYTES);
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new PublicJwksSnapshot(sourceIdentity, PUBLIC_JWKS_BYTES);
+        });
     var clock = Clock.fixed(Instant.ofEpochSecond(NOW), ZoneOffset.UTC);
     var realProbeService =
         new AccountJwtReadinessProbeService(
@@ -272,10 +267,9 @@ class AccountJwtReadinessReceiverMetadataServiceTest {
 
   @Test
   void rejectsMalformedRequestBeforeReadingPlanInventoryOrPublicJwks() {
-    assertThatThrownBy(
-            () ->
-                service.getCurrentReadinessReceiverMetadata(
-                    GetCurrentReadinessReceiverMetadataRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            service.getCurrentReadinessReceiverMetadata(
+                GetCurrentReadinessReceiverMetadataRequest.getDefaultInstance()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
 
@@ -283,10 +277,9 @@ class AccountJwtReadinessReceiverMetadataServiceTest {
         UnknownFieldSet.newBuilder()
             .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                service.getCurrentReadinessReceiverMetadata(
-                    request().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            service.getCurrentReadinessReceiverMetadata(
+                request().setUnknownFields(unknown).build()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
 
@@ -378,11 +371,10 @@ class AccountJwtReadinessReceiverMetadataServiceTest {
     when(trustedJwksSource.sourceIdentity())
         .thenReturn(sourceIdentity("33333333-3333-4333-8333-333333333333", "account-api-r1"));
     when(trustedJwksSource.load())
-        .thenAnswer(
-            ignored ->
-                new PublicJwksSnapshot(
-                    sourceIdentity("88888888-8888-4888-8888-888888888888", "account-api-r1"),
-                    PUBLIC_JWKS_BYTES));
+        .thenAnswer(ignored ->
+            new PublicJwksSnapshot(
+                sourceIdentity("88888888-8888-4888-8888-888888888888", "account-api-r1"),
+                PUBLIC_JWKS_BYTES));
     assertUnavailable(request().build());
 
     setUp();
@@ -448,13 +440,12 @@ class AccountJwtReadinessReceiverMetadataServiceTest {
     AtomicInteger inventoryReads = new AtomicInteger();
     AtomicBoolean secondNetworkPhaseComplete = new AtomicBoolean();
     when(inventorySource.observe(context))
-        .thenAnswer(
-            ignored -> {
-              if (inventoryReads.incrementAndGet() == 2) {
-                secondNetworkPhaseComplete.set(true);
-              }
-              return inventory;
-            });
+        .thenAnswer(ignored -> {
+          if (inventoryReads.incrementAndGet() == 2) {
+            secondNetworkPhaseComplete.set(true);
+          }
+          return inventory;
+        });
     when(probeService.readCurrentInventoryObservationContext(accountBinding, trustFence))
         .thenAnswer(ignored -> secondNetworkPhaseComplete.get() ? rotatedContext : context);
 

@@ -13,31 +13,29 @@ public record WorldDraftTerminalReadEvidence(
   public WorldDraftTerminalReadEvidence {
     Objects.requireNonNull(request, "request");
     ownerReadback = Objects.requireNonNull(ownerReadback, "ownerReadback");
-    ownerReadback.ifPresent(
-        value -> {
-          if (value.owner() != DraftAuthorizationFenceBinding.Owner.WORLD
-              || (value.outcome() != DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED
-                  && value.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED)) {
-            throw new IllegalArgumentException("World readback must be an exact terminal outcome");
-          }
-          DraftAuthorizationFenceBinding binding = request.accountBinding();
-          value.requireBinding(binding);
-          if (!Arrays.equals(value.fullBinding(), request.originalAccountBinding())) {
-            throw new IllegalArgumentException("World readback differs from the original binding");
-          }
-          if (value.outcome() == DraftAuthorizationFenceBinding.Outcome.COMMITTED) {
-            WorldDraftTerminalReadGrpcCodec.requireCommittedResult(request, value);
-          }
-        });
+    ownerReadback.ifPresent(value -> {
+      if (value.owner() != DraftAuthorizationFenceBinding.Owner.WORLD
+          || (value.outcome() != DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED
+              && value.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED)) {
+        throw new IllegalArgumentException("World readback must be an exact terminal outcome");
+      }
+      DraftAuthorizationFenceBinding binding = request.accountBinding();
+      value.requireBinding(binding);
+      if (!Arrays.equals(value.fullBinding(), request.originalAccountBinding())) {
+        throw new IllegalArgumentException("World readback differs from the original binding");
+      }
+      if (value.outcome() == DraftAuthorizationFenceBinding.Outcome.COMMITTED) {
+        WorldDraftTerminalReadGrpcCodec.requireCommittedResult(request, value);
+      }
+    });
   }
 
   /** Returns the intake request identity from this validated committed World APPLIED result. */
   public UUID appliedIntakeRequestId() {
     DraftAuthorizationFenceBinding.OwnerReadback readback =
-        ownerReadback.orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "World APPLIED intake request requires a committed terminal readback"));
+        ownerReadback.orElseThrow(() ->
+            new IllegalStateException(
+                "World APPLIED intake request requires a committed terminal readback"));
     if (readback.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED) {
       throw new IllegalStateException(
           "World APPLIED intake request requires a committed terminal readback");

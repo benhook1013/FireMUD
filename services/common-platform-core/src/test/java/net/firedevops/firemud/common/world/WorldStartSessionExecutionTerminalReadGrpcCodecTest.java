@@ -78,36 +78,32 @@ class WorldStartSessionExecutionTerminalReadGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
-                    WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
-                        .setUnknownFields(unknown)
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
+                WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
+                    .setUnknownFields(unknown)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
-                    WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
-                        .setReadRequestId("d1f41bfb-265a-4f3b-8b2a-124cba20ce43 ")
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
+                WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
+                    .setReadRequestId("d1f41bfb-265a-4f3b-8b2a-124cba20ce43 ")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil UUID");
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
-                    WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
-                        .setAccountWorldParticipationFence(0L)
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
+                WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
+                    .setAccountWorldParticipationFence(0L)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive");
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
-                    WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
-                        .setTargetNamespace("other-runtime")
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminalReadGrpcCodec.fromRequest(
+                WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request).toBuilder()
+                    .setTargetNamespace("other-runtime")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("differs from the exact original");
   }
@@ -140,17 +136,15 @@ class WorldStartSessionExecutionTerminalReadGrpcCodecTest {
             .setCanonicalTerminalBytes(
                 com.google.protobuf.ByteString.copyFrom(valid.canonicalBytes()))
             .build();
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(
-                    request, changedCorrelation))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(
+                request, changedCorrelation))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact");
 
-    assertThatThrownBy(
-            () ->
-                WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(
-                    request, changedCorrelation.toBuilder().setUnknownFields(unknown()).build()))
+    assertThatThrownBy(() ->
+            WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(
+                request, changedCorrelation.toBuilder().setUnknownFields(unknown()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }

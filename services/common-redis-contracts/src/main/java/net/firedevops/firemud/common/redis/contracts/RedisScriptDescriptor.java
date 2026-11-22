@@ -109,11 +109,9 @@ public record RedisScriptDescriptor(
 
     boolean fullKeyCompanion =
         keys.stream()
-            .anyMatch(
-                key ->
-                    key.hashTagDeclaration() == HashTagDeclaration.FULL_KEY_ANCHOR
-                        || key.hashTagDeclaration()
-                            == HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
+            .anyMatch(key ->
+                key.hashTagDeclaration() == HashTagDeclaration.FULL_KEY_ANCHOR
+                    || key.hashTagDeclaration() == HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
     if (fullKeyCompanion
         && (keys.size() != 2
             || keys.get(0).hashTagDeclaration() != HashTagDeclaration.FULL_KEY_ANCHOR

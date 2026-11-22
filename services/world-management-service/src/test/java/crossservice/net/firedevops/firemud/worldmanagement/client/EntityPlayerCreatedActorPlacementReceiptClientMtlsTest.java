@@ -74,10 +74,9 @@ class EntityPlayerCreatedActorPlacementReceiptClientMtlsTest {
                 .build());
         assertThatThrownBy(() -> client.read(request()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
         var exact = receipt(request());
         for (var malformed :
             java.util.List.of(
@@ -105,21 +104,18 @@ class EntityPlayerCreatedActorPlacementReceiptClientMtlsTest {
           expected.set(malformed);
           assertThatThrownBy(() -> client.read(request()))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.FAILED_PRECONDITION));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
         }
         int beforeInvalid = calls.get();
         assertThatThrownBy(() -> client.read(request().toBuilder().setSchemaVersion(2).build()))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(
-                () ->
-                    client.read(
-                        request().toBuilder()
-                            .setOrigin(
-                                request().getOrigin().toBuilder().setTargetNamespace("other"))
-                            .build()))
+        assertThatThrownBy(() ->
+                client.read(
+                    request().toBuilder()
+                        .setOrigin(request().getOrigin().toBuilder().setTargetNamespace("other"))
+                        .build()))
             .isInstanceOf(IllegalArgumentException.class);
         assertThat(calls).hasValue(beforeInvalid);
       }
@@ -149,10 +145,9 @@ class EntityPlayerCreatedActorPlacementReceiptClientMtlsTest {
         client.init();
         assertThatThrownBy(() -> client.read(request()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
       }
     } finally {
       stopServer(wrongServer);

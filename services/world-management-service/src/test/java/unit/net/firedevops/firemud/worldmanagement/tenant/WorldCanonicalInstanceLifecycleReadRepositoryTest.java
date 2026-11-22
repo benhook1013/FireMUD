@@ -93,14 +93,13 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
             Record.class,
             boolean.class);
     readMaterialized.setAccessible(true);
-    assertThatThrownBy(
-            () ->
-                readMaterialized.invoke(
-                    repository,
-                    request,
-                    mock(WorldCanonicalInstanceAssociation.class),
-                    preparation,
-                    false))
+    assertThatThrownBy(() ->
+            readMaterialized.invoke(
+                repository,
+                request,
+                mock(WorldCanonicalInstanceAssociation.class),
+                preparation,
+                false))
         .isInstanceOf(InvocationTargetException.class)
         .satisfies(failure -> assertThat(failure.getCause()).isSameAs(materializedFailure));
   }
@@ -134,14 +133,13 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
       var preparation = mock(Record.class);
       when(preparation.get("capture_id", UUID.class)).thenThrow(storageFailure);
 
-      assertThatThrownBy(
-              () ->
-                  readMaterialized.invoke(
-                      repository,
-                      request,
-                      mock(WorldCanonicalInstanceAssociation.class),
-                      preparation,
-                      false))
+      assertThatThrownBy(() ->
+              readMaterialized.invoke(
+                  repository,
+                  request,
+                  mock(WorldCanonicalInstanceAssociation.class),
+                  preparation,
+                  false))
           .isInstanceOf(InvocationTargetException.class)
           .satisfies(failure -> assertThat(failure.getCause()).isSameAs(storageFailure));
     }
@@ -195,25 +193,22 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
 
     var closureSelector =
         release(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
-    assertThatThrownBy(
-            () ->
-                closureSelector(
-                    closureSelector,
-                    participantDigestsWithSchema(closureSelector, "ENTITY_MANAGEMENT", 1)))
+    assertThatThrownBy(() ->
+            closureSelector(
+                closureSelector,
+                participantDigestsWithSchema(closureSelector, "ENTITY_MANAGEMENT", 1)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
-    assertThatThrownBy(
-            () ->
-                closureSelector(
-                    closureSelector,
-                    participantDigestsWithSchema(closureSelector, "AUTOMATION_SCRIPTING", 4)))
+    assertThatThrownBy(() ->
+            closureSelector(
+                closureSelector,
+                participantDigestsWithSchema(closureSelector, "AUTOMATION_SCRIPTING", 4)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
-    assertThatThrownBy(
-            () ->
-                closureSelector(
-                    closureSelector,
-                    participantDigestsWithSchema(closureSelector, "WORLD_MANAGEMENT", 3)))
+    assertThatThrownBy(() ->
+            closureSelector(
+                closureSelector,
+                participantDigestsWithSchema(closureSelector, "WORLD_MANAGEMENT", 3)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
   }
@@ -281,25 +276,24 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
             : selector.request().canonicalVersionId();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner -> {
-                  boolean gameLogic = "GAME_LOGIC".equals(owner);
-                  String contentDigest =
-                      "WORLD_MANAGEMENT".equals(owner) && selector != null
-                          ? selector.request().contentDigest()
-                          : "a".repeat(64);
-                  return new AuthoredWorldReleaseAttestationEvidence.Participant(
-                      owner,
-                      "7",
-                      false,
-                      null,
-                      commitId,
-                      contentDigest,
-                      AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                          owner, schemaVersion),
-                      gameLogic,
-                      gameLogic ? "sha256:" + "c".repeat(64) : null);
-                })
+            .map(owner -> {
+              boolean gameLogic = "GAME_LOGIC".equals(owner);
+              String contentDigest =
+                  "WORLD_MANAGEMENT".equals(owner) && selector != null
+                      ? selector.request().contentDigest()
+                      : "a".repeat(64);
+              return new AuthoredWorldReleaseAttestationEvidence.Participant(
+                  owner,
+                  "7",
+                  false,
+                  null,
+                  commitId,
+                  contentDigest,
+                  AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                      owner, schemaVersion),
+                  gameLogic,
+                  gameLogic ? "sha256:" + "c".repeat(64) : null);
+            })
             .toList();
 
     String descriptorDigest = "sha256:" + "b".repeat(64);
@@ -432,20 +426,19 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
       participantDigestsWithSchema(
           AuthoredWorldReleaseAttestationEvidence release, String owner, int schemaVersion) {
     return release.participantDigests().stream()
-        .map(
-            participant ->
-                new AuthoredWorldReleaseAttestationEvidence.Participant(
-                    participant.participantKey(),
-                    participant.scopeValue(),
-                    participant.baseVersionIdPresent(),
-                    participant.baseVersionId(),
-                    participant.appliedCommitId(),
-                    participant.contentDigest(),
-                    owner.equals(participant.participantKey())
-                        ? schemaVersion
-                        : participant.digestSchemaVersion(),
-                    participant.abilitySchemaDigestPresent(),
-                    participant.abilitySchemaDigest()))
+        .map(participant ->
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                participant.participantKey(),
+                participant.scopeValue(),
+                participant.baseVersionIdPresent(),
+                participant.baseVersionId(),
+                participant.appliedCommitId(),
+                participant.contentDigest(),
+                owner.equals(participant.participantKey())
+                    ? schemaVersion
+                    : participant.digestSchemaVersion(),
+                participant.abilitySchemaDigestPresent(),
+                participant.abilitySchemaDigest()))
         .toList();
   }
 

@@ -132,10 +132,9 @@ class AutomationEmptySelectedSourceIntakeValueTest {
         mock(SelectedOwnerIntakeAuthorizationReadClient.class);
     SelectedOwnerWorldInventoryReadClient worldInventoryReadClient =
         mock(SelectedOwnerWorldInventoryReadClient.class);
-    assertThatThrownBy(
-            () ->
-                new AutomationEmptySelectedSourceIntakeService(
-                    repository, authorizationReadClient, worldInventoryReadClient, "bad namespace"))
+    assertThatThrownBy(() ->
+            new AutomationEmptySelectedSourceIntakeService(
+                repository, authorizationReadClient, worldInventoryReadClient, "bad namespace"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Canonical namespace");
 
@@ -242,10 +241,8 @@ class AutomationEmptySelectedSourceIntakeValueTest {
     try (MockedStatic<AutomationEmptySelectedSourceIntakeReceipt> receiptStatic =
         mockStatic(AutomationEmptySelectedSourceIntakeReceipt.class)) {
       receiptStatic
-          .when(
-              () ->
-                  AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
-                      namespace, binding, freeze))
+          .when(() ->
+              AutomationEmptySelectedSourceIntakeReceipt.requestDigest(namespace, binding, freeze))
           .thenReturn(requestDigest);
       assertThat(service.retain(namespace, binding, freeze)).isSameAs(receipt);
     } finally {

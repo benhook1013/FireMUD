@@ -523,14 +523,13 @@ public class AccountStartSessionActivationProtectionRepository {
     if (isolation != null && isolation != Connection.TRANSACTION_READ_COMMITTED) {
       throw new IllegalStateException("Writable Account READ_COMMITTED transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException("Writable Account READ_COMMITTED transaction required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException("Writable Account READ_COMMITTED transaction required");
+      }
+    });
   }
 
   private static IllegalStateException conflict() {

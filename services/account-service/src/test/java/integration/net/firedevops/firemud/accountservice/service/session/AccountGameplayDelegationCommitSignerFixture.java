@@ -182,10 +182,9 @@ public final class AccountGameplayDelegationCommitSignerFixture {
     trustedJwksSource = mock(AccountJwtJwksTrustedSource.class);
     when(trustedJwksSource.sourceIdentity()).thenReturn(sourceIdentity);
     when(trustedJwksSource.load())
-        .thenAnswer(
-            invocation ->
-                new PublicJwksSnapshot(
-                    sourceIdentity, trustedJwksJson.get().getBytes(StandardCharsets.UTF_8)));
+        .thenAnswer(invocation ->
+            new PublicJwksSnapshot(
+                sourceIdentity, trustedJwksJson.get().getBytes(StandardCharsets.UTF_8)));
 
     AccountJwtSignerDesiredStateRepository desiredState =
         mock(AccountJwtSignerDesiredStateRepository.class);

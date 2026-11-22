@@ -124,78 +124,65 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     var evidence = evidence("test", 1, Outcome.RETAINED);
     var wire = AccountGameLogicIntakeSettlementProtoCodec.toResponse(evidence);
     var changed = evidence("test", 1, Outcome.RETAINED);
-    assertThatThrownBy(
-            () ->
-                new AccountGameLogicIntakeSettlementReadEvidence(
-                    evidence.request(), changed.receipt()))
+    assertThatThrownBy(() ->
+            new AccountGameLogicIntakeSettlementReadEvidence(evidence.request(), changed.receipt()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameLogicIntakeSettlementReadEvidence(
-                    AccountGameLogicIntakeSettlementReadEvidence.Request.create(
-                        "other", evidence.request().binding()),
-                    evidence.receipt()))
+    assertThatThrownBy(() ->
+            new AccountGameLogicIntakeSettlementReadEvidence(
+                AccountGameLogicIntakeSettlementReadEvidence.Request.create(
+                    "other", evidence.request().binding()),
+                evidence.receipt()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(),
-                    wire.toBuilder()
-                        .setSettlementReceiptDigest("sha256:" + "0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(),
+                wire.toBuilder().setSettlementReceiptDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var unknown =
         com.google.protobuf.UnknownFieldSet.newBuilder()
             .addField(
                 99, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromRequest(
-                    wire.getRequest().toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromRequest(
+                wire.getRequest().toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(),
-                    wire.toBuilder()
-                        .setRequest(wire.getRequest().toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(),
+                wire.toBuilder()
+                    .setRequest(wire.getRequest().toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(),
-                    wire.toBuilder()
-                        .setRequest(wire.getRequest().toBuilder().setTargetNamespace("other"))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(),
+                wire.toBuilder()
+                    .setRequest(wire.getRequest().toBuilder().setTargetNamespace("other"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(),
-                    wire.toBuilder()
-                        .setOriginalSettlementReceipt(
-                            ByteString.copyFrom(changed.receipt().canonicalBytes()))
-                        .setSettlementReceiptDigest(changed.receipt().digest())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(),
+                wire.toBuilder()
+                    .setOriginalSettlementReceipt(
+                        ByteString.copyFrom(changed.receipt().canonicalBytes()))
+                    .setSettlementReceiptDigest(changed.receipt().digest())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(), wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(), wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromRequest(
-                    wire.getRequest().toBuilder().setIntakeAuthorizationDigest("changed").build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromRequest(
+                wire.getRequest().toBuilder().setIntakeAuthorizationDigest("changed").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromRequest(
-                    wire.getRequest().toBuilder()
-                        .setOriginalIntakeAuthorization(ByteString.copyFrom(new byte[4194305]))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromRequest(
+                wire.getRequest().toBuilder()
+                    .setOriginalIntakeAuthorization(ByteString.copyFrom(new byte[4194305]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     byte[] trailing =
         java.util.Arrays.copyOf(
@@ -206,24 +193,21 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     wrongSchema[Integer.BYTES] ^= 1;
     assertThatThrownBy(() -> AccountGameLogicIntakeSettlementEvidence.fromStored(wrongSchema))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(),
-                    wire.toBuilder()
-                        .setOriginalSettlementReceipt(
-                            ByteString.copyFrom(
-                                new byte
-                                    [AccountGameLogicIntakeSettlementEvidence.MAX_CANONICAL_BYTES
-                                        + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(),
+                wire.toBuilder()
+                    .setOriginalSettlementReceipt(
+                        ByteString.copyFrom(
+                            new byte
+                                [AccountGameLogicIntakeSettlementEvidence.MAX_CANONICAL_BYTES + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
-                    evidence.request(),
-                    net.firedevops.firemud.account.v1.SettleGameLogicIntakeResponse
-                        .getDefaultInstance()))
+    assertThatThrownBy(() ->
+            AccountGameLogicIntakeSettlementProtoCodec.fromResponse(
+                evidence.request(),
+                net.firedevops.firemud.account.v1.SettleGameLogicIntakeResponse
+                    .getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -232,10 +216,9 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcAccountGameLogicIntakeSettlementReadClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcAccountGameLogicIntakeSettlementReadClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     client =
         new GrpcAccountGameLogicIntakeSettlementReadClient(
@@ -245,11 +228,10 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
             NAMESPACE);
     var evidence = evidence("test", 1, Outcome.ABORTED);
     assertSanitizedUnavailable(() -> client.read(evidence.request()));
-    assertThatThrownBy(
-            () ->
-                client.read(
-                    AccountGameLogicIntakeSettlementReadEvidence.Request.create(
-                        "other", evidence.request().binding())))
+    assertThatThrownBy(() ->
+            client.read(
+                AccountGameLogicIntakeSettlementReadEvidence.Request.create(
+                    "other", evidence.request().binding())))
         .isInstanceOf(IllegalArgumentException.class);
     org.springframework.transaction.support.TransactionSynchronizationManager
         .setActualTransactionActive(true);
@@ -290,10 +272,9 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     client.init();
     assertThatThrownBy(() -> client.read(large.request()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(headers).hasValue(0);
     assertThat(bodies).hasValue(0);
   }
@@ -382,13 +363,12 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
   private static void assertSanitizedUnavailable(ThrowingCallable operation) {
     assertThatThrownBy(operation)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = Status.fromThrowable(failure);
-              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(status.getDescription()).isNull();
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          var status = Status.fromThrowable(failure);
+          assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(status.getDescription()).isNull();
+          assertThat(failure.getCause()).isNull();
+        });
   }
 
   /** These canonical bytes are deliberately synthetic transport evidence, not owner provenance. */

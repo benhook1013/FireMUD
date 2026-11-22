@@ -99,21 +99,16 @@ class StartSessionPreAuthorizationReservationTupleTest {
             () -> StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(" " + json))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical JSON");
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
-                    withUnknownRootField))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(withUnknownRootField))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(missingTargetOwner))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(missingTargetOwner))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
-                    invalidExpectedVersion))
+    assertThatThrownBy(() ->
+            StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(invalidExpectedVersion))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("expectedVersion");
     assertThatThrownBy(

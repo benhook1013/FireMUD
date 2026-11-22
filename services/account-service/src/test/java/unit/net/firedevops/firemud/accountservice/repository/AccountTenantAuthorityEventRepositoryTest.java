@@ -368,29 +368,27 @@ class AccountTenantAuthorityEventRepositoryTest {
       if (hosting)
         doReturn(authority).when(repository).readHostingCheckpoint(TENANT_ID, REQUEST_ID);
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0, String.class);
-                if (sql.contains("FROM account_tenant_authority_source_records")) return head;
-                if (sql.contains("JOIN account_tenant_entitlement_outbox_streams")) return billing;
-                if (sql.contains("SELECT receipt_payload FROM subscription_lifecycle_receipts"))
-                  return receipt;
-                if (sql.contains(
-                    "SELECT canonical_tenant_id FROM account_fresh_tenant_identity_associations"))
-                  return null;
-                throw new AssertionError("Unexpected source-selection SQL: " + sql);
-              });
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0, String.class);
+            if (sql.contains("FROM account_tenant_authority_source_records")) return head;
+            if (sql.contains("JOIN account_tenant_entitlement_outbox_streams")) return billing;
+            if (sql.contains("SELECT receipt_payload FROM subscription_lifecycle_receipts"))
+              return receipt;
+            if (sql.contains(
+                "SELECT canonical_tenant_id FROM account_fresh_tenant_identity_associations"))
+              return null;
+            throw new AssertionError("Unexpected source-selection SQL: " + sql);
+          });
     }
   }
 
   @SuppressWarnings("unchecked")
   private static Record projection(Map<String, Object> fields) {
     Record row = mock(Record.class);
-    doAnswer(
-            invocation ->
-                invocation
-                    .getArgument(1, Class.class)
-                    .cast(fields.get(invocation.getArgument(0, String.class))))
+    doAnswer(invocation ->
+            invocation
+                .getArgument(1, Class.class)
+                .cast(fields.get(invocation.getArgument(0, String.class))))
         .when(row)
         .get(anyString(), any(Class.class));
     return row;

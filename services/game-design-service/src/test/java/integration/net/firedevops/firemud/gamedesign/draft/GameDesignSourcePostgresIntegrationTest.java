@@ -81,26 +81,22 @@ class GameDesignSourcePostgresIntegrationTest {
   void exactReviewedClaimReplayPreservesAllRetainedRowsAndChangedInputCannotRewriteThem() {
     var local = fixture();
     var original = storageBinding(local, "reviewed-claim");
-    local.tx(
-        () -> {
-          claimStorageBinding(local, original);
-          return null;
-        });
+    local.tx(() -> {
+      claimStorageBinding(local, original);
+      return null;
+    });
     var retained = reviewedClaimRows(local);
-    local.tx(
-        () -> {
-          claimStorageBinding(local, original);
-          return null;
-        });
+    local.tx(() -> {
+      claimStorageBinding(local, original);
+      return null;
+    });
     assertThat(reviewedClaimRows(local)).isEqualTo(retained);
     var changed = changedClaimInput(original);
-    assertThatThrownBy(
-            () ->
-                local.tx(
-                    () -> {
-                      claimStorageBinding(local, changed);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            local.tx(() -> {
+              claimStorageBinding(local, changed);
+              return null;
+            }))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT");
     assertThat(reviewedClaimRows(local)).isEqualTo(retained);
@@ -113,11 +109,10 @@ class GameDesignSourcePostgresIntegrationTest {
     var binding = storageBinding(local, "rolled-back-reviewed-claim");
     local
         .write()
-        .executeWithoutResult(
-            status -> {
-              claimStorageBinding(local, binding);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          claimStorageBinding(local, binding);
+          status.setRollbackOnly();
+        });
     assertThat(local.coordinator().read(local.target(), binding.requestId())).isEmpty();
     assertThat(new GameDesignReviewedBaseRepository(local.dsl()).read(binding)).isEmpty();
     assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
@@ -136,11 +131,10 @@ class GameDesignSourcePostgresIntegrationTest {
     var binding = storageBinding(local, "concurrent-exact-reviewed");
     var claims = concurrentReviewedClaims(local, binding, binding);
     assertThat(claims)
-        .allSatisfy(
-            claim -> {
-              assertThat(claim.failure()).isNull();
-              assertThat(claim.binding()).isEqualTo(binding);
-            });
+        .allSatisfy(claim -> {
+          assertThat(claim.failure()).isNull();
+          assertThat(claim.binding()).isEqualTo(binding);
+        });
     assertReviewedClaimInventory(local, binding);
   }
 
@@ -211,12 +205,11 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(persisted.binding().canonicalBytes()).containsExactly(binding.canonicalBytes());
     assertThat(persisted.ownerStates()).containsOnlyKeys(Owner.GAME_DESIGN_CONTROL_PLANE);
     assertThat(persisted.ownerStates().values())
-        .allSatisfy(
-            state -> {
-              assertThat(state.status())
-                  .isEqualTo(DraftCommitCoordinatorRepository.OwnerStatus.NOT_ATTEMPTED);
-              assertThat(state.outcome()).isEmpty();
-            });
+        .allSatisfy(state -> {
+          assertThat(state.status())
+              .isEqualTo(DraftCommitCoordinatorRepository.OwnerStatus.NOT_ATTEMPTED);
+          assertThat(state.outcome()).isEmpty();
+        });
     assertThat(new GameDesignReviewedBaseRepository(local.dsl()).read(binding)).isPresent();
     assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
     for (String table :
@@ -253,15 +246,14 @@ class GameDesignSourcePostgresIntegrationTest {
       throw new IllegalStateException("Reviewed claim launch timed out");
     try {
       var persisted =
-          local.tx(
-              () -> {
-                claimStorageBinding(local, binding);
-                return local
-                    .coordinator()
-                    .read(local.target(), binding.requestId())
-                    .orElseThrow()
-                    .binding();
-              });
+          local.tx(() -> {
+            claimStorageBinding(local, binding);
+            return local
+                .coordinator()
+                .read(local.target(), binding.requestId())
+                .orElseThrow()
+                .binding();
+          });
       return new ReviewedClaimAttempt(persisted, null);
     } catch (RuntimeException failure) {
       return new ReviewedClaimAttempt(null, failure);
@@ -272,11 +264,10 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(claims.stream().filter(claim -> claim.failure() == null)).hasSize(1);
     assertThat(claims.stream().filter(claim -> claim.failure() != null))
         .singleElement()
-        .satisfies(
-            claim ->
-                assertThat(claim.failure())
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT"));
+        .satisfies(claim ->
+            assertThat(claim.failure())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT"));
     return claims.stream()
         .filter(claim -> claim.failure() == null)
         .findFirst()
@@ -339,28 +330,25 @@ class GameDesignSourcePostgresIntegrationTest {
                   .get(0, byte[].class))
           .containsExactly(bytes);
       if (branding) {
-        fixture.tx(
-            () -> {
-              applyBrandingFirstReference(fixture, assetId);
-              return null;
-            });
+        fixture.tx(() -> {
+          applyBrandingFirstReference(fixture, assetId);
+          return null;
+        });
       } else {
-        fixture.tx(
-            () ->
-                IsolatedAssetSourceOwnerSetup.upsert(
-                    fixture.dsl(), fixture.target(), assetId, "logo.bin"));
+        fixture.tx(() ->
+            IsolatedAssetSourceOwnerSetup.upsert(
+                fixture.dsl(), fixture.target(), assetId, "logo.bin"));
       }
       assertThat(fixture.dsl().fetchCount(DSL.table(history))).isEqualTo(1);
       // A still sees the pre-reference history, so a row version fence must reject its write.
       assertThat(staleDsl.fetchCount(DSL.table(history))).isZero();
-      assertThatThrownBy(
-              () ->
-                  staleDsl.execute(
-                      metadata
-                          ? "UPDATE game_assets SET content_type = ? WHERE id = ?"
-                          : "UPDATE game_assets SET data = ? WHERE id = ?",
-                      metadata ? "image/png" : new byte[] {9},
-                      assetId))
+      assertThatThrownBy(() ->
+              staleDsl.execute(
+                  metadata
+                      ? "UPDATE game_assets SET content_type = ? WHERE id = ?"
+                      : "UPDATE game_assets SET data = ? WHERE id = ?",
+                  metadata ? "image/png" : new byte[] {9},
+                  assetId))
           .rootCause()
           .isInstanceOfSatisfying(
               PSQLException.class, failure -> assertThat(failure.getSQLState()).isEqualTo("40001"));
@@ -557,13 +545,11 @@ class GameDesignSourcePostgresIntegrationTest {
             command.commitId().toString(),
             "0",
             AssetSource.deletePayload("logo.bin"));
-    assertThatThrownBy(
-            () ->
-                fixture.tx(
-                    () -> {
-                      start(fixture, staleDelete);
-                      return fixture.sources().apply(staleDelete);
-                    }))
+    assertThatThrownBy(() ->
+            fixture.tx(() -> {
+              start(fixture, staleDelete);
+              return fixture.sources().apply(staleDelete);
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("ASSET_SOURCE_EPOCH_CONFLICT");
     assertThat(fixture.coordinator().readApplicationSlot(fixture.target())).isEmpty();
@@ -656,13 +642,12 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThatThrownBy(mutation::run)
         .rootCause()
         .isInstanceOf(PSQLException.class)
-        .satisfies(
-            cause -> {
-              PSQLException postgresException = (PSQLException) cause;
-              assertThat(postgresException.getSQLState()).isEqualTo("23514");
-              assertThat(postgresException.getServerErrorMessage().getMessage())
-                  .isEqualTo("ordinary asset source bytes are immutable from source history");
-            });
+        .satisfies(cause -> {
+          PSQLException postgresException = (PSQLException) cause;
+          assertThat(postgresException.getSQLState()).isEqualTo("23514");
+          assertThat(postgresException.getServerErrorMessage().getMessage())
+              .isEqualTo("ordinary asset source bytes are immutable from source history");
+        });
     assertThat(
             fixture.sources().readSynchronized(fixture.target(), binding.commitId()).orElseThrow())
         .isEqualTo(snapshot);
@@ -816,18 +801,14 @@ class GameDesignSourcePostgresIntegrationTest {
   private static void assertMissingReviewedBaseDeniesOwnerApply(
       Fixture fixture, DraftCommitBinding binding, Runnable ownerApply) {
     var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
-    assertThatThrownBy(
-            () ->
-                fixture.tx(
-                    () -> {
-                      fixture.coordinator().claim(binding);
-                      fixture.coordinator().claimApplicationSlot(binding);
-                      fixture
-                          .coordinator()
-                          .markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-                      ownerApply.run();
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.tx(() -> {
+              fixture.coordinator().claim(binding);
+              fixture.coordinator().claimApplicationSlot(binding);
+              fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+              ownerApply.run();
+              return null;
+            }))
         .hasMessageContaining("Draft source application requires exact reviewed base evidence");
 
     assertThat(fixture.sources().readGenesis(fixture.target())).contains(genesis);
@@ -860,11 +841,10 @@ class GameDesignSourcePostgresIntegrationTest {
     start(fixture, incomplete);
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              fixture.sources().apply(incomplete);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          fixture.sources().apply(incomplete);
+          status.setRollbackOnly();
+        });
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_realm_policy_application")))
         .isZero();
     assertThat(
@@ -904,20 +884,19 @@ class GameDesignSourcePostgresIntegrationTest {
         .hasMessageContaining("Complete supported Game Design source scopes");
 
     var operation =
-        fixture.tx(
-            () -> {
-              try {
-                var retained =
-                    IsolatedPublicationOwnerSetup.retainSourceBacked(
-                        fixture.dsl(), fixture.target(), 1);
-                fixture
-                    .sources()
-                    .captureSynchronized(retained.account().input().selection().selectedCommit());
-                return retained;
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        fixture.tx(() -> {
+          try {
+            var retained =
+                IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    fixture.dsl(), fixture.target(), 1);
+            fixture
+                .sources()
+                .captureSynchronized(retained.account().input().selection().selectedCommit());
+            return retained;
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
     assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().freeze(operation)))
         .isInstanceOfSatisfying(
             PublishGateFailureException.class,
@@ -931,20 +910,19 @@ class GameDesignSourcePostgresIntegrationTest {
   void emptyRealmPolicySourceFailsWithTypedPublicationGateBeforeCapture() {
     Fixture fixture = fixture();
     var operation =
-        fixture.tx(
-            () -> {
-              try {
-                var retained =
-                    IsolatedPublicationOwnerSetup.retainSourceBacked(
-                        fixture.dsl(), fixture.target(), 1);
-                fixture
-                    .sources()
-                    .captureSynchronized(retained.account().input().selection().selectedCommit());
-                return retained;
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        fixture.tx(() -> {
+          try {
+            var retained =
+                IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    fixture.dsl(), fixture.target(), 1);
+            fixture
+                .sources()
+                .captureSynchronized(retained.account().input().selection().selectedCommit());
+            return retained;
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
 
     assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().freeze(operation)))
         .isInstanceOfSatisfying(
@@ -974,20 +952,19 @@ class GameDesignSourcePostgresIntegrationTest {
             true);
     synchronize(fixture, authored, apply(fixture, authored));
     var operation =
-        fixture.tx(
-            () -> {
-              try {
-                var retained =
-                    IsolatedPublicationOwnerSetup.retainSourceBacked(
-                        fixture.dsl(), fixture.target(), 1);
-                fixture
-                    .sources()
-                    .captureSynchronized(retained.account().input().selection().selectedCommit());
-                return retained;
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        fixture.tx(() -> {
+          try {
+            var retained =
+                IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    fixture.dsl(), fixture.target(), 1);
+            fixture
+                .sources()
+                .captureSynchronized(retained.account().input().selection().selectedCommit());
+            return retained;
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
     assertThat(fixture.sources().readCapture(operation)).isEmpty();
     var selectedBinding = operation.account().input().selection().selectedCommit();
     var selectedRules =
@@ -1000,21 +977,19 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(selectedRules.entries()).isEmpty();
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              fixture.sources().freeze(operation);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          fixture.sources().freeze(operation);
+          status.setRollbackOnly();
+        });
     assertThat(fixture.sources().readCapture(operation)).isEmpty();
 
-    fixture.tx(
-        () -> {
-          new CommandSourceRepository(fixture.dsl()).freeze(operation);
-          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
-          new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
-              .freeze(operation);
-          return null;
-        });
+    fixture.tx(() -> {
+      new CommandSourceRepository(fixture.dsl()).freeze(operation);
+      new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+      new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
+          .freeze(operation);
+      return null;
+    });
     assertThatThrownBy(() -> fixture.sources().readCapture(operation))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
@@ -1023,16 +998,15 @@ class GameDesignSourcePostgresIntegrationTest {
     var originalAccount = operation.account();
     var changedSources =
         originalAccount.sources().stream()
-            .map(
-                source ->
-                    new SourceEvidence(
-                        source.kind(),
-                        source.scopeId(),
-                        source.generation(),
-                        source.sourceVersion() + "0",
-                        source.checkpointStream(),
-                        source.checkpointSequence(),
-                        source.evidence()))
+            .map(source ->
+                new SourceEvidence(
+                    source.kind(),
+                    source.scopeId(),
+                    source.generation(),
+                    source.sourceVersion() + "0",
+                    source.checkpointStream(),
+                    source.checkpointSequence(),
+                    source.evidence()))
             .toList();
     var changedAccount =
         new AccountPublicationAuthorizationBinding(
@@ -1119,27 +1093,25 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(retry.gameplay().orElseThrow().snapshot().entries()).isEmpty();
     assertThat(read.gameplay().orElseThrow().canonicalBytes())
         .containsExactly(first.gameplay().orElseThrow().canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_gameplay_rule_source_capture SET capture_bytes = ? "
-                            + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-                        new byte[] {1},
-                        fixture.target().canonicalTenantId(),
-                        fixture.target().canonicalVersionId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_design_gameplay_rule_source_capture SET capture_bytes = ? "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    new byte[] {1},
+                    fixture.target().canonicalTenantId(),
+                    fixture.target().canonicalVersionId()))
         .rootCause()
         .hasMessageContaining("gameplay-rule publication source capture is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "DELETE FROM game_design_gameplay_rule_source_capture "
-                            + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-                        fixture.target().canonicalTenantId(),
-                        fixture.target().canonicalVersionId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "DELETE FROM game_design_gameplay_rule_source_capture "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    fixture.target().canonicalVersionId()))
         .rootCause()
         .hasMessageContaining("gameplay-rule publication source capture is immutable");
     assertThatThrownBy(
@@ -1159,20 +1131,19 @@ class GameDesignSourcePostgresIntegrationTest {
             binding(fixture.target(), genesisBase, "0", null, "main", true), gameplayUpsert());
     synchronize(fixture, authored, apply(fixture, authored));
     var operation =
-        fixture.tx(
-            () -> {
-              try {
-                var retained =
-                    IsolatedPublicationOwnerSetup.retainSourceBacked(
-                        fixture.dsl(), fixture.target(), 1);
-                fixture
-                    .sources()
-                    .captureSynchronized(retained.account().input().selection().selectedCommit());
-                return retained;
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        fixture.tx(() -> {
+          try {
+            var retained =
+                IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    fixture.dsl(), fixture.target(), 1);
+            fixture
+                .sources()
+                .captureSynchronized(retained.account().input().selection().selectedCommit());
+            return retained;
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
     var selectedBinding = operation.account().input().selection().selectedCommit();
     var selectedRules =
         fixture
@@ -1274,27 +1245,25 @@ class GameDesignSourcePostgresIntegrationTest {
     synchronize(fixture, authored, apply(fixture, authored));
     var operation = retainSelectedOperation(fixture);
 
-    fixture.tx(
-        () -> {
-          new CommandSourceRepository(fixture.dsl()).freeze(operation);
-          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
-          new BrandingSourceRepository(fixture.dsl()).freeze(operation);
-          new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
-          var attempts = new PublishAttemptRepository(fixture.dsl());
-          var attempt =
-              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
-          attempt.setStatus(PublishAttemptStatus.FAILED);
-          attempt.setFailureCode("ISOLATED_PARTIAL_CAPTURE_DENIAL");
-          attempts.save(attempt);
-          new GameDesignPublicationOperationRepository(fixture.dsl())
-              .seal(
-                  operation.tenantKey(),
-                  operation.workflowId(),
-                  operation.versionId(),
-                  operation.selectionDigest(),
-                  false);
-          return null;
-        });
+    fixture.tx(() -> {
+      new CommandSourceRepository(fixture.dsl()).freeze(operation);
+      new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+      new BrandingSourceRepository(fixture.dsl()).freeze(operation);
+      new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
+      var attempts = new PublishAttemptRepository(fixture.dsl());
+      var attempt = attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+      attempt.setStatus(PublishAttemptStatus.FAILED);
+      attempt.setFailureCode("ISOLATED_PARTIAL_CAPTURE_DENIAL");
+      attempts.save(attempt);
+      new GameDesignPublicationOperationRepository(fixture.dsl())
+          .seal(
+              operation.tenantKey(),
+              operation.workflowId(),
+              operation.versionId(),
+              operation.selectionDigest(),
+              false);
+      return null;
+    });
 
     assertThatThrownBy(() -> fixture.sources().readCapture(operation))
         .isInstanceOf(IllegalStateException.class)
@@ -1321,38 +1290,35 @@ class GameDesignSourcePostgresIntegrationTest {
     synchronize(fixture, authored, apply(fixture, authored));
     var operation = retainSelectedOperation(fixture);
 
-    fixture.tx(
-        () -> {
-          new CommandSourceRepository(fixture.dsl()).freeze(operation);
-          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
-          new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
-              .freeze(operation);
-          new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation);
-          new BrandingSourceRepository(fixture.dsl()).freeze(operation);
-          return null;
-        });
+    fixture.tx(() -> {
+      new CommandSourceRepository(fixture.dsl()).freeze(operation);
+      new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+      new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
+          .freeze(operation);
+      new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation);
+      new BrandingSourceRepository(fixture.dsl()).freeze(operation);
+      return null;
+    });
 
     assertThatThrownBy(() -> fixture.sources().readCapture(operation))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
 
-    fixture.tx(
-        () -> {
-          var attempts = new PublishAttemptRepository(fixture.dsl());
-          var attempt =
-              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
-          attempt.setStatus(PublishAttemptStatus.FAILED);
-          attempt.setFailureCode("ISOLATED_TERMINAL_CAPTURE_WITHOUT_TEMPLATE");
-          attempts.save(attempt);
-          new GameDesignPublicationOperationRepository(fixture.dsl())
-              .seal(
-                  operation.tenantKey(),
-                  operation.workflowId(),
-                  operation.versionId(),
-                  operation.selectionDigest(),
-                  false);
-          return null;
-        });
+    fixture.tx(() -> {
+      var attempts = new PublishAttemptRepository(fixture.dsl());
+      var attempt = attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+      attempt.setStatus(PublishAttemptStatus.FAILED);
+      attempt.setFailureCode("ISOLATED_TERMINAL_CAPTURE_WITHOUT_TEMPLATE");
+      attempts.save(attempt);
+      new GameDesignPublicationOperationRepository(fixture.dsl())
+          .seal(
+              operation.tenantKey(),
+              operation.workflowId(),
+              operation.versionId(),
+              operation.selectionDigest(),
+              false);
+      return null;
+    });
 
     var retained = fixture.sources().readCapture(operation).orElseThrow();
     assertThat(retained.command()).isNotNull();
@@ -1382,43 +1348,40 @@ class GameDesignSourcePostgresIntegrationTest {
             true);
     synchronize(fixture, authored, apply(fixture, authored));
     var operation =
-        fixture.tx(
-            () -> {
-              try {
-                var retained =
-                    IsolatedPublicationOwnerSetup.retainSourceBacked(
-                        fixture.dsl(), fixture.target(), 1);
-                fixture
-                    .sources()
-                    .captureSynchronized(retained.account().input().selection().selectedCommit());
-                return retained;
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
-    fixture.tx(
-        () -> {
-          new CommandSourceRepository(fixture.dsl()).freeze(operation);
-          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
-          new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
-              .freeze(operation);
-          new BrandingSourceRepository(fixture.dsl()).freeze(operation);
-          new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
-          var attempts = new PublishAttemptRepository(fixture.dsl());
-          var attempt =
-              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
-          attempt.setStatus(PublishAttemptStatus.FAILED);
-          attempt.setFailureCode("ISOLATED_PRE_GAMEPLAY_STORAGE_DENIAL");
-          attempts.save(attempt);
-          new GameDesignPublicationOperationRepository(fixture.dsl())
-              .seal(
-                  operation.tenantKey(),
-                  operation.workflowId(),
-                  operation.versionId(),
-                  operation.selectionDigest(),
-                  false);
-          return null;
+        fixture.tx(() -> {
+          try {
+            var retained =
+                IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    fixture.dsl(), fixture.target(), 1);
+            fixture
+                .sources()
+                .captureSynchronized(retained.account().input().selection().selectedCommit());
+            return retained;
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
         });
+    fixture.tx(() -> {
+      new CommandSourceRepository(fixture.dsl()).freeze(operation);
+      new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+      new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
+          .freeze(operation);
+      new BrandingSourceRepository(fixture.dsl()).freeze(operation);
+      new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
+      var attempts = new PublishAttemptRepository(fixture.dsl());
+      var attempt = attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+      attempt.setStatus(PublishAttemptStatus.FAILED);
+      attempt.setFailureCode("ISOLATED_PRE_GAMEPLAY_STORAGE_DENIAL");
+      attempts.save(attempt);
+      new GameDesignPublicationOperationRepository(fixture.dsl())
+          .seal(
+              operation.tenantKey(),
+              operation.workflowId(),
+              operation.versionId(),
+              operation.selectionDigest(),
+              false);
+      return null;
+    });
 
     var operationBefore =
         Objects.requireNonNull(
@@ -1480,9 +1443,8 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().freeze(operation)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAMEPLAY_RULE_PUBLICATION_OPERATION_SEALED");
-    assertThatThrownBy(
-            () ->
-                fixture.tx(() -> new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation)))
+    assertThatThrownBy(() ->
+            fixture.tx(() -> new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAMEPLAY_RULE_PUBLICATION_OPERATION_SEALED");
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_gameplay_rule_source_capture")))
@@ -1502,42 +1464,38 @@ class GameDesignSourcePostgresIntegrationTest {
       byte[] captureBytes,
       String captureDigest,
       String expectedSqlGuardMessage) {
-    assertThatThrownBy(
-            () ->
-                fixture.tx(
-                    () ->
-                        fixture
-                            .dsl()
-                            .execute(
-                                "INSERT INTO game_design_gameplay_rule_source_capture "
-                                    + "(canonical_tenant_id, canonical_version_id, publish_workflow_id, commit_id, "
-                                    + "operation_bytes, capture_bytes, capture_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                fixture.target().canonicalTenantId(),
-                                fixture.target().canonicalVersionId(),
-                                operation.workflowId(),
-                                operation.account().input().selection().selectedCommit().commitId(),
-                                operationBytes,
-                                captureBytes,
-                                captureDigest)))
+    assertThatThrownBy(() ->
+            fixture.tx(() ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "INSERT INTO game_design_gameplay_rule_source_capture "
+                            + "(canonical_tenant_id, canonical_version_id, publish_workflow_id, commit_id, "
+                            + "operation_bytes, capture_bytes, capture_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        fixture.target().canonicalTenantId(),
+                        fixture.target().canonicalVersionId(),
+                        operation.workflowId(),
+                        operation.account().input().selection().selectedCommit().commitId(),
+                        operationBytes,
+                        captureBytes,
+                        captureDigest)))
         .rootCause()
         .hasMessageContaining(expectedSqlGuardMessage);
   }
 
   private static GameDesignPublicationOperation retainSelectedOperation(Fixture fixture) {
-    return fixture.tx(
-        () -> {
-          try {
-            var operation =
-                IsolatedPublicationOwnerSetup.retainSourceBacked(
-                    fixture.dsl(), fixture.target(), 1);
-            fixture
-                .sources()
-                .captureSynchronized(operation.account().input().selection().selectedCommit());
-            return operation;
-          } catch (Exception failure) {
-            throw new IllegalStateException(failure);
-          }
-        });
+    return fixture.tx(() -> {
+      try {
+        var operation =
+            IsolatedPublicationOwnerSetup.retainSourceBacked(fixture.dsl(), fixture.target(), 1);
+        fixture
+            .sources()
+            .captureSynchronized(operation.account().input().selection().selectedCommit());
+        return operation;
+      } catch (Exception failure) {
+        throw new IllegalStateException(failure);
+      }
+    });
   }
 
   private static CaptureRow retainedCapture(Fixture fixture, String table) {
@@ -1574,37 +1532,35 @@ class GameDesignSourcePostgresIntegrationTest {
   }
 
   private static void start(Fixture fixture, DraftCommitBinding binding) {
-    fixture.tx(
-        () -> {
-          var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
-          fixture
-              .sources()
-              .claimReviewed(
-                  binding,
-                  reviewed.resolve(
-                      fixture.target(),
-                      net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
-                          binding.baseCommitId())));
-          fixture.coordinator().claimApplicationSlot(binding);
-          fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-          return null;
-        });
+    fixture.tx(() -> {
+      var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+      fixture
+          .sources()
+          .claimReviewed(
+              binding,
+              reviewed.resolve(
+                  fixture.target(),
+                  net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+                      binding.baseCommitId())));
+      fixture.coordinator().claimApplicationSlot(binding);
+      fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+      return null;
+    });
   }
 
   private static void synchronize(
       Fixture fixture, DraftCommitBinding binding, GameDesignSourceRepository.Application result) {
-    fixture.tx(
-        () -> {
-          fixture
-              .coordinator()
-              .advanceSourceVisibilityFence(
-                  binding,
-                  new DraftCommitCoordinatorRepository.CoordinatorProof(
-                      binding, List.of(result.ownerOutcome())));
-          fixture.sources().captureSynchronized(binding);
-          fixture.coordinator().releaseApplicationSlot(binding);
-          return null;
-        });
+    fixture.tx(() -> {
+      fixture
+          .coordinator()
+          .advanceSourceVisibilityFence(
+              binding,
+              new DraftCommitCoordinatorRepository.CoordinatorProof(
+                  binding, List.of(result.ownerOutcome())));
+      fixture.sources().captureSynchronized(binding);
+      fixture.coordinator().releaseApplicationSlot(binding);
+      return null;
+    });
   }
 
   private static DraftCommitBinding binding(
@@ -1797,12 +1753,11 @@ class GameDesignSourcePostgresIntegrationTest {
         var started = new java.util.concurrent.CountDownLatch(1);
         var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var inserting =
-            worker.submit(
-                () -> {
-                  workerPid.set(storageBackendPid(slotSql));
-                  started.countDown();
-                  return failedStorageWrite(() -> insertRawSlot(slotSql, binding));
-                });
+            worker.submit(() -> {
+              workerPid.set(storageBackendPid(slotSql));
+              started.countDown();
+              return failedStorageWrite(() -> insertRawSlot(slotSql, binding));
+            });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
           assertThat(awaitStorageBackendBlock(local, lifecyclePid, workerPid.get()))
@@ -1849,16 +1804,14 @@ class GameDesignSourcePostgresIntegrationTest {
         var started = new java.util.concurrent.CountDownLatch(1);
         var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var updating =
-            worker.submit(
-                () -> {
-                  workerPid.set(storageBackendPid(lifecycleSql));
-                  started.countDown();
-                  return failedStorageWrite(
-                      () ->
-                          lifecycleSql.execute(
-                              "UPDATE version SET version_state = 'RETIRED', version_state_epoch = version_state_epoch + 1 WHERE id = ?",
-                              local.target().gameDesignVersionRowId()));
-                });
+            worker.submit(() -> {
+              workerPid.set(storageBackendPid(lifecycleSql));
+              started.countDown();
+              return failedStorageWrite(() ->
+                  lifecycleSql.execute(
+                      "UPDATE version SET version_state = 'RETIRED', version_state_epoch = version_state_epoch + 1 WHERE id = ?",
+                      local.target().gameDesignVersionRowId()));
+            });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
           assertThat(awaitStorageBackendBlock(local, slotPid, workerPid.get()))
@@ -1899,12 +1852,11 @@ class GameDesignSourcePostgresIntegrationTest {
         var started = new java.util.concurrent.CountDownLatch(1);
         var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var inserting =
-            worker.submit(
-                () -> {
-                  workerPid.set(storageBackendPid(slotSql));
-                  started.countDown();
-                  return failedStorageWrite(() -> insertRawSlot(slotSql, later));
-                });
+            worker.submit(() -> {
+              workerPid.set(storageBackendPid(slotSql));
+              started.countDown();
+              return failedStorageWrite(() -> insertRawSlot(slotSql, later));
+            });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
           assertThat(awaitStorageBackendBlock(local, selectionPid, workerPid.get()))
@@ -1948,12 +1900,11 @@ class GameDesignSourcePostgresIntegrationTest {
         var started = new java.util.concurrent.CountDownLatch(1);
         var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var inserting =
-            worker.submit(
-                () -> {
-                  workerPid.set(storageBackendPid(selectionSql));
-                  started.countDown();
-                  return failedStorageWrite(() -> insertRawSelection(selectionSql, selected));
-                });
+            worker.submit(() -> {
+              workerPid.set(storageBackendPid(selectionSql));
+              started.countDown();
+              return failedStorageWrite(() -> insertRawSelection(selectionSql, selected));
+            });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
           assertThat(awaitStorageBackendBlock(local, slotPid, workerPid.get()))
@@ -2062,25 +2013,23 @@ class GameDesignSourcePostgresIntegrationTest {
     String base =
         current
             .map(fence -> fence.commitId().toString())
-            .orElseGet(
-                () ->
-                    "genesis:"
-                        + fixture
-                            .sources()
-                            .readGenesis(fixture.target())
-                            .orElseThrow()
-                            .policy()
-                            .receiptId());
+            .orElseGet(() ->
+                "genesis:"
+                    + fixture
+                        .sources()
+                        .readGenesis(fixture.target())
+                        .orElseThrow()
+                        .policy()
+                        .receiptId());
     String epoch =
         current
-            .map(
-                fence ->
-                    fixture
-                        .sources()
-                        .readSynchronized(fixture.target(), fence.commitId())
-                        .orElseThrow()
-                        .command()
-                        .sourceEpoch())
+            .map(fence ->
+                fixture
+                    .sources()
+                    .readSynchronized(fixture.target(), fence.commitId())
+                    .orElseThrow()
+                    .command()
+                    .sourceEpoch())
             .orElse("0");
     return binding(fixture.target(), base, null, epoch, null, false);
   }
@@ -2115,18 +2064,14 @@ class GameDesignSourcePostgresIntegrationTest {
             binding.requestId(),
             binding.commitId(),
             binding.digest());
-    return fixture.tx(
-        () ->
-            AuthoredDraftPublishSelection.capture(
-                intent,
-                fixture.target(),
-                fixture
-                    .coordinator()
-                    .requireSynchronizedPublicationEvidence(
-                        fixture.target(),
-                        binding.requestId(),
-                        binding.commitId(),
-                        binding.digest())));
+    return fixture.tx(() ->
+        AuthoredDraftPublishSelection.capture(
+            intent,
+            fixture.target(),
+            fixture
+                .coordinator()
+                .requireSynchronizedPublicationEvidence(
+                    fixture.target(), binding.requestId(), binding.commitId(), binding.digest())));
   }
 
   private void insertRawSelection(DSLContext sql, AuthoredDraftPublishSelection selected) {
@@ -2185,25 +2130,24 @@ class GameDesignSourcePostgresIntegrationTest {
     var properties = new PostgresProperties();
     properties.setSchema(schema);
     TargetProof target =
-        write.execute(
-            status -> {
-              var game = new Game();
-              game.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
-              game.setName("ISOLATED composed source");
-              game = new GameRepository(dsl).save(game);
-              var version = new Version();
-              version.setTenantId(game.getTenantId());
-              version.setVersionNumber(1);
-              version = new VersionRepository(dsl).save(version);
-              return new TargetProof(
-                  version.getCanonicalTenantId(),
-                  version.getCanonicalVersionId(),
-                  version.getId(),
-                  version.getTenantId(),
-                  version.getIdentitySourceGameRowId(),
-                  version.getIdentitySourceGameTenantKey(),
-                  version.getIdentitySourceProvenanceKind());
-            });
+        write.execute(status -> {
+          var game = new Game();
+          game.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
+          game.setName("ISOLATED composed source");
+          game = new GameRepository(dsl).save(game);
+          var version = new Version();
+          version.setTenantId(game.getTenantId());
+          version.setVersionNumber(1);
+          version = new VersionRepository(dsl).save(version);
+          return new TargetProof(
+              version.getCanonicalTenantId(),
+              version.getCanonicalVersionId(),
+              version.getId(),
+              version.getTenantId(),
+              version.getIdentitySourceGameRowId(),
+              version.getIdentitySourceGameTenantKey(),
+              version.getIdentitySourceProvenanceKind());
+        });
     return new Fixture(
         schema,
         dsl,

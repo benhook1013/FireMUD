@@ -268,10 +268,9 @@ public final class EntityRuntimeFamilyCatalog {
     }
     RuntimeFamilyCatalogValidation.requireComplete(
         families.stream()
-            .map(
-                family ->
-                    new RuntimeFamilyCatalogValidation.FamilyComponent(
-                        family.relation(), family.component()))
+            .map(family ->
+                new RuntimeFamilyCatalogValidation.FamilyComponent(
+                    family.relation(), family.component()))
             .toList(),
         structuralFacts);
     return new EntityRuntimeFamilyCatalog(epoch, families, facts, bytes);

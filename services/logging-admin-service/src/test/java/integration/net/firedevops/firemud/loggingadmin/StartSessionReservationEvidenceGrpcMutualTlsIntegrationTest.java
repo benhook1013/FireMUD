@@ -363,13 +363,12 @@ class StartSessionReservationEvidenceGrpcMutualTlsIntegrationTest {
     rejectionEvidence.clear();
     RawClientTls clientTls = rawClientTls(pki, clientIdentity);
     Throwable failure =
-        catchThrowable(
-            () -> {
-              try (SSLSocket socket = clientSocket(server, clientTls.context())) {
-                socket.startHandshake();
-                socket.getInputStream().read();
-              }
-            });
+        catchThrowable(() -> {
+          try (SSLSocket socket = clientSocket(server, clientTls.context())) {
+            socket.startHandshake();
+            socket.getInputStream().read();
+          }
+        });
     assertThat(failure).as(description).isNotNull();
     if (clientIdentity.certificate() != null) {
       clientTls.assertIdentitySelected(clientIdentity, ACCOUNT_URI);

@@ -113,32 +113,29 @@ class GameSessionCanonicalInitialAdmissionOwnerProofCodecTest {
   void rejectsAmbiguousOrContradictoryTerminalFields() {
     var identity = holdIdentity(InitialAdmissionOrigin.NO_PRIOR_POINTER, null);
 
-    assertThatThrownBy(
-            () ->
-                new GameSessionCanonicalInitialAdmissionOwnerProof(
-                    identity, Outcome.PENDING, null, null, "sha256:" + "a".repeat(64), false, null))
+    assertThatThrownBy(() ->
+            new GameSessionCanonicalInitialAdmissionOwnerProof(
+                identity, Outcome.PENDING, null, null, "sha256:" + "a".repeat(64), false, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GameSessionCanonicalInitialAdmissionOwnerProof(
-                    identity,
-                    Outcome.ABORTED,
-                    14L,
-                    null,
-                    "sha256:" + "a".repeat(64),
-                    true,
-                    TERMINAL_AT))
+    assertThatThrownBy(() ->
+            new GameSessionCanonicalInitialAdmissionOwnerProof(
+                identity,
+                Outcome.ABORTED,
+                14L,
+                null,
+                "sha256:" + "a".repeat(64),
+                true,
+                TERMINAL_AT))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GameSessionCanonicalInitialAdmissionOwnerProof(
-                    identity,
-                    Outcome.ABORTED,
-                    null,
-                    null,
-                    "sha256:" + "a".repeat(64),
-                    false,
-                    TERMINAL_AT))
+    assertThatThrownBy(() ->
+            new GameSessionCanonicalInitialAdmissionOwnerProof(
+                identity,
+                Outcome.ABORTED,
+                null,
+                null,
+                "sha256:" + "a".repeat(64),
+                false,
+                TERMINAL_AT))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

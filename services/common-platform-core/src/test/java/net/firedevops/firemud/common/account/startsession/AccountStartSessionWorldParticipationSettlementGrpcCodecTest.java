@@ -79,51 +79,42 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
     var input = input();
     var request = AccountStartSessionWorldParticipationSettlementGrpcCodec.toRequest(input);
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
-                    request.toBuilder().addAccountWorldParticipationFence("32").build(), NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
+                request.toBuilder().addAccountWorldParticipationFence("32").build(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
-                    request.toBuilder().setTargetNamespace(0, "another-runtime").build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
+                request.toBuilder().setTargetNamespace(0, "another-runtime").build(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
-                    request.toBuilder().setAccountWorldParticipationFence(0, "031").build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
+                request.toBuilder().setAccountWorldParticipationFence(0, "031").build(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setAccountWorldParticipationFence(0, "9223372036854775808")
-                        .build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setAccountWorldParticipationFence(0, "9223372036854775808")
+                    .build(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setSettlementRequestId(0, "00000000-0000-0000-0000-000000000000")
-                        .build(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setSettlementRequestId(0, "00000000-0000-0000-0000-000000000000")
+                    .build(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil UUID");
 
@@ -132,10 +123,9 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
             AccountStartSessionWorldParticipationSettlementGrpcCodec.toRequest(input).toByteArray(),
             request.getSerializedSize() + 1);
     noncanonicalWire[noncanonicalWire.length - 1] = 0;
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequestWireBytes(
-                    noncanonicalWire, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequestWireBytes(
+                noncanonicalWire, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] outOfOrderWire =
@@ -147,10 +137,9 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
                 .build()
                 .toByteArray(),
             request.toBuilder().clearAccountWorldParticipationFence().build().toByteArray());
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequestWireBytes(
-                    outOfOrderWire, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequestWireBytes(
+                outOfOrderWire, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not canonical");
   }
@@ -161,77 +150,68 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
     var terminal = terminal(NAMESPACE, PARTICIPATION_ID, 31L, Outcome.ABORTED);
     var valid = response(input, terminal, "2026-10-11T00:00:00.000001Z");
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
-                    input,
-                    valid.toBuilder()
-                        .setSettlementRequestId(
-                            0, uuid("e2a52c0c-c71f-4900-b1f2-c78f8b512a63").toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input,
+                valid.toBuilder()
+                    .setSettlementRequestId(
+                        0, uuid("e2a52c0c-c71f-4900-b1f2-c78f8b512a63").toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("identity");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
-                    input,
-                    valid.toBuilder().setSettledAt(0, "2026-10-11T00:00:00.000000001Z").build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input, valid.toBuilder().setSettledAt(0, "2026-10-11T00:00:00.000000001Z").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("microseconds");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
-                    input,
-                    valid.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input,
+                valid.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input,
+                response(
                     input,
-                    response(
-                        input,
-                        terminal(
-                            NAMESPACE,
-                            uuid("e2a52c0c-c71f-4900-b1f2-c78f8b512a63"),
-                            31L,
-                            Outcome.COMMITTED),
-                        "2026-10-11T00:00:00.000001Z")))
+                    terminal(
+                        NAMESPACE,
+                        uuid("e2a52c0c-c71f-4900-b1f2-c78f8b512a63"),
+                        31L,
+                        Outcome.COMMITTED),
+                    "2026-10-11T00:00:00.000001Z")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact Account participation");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input,
+                response(
                     input,
-                    response(
-                        input,
-                        terminal(NAMESPACE, PARTICIPATION_ID, 32L, Outcome.COMMITTED),
-                        "2026-10-11T00:00:00.000001Z")))
+                    terminal(NAMESPACE, PARTICIPATION_ID, 32L, Outcome.COMMITTED),
+                    "2026-10-11T00:00:00.000001Z")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact Account participation");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input,
+                response(
                     input,
-                    response(
-                        input,
-                        terminal("another-runtime", PARTICIPATION_ID, 31L, Outcome.COMMITTED),
-                        "2026-10-11T00:00:00.000001Z")))
+                    terminal("another-runtime", PARTICIPATION_ID, 31L, Outcome.COMMITTED),
+                    "2026-10-11T00:00:00.000001Z")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact Account participation");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
-                    input,
-                    valid.toBuilder()
-                        .setTerminalEvidenceCanonicalBytes(0, ByteString.copyFromUtf8("{}"))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input,
+                valid.toBuilder()
+                    .setTerminalEvidenceCanonicalBytes(0, ByteString.copyFromUtf8("{}"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -253,22 +233,20 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
                 .toByteArray(),
             response.toBuilder().clearTerminalEvidenceCanonicalBytes().build().toByteArray());
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponseWireBytes(
-                    input, outOfOrderWire))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponseWireBytes(
+                input, outOfOrderWire))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not canonical");
   }
 
   @Test
   void rejectsIncompleteEvidenceAndTimestampPrecisionLoss() {
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationSettlementEvidence(
-                    SETTLEMENT_REQUEST_ID,
-                    terminal(NAMESPACE, PARTICIPATION_ID, 31L, Outcome.COMMITTED),
-                    Instant.parse("2026-10-11T00:00:00.000000001Z")))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationSettlementEvidence(
+                SETTLEMENT_REQUEST_ID,
+                terminal(NAMESPACE, PARTICIPATION_ID, 31L, Outcome.COMMITTED),
+                Instant.parse("2026-10-11T00:00:00.000000001Z")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("preserve PostgreSQL microseconds");
 
@@ -282,10 +260,9 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
             .addSettledAt("2026-10-11T00:00:00.000001Z")
             .addTerminalEvidenceCanonicalBytes(ByteString.EMPTY)
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
-                    input, incomplete))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponse(
+                input, incomplete))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

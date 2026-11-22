@@ -351,13 +351,11 @@ class AuthenticatedDirectTextCommandReceiverTest {
     var connection = mock(AuthenticatedDirectTextSessions.Connection.class);
     when(sessions.require(socket)).thenReturn(connection);
     when(connection.withLogin(any()))
-        .thenAnswer(
-            invocation -> {
-              BiFunction<
-                      InitialGameplayLoginAttemptCoordinates, CanonicalGameplayLoginResult, Object>
-                  action = invocation.getArgument(0);
-              return action.apply(null, null);
-            });
+        .thenAnswer(invocation -> {
+          BiFunction<InitialGameplayLoginAttemptCoordinates, CanonicalGameplayLoginResult, Object>
+              action = invocation.getArgument(0);
+          return action.apply(null, null);
+        });
     connection.menu = mock(DirectTextWorldSelectionService.SelectionSnapshot.class);
     connection.selectedScope = mock(DirectTextAuthenticatedLobbyScope.class);
     var target = mock(CanonicalPlayableTarget.class);

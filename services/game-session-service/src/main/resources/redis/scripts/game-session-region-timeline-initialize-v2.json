@@ -18,6 +18,7 @@
   "outcomes": [
     {"code": "TIMELINE_INITIALIZED", "category": "SUCCESS", "effect": "MUTATING"},
     {"code": "INITIALIZATION_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TIMELINE_VERIFIED", "category": "SUCCESS", "effect": "NON_MUTATING"},
     {"code": "TIMELINE_ABSENT", "category": "SUCCESS", "effect": "NON_MUTATING"},
     {"code": "EXISTING_OR_CONFLICTING_STATE", "category": "STALE", "effect": "NON_MUTATING"},
     {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},

@@ -1281,13 +1281,13 @@ public final class CanonicalHostingSubscriptionTestFixture {
             ? Long.toString(fixture.clock().instant().getEpochSecond())
             : "null";
     return """
-        {"id":"%s","object":"subscription","customer":"%s","default_payment_method":"%s",
-         "livemode":false,"status":"%s","cancel_at_period_end":false,"cancel_at":null,"canceled_at":null,"ended_at":%s,
-         "metadata":{"firemud_metadata_schema_version":"1","firemud_operation_type":"subscription_provisioning",
-          "firemud_operation_id":"%s","firemud_subscription_id":"%s"},
-         "items":{"object":"list","data":[{"id":"si_controlled","object":"subscription_item","subscription":"%s",
-          "quantity":1,"current_period_start":%d,"current_period_end":%d,"price":{"id":"%s","object":"price"}}],"has_more":false}}
-        """
+    {"id":"%s","object":"subscription","customer":"%s","default_payment_method":"%s",
+     "livemode":false,"status":"%s","cancel_at_period_end":false,"cancel_at":null,"canceled_at":null,"ended_at":%s,
+     "metadata":{"firemud_metadata_schema_version":"1","firemud_operation_type":"subscription_provisioning",
+      "firemud_operation_id":"%s","firemud_subscription_id":"%s"},
+     "items":{"object":"list","data":[{"id":"si_controlled","object":"subscription_item","subscription":"%s",
+      "quantity":1,"current_period_start":%d,"current_period_end":%d,"price":{"id":"%s","object":"price"}}],"has_more":false}}
+    """
         .formatted(
             fixture.providerId(),
             fixture.creation().providerCustomerId(),

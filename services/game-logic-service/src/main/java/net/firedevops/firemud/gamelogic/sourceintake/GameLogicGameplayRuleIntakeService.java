@@ -90,20 +90,17 @@ public final class GameLogicGameplayRuleIntakeService {
         sourceEvidence.source().manifest().canonicalJson().getBytes(StandardCharsets.UTF_8);
     var retained =
         GameLogicGameplayRuleIntakeTerminal.retained(operation, sourceBytes, manifestBytes);
-    return ownerTransaction.execute(
-        status -> {
-          repository.lockOperation(authorization.operationId());
-          var concurrent = repository.findTerminal(authorization.operationId());
-          if (concurrent.isPresent()) return exactTerminal(concurrent.orElseThrow(), operation);
-          repository.insertTerminal(retained);
-          return repository
-              .findTerminal(authorization.operationId())
-              .filter(value -> Arrays.equals(value.canonicalBytes(), retained.canonicalBytes()))
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "GL_GAMEPLAY_RULE_INTAKE_COMMIT_READBACK_MISMATCH"));
-        });
+    return ownerTransaction.execute(status -> {
+      repository.lockOperation(authorization.operationId());
+      var concurrent = repository.findTerminal(authorization.operationId());
+      if (concurrent.isPresent()) return exactTerminal(concurrent.orElseThrow(), operation);
+      repository.insertTerminal(retained);
+      return repository
+          .findTerminal(authorization.operationId())
+          .filter(value -> Arrays.equals(value.canonicalBytes(), retained.canonicalBytes()))
+          .orElseThrow(
+              () -> new IllegalStateException("GL_GAMEPLAY_RULE_INTAKE_COMMIT_READBACK_MISMATCH"));
+    });
   }
 
   /** No value means there is no actual owner terminal; ABORTED is an explicit durable terminal. */
@@ -135,20 +132,18 @@ public final class GameLogicGameplayRuleIntakeService {
           .asRuntimeException();
     }
 
-    return ownerTransaction.execute(
-        status -> {
-          repository.lockOperation(authorization.operationId());
-          var concurrent = repository.findTerminal(authorization.operationId());
-          if (concurrent.isPresent()) return exactTerminal(concurrent.orElseThrow(), operation);
-          var aborted = GameLogicGameplayRuleIntakeTerminal.aborted(operation);
-          repository.insertTerminal(aborted);
-          return repository
-              .findTerminal(authorization.operationId())
-              .filter(value -> Arrays.equals(value.canonicalBytes(), aborted.canonicalBytes()))
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException("GL_GAMEPLAY_RULE_INTAKE_ABORT_READBACK_MISMATCH"));
-        });
+    return ownerTransaction.execute(status -> {
+      repository.lockOperation(authorization.operationId());
+      var concurrent = repository.findTerminal(authorization.operationId());
+      if (concurrent.isPresent()) return exactTerminal(concurrent.orElseThrow(), operation);
+      var aborted = GameLogicGameplayRuleIntakeTerminal.aborted(operation);
+      repository.insertTerminal(aborted);
+      return repository
+          .findTerminal(authorization.operationId())
+          .filter(value -> Arrays.equals(value.canonicalBytes(), aborted.canonicalBytes()))
+          .orElseThrow(
+              () -> new IllegalStateException("GL_GAMEPLAY_RULE_INTAKE_ABORT_READBACK_MISMATCH"));
+    });
   }
 
   private GameLogicGameplayRuleIntakeOperation requestOperation(

@@ -352,10 +352,9 @@ final class GameSessionRuntimeControlPlaneReadService {
     GameplayRoutingBundle singularBundle =
         GameplayAdmissionPointerSnapshots.singularCompletePointer(pointers)
             .map(this::toGameplayRoutingBundle)
-            .orElseGet(
-                () ->
-                    new GameplayRoutingBundle(
-                        PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
+            .orElseGet(() ->
+                new GameplayRoutingBundle(
+                    PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED, "", "", 0L));
     return new CurrentRoutingProjection(singularBundle, entries);
   }
 

@@ -162,11 +162,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       }
       new AccountAuditOutboxRepository(dsl)
           .findCanonicalTenantEnvelopeForUpdate(request.auditEventId())
-          .filter(
-              audit ->
-                  request.digest().equals(audit.payloadDigest())
-                      && "HOSTING_SUBSCRIPTION_TERMINAL_RESOLVED".equals(audit.eventType())
-                      && request.tenantId().equals(audit.tenantUuid()))
+          .filter(audit ->
+              request.digest().equals(audit.payloadDigest())
+                  && "HOSTING_SUBSCRIPTION_TERMINAL_RESOLVED".equals(audit.eventType())
+                  && request.tenantId().equals(audit.tenantUuid()))
           .orElseThrow(
               () -> new FenceRejectedException("Terminal resolution audit readback differs"));
       return new ResolutionPreparation(

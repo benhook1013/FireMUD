@@ -67,12 +67,11 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
       throws Exception {
     Fixture fixture = fixture();
     DraftAuthorizationFenceBinding binding = binding(fixture);
-    fixture.tx(
-        () -> {
-          fixture.repository.reserve(binding);
-          fixture.repository.claimCommitOrder(binding);
-          return null;
-        });
+    fixture.tx(() -> {
+      fixture.repository.reserve(binding);
+      fixture.repository.claimCommitOrder(binding);
+      return null;
+    });
     var before = snapshot(fixture);
     assertThat(ordering(fixture, binding)).isEqualTo("COMMIT_ORDER");
     Record order =
@@ -99,16 +98,14 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
 
     // V87's real source guard remains effective while this original owner result is unresolved.
     String passwordBefore = accountPassword(fixture, binding.actorAccountId());
-    assertThatThrownBy(
-            () ->
-                fixture.tx(
-                    () -> {
-                      fixture.dsl.execute(
-                          "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
-                          "test-only-blocked-change",
-                          binding.actorAccountId());
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.tx(() -> {
+              fixture.dsl.execute(
+                  "UPDATE accounts SET password_hash = ? WHERE account_uuid = ?",
+                  "test-only-blocked-change",
+                  binding.actorAccountId());
+              return null;
+            }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasMessageContaining("Required creator source is held");
     assertThat(accountPassword(fixture, binding.actorAccountId())).isEqualTo(passwordBefore);
@@ -213,15 +210,14 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
 
   private static DraftAuthorizationFenceBinding binding(Fixture fixture) {
     UUID account =
-        fixture.tx(
-            () -> {
-              Account row = new Account();
-              String suffix = UUID.randomUUID().toString();
-              row.setUsername("held-order-" + suffix);
-              row.setEmail(suffix + "@example.test");
-              row.setPasswordHash("test-only-original-hash");
-              return new AccountRepository(fixture.dsl).save(row).getAccountUuid();
-            });
+        fixture.tx(() -> {
+          Account row = new Account();
+          String suffix = UUID.randomUUID().toString();
+          row.setUsername("held-order-" + suffix);
+          row.setEmail(suffix + "@example.test");
+          row.setPasswordHash("test-only-original-hash");
+          return new AccountRepository(fixture.dsl).save(row).getAccountUuid();
+        });
     UUID tenant = UUID.randomUUID();
     UUID version = UUID.randomUUID();
     UUID request = UUID.randomUUID();
@@ -303,12 +299,11 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
 
   private static void reserveAndCommitOrder(
       Fixture fixture, DraftAuthorizationFenceBinding binding) {
-    fixture.tx(
-        () -> {
-          fixture.repository.reserve(binding);
-          fixture.repository.claimCommitOrder(binding);
-          return null;
-        });
+    fixture.tx(() -> {
+      fixture.repository.reserve(binding);
+      fixture.repository.claimCommitOrder(binding);
+      return null;
+    });
   }
 
   private static void recordReadback(
@@ -327,11 +322,10 @@ class AccountDraftCommitOrderReadPostgresIntegrationTest {
             binding.inputDigest(),
             binding.canonicalBytes(),
             result);
-    fixture.tx(
-        () -> {
-          fixture.repository.recordOwnerReadback(binding, readback);
-          return null;
-        });
+    fixture.tx(() -> {
+      fixture.repository.recordOwnerReadback(binding, readback);
+      return null;
+    });
   }
 
   private static DraftCommitOrderReadEvidence.Request request(

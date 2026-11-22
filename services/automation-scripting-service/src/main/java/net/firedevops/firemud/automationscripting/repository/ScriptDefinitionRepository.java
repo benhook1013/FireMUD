@@ -220,16 +220,14 @@ public class ScriptDefinitionRepository {
                     .otherwise(SCRIPTS.ROW_VERSION))
             .where(SCRIPTS.BASE_VERSION_ID.isNotDistinctFrom(DSL.excluded(SCRIPTS.BASE_VERSION_ID)))
             .returningResult(returningFields)
-            .fetchOptional(
-                returned -> {
-                  ScriptDefinition definition = toEntity(returned);
-                  if (!sameIdentity(definition, entity)) {
-                    throw new IllegalStateException(
-                        "script definition identity upsert returned an unexpected row");
-                  }
-                  return new SaveResult(
-                      definition, Boolean.TRUE.equals(returned.get(INSERTED_ROW)));
-                });
+            .fetchOptional(returned -> {
+              ScriptDefinition definition = toEntity(returned);
+              if (!sameIdentity(definition, entity)) {
+                throw new IllegalStateException(
+                    "script definition identity upsert returned an unexpected row");
+              }
+              return new SaveResult(definition, Boolean.TRUE.equals(returned.get(INSERTED_ROW)));
+            });
     if (saved.isPresent()) {
       return saved.get();
     }

@@ -78,13 +78,12 @@ class DirectTextAuthenticatedLobbyTest {
     assertThat(new String(bytes, StandardCharsets.UTF_8))
         .doesNotContain("fixture-private-token", "password", "authToken", "compactJwt");
     // Historical decode after expiry is still possible, but use cannot renew its deadline.
-    assertThatThrownBy(
-            () ->
-                restored.requireCurrent(
-                    f.original,
-                    f.result,
-                    f.transport,
-                    Clock.fixed(NOW.plusSeconds(60), ZoneOffset.UTC)))
+    assertThatThrownBy(() ->
+            restored.requireCurrent(
+                f.original,
+                f.result,
+                f.transport,
+                Clock.fixed(NOW.plusSeconds(60), ZoneOffset.UTC)))
         .isInstanceOf(IllegalArgumentException.class);
     verify(f.result, never()).close();
   }
@@ -247,20 +246,18 @@ class DirectTextAuthenticatedLobbyTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
     var request = f.frozen.request();
-    assertThatThrownBy(
-            () ->
-                DirectTextAuthenticatedLobbyJoin.decodeRequest(
-                    request.toBuilder().setUnknownFields(unknown).build().toByteArray()))
+    assertThatThrownBy(() ->
+            DirectTextAuthenticatedLobbyJoin.decodeRequest(
+                request.toBuilder().setUnknownFields(unknown).build().toByteArray()))
         .isInstanceOf(IllegalArgumentException.class);
     var hidden =
         request.toBuilder()
             .setPlayerContext(
                 request.getPlayerContext().toBuilder().setCharacterId(UUID.randomUUID().toString()))
             .build();
-    assertThatThrownBy(
-            () ->
-                new DirectTextAuthenticatedLobbyJoin(
-                    f.scope, hidden, State.NEVER_DISPATCHED, Optional.empty()))
+    assertThatThrownBy(() ->
+            new DirectTextAuthenticatedLobbyJoin(
+                f.scope, hidden, State.NEVER_DISPATCHED, Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class);
     byte[] duplicate = new byte[request.getSerializedSize() * 2];
     System.arraycopy(request.toByteArray(), 0, duplicate, 0, request.getSerializedSize());
@@ -279,13 +276,12 @@ class DirectTextAuthenticatedLobbyTest {
             f.scope.recordId(),
             f.transport.proxyConnectionId(),
             f.result.evidence().tokenJti())) {
-      assertThatThrownBy(
-              () ->
-                  new DirectTextAuthenticatedLobbyJoin(
-                      f.scope,
-                      DirectTextAuthenticatedLobbyJoin.requestFor(f.scope, reused),
-                      State.NEVER_DISPATCHED,
-                      Optional.empty()))
+      assertThatThrownBy(() ->
+              new DirectTextAuthenticatedLobbyJoin(
+                  f.scope,
+                  DirectTextAuthenticatedLobbyJoin.requestFor(f.scope, reused),
+                  State.NEVER_DISPATCHED,
+                  Optional.empty()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -315,11 +311,10 @@ class DirectTextAuthenticatedLobbyTest {
     when(f.selection.resolve(null, "public")).thenReturn(Optional.of(f.scope.publicTarget()));
     when(f.account.issueDirectTextConnectScope(any(), any())).thenReturn(scopeResponse());
     when(f.repository.readCommittedScope(any()))
-        .thenAnswer(
-            call -> {
-              assertThat(f.events.getLast()).isEqualTo("COMMIT");
-              return call.getArgument(0);
-            });
+        .thenAnswer(call -> {
+          assertThat(f.events.getLast()).isEqualTo("COMMIT");
+          return call.getArgument(0);
+        });
     var retained = f.owner.realms(f.original, f.result, f.custody, null, "public");
     assertThat(retained.issued().evaluatedAt()).isEqualTo(scopeResponse().getEvaluatedAt());
     assertThat(retained.issued().connectScopeExpiresAt())
@@ -364,25 +359,23 @@ class DirectTextAuthenticatedLobbyTest {
   void committedExactRequestAndPossibleStatePrecedeAccountAndReplyPersistence() {
     var f = new Fixture();
     when(f.account.joinPublicProductionMembership(any(), any(), any(), any()))
-        .thenAnswer(
-            call -> {
-              assertThat(f.events)
-                  .containsSubsequence("FREEZE", "COMMIT", "READ", "CLAIM", "COMMIT", "READ");
-              assertThat(
-                      call.getArgument(
-                          0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class))
-                  .isEqualTo(f.frozen.request().getPlayerContext());
-              var context =
+        .thenAnswer(call -> {
+          assertThat(f.events)
+              .containsSubsequence("FREEZE", "COMMIT", "READ", "CLAIM", "COMMIT", "READ");
+          assertThat(
                   call.getArgument(
-                      0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class);
-              assertThat(context.getAccountId()).isEqualTo(ACCOUNT.toString());
-              assertThat(context.getSessionId()).isEqualTo(f.transport.transportSessionId());
-              assertThat(call.getArgument(1, String.class))
-                  .isEqualTo(f.scope.issued().connectScopeId());
-              assertThat(call.getArgument(2, String.class))
-                  .isEqualTo(f.frozen.request().getRequestId());
-              return positive();
-            });
+                      0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class))
+              .isEqualTo(f.frozen.request().getPlayerContext());
+          var context =
+              call.getArgument(0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class);
+          assertThat(context.getAccountId()).isEqualTo(ACCOUNT.toString());
+          assertThat(context.getSessionId()).isEqualTo(f.transport.transportSessionId());
+          assertThat(call.getArgument(1, String.class))
+              .isEqualTo(f.scope.issued().connectScopeId());
+          assertThat(call.getArgument(2, String.class))
+              .isEqualTo(f.frozen.request().getRequestId());
+          return positive();
+        });
     var observation = f.owner.join(f.original, f.result, f.custody);
     assertThat(observation.status())
         .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING);
@@ -422,12 +415,11 @@ class DirectTextAuthenticatedLobbyTest {
   void positiveReplyAfterCustodyLossIsRetainedButNeverAppliedToReplacementTransport() {
     var f = new Fixture();
     when(f.account.joinPublicProductionMembership(any(), any(), any(), any()))
-        .thenAnswer(
-            call -> {
-              f.resetAfterCallback.set(
-                  true); // Controlled reset at callback exit, not real receiving proof.
-              return positive();
-            });
+        .thenAnswer(call -> {
+          f.resetAfterCallback.set(
+              true); // Controlled reset at callback exit, not real receiving proof.
+          return positive();
+        });
     var observation = f.owner.join(f.original, f.result, f.custody);
     assertThat(observation.status())
         .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.HISTORICAL_ONLY);
@@ -457,29 +449,26 @@ class DirectTextAuthenticatedLobbyTest {
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(f.repository, f.account);
     f.live.set(true);
-    assertThatThrownBy(
-            () ->
-                f.scope.requireCurrent(
-                    f.original,
-                    f.result,
-                    new ObservedDirectTextTransport("42", f.transport.proxyConnectionId()),
-                    CLOCK))
+    assertThatThrownBy(() ->
+            f.scope.requireCurrent(
+                f.original,
+                f.result,
+                new ObservedDirectTextTransport("42", f.transport.proxyConnectionId()),
+                CLOCK))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                f.scope.requireCurrent(
-                    f.original,
-                    f.result,
-                    new ObservedDirectTextTransport("00042", UUID.randomUUID()),
-                    CLOCK))
+    assertThatThrownBy(() ->
+            f.scope.requireCurrent(
+                f.original,
+                f.result,
+                new ObservedDirectTextTransport("00042", UUID.randomUUID()),
+                CLOCK))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                f.scope.requireCurrent(
-                    f.original,
-                    f.result,
-                    f.transport,
-                    Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC)))
+    assertThatThrownBy(() ->
+            f.scope.requireCurrent(
+                f.original,
+                f.result,
+                f.transport,
+                Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -547,27 +536,24 @@ class DirectTextAuthenticatedLobbyTest {
       retained.set(frozen);
       when(repository.current(any(), any(), any(), any())).thenReturn(scope);
       when(repository.freezeCurrentJoin(any(), any(), any(), any()))
-          .thenAnswer(
-              call -> {
-                events.add("FREEZE");
-                return retained.get();
-              });
+          .thenAnswer(call -> {
+            events.add("FREEZE");
+            return retained.get();
+          });
       when(repository.readCommittedJoin(any()))
-          .thenAnswer(
-              call -> {
-                events.add("READ");
-                return retained.get();
-              });
+          .thenAnswer(call -> {
+            events.add("READ");
+            return retained.get();
+          });
       when(repository.claimDispatch(any(), any(), any(), any()))
-          .thenAnswer(
-              call -> {
-                events.add("CLAIM");
-                if (retained.get().state() != State.NEVER_DISPATCHED) return false;
-                retained.set(
-                    new DirectTextAuthenticatedLobbyJoin(
-                        scope, frozen.request(), State.DISPATCH_POSSIBLE, Optional.empty()));
-                return true;
-              });
+          .thenAnswer(call -> {
+            events.add("CLAIM");
+            if (retained.get().state() != State.NEVER_DISPATCHED) return false;
+            retained.set(
+                new DirectTextAuthenticatedLobbyJoin(
+                    scope, frozen.request(), State.DISPATCH_POSSIBLE, Optional.empty()));
+            return true;
+          });
       doAnswer(
               call -> {
                 retained.set(

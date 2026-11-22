@@ -52,17 +52,16 @@ public class VersionAssetPublicationRepository {
     if (versionNumber <= 0) {
       throw new IllegalArgumentException("Version number must be positive");
     }
-    return dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()) {
-            throw new IllegalStateException(
-                "Version asset snapshot requires an enclosing owner transaction");
-          }
-          // Preserve caller configuration while keeping every query on the checked connection.
-          DSLContext ownerDsl = DSL.using(dsl.configuration().derive(connection));
-          return new VersionAssetPublicationRepository(ownerDsl)
-              .freezeOrReadSnapshotInTransaction(tenantId, versionNumber);
-        });
+    return dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()) {
+        throw new IllegalStateException(
+            "Version asset snapshot requires an enclosing owner transaction");
+      }
+      // Preserve caller configuration while keeping every query on the checked connection.
+      DSLContext ownerDsl = DSL.using(dsl.configuration().derive(connection));
+      return new VersionAssetPublicationRepository(ownerDsl)
+          .freezeOrReadSnapshotInTransaction(tenantId, versionNumber);
+    });
   }
 
   private ExportSnapshot freezeOrReadSnapshotInTransaction(String tenantId, int versionNumber) {
@@ -419,15 +418,14 @@ public class VersionAssetPublicationRepository {
                 + "ORDER BY va.asset_id FOR UPDATE OF ga",
             tenantId,
             versionId)
-        .map(
-            row ->
-                new SourceAsset(
-                    row.get("usage_key", String.class),
-                    row.get("asset_id", Long.class),
-                    row.get("file_name", String.class),
-                    row.get("content_type", String.class),
-                    row.get("content_digest", String.class),
-                    row.get("byte_size", Long.class)));
+        .map(row ->
+            new SourceAsset(
+                row.get("usage_key", String.class),
+                row.get("asset_id", Long.class),
+                row.get("file_name", String.class),
+                row.get("content_type", String.class),
+                row.get("content_digest", String.class),
+                row.get("byte_size", Long.class)));
   }
 
   private Optional<VersionRow> lockVersionByTenantAndVersionNumber(

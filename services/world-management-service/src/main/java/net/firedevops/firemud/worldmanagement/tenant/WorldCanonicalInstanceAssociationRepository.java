@@ -424,15 +424,14 @@ public final class WorldCanonicalInstanceAssociationRepository {
       PreparedWorldInstanceRequest gameSessionRequest) {
     Objects.requireNonNull(fixtureEvidence, "fixtureEvidence").requireFixedGameSessionPeer();
     requireWritableReadCommittedOwnerTransaction();
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Run-owned World fixture locking requires a physical writable READ COMMITTED owner transaction");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Run-owned World fixture locking requires a physical writable READ COMMITTED owner transaction");
+      }
+    });
     Record state =
         Objects.requireNonNull(
             dsl.fetchOne(
@@ -515,10 +514,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
         sourceIntakeRepository
             .readInOwnerActivationTransaction(
                 sourceReceipt.targetNamespace(), sourceReceipt.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new InvalidAssociationEvidenceException(
-                        "Run-owned fixture lost its retained World source intake"));
+            .orElseThrow(() ->
+                new InvalidAssociationEvidenceException(
+                    "Run-owned fixture lost its retained World source intake"));
     WorldAuthoredVersionIdentityReceipt storedVersion =
         versionIdentityRepository
             .readByCanonicalVersionInOwnerActivationTransaction(
@@ -526,10 +524,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
                 versionIdentity.canonicalTenantId(),
                 versionIdentity.worldSlug(),
                 versionIdentity.canonicalVersionId())
-            .orElseThrow(
-                () ->
-                    new InvalidAssociationEvidenceException(
-                        "Run-owned fixture lost its retained World Version identity"));
+            .orElseThrow(() ->
+                new InvalidAssociationEvidenceException(
+                    "Run-owned fixture lost its retained World Version identity"));
     if (!storedSource.equals(sourceReceipt) || !storedVersion.equals(versionIdentity)) {
       throw new InvalidAssociationEvidenceException(
           "Run-owned fixture World source or Version receipt changed before allocation");
@@ -920,10 +917,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
     }
     WorldCanonicalInstanceAssociation stored =
         readOwnerAssociation(gameSession.gameInstanceUuid())
-            .orElseThrow(
-                () ->
-                    new InvalidAssociationEvidenceException(
-                        "Run-owned World fixture association is not retained"));
+            .orElseThrow(() ->
+                new InvalidAssociationEvidenceException(
+                    "Run-owned World fixture association is not retained"));
     requireFixtureAssociationMatches(stored, evidence, originalGameSessionRequest);
     return stored;
   }
@@ -960,10 +956,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
     }
     WorldCanonicalInstanceAssociation stored =
         readOwnerAssociation(gameSession.gameInstanceUuid(), true, true)
-            .orElseThrow(
-                () ->
-                    new InvalidAssociationEvidenceException(
-                        "Run-owned World fixture association is not retained"));
+            .orElseThrow(() ->
+                new InvalidAssociationEvidenceException(
+                    "Run-owned World fixture association is not retained"));
     requireFixtureAssociationMatches(stored, evidence, originalGameSessionRequest);
     return stored;
   }
@@ -1078,10 +1073,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
                       ? launchBindingRepository.readInOwnerReadOnlyRepeatableRead(
                           namespace, tenantId, controlRequestId)
                       : launchBindingRepository.read(namespace, tenantId, controlRequestId))
-              .orElseThrow(
-                  () ->
-                      new InvalidAssociationEvidenceException(
-                          "World canonical association lost its immutable launch binding"));
+              .orElseThrow(() ->
+                  new InvalidAssociationEvidenceException(
+                      "World canonical association lost its immutable launch binding"));
       if (!storedBinding.operationId().equals(bindingOperationId)) {
         throw new InvalidAssociationEvidenceException(
             "World canonical association substituted its complete launch binding");
@@ -1094,10 +1088,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
                       ? sourceIntakeRepository.readInOwnerReadOnlyRepeatableRead(
                           namespace, intakeRequestId)
                       : sourceIntakeRepository.read(namespace, intakeRequestId))
-              .orElseThrow(
-                  () ->
-                      new InvalidAssociationEvidenceException(
-                          "World canonical association lost its original source intake"));
+              .orElseThrow(() ->
+                  new InvalidAssociationEvidenceException(
+                      "World canonical association lost its original source intake"));
       WorldCompleteLaunchBindingReceipt completeBinding =
           launchBindingRepository.toReceipt(storedBinding, sourceReceipt);
       UUID canonicalVersionId = required(row, CANONICAL_VERSION_ID);
@@ -1111,10 +1104,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
                               namespace, tenantId, worldSlug, canonicalVersionId)
                       : versionIdentityRepository.readByCanonicalVersion(
                           namespace, tenantId, worldSlug, canonicalVersionId))
-              .orElseThrow(
-                  () ->
-                      new InvalidAssociationEvidenceException(
-                          "World canonical association lost its UUID-to-private-Version receipt"));
+              .orElseThrow(() ->
+                  new InvalidAssociationEvidenceException(
+                      "World canonical association lost its UUID-to-private-Version receipt"));
       WorldCanonicalInstanceAssociation.CanonicalIdentity identity =
           new WorldCanonicalInstanceAssociation.CanonicalIdentity(
               required(row, CANONICAL_GAME_INSTANCE_ID),
@@ -1202,10 +1194,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
                     ? sourceIntakeRepository.readInOwnerReadOnlyRepeatableRead(
                         namespace, required(row, INTAKE_REQUEST_ID))
                     : sourceIntakeRepository.read(namespace, required(row, INTAKE_REQUEST_ID)))
-            .orElseThrow(
-                () ->
-                    new InvalidAssociationEvidenceException(
-                        "Run-owned fixture association lost its exact World source intake"));
+            .orElseThrow(() ->
+                new InvalidAssociationEvidenceException(
+                    "Run-owned fixture association lost its exact World source intake"));
     WorldAuthoredVersionIdentityReceipt versionIdentity =
         (inActivationTransaction
                 ? versionIdentityRepository.readByCanonicalVersionInOwnerActivationTransaction(
@@ -1215,10 +1206,9 @@ public final class WorldCanonicalInstanceAssociationRepository {
                         namespace, canonicalTenantId, worldSlug, canonicalVersionId)
                     : versionIdentityRepository.readByCanonicalVersion(
                         namespace, canonicalTenantId, worldSlug, canonicalVersionId))
-            .orElseThrow(
-                () ->
-                    new InvalidAssociationEvidenceException(
-                        "Run-owned fixture association lost its exact World Version identity"));
+            .orElseThrow(() ->
+                new InvalidAssociationEvidenceException(
+                    "Run-owned fixture association lost its exact World Version identity"));
     WorldCanonicalInstanceAssociation.WorldPrivateKeys worldPrivateKeys =
         new WorldCanonicalInstanceAssociation.WorldPrivateKeys(
             required(row, LOCAL_TENANT_KEY),

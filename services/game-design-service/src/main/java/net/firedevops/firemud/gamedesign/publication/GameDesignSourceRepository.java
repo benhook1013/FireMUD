@@ -90,10 +90,8 @@ public final class GameDesignSourceRepository {
             Optional.of(templateConfig));
     if (!result.equals(
         readGenesis(target)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "GAME_DESIGN_SOURCE_GENESIS_READBACK_UNAVAILABLE")))) {
+            .orElseThrow(() ->
+                new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_READBACK_UNAVAILABLE")))) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_READBACK_CONFLICT");
     }
     return result;
@@ -461,9 +459,8 @@ public final class GameDesignSourceRepository {
 
   private void requireGenesis(TargetProof target) {
     if (readGenesis(target)
-        .filter(
-            genesis ->
-                genesis.assetEvidence().isPresent() && genesis.brandingEvidence().isPresent())
+        .filter(genesis ->
+            genesis.assetEvidence().isPresent() && genesis.brandingEvidence().isPresent())
         .isEmpty()) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_UNAVAILABLE");
     }
@@ -525,19 +522,17 @@ public final class GameDesignSourceRepository {
     List<AffectedUnit> units = binding.affectedUnits(Owner.GAME_DESIGN_CONTROL_PLANE);
     List<AffectedUnit> commands =
         units.stream()
-            .filter(
-                unit ->
-                    CommandSource.SCOPE.equals(unit.aggregateType())
-                        && CommandSource.SCOPE.equals(unit.scopeType())
-                        && CommandSource.SCOPE_ID.equals(unit.scopeId()))
+            .filter(unit ->
+                CommandSource.SCOPE.equals(unit.aggregateType())
+                    && CommandSource.SCOPE.equals(unit.scopeType())
+                    && CommandSource.SCOPE_ID.equals(unit.scopeId()))
             .toList();
     List<AffectedUnit> policies =
         units.stream()
-            .filter(
-                unit ->
-                    RealmPolicySource.SCOPE.equals(unit.aggregateType())
-                        && RealmPolicySource.SCOPE.equals(unit.scopeType())
-                        && "effective".equals(unit.scopeId()))
+            .filter(unit ->
+                RealmPolicySource.SCOPE.equals(unit.aggregateType())
+                    && RealmPolicySource.SCOPE.equals(unit.scopeType())
+                    && "effective".equals(unit.scopeId()))
             .toList();
     List<AffectedUnit> assets = units.stream().filter(AssetSourceRepository::isScope).toList();
     List<AffectedUnit> branding = units.stream().filter(BrandingSourceRepository::isScope).toList();
@@ -557,9 +552,8 @@ public final class GameDesignSourceRepository {
                 + templateConfigs.size()
             != units.size()
         || units.stream()
-            .anyMatch(
-                unit ->
-                    !binding.target().canonicalVersionId().toString().equals(unit.aggregateId()))) {
+            .anyMatch(unit ->
+                !binding.target().canonicalVersionId().toString().equals(unit.aggregateId()))) {
       throw new IllegalArgumentException("Complete supported Game Design source scopes required");
     }
     if (hasPolicy) {

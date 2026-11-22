@@ -101,28 +101,25 @@ class WorldExecutionIntentHistoryPostgresIntegrationTest {
     abort(sql, transaction, abortedAfterIntent);
     abort(sql, transaction, bornAborted);
     assertThat(snapshots(sql, seeds)).isEqualTo(after1036);
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        sql.fetchSingle(
-                            "SELECT world_claim_canonical_instance_execution(?,?,?,?,?,?,?,?)",
-                            pending.inputJson(),
-                            digest(pending.inputJson()),
-                            pending.tupleJson().getBytes(StandardCharsets.UTF_8),
-                            pending.participation(),
-                            7L,
-                            pending.attempt(),
-                            9007199254740993L,
-                            pending.instance())))
+    assertThatThrownBy(() ->
+            transaction.execute(status ->
+                sql.fetchSingle(
+                    "SELECT world_claim_canonical_instance_execution(?,?,?,?,?,?,?,?)",
+                    pending.inputJson(),
+                    digest(pending.inputJson()),
+                    pending.tupleJson().getBytes(StandardCharsets.UTF_8),
+                    pending.participation(),
+                    7L,
+                    pending.attempt(),
+                    9007199254740993L,
+                    pending.instance())))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("exact complete owner observation and serialization fence");
-    assertThatThrownBy(
-            () ->
-                sql.execute(
-                    "UPDATE world_canonical_instance_execution SET game_session_owner_mutation_id = ? WHERE canonical_game_instance_id = ?",
-                    UUID.randomUUID(),
-                    pending.instance()))
+    assertThatThrownBy(() ->
+            sql.execute(
+                "UPDATE world_canonical_instance_execution SET game_session_owner_mutation_id = ? WHERE canonical_game_instance_id = ?",
+                UUID.randomUUID(),
+                pending.instance()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("World execution identity and Account owner witness are immutable");
     Seed freshWithoutWitness = seed();
@@ -202,39 +199,37 @@ class WorldExecutionIntentHistoryPostgresIntegrationTest {
 
   private static long persist(DSLContext sql, TransactionTemplate transaction, Seed seed) {
     return Objects.requireNonNull(
-        transaction.execute(
-            status ->
-                sql.fetchSingle(
-                        "SELECT world_persist_canonical_instance_execution_intent(?,?,?,?,?,?,?,?)",
-                        seed.inputJson(),
-                        digest(seed.inputJson()),
-                        seed.tupleJson().getBytes(StandardCharsets.UTF_8),
-                        seed.participation(),
-                        7L,
-                        seed.attempt(),
-                        9007199254740993L,
-                        seed.instance())
-                    .get(0, Long.class)));
+        transaction.execute(status ->
+            sql.fetchSingle(
+                    "SELECT world_persist_canonical_instance_execution_intent(?,?,?,?,?,?,?,?)",
+                    seed.inputJson(),
+                    digest(seed.inputJson()),
+                    seed.tupleJson().getBytes(StandardCharsets.UTF_8),
+                    seed.participation(),
+                    7L,
+                    seed.attempt(),
+                    9007199254740993L,
+                    seed.instance())
+                .get(0, Long.class)));
   }
 
   private static void abort(DSLContext sql, TransactionTemplate transaction, Seed seed) {
     var result =
         Objects.requireNonNull(
-            transaction.execute(
-                status ->
-                    sql.fetchSingle(
-                        "SELECT * FROM world_abort_canonical_instance_execution(?,?,?,?,?,?,?,?,?,?,?)",
-                        NAMESPACE,
-                        seed.tenant(),
-                        seed.request(),
-                        seed.instance(),
-                        seed.inputJson(),
-                        digest(seed.inputJson()),
-                        seed.tupleJson().getBytes(StandardCharsets.UTF_8),
-                        seed.participation(),
-                        7L,
-                        seed.attempt(),
-                        9007199254740993L)));
+            transaction.execute(status ->
+                sql.fetchSingle(
+                    "SELECT * FROM world_abort_canonical_instance_execution(?,?,?,?,?,?,?,?,?,?,?)",
+                    NAMESPACE,
+                    seed.tenant(),
+                    seed.request(),
+                    seed.instance(),
+                    seed.inputJson(),
+                    digest(seed.inputJson()),
+                    seed.tupleJson().getBytes(StandardCharsets.UTF_8),
+                    seed.participation(),
+                    7L,
+                    seed.attempt(),
+                    9007199254740993L)));
     assertThat(result.get("operation_state", String.class)).isEqualTo("ABORTED");
     assertThat(result.get("world_execution_fence", Long.class)).isPositive();
     assertThat(result.get("world_instance_id", Long.class)).isNull();
@@ -255,17 +250,16 @@ class WorldExecutionIntentHistoryPostgresIntegrationTest {
   }
 
   private static void assertOriginalRows(DSLContext sql, Map<UUID, Snapshot> before) {
-    before.forEach(
-        (id, snapshot) -> {
-          var row =
-              sql.fetchSingle(
-                  "SELECT (to_jsonb(e) - ?::text[]) = ?::jsonb AS original, xmin::text AS xmin FROM world_canonical_instance_execution e WHERE canonical_game_instance_id = ?",
-                  WITNESS_COLUMNS.toArray(String[]::new),
-                  snapshot.json(),
-                  id);
-          assertThat(row.get("original", Boolean.class)).isTrue();
-          assertThat(row.get("xmin", String.class)).isEqualTo(snapshot.xmin());
-        });
+    before.forEach((id, snapshot) -> {
+      var row =
+          sql.fetchSingle(
+              "SELECT (to_jsonb(e) - ?::text[]) = ?::jsonb AS original, xmin::text AS xmin FROM world_canonical_instance_execution e WHERE canonical_game_instance_id = ?",
+              WITNESS_COLUMNS.toArray(String[]::new),
+              snapshot.json(),
+              id);
+      assertThat(row.get("original", Boolean.class)).isTrue();
+      assertThat(row.get("xmin", String.class)).isEqualTo(snapshot.xmin());
+    });
   }
 
   private static void assertNoWitness(DSLContext sql) {

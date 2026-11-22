@@ -212,10 +212,9 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             () -> fixture.start(uuid(209), CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, binding))
         .isInstanceOf(InvalidCanonicalStartingInstanceEvidenceException.class)
         .hasMessageContaining("owner");
-    assertThatThrownBy(
-            () ->
-                fixture.start(
-                    OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, OTHER_REQUEST_DIGEST, binding))
+    assertThatThrownBy(() ->
+            fixture.start(
+                OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, OTHER_REQUEST_DIGEST, binding))
         .isInstanceOf(InvalidCanonicalStartingInstanceEvidenceException.class)
         .hasMessageContaining("launch request");
 
@@ -226,10 +225,9 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             CONTROL_PLANE_REQUEST_ID,
             CHANGED_LAUNCH_DESCRIPTOR_ID,
             fixture.source().source().operationId());
-    assertThatThrownBy(
-            () ->
-                fixture.start(
-                    OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, changedBinding))
+    assertThatThrownBy(() ->
+            fixture.start(
+                OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, changedBinding))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Canonical descriptor pin differs from complete launch binding");
 
@@ -258,10 +256,9 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             CONTROL_PLANE_REQUEST_ID,
             "descriptor-for-starting",
             uuid(299));
-    assertThatThrownBy(
-            () ->
-                fixture.start(
-                    OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, mismatchedSource))
+    assertThatThrownBy(() ->
+            fixture.start(
+                OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, mismatchedSource))
         .isInstanceOf(InvalidCanonicalStartingInstanceEvidenceException.class)
         .hasMessageContaining("persisted authored-world source receipt");
     assertNoStartingRows(fixture);
@@ -270,10 +267,9 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
     CompleteLaunchBindingEvidence validBinding =
         launchBinding(
             missingRealm.source().source(), missingRealm.publishedSet(), CONTROL_PLANE_REQUEST_ID);
-    assertThatThrownBy(
-            () ->
-                missingRealm.start(
-                    OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, validBinding))
+    assertThatThrownBy(() ->
+            missingRealm.start(
+                OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, validBinding))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("visible public SHARED realm");
     assertNoStartingRows(missingRealm);
@@ -305,17 +301,12 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
         }
 
         Future<?> capture =
-            executor.submit(
-                () ->
-                    fixture
-                        .transactions()
-                        .executeWithoutResult(
-                            status ->
-                                associationRepository.capture(
-                                    fixture.tenantAssociation(),
-                                    1L,
-                                    unpinnedBinding,
-                                    unpinnedTuple)));
+            executor.submit(() ->
+                fixture
+                    .transactions()
+                    .executeWithoutResult(status ->
+                        associationRepository.capture(
+                            fixture.tenantAssociation(), 1L, unpinnedBinding, unpinnedTuple)));
         awaitAdvisoryWaiter(fixture, lockKey, capture);
         assertThat(capture.isDone()).isFalse();
         assertNoStartingRows(fixture);
@@ -520,15 +511,14 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
         String requestDigest,
         CompleteLaunchBindingEvidence binding) {
       return Objects.requireNonNull(
-          transactions.execute(
-              status ->
-                  startingRepository.createStarting(
-                      tenantAssociation,
-                      binding,
-                      ownerAccountUuid,
-                      controlPlaneRequestId,
-                      requestDigest,
-                      originalTuple)),
+          transactions.execute(status ->
+              startingRepository.createStarting(
+                  tenantAssociation,
+                  binding,
+                  ownerAccountUuid,
+                  controlPlaneRequestId,
+                  requestDigest,
+                  originalTuple)),
           "canonical STARTING owner result");
     }
   }
@@ -563,14 +553,12 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             "registered authored-world source receipt");
     FreshGameSessionTenantAssociation tenantAssociation =
         Objects.requireNonNull(
-            transactions.execute(
-                status ->
-                    tenantAssociationRepository.associateFresh(
-                        TENANT_ASSOCIATION_OPERATION_ID,
-                        NAMESPACE,
-                        source,
-                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                            source.source()))),
+            transactions.execute(status ->
+                tenantAssociationRepository.associateFresh(
+                    TENANT_ASSOCIATION_OPERATION_ID,
+                    NAMESPACE,
+                    source,
+                    CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source.source()))),
             "fresh complete source-bound Game Session tenant association");
     var request =
         new CreateCanonicalRealmCatalogRequest(

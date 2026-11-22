@@ -275,11 +275,10 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     var migrations = flyway.info().all();
     assertThat(migrations)
         .isNotEmpty()
-        .allSatisfy(
-            migration ->
-                assertThat(migration.getState())
-                    .as(migration.getScript())
-                    .isEqualTo(MigrationState.SUCCESS));
+        .allSatisfy(migration ->
+            assertThat(migration.getState())
+                .as(migration.getScript())
+                .isEqualTo(MigrationState.SUCCESS));
     assertThat(migrations)
         .extracting(MigrationInfo::getVersion)
         .contains(MigrationVersion.fromVersion("1003"), MigrationVersion.fromVersion("1004"));
@@ -307,17 +306,16 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     // capture/World rows in this fixture. This does not establish authenticated producer proof.
     parent
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              parent.dsl().execute("SET LOCAL session_replication_role = replica");
-              parent
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_jwt_signer_desired_states "
-                          + "(environment_id, cluster_id, kubernetes_namespace, custody_mode) "
-                          + "VALUES ('test', 'test-cluster', 'test', 'INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK')");
-              parent.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+        .executeWithoutResult(status -> {
+          parent.dsl().execute("SET LOCAL session_replication_role = replica");
+          parent
+              .dsl()
+              .execute(
+                  "INSERT INTO account_jwt_signer_desired_states "
+                      + "(environment_id, cluster_id, kubernetes_namespace, custody_mode) "
+                      + "VALUES ('test', 'test-cluster', 'test', 'INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK')");
+          parent.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
     List<String> retainedTables =
         List.of(
             "account_jwt_signer_desired_states",
@@ -464,18 +462,17 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     // The parent immutable writer remains enabled outside this deliberate corruption fixture.
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              fixture
-                  .dsl()
-                  .execute(
-                      "UPDATE account_start_session_operator_authorizations SET issuance_operation_id = ? "
-                          + "WHERE control_plane_request_id = ?",
-                      UUID.randomUUID(),
-                      fixture.requestId());
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+        .executeWithoutResult(status -> {
+          fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE account_start_session_operator_authorizations SET issuance_operation_id = ? "
+                      + "WHERE control_plane_request_id = ?",
+                  UUID.randomUUID(),
+                  fixture.requestId());
+          fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
     assertThat(fixture.projection()).containsExactly(fixture.tuple());
     assertThatThrownBy(() -> acquire(fixture))
         .hasMessageContaining(
@@ -543,15 +540,14 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
       var current =
           fixture
               .transaction()
-              .execute(
-                  status ->
-                      fixture
-                          .dsl()
-                          .fetchSingle(
-                              "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
-                              fixture.protectionId(),
-                              1L,
-                              fixture.request()));
+              .execute(status ->
+                  fixture
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
+                          fixture.protectionId(),
+                          1L,
+                          fixture.request()));
       assertThat(current.get("protection_id", UUID.class)).isEqualTo(fixture.protectionId());
       assertThat(current.get("request_binding_bytes", byte[].class))
           .containsExactly(fixture.request());
@@ -569,17 +565,15 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                     fixture.worldId())
                 .get(0, Boolean.class))
         .isTrue();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                                    fixture.source().key())))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                            fixture.source().key())))
         .hasMessageContaining("Original StartSession admission protection remains pending");
   }
 
@@ -603,19 +597,17 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             .getBytes(StandardCharsets.UTF_8);
     assertThat(changedRequest).isNotEqualTo(fixture.request());
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
-                                    fixture.protectionId(),
-                                    1L,
-                                    changedRequest)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
+                            fixture.protectionId(),
+                            1L,
+                            changedRequest)))
         .hasMessageContaining("Original admission recovery binding differs");
     var storedRowAfter =
         fixture
@@ -651,12 +643,11 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             .replace(base64(fixture.hold()), base64(forgedHold))
             .getBytes(StandardCharsets.UTF_8);
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> insertProtection(fixture, 11L, forgedHold, forgedRequest)))
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(
+                    status -> insertProtection(fixture, 11L, forgedHold, forgedRequest)))
         .hasMessageContaining(
             "Original StartSession admission hold request differs from retained protection");
     assertThat(
@@ -674,100 +665,87 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     UUID changeId = UUID.randomUUID();
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              insert(
-                  fixture.dsl(),
-                  "account_draft_authorization_source_changes",
-                  "change_id",
-                  changeId,
-                  "binding",
-                  bytes("change"),
-                  "status",
-                  "WAITING");
-              insert(
-                  fixture.dsl(),
-                  "account_draft_authorization_changed_scopes",
-                  "change_id",
-                  changeId,
-                  "source_key",
-                  fixture.source().key());
-            });
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_draft_authorization_source_changes SET status = 'SOURCE_COMMITTED', committed_at = clock_timestamp() WHERE change_id = ?",
-                                    changeId)))
+        .executeWithoutResult(status -> {
+          insert(
+              fixture.dsl(),
+              "account_draft_authorization_source_changes",
+              "change_id",
+              changeId,
+              "binding",
+              bytes("change"),
+              "status",
+              "WAITING");
+          insert(
+              fixture.dsl(),
+              "account_draft_authorization_changed_scopes",
+              "change_id",
+              changeId,
+              "source_key",
+              fixture.source().key());
+        });
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "UPDATE account_draft_authorization_source_changes SET status = 'SOURCE_COMMITTED', committed_at = clock_timestamp() WHERE change_id = ?",
+                            changeId)))
         .hasMessageContaining("Original StartSession admission protection remains pending");
     UUID handoffId = UUID.randomUUID();
     fixture
         .transaction()
-        .executeWithoutResult(
-            status ->
-                insert(
-                    fixture.dsl(),
-                    "account_hosted_terms_disclosure_handoffs",
-                    "handoff_id",
-                    handoffId,
-                    "request_id",
-                    UUID.randomUUID(),
-                    "kind",
-                    "CATALOG",
-                    "source_key",
-                    fixture.source().key(),
-                    "predecessor_digest",
-                    "sha256:" + "a".repeat(64),
-                    "candidate_digest",
-                    "sha256:" + "b".repeat(64),
-                    "effective_at",
-                    OffsetDateTime.now().plusDays(1),
-                    "binding",
-                    bytes("disclosure"),
-                    "binding_digest",
-                    "sha256:" + hash(bytes("disclosure")),
-                    "status",
-                    "PREPARED"));
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 WHERE handoff_id = ?",
-                                    handoffId)))
+        .executeWithoutResult(status ->
+            insert(
+                fixture.dsl(),
+                "account_hosted_terms_disclosure_handoffs",
+                "handoff_id",
+                handoffId,
+                "request_id",
+                UUID.randomUUID(),
+                "kind",
+                "CATALOG",
+                "source_key",
+                fixture.source().key(),
+                "predecessor_digest",
+                "sha256:" + "a".repeat(64),
+                "candidate_digest",
+                "sha256:" + "b".repeat(64),
+                "effective_at",
+                OffsetDateTime.now().plusDays(1),
+                "binding",
+                bytes("disclosure"),
+                "binding_digest",
+                "sha256:" + hash(bytes("disclosure")),
+                "status",
+                "PREPARED"));
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 WHERE handoff_id = ?",
+                            handoffId)))
         .hasMessageContaining("Original StartSession admission protection remains pending");
   }
 
   @Test
   void rawChangedCaptureAndIncompleteChildrenCannotBecomeProtection() {
     Fixture changed = fixture();
-    assertThatThrownBy(
-            () ->
-                changed
-                    .transaction()
-                    .executeWithoutResult(status -> insertProtection(changed, 99L)))
+    assertThatThrownBy(() ->
+            changed.transaction().executeWithoutResult(status -> insertProtection(changed, 99L)))
         .hasMessageContaining("retained owner bindings");
     Fixture incomplete = fixture();
-    assertThatThrownBy(
-            () ->
-                incomplete
-                    .transaction()
-                    .executeWithoutResult(status -> insertProtection(incomplete, 11L)))
-        .satisfies(
-            failure ->
-                assertDatabaseGuardFailure(
-                    failure,
-                    "Admission protection has incomplete or extra source children",
-                    "23514"));
+    assertThatThrownBy(() ->
+            incomplete
+                .transaction()
+                .executeWithoutResult(status -> insertProtection(incomplete, 11L)))
+        .satisfies(failure ->
+            assertDatabaseGuardFailure(
+                failure, "Admission protection has incomplete or extra source children", "23514"));
     assertThat(
             incomplete
                 .dsl()
@@ -789,23 +767,21 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
       assertThatThrownBy(() -> fixture.dsl().execute("TRUNCATE " + table + " CASCADE"))
           .hasMessageContaining("append-only");
     }
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE account_start_session_admission_protection_sources SET source_evidence = ?",
-                        bytes("changed")))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE account_start_session_admission_protection_sources SET source_evidence = ?",
+                    bytes("changed")))
         .hasMessageContaining("append-only");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_start_session_admission_protection_settlements (protection_id, outcome, terminal_bytes, terminal_digest) VALUES (?, 'ABORTED', ?, ?)",
-                        fixture.protectionId(),
-                        malformedSettlementBytes(),
-                        "sha256:" + hash(malformedSettlementBytes())))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO account_start_session_admission_protection_settlements (protection_id, outcome, terminal_bytes, terminal_digest) VALUES (?, 'ABORTED', ?, ?)",
+                    fixture.protectionId(),
+                    malformedSettlementBytes(),
+                    "sha256:" + hash(malformedSettlementBytes())))
         .hasMessageContaining("not the closed envelope");
     assertThat(
             fixture
@@ -823,13 +799,12 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED)) {
       Fixture fixture = fixture();
       acquire(fixture);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
-                          fixture.source().key()))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                      fixture.source().key()))
           .hasMessageContaining("Original StartSession admission protection remains pending");
       var proof =
           new GameSessionCanonicalInitialAdmissionOwnerProof(
@@ -901,29 +876,26 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     // rewriting the fixture row requires disabling the immutable upstream/new triggers.
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              fixture
-                  .dsl()
-                  .execute(
-                      "UPDATE account_start_session_admission_protections SET original_lease_expires_at = date_trunc('milliseconds', clock_timestamp() - INTERVAL '1 second') WHERE protection_id = ?",
-                      fixture.protectionId());
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
-                                    fixture.protectionId(),
-                                    1L,
-                                    fixture.request())))
+        .executeWithoutResult(status -> {
+          fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE account_start_session_admission_protections SET original_lease_expires_at = date_trunc('milliseconds', clock_timestamp() - INTERVAL '1 second') WHERE protection_id = ?",
+                  fixture.protectionId());
+          fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
+    assertThatThrownBy(() ->
+            fixture
+                .transaction()
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
+                            fixture.protectionId(),
+                            1L,
+                            fixture.request())))
         .hasMessageContaining("not current");
     assertThat(
             fixture
@@ -947,30 +919,28 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
               "SELECT control_plane_request_id FROM account_start_session_authority_captures WHERE control_plane_request_id = ? FOR UPDATE",
               fixture.requestId());
       var waiting =
-          executor.submit(
-              () ->
-                  fixture
-                      .transaction()
-                      .executeWithoutResult(
-                          status -> {
-                            entered.countDown();
-                            // The currentness producer's original-capture lock can wait before the
-                            // V165
-                            // boundary. V165 itself uses NOWAIT to avoid reversing source lock
-                            // order.
-                            fixture
-                                .dsl()
-                                .fetch(
-                                    "SELECT control_plane_request_id FROM account_start_session_authority_captures WHERE control_plane_request_id = ? FOR UPDATE",
-                                    fixture.requestId());
-                            fixture
-                                .dsl()
-                                .execute(
-                                    "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
-                                    fixture.protectionId(),
-                                    1L,
-                                    fixture.request());
-                          }));
+          executor.submit(() ->
+              fixture
+                  .transaction()
+                  .executeWithoutResult(status -> {
+                    entered.countDown();
+                    // The currentness producer's original-capture lock can wait before the
+                    // V165
+                    // boundary. V165 itself uses NOWAIT to avoid reversing source lock
+                    // order.
+                    fixture
+                        .dsl()
+                        .fetch(
+                            "SELECT control_plane_request_id FROM account_start_session_authority_captures WHERE control_plane_request_id = ? FOR UPDATE",
+                            fixture.requestId());
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
+                            fixture.protectionId(),
+                            1L,
+                            fixture.request());
+                  }));
       assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
       long expiryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
       while (fixture
@@ -1018,23 +988,21 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
         () ->
             fixture
                 .transaction()
-                .executeWithoutResult(
-                    status ->
-                        insertProtection(fixture, 11L, oversizedHold, json(oversizedHoldRequest))),
+                .executeWithoutResult(status ->
+                    insertProtection(fixture, 11L, oversizedHold, json(oversizedHoldRequest))),
         "23514");
     assertDatabaseGuardFailure(
         () ->
             fixture
                 .transaction()
-                .executeWithoutResult(
-                    status ->
-                        insertProtection(
-                            fixture,
-                            11L,
-                            fixture.hold(),
-                            bytes(
-                                new String(fixture.request(), StandardCharsets.UTF_8)
-                                    + " ".repeat(786433)))),
+                .executeWithoutResult(status ->
+                    insertProtection(
+                        fixture,
+                        11L,
+                        fixture.hold(),
+                        bytes(
+                            new String(fixture.request(), StandardCharsets.UTF_8)
+                                + " ".repeat(786433)))),
         "23514");
 
     for (List<String> vector :
@@ -1174,28 +1142,27 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
       sources.sort(java.util.Comparator.comparing(SourceEvidence::key));
       fixture
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-                for (SourceEvidence source : sources) {
-                  if (source.key().equals(fixture.source().key())) continue;
-                  fixture
-                      .dsl()
-                      .execute(
-                          "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
-                          source.key());
-                  insert(
-                      fixture.dsl(),
-                      "account_start_session_world_participation_sources",
-                      "participation_id",
-                      fixture.worldId(),
-                      "source_key",
-                      source.key(),
-                      "source_evidence",
-                      source.canonicalBytes());
-                }
-                fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-              });
+          .executeWithoutResult(status -> {
+            fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+            for (SourceEvidence source : sources) {
+              if (source.key().equals(fixture.source().key())) continue;
+              fixture
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                      source.key());
+              insert(
+                  fixture.dsl(),
+                  "account_start_session_world_participation_sources",
+                  "participation_id",
+                  fixture.worldId(),
+                  "source_key",
+                  source.key(),
+                  "source_evidence",
+                  source.canonicalBytes());
+            }
+            fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+          });
       replaceSnapshot(
           fixture,
           json(
@@ -1243,27 +1210,26 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             .toList();
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              for (SourceEvidence source : List.of(supplementary, bmp)) {
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
-                        source.key());
-                insert(
-                    fixture.dsl(),
-                    "account_start_session_world_participation_sources",
-                    "participation_id",
-                    fixture.worldId(),
-                    "source_key",
-                    source.key(),
-                    "source_evidence",
-                    source.canonicalBytes());
-              }
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+        .executeWithoutResult(status -> {
+          fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+          for (SourceEvidence source : List.of(supplementary, bmp)) {
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                    source.key());
+            insert(
+                fixture.dsl(),
+                "account_start_session_world_participation_sources",
+                "participation_id",
+                fixture.worldId(),
+                "source_key",
+                source.key(),
+                "source_evidence",
+                source.canonicalBytes());
+          }
+          fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
     var reversed = new java.util.ArrayList<>(sources);
     java.util.Collections.reverse(reversed);
     replaceSnapshot(
@@ -1307,33 +1273,31 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
   private static void replaceSnapshot(Fixture fixture, byte[] snapshot) {
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              fixture
-                  .dsl()
-                  .execute(
-                      "UPDATE account_start_session_authority_captures SET canonical_snapshot_bytes = ?, snapshot_sha256 = ? WHERE control_plane_request_id = ?",
-                      snapshot,
-                      hash(snapshot),
-                      fixture.requestId());
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+        .executeWithoutResult(status -> {
+          fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE account_start_session_authority_captures SET canonical_snapshot_bytes = ?, snapshot_sha256 = ? WHERE control_plane_request_id = ?",
+                  snapshot,
+                  hash(snapshot),
+                  fixture.requestId());
+          fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+        });
   }
 
   private static void acquire(Fixture fixture) {
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              insertProtection(fixture, 11L);
-              fixture
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_start_session_admission_protection_sources(protection_id, source_key, source_evidence) SELECT ?, source_key, source_evidence FROM account_start_session_world_participation_sources WHERE participation_id = ?",
-                      fixture.protectionId(),
-                      fixture.worldId());
-            });
+        .executeWithoutResult(status -> {
+          insertProtection(fixture, 11L);
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO account_start_session_admission_protection_sources(protection_id, source_key, source_evidence) SELECT ?, source_key, source_evidence FROM account_start_session_world_participation_sources WHERE participation_id = ?",
+                  fixture.protectionId(),
+                  fixture.worldId());
+        });
   }
 
   private static void insertProtection(Fixture fixture, long version) {
@@ -1532,195 +1496,194 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                 requestId,
                 "sourceVector",
                 List.of(base64(evidence.canonicalBytes()))));
-    transaction.executeWithoutResult(
-        status -> {
-          dsl.execute("SET LOCAL session_replication_role = replica");
-          insert(
-              dsl,
-              "account_canonical_tenant_identity_claims",
-              "canonical_tenant_id",
-              tenant,
-              "identity_kind",
-              "APPROVED_RETAINED",
-              "source_operation_id",
-              UUID.randomUUID(),
-              "source_account_legacy_tenant_id",
-              1L,
-              "source_target_namespace",
-              "test",
-              "source_game_row_id",
-              1L,
-              "source_game_tenant_key",
-              tenant.toString());
-          insert(dsl, "account_draft_authorization_source_locks", "source_key", evidence.key());
-          insert(
-              dsl,
-              "account_start_session_authority_captures",
-              "control_plane_request_id",
-              requestId,
-              "account_uuid",
-              actor,
-              "tenant_uuid",
-              tenant,
-              "target_owner",
-              "game-session-service",
-              "logging_workload_uri",
-              "spiffe://firemud/ns/test/sa/logging-admin-service",
-              "reservation_owner_id",
-              UUID.randomUUID(),
-              "reservation_claim_fence",
-              7L,
-              "pre_authorization_tuple",
-              bytes("{}"),
-              "mutation_digest",
-              "c".repeat(64),
-              "control_ui_operation_id",
-              UUID.randomUUID(),
-              "control_ui_token_jti",
-              UUID.randomUUID(),
-              "control_ui_token_hash",
-              "d".repeat(64),
-              "control_ui_signer_receipt_sha256",
-              "e".repeat(64),
-              "issuance_fence",
-              9L,
-              "issuance_fence_source_version",
-              1L,
-              "captured_at",
-              capturedAt,
-              "snapshot_sha256",
-              hash(snapshot),
-              "canonical_snapshot_bytes",
-              snapshot,
-              "source_version",
-              11L,
-              "source_fence",
-              13L,
-              "linearization",
-              "17",
-              "canonical_sha256",
-              hash(bytes("{}")),
-              "canonical_capture_bytes",
-              bytes("{}"));
-          insert(
-              dsl,
-              "account_start_session_operator_authorizations",
-              "control_plane_request_id",
-              requestId,
-              "pre_authorization_tuple",
-              bytes("{}"),
-              "mutation_digest",
-              "c".repeat(64),
-              "issuance_workload_uri",
-              "spiffe://firemud/ns/test/sa/logging-admin-service",
-              "reservation_owner_id",
-              UUID.randomUUID(),
-              "reservation_claim_fence",
-              7L,
-              "issuance_operation_id",
-              issuance,
-              "issuance_fence",
-              9L,
-              "bundle_version",
-              "authorityEvidenceBundle/v1",
-              "bundle_source_version",
-              "11",
-              "bundle_source_fence",
-              "13",
-              "bundle_linearization",
-              "17",
-              "authority_evidence_bundle",
-              json(authorityBundle),
-              "authorization_reference_fingerprint",
-              "arfp/v1/key-1/" + "a".repeat(64),
-              "encrypted_response_envelope",
-              bytes("synthetic"),
-              "issued_at",
-              now.minusSeconds(10),
-              "reference_expires_at",
-              now.plusSeconds(90),
-              "response_envelope_expires_at",
-              now.plusSeconds(120),
-              "status",
-              "REDEEMED",
-              "redemption_redeemer_workload_uri",
-              "spiffe://firemud/ns/test/sa/game-session-service",
-              "redemption_owner_attempt_id",
-              attempt,
-              "redemption_owner_fence",
-              47L,
-              "redeemed_at",
-              now.minusSeconds(5),
-              "redemption_reference_fingerprint",
-              "arfp/v1/key-1/" + "a".repeat(64),
-              "redemption_authority_evidence_bundle",
-              json(authorityBundle));
-          insert(
-              dsl,
-              "account_start_session_world_participations",
-              "participation_id",
-              world,
-              "control_plane_request_id",
-              requestId,
-              "original_post_authorization_tuple",
-              tuple,
-              "target_namespace",
-              "test",
-              "canonical_tenant_id",
-              tenant,
-              "canonical_game_instance_id",
-              instance,
-              "game_session_owner_attempt_id",
-              attempt,
-              "game_session_owner_fence",
-              47L,
-              "preparation_input_json",
-              "{}",
-              "preparation_input_digest",
-              "sha256:" + hash(bytes("{}")));
-          insert(
-              dsl,
-              "account_start_session_world_participation_sources",
-              "participation_id",
-              world,
-              "source_key",
-              evidence.key(),
-              "source_evidence",
-              evidence.canonicalBytes());
-          insert(
-              dsl,
-              "account_start_session_world_original_attempt_evidence",
-              "participation_id",
-              world,
-              "target_namespace",
-              "test",
-              "game_session_owner_mutation_id",
-              mutation,
-              "game_session_owner_attempt_id",
-              attempt,
-              "game_session_owner_fence",
-              47L,
-              "original_lease_expires_at",
-              expiry,
-              "original_response_bytes",
-              bytes("synthetic-observation"),
-              "original_response_digest",
-              "sha256:" + hash(bytes("synthetic-observation")));
-          insert(
-              dsl,
-              "account_start_session_world_participation_settlements",
-              "participation_id",
-              world,
-              "outcome",
-              "COMMITTED",
-              "world_execution_fence",
-              1L,
-              "terminal_bytes",
-              bytes("synthetic-terminal"),
-              "terminal_digest",
-              "sha256:" + hash(bytes("synthetic-terminal")));
-          dsl.execute("SET LOCAL session_replication_role = origin");
-        });
+    transaction.executeWithoutResult(status -> {
+      dsl.execute("SET LOCAL session_replication_role = replica");
+      insert(
+          dsl,
+          "account_canonical_tenant_identity_claims",
+          "canonical_tenant_id",
+          tenant,
+          "identity_kind",
+          "APPROVED_RETAINED",
+          "source_operation_id",
+          UUID.randomUUID(),
+          "source_account_legacy_tenant_id",
+          1L,
+          "source_target_namespace",
+          "test",
+          "source_game_row_id",
+          1L,
+          "source_game_tenant_key",
+          tenant.toString());
+      insert(dsl, "account_draft_authorization_source_locks", "source_key", evidence.key());
+      insert(
+          dsl,
+          "account_start_session_authority_captures",
+          "control_plane_request_id",
+          requestId,
+          "account_uuid",
+          actor,
+          "tenant_uuid",
+          tenant,
+          "target_owner",
+          "game-session-service",
+          "logging_workload_uri",
+          "spiffe://firemud/ns/test/sa/logging-admin-service",
+          "reservation_owner_id",
+          UUID.randomUUID(),
+          "reservation_claim_fence",
+          7L,
+          "pre_authorization_tuple",
+          bytes("{}"),
+          "mutation_digest",
+          "c".repeat(64),
+          "control_ui_operation_id",
+          UUID.randomUUID(),
+          "control_ui_token_jti",
+          UUID.randomUUID(),
+          "control_ui_token_hash",
+          "d".repeat(64),
+          "control_ui_signer_receipt_sha256",
+          "e".repeat(64),
+          "issuance_fence",
+          9L,
+          "issuance_fence_source_version",
+          1L,
+          "captured_at",
+          capturedAt,
+          "snapshot_sha256",
+          hash(snapshot),
+          "canonical_snapshot_bytes",
+          snapshot,
+          "source_version",
+          11L,
+          "source_fence",
+          13L,
+          "linearization",
+          "17",
+          "canonical_sha256",
+          hash(bytes("{}")),
+          "canonical_capture_bytes",
+          bytes("{}"));
+      insert(
+          dsl,
+          "account_start_session_operator_authorizations",
+          "control_plane_request_id",
+          requestId,
+          "pre_authorization_tuple",
+          bytes("{}"),
+          "mutation_digest",
+          "c".repeat(64),
+          "issuance_workload_uri",
+          "spiffe://firemud/ns/test/sa/logging-admin-service",
+          "reservation_owner_id",
+          UUID.randomUUID(),
+          "reservation_claim_fence",
+          7L,
+          "issuance_operation_id",
+          issuance,
+          "issuance_fence",
+          9L,
+          "bundle_version",
+          "authorityEvidenceBundle/v1",
+          "bundle_source_version",
+          "11",
+          "bundle_source_fence",
+          "13",
+          "bundle_linearization",
+          "17",
+          "authority_evidence_bundle",
+          json(authorityBundle),
+          "authorization_reference_fingerprint",
+          "arfp/v1/key-1/" + "a".repeat(64),
+          "encrypted_response_envelope",
+          bytes("synthetic"),
+          "issued_at",
+          now.minusSeconds(10),
+          "reference_expires_at",
+          now.plusSeconds(90),
+          "response_envelope_expires_at",
+          now.plusSeconds(120),
+          "status",
+          "REDEEMED",
+          "redemption_redeemer_workload_uri",
+          "spiffe://firemud/ns/test/sa/game-session-service",
+          "redemption_owner_attempt_id",
+          attempt,
+          "redemption_owner_fence",
+          47L,
+          "redeemed_at",
+          now.minusSeconds(5),
+          "redemption_reference_fingerprint",
+          "arfp/v1/key-1/" + "a".repeat(64),
+          "redemption_authority_evidence_bundle",
+          json(authorityBundle));
+      insert(
+          dsl,
+          "account_start_session_world_participations",
+          "participation_id",
+          world,
+          "control_plane_request_id",
+          requestId,
+          "original_post_authorization_tuple",
+          tuple,
+          "target_namespace",
+          "test",
+          "canonical_tenant_id",
+          tenant,
+          "canonical_game_instance_id",
+          instance,
+          "game_session_owner_attempt_id",
+          attempt,
+          "game_session_owner_fence",
+          47L,
+          "preparation_input_json",
+          "{}",
+          "preparation_input_digest",
+          "sha256:" + hash(bytes("{}")));
+      insert(
+          dsl,
+          "account_start_session_world_participation_sources",
+          "participation_id",
+          world,
+          "source_key",
+          evidence.key(),
+          "source_evidence",
+          evidence.canonicalBytes());
+      insert(
+          dsl,
+          "account_start_session_world_original_attempt_evidence",
+          "participation_id",
+          world,
+          "target_namespace",
+          "test",
+          "game_session_owner_mutation_id",
+          mutation,
+          "game_session_owner_attempt_id",
+          attempt,
+          "game_session_owner_fence",
+          47L,
+          "original_lease_expires_at",
+          expiry,
+          "original_response_bytes",
+          bytes("synthetic-observation"),
+          "original_response_digest",
+          "sha256:" + hash(bytes("synthetic-observation")));
+      insert(
+          dsl,
+          "account_start_session_world_participation_settlements",
+          "participation_id",
+          world,
+          "outcome",
+          "COMMITTED",
+          "world_execution_fence",
+          1L,
+          "terminal_bytes",
+          bytes("synthetic-terminal"),
+          "terminal_digest",
+          "sha256:" + hash(bytes("synthetic-terminal")));
+      dsl.execute("SET LOCAL session_replication_role = origin");
+    });
     return fixture;
   }
 

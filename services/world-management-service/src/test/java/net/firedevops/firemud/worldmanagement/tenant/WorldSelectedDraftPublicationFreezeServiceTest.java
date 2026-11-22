@@ -64,28 +64,19 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     var collaborators = new Collaborators();
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withoutPeer(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withoutPeer(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer("other", "game-design-service"),
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer("other", "game-design-service"),
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-session-service"),
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-session-service"),
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(SecurityException.class);
 
     collaborators.verifyNoReadsOrWrites();
@@ -146,10 +137,8 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
             fixture.selection(),
             fixture.accountBinding().operationId(),
             uuid("14141414-1414-4414-8414-141414141414"));
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () -> service.freeze(fixture.evidence(), fixture.plan(), changedFence)))
+    assertThatThrownBy(() ->
+            withGameDesign(() -> service.freeze(fixture.evidence(), fixture.plan(), changedFence)))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("Account");
     verifyNoInteractions(
@@ -168,12 +157,9 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.authorizationRepository.readCommitted(prior)).thenReturn(Optional.empty());
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("no original Account");
     verifyNoInteractions(
@@ -194,10 +180,8 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
         accountBinding(changedSelection, uuid("15151515-1515-4515-8515-151515151515"));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () -> service.freeze(fixture.evidence(), fixture.plan(), changedOrder)))
+    assertThatThrownBy(() ->
+            withGameDesign(() -> service.freeze(fixture.evidence(), fixture.plan(), changedOrder)))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("not exact");
     collaborators.verifyNoReadsOrWrites();
@@ -214,19 +198,15 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     var changedSelection =
         selection(fixture.binding(), "other-selection", VERSION_EPOCH, "other immutable selection");
     when(collaborators.selectionClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                selectionRead(
-                    AuthoredDraftPublishSelectionReadEvidence.Request.create(
-                        NAMESPACE, changedSelection)));
+        .thenAnswer(invocation ->
+            selectionRead(
+                AuthoredDraftPublishSelectionReadEvidence.Request.create(
+                    NAMESPACE, changedSelection)));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("selected Draft read");
     verify(collaborators.versionStateClient, never()).read(any());
@@ -245,42 +225,37 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.fence.readAttempt(fixture.evidence()))
         .thenReturn(Optional.empty(), Optional.of(committed));
     when(collaborators.selectionClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return selectionRead(invocation.getArgument(0));
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return selectionRead(invocation.getArgument(0));
+        });
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return AuthoredWorldVersionStateEvidence.create(
-                  invocation.getArgument(0),
-                  fixture.source(),
-                  VERSION,
-                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                  VERSION_EPOCH);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return AuthoredWorldVersionStateEvidence.create(
+              invocation.getArgument(0),
+              fixture.source(),
+              VERSION,
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+              VERSION_EPOCH);
+        });
     when(collaborators.accountClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return accountRead(invocation.getArgument(0));
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return accountRead(invocation.getArgument(0));
+        });
     when(collaborators.checkpointRepository.captureWithSource(fixture.evidence(), fixture.plan()))
         .thenReturn(
             new WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint(
                 fixture.checkpoint(), null, null, null, null));
     when(collaborators.fence.claimFreeze(eq(fixture.evidence()), any()))
-        .thenAnswer(
-            invocation -> {
-              Checkpoint checkpoint = ((Supplier<Checkpoint>) invocation.getArgument(1)).get();
-              return new FrozenAttempt(
-                  fixture.evidence(), committed.publicationFence(), checkpoint);
-            });
+        .thenAnswer(invocation -> {
+          Checkpoint checkpoint = ((Supplier<Checkpoint>) invocation.getArgument(1)).get();
+          return new FrozenAttempt(fixture.evidence(), committed.publicationFence(), checkpoint);
+        });
     when(collaborators.authorizationRepository.retainOrRequireExact(
             committed, fixture.accountBinding(), true))
         .thenReturn(fixture.accountBinding());
@@ -335,22 +310,18 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                AuthoredWorldVersionStateEvidence.create(
-                    invocation.getArgument(0),
-                    fixture.source(),
-                    VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                    VERSION_EPOCH));
+        .thenAnswer(invocation ->
+            AuthoredWorldVersionStateEvidence.create(
+                invocation.getArgument(0),
+                fixture.source(),
+                VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                VERSION_EPOCH));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("DRAFT epoch");
     verify(collaborators.accountClient, never()).read(any());
@@ -368,22 +339,18 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                AuthoredWorldVersionStateEvidence.create(
-                    invocation.getArgument(0),
-                    fixture.source(),
-                    VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                    VERSION_EPOCH + 1L));
+        .thenAnswer(invocation ->
+            AuthoredWorldVersionStateEvidence.create(
+                invocation.getArgument(0),
+                fixture.source(),
+                VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                VERSION_EPOCH + 1L));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("DRAFT epoch");
     verify(collaborators.accountClient, never()).read(any());
@@ -401,35 +368,31 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldVersionStateEvidence.Request expected = invocation.getArgument(0);
-              AuthoredWorldSourceEvidence changedSource = changedSource(fixture.source());
-              var changedRequest =
-                  new AuthoredWorldVersionStateEvidence.Request(
-                      1,
-                      NAMESPACE,
-                      expected.readRequestId(),
-                      expected.canonicalTenantId(),
-                      changedSource.worldSlug(),
-                      changedSource.operationId(),
-                      changedSource.evidenceDigest(),
-                      expected.versionId());
-              return AuthoredWorldVersionStateEvidence.create(
-                  changedRequest,
-                  changedSource,
-                  VERSION,
-                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                  VERSION_EPOCH);
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldVersionStateEvidence.Request expected = invocation.getArgument(0);
+          AuthoredWorldSourceEvidence changedSource = changedSource(fixture.source());
+          var changedRequest =
+              new AuthoredWorldVersionStateEvidence.Request(
+                  1,
+                  NAMESPACE,
+                  expected.readRequestId(),
+                  expected.canonicalTenantId(),
+                  changedSource.worldSlug(),
+                  changedSource.operationId(),
+                  changedSource.evidenceDigest(),
+                  expected.versionId());
+          return AuthoredWorldVersionStateEvidence.create(
+              changedRequest,
+              changedSource,
+              VERSION,
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+              VERSION_EPOCH);
+        });
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("DRAFT epoch");
     verify(collaborators.accountClient, never()).read(any());
@@ -447,29 +410,23 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                AuthoredWorldVersionStateEvidence.create(
-                    invocation.getArgument(0),
-                    fixture.source(),
-                    VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                    VERSION_EPOCH));
+        .thenAnswer(invocation ->
+            AuthoredWorldVersionStateEvidence.create(
+                invocation.getArgument(0),
+                fixture.source(),
+                VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                VERSION_EPOCH));
     var changed = accountBinding(fixture.selection(), uuid("16161616-1616-4616-8616-161616161616"));
     when(collaborators.accountClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                accountRead(
-                    AccountPublicationAuthorizationReadEvidence.Request.create(
-                        NAMESPACE, changed)));
+        .thenAnswer(invocation ->
+            accountRead(
+                AccountPublicationAuthorizationReadEvidence.Request.create(NAMESPACE, changed)));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("HELD read");
     verify(collaborators.fence, never()).claimFreeze(any(), any());
@@ -486,24 +443,20 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                AuthoredWorldVersionStateEvidence.create(
-                    invocation.getArgument(0),
-                    fixture.source(),
-                    VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                    VERSION_EPOCH));
+        .thenAnswer(invocation ->
+            AuthoredWorldVersionStateEvidence.create(
+                invocation.getArgument(0),
+                fixture.source(),
+                VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                VERSION_EPOCH));
     when(collaborators.accountClient.read(any()))
         .thenThrow(new IllegalStateException("Account authorization read unavailable"));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unavailable");
     verify(collaborators.fence, never()).claimFreeze(any(), any());
@@ -521,14 +474,13 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                AuthoredWorldVersionStateEvidence.create(
-                    invocation.getArgument(0),
-                    fixture.source(),
-                    VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                    VERSION_EPOCH));
+        .thenAnswer(invocation ->
+            AuthoredWorldVersionStateEvidence.create(
+                invocation.getArgument(0),
+                fixture.source(),
+                VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                VERSION_EPOCH));
     when(collaborators.accountClient.read(any()))
         .thenAnswer(invocation -> accountRead(invocation.getArgument(0)));
     when(collaborators.checkpointRepository.captureWithSource(fixture.evidence(), fixture.plan()))
@@ -536,11 +488,10 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
             new WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint(
                 fixture.checkpoint(), null, null, null, null));
     when(collaborators.fence.claimFreeze(eq(fixture.evidence()), any()))
-        .thenAnswer(
-            invocation -> {
-              ((Supplier<Checkpoint>) invocation.getArgument(1)).get();
-              return claimed;
-            });
+        .thenAnswer(invocation -> {
+          ((Supplier<Checkpoint>) invocation.getArgument(1)).get();
+          return claimed;
+        });
     when(collaborators.authorizationRepository.retainOrRequireExact(
             claimed, fixture.accountBinding(), true))
         .thenThrow(
@@ -548,12 +499,9 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
                 "qualification readback failed"));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("qualification readback");
     assertThat(collaborators.transactionManager.commits).isZero();
@@ -572,14 +520,13 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     when(collaborators.selectionClient.read(any()))
         .thenAnswer(invocation -> selectionRead(invocation.getArgument(0)));
     when(collaborators.versionStateClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                AuthoredWorldVersionStateEvidence.create(
-                    invocation.getArgument(0),
-                    fixture.source(),
-                    VERSION,
-                    VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                    VERSION_EPOCH));
+        .thenAnswer(invocation ->
+            AuthoredWorldVersionStateEvidence.create(
+                invocation.getArgument(0),
+                fixture.source(),
+                VERSION,
+                VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                VERSION_EPOCH));
     when(collaborators.accountClient.read(any()))
         .thenAnswer(invocation -> accountRead(invocation.getArgument(0)));
     when(collaborators.fence.claimFreeze(eq(fixture.evidence()), any())).thenReturn(unqualified);
@@ -590,12 +537,9 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
                 "unqualified race winner cannot be attached to this Account order"));
     var service = service(fixture, collaborators);
 
-    assertThatThrownBy(
-            () ->
-                withGameDesign(
-                    () ->
-                        service.freeze(
-                            fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+    assertThatThrownBy(() ->
+            withGameDesign(
+                () -> service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("cannot be attached");
     verify(collaborators.checkpointRepository, never()).captureWithSource(any(), any());
@@ -611,12 +555,9 @@ class WorldSelectedDraftPublicationFreezeServiceTest {
     var service = service(fixture, collaborators);
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertThatThrownBy(
-              () ->
-                  withGameDesign(
-                      () ->
-                          service.freeze(
-                              fixture.evidence(), fixture.plan(), fixture.accountBinding())))
+      assertThatThrownBy(() ->
+              withGameDesign(() ->
+                  service.freeze(fixture.evidence(), fixture.plan(), fixture.accountBinding())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("ambient transaction");
     } finally {

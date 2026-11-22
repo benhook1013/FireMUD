@@ -116,17 +116,16 @@ class WorldOriginalStartSessionProtectedActivationServiceTest {
     when(repository.readProtectedActivationByAcquisitionInput(input)).thenReturn(Optional.empty());
     when(account.acquire(input)).thenReturn(protection);
     when(activation.activateProtected(eq(protection), any()))
-        .thenAnswer(
-            call -> {
-              WorldCanonicalInstanceActivationService.HeldActivationAuthority held =
-                  call.getArgument(1);
-              held.requireHeld();
-              held.close();
-              assertThatThrownBy(held::requireHeld)
-                  .isInstanceOf(
-                      WorldCanonicalInstanceActivationService.ActivationDeniedException.class);
-              return terminal;
-            });
+        .thenAnswer(call -> {
+          WorldCanonicalInstanceActivationService.HeldActivationAuthority held =
+              call.getArgument(1);
+          held.requireHeld();
+          held.close();
+          assertThatThrownBy(held::requireHeld)
+              .isInstanceOf(
+                  WorldCanonicalInstanceActivationService.ActivationDeniedException.class);
+          return terminal;
+        });
 
     assertThat(service.activate(input)).isSameAs(terminal);
 

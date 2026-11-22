@@ -237,17 +237,16 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     }
 
     Genesis genesis =
-        inWritableSerializableTransaction(
-            dsl ->
-                new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
-                    .beginGenesis(
-                        requestedLease,
-                        receipt,
-                        newLineageId,
-                        frozenNewTokenJti,
-                        nowSeconds,
-                        nowSeconds,
-                        expirySeconds));
+        inWritableSerializableTransaction(dsl ->
+            new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
+                .beginGenesis(
+                    requestedLease,
+                    receipt,
+                    newLineageId,
+                    frozenNewTokenJti,
+                    nowSeconds,
+                    nowSeconds,
+                    expirySeconds));
 
     if (genesis.tokenHash() == null) {
       genesis = signAndPersistCandidate(caller, requestedLease, receipt, genesis);
@@ -970,13 +969,12 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
   private static Map<String, String> stringStringMap(byte[] bytes) {
     Map<?, ?> value = parseJsonMap(bytes);
     Map<String, String> copy = new LinkedHashMap<>();
-    value.forEach(
-        (key, item) -> {
-          if (!(key instanceof String textKey) || !(item instanceof String textValue)) {
-            throw unavailable();
-          }
-          copy.put(textKey, textValue);
-        });
+    value.forEach((key, item) -> {
+      if (!(key instanceof String textKey) || !(item instanceof String textValue)) {
+        throw unavailable();
+      }
+      copy.put(textKey, textValue);
+    });
     return Map.copyOf(copy);
   }
 
@@ -1066,24 +1064,23 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setReadOnly(false);
     T result =
-        transaction.execute(
-            status -> {
-              if (!status.isNewTransaction()) throw unavailable();
-              Object resource =
-                  TransactionSynchronizationManager.getResource(
-                      Objects.requireNonNull(manager.getDataSource()));
-              if (!(resource instanceof ConnectionHolder holder)) throw unavailable();
-              var connection = holder.getConnection();
-              try {
-                if (connection.getAutoCommit()
-                    || connection.isReadOnly()
-                    || connection.getTransactionIsolation()
-                        != java.sql.Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
-              } catch (java.sql.SQLException failure) {
-                throw unavailable();
-              }
-              return operation.apply(DSL.using(connection, SQLDialect.POSTGRES));
-            });
+        transaction.execute(status -> {
+          if (!status.isNewTransaction()) throw unavailable();
+          Object resource =
+              TransactionSynchronizationManager.getResource(
+                  Objects.requireNonNull(manager.getDataSource()));
+          if (!(resource instanceof ConnectionHolder holder)) throw unavailable();
+          var connection = holder.getConnection();
+          try {
+            if (connection.getAutoCommit()
+                || connection.isReadOnly()
+                || connection.getTransactionIsolation()
+                    != java.sql.Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
+          } catch (java.sql.SQLException failure) {
+            throw unavailable();
+          }
+          return operation.apply(DSL.using(connection, SQLDialect.POSTGRES));
+        });
     return Objects.requireNonNull(result);
   }
 

@@ -148,10 +148,9 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
         status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 1L));
 
     assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
-    assertThatThrownBy(
-            () ->
-                transactionTemplate.executeWithoutResult(
-                    status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 2L)))
+    assertThatThrownBy(() ->
+            transactionTemplate.executeWithoutResult(
+                status -> definitionRepository.bindScriptPatchBaseVersionId("1", VERSION, 2L)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("script_patch_base_version_conflict");
     assertThat(definitionRepository.findScriptPatchBaseVersionId("1", VERSION)).contains(1L);
@@ -169,14 +168,10 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
         .where(SCRIPT_EVENT_BINDINGS.ID.eq(bindingRowId(name)))
         .execute();
 
-    assertThatThrownBy(
-            () ->
-                updateInTransaction(
-                    request(
-                        initial.id(),
-                        name,
-                        "{\"value\":2}",
-                        List.of(binding("binding-a", "scope-a")))))
+    assertThatThrownBy(() ->
+            updateInTransaction(
+                request(
+                    initial.id(), name, "{\"value\":2}", List.of(binding("binding-a", "scope-a")))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("script_patch_base_version_conflict");
   }
@@ -193,14 +188,10 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
         .where(SCRIPT_EVENT_BINDINGS.ID.eq(bindingRowId(name)))
         .execute();
 
-    assertThatThrownBy(
-            () ->
-                updateInTransaction(
-                    request(
-                        initial.id(),
-                        name,
-                        "{\"value\":2}",
-                        List.of(binding("binding-a", "scope-a")))))
+    assertThatThrownBy(() ->
+            updateInTransaction(
+                request(
+                    initial.id(), name, "{\"value\":2}", List.of(binding("binding-a", "scope-a")))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("script_patch_base_version_conflict");
   }
@@ -292,14 +283,13 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
   }
 
   private ScriptDefinitionDto updateInTransaction(ScriptDefinitionDto request) {
-    return transactionTemplate.execute(
-        status -> {
-          try {
-            return service.updateScript(request);
-          } catch (SagaException exception) {
-            throw new UpdateFailedException(exception);
-          }
-        });
+    return transactionTemplate.execute(status -> {
+      try {
+        return service.updateScript(request);
+      } catch (SagaException exception) {
+        throw new UpdateFailedException(exception);
+      }
+    });
   }
 
   private UpdateOutcome updateAfterBarrier(

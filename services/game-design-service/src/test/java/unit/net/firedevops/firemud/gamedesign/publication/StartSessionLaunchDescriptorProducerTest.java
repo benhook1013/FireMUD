@@ -100,15 +100,13 @@ class StartSessionLaunchDescriptorProducerTest {
         .isInstanceOf(NullPointerException.class);
     verifyNoInteractions(associationReader, transactions);
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    () ->
-                        producer.resolve(
-                            request(
-                                new ExactReplay(
-                                    VERSION, COMMIT, "selected-workflow", digest('a')))),
-                    "account-service"))
+    assertThatThrownBy(() ->
+            withPeer(
+                () ->
+                    producer.resolve(
+                        request(
+                            new ExactReplay(VERSION, COMMIT, "selected-workflow", digest('a')))),
+                "account-service"))
         .isInstanceOf(StatusRuntimeException.class)
         .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
@@ -224,13 +222,12 @@ class StartSessionLaunchDescriptorProducerTest {
 
     assertThatThrownBy(() -> producer.toPublishedReleaseBundle(failedDto))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = ((StatusRuntimeException) failure).getStatus();
-              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-              assertThat(status.getDescription())
-                  .isEqualTo("Published release participant did not succeed");
-            });
+        .satisfies(failure -> {
+          var status = ((StatusRuntimeException) failure).getStatus();
+          assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+          assertThat(status.getDescription())
+              .isEqualTo("Published release participant did not succeed");
+        });
     assertThatThrownBy(() -> associationReader.toPublishedReleaseBundle(failedDto))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("START_SESSION_PUBLISHED_PARTICIPANT_FAILURE");
@@ -242,13 +239,12 @@ class StartSessionLaunchDescriptorProducerTest {
     assertThat(legacyBundle.getArtifactDigestsList()).isEmpty();
     assertThatThrownBy(() -> producer.releaseContent(incomplete))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = ((StatusRuntimeException) failure).getStatus();
-              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-              assertThat(status.getDescription())
-                  .isEqualTo("Immutable release content evidence is incomplete");
-            });
+        .satisfies(failure -> {
+          var status = ((StatusRuntimeException) failure).getStatus();
+          assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+          assertThat(status.getDescription())
+              .isEqualTo("Immutable release content evidence is incomplete");
+        });
     assertThatThrownBy(() -> associationReader.releaseContent(incomplete))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("START_SESSION_IMMUTABLE_RELEASE_ARTIFACT_PROOF_MISSING");
@@ -308,18 +304,17 @@ class StartSessionLaunchDescriptorProducerTest {
         new net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot(
             otherCommit, "1", fixture.policySnapshot().policies());
 
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
-                    uuid("66666666-6666-4666-8666-666666666666"),
-                    digest('a'),
-                    "world",
-                    "selected-workflow",
-                    bytes("selected publication operation"),
-                    bytes("selected publication terminal evidence"),
-                    fixture.binding(),
-                    changedPolicySnapshot,
-                    fixture.gameplayRules()))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorProducer.resolveSelectedAuthoredInitialActorCoreSources(
+                uuid("66666666-6666-4666-8666-666666666666"),
+                digest('a'),
+                "world",
+                "selected-workflow",
+                bytes("selected publication operation"),
+                bytes("selected publication terminal evidence"),
+                fixture.binding(),
+                changedPolicySnapshot,
+                fixture.gameplayRules()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("selected authored commit");
   }
@@ -364,35 +359,31 @@ class StartSessionLaunchDescriptorProducerTest {
     assertThatThrownBy(resolved.actorCoreProjections()::clear)
         .isInstanceOf(UnsupportedOperationException.class);
 
-    assertThatThrownBy(
-            () ->
-                resolvedBinding(
-                    sourceBindings,
-                    uuid("77777777-7777-4777-8777-777777777777"),
-                    "world",
-                    COMMIT,
-                    "selected-workflow"))
+    assertThatThrownBy(() ->
+            resolvedBinding(
+                sourceBindings,
+                uuid("77777777-7777-4777-8777-777777777777"),
+                "world",
+                COMMIT,
+                "selected-workflow"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact selected StartSession release");
-    assertThatThrownBy(
-            () ->
-                resolvedBinding(
-                    sourceBindings, sourceOperation, "other-world", COMMIT, "selected-workflow"))
+    assertThatThrownBy(() ->
+            resolvedBinding(
+                sourceBindings, sourceOperation, "other-world", COMMIT, "selected-workflow"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact selected StartSession release");
-    assertThatThrownBy(
-            () ->
-                resolvedBinding(
-                    sourceBindings,
-                    sourceOperation,
-                    "world",
-                    uuid("88888888-8888-4888-8888-888888888888"),
-                    "selected-workflow"))
+    assertThatThrownBy(() ->
+            resolvedBinding(
+                sourceBindings,
+                sourceOperation,
+                "world",
+                uuid("88888888-8888-4888-8888-888888888888"),
+                "selected-workflow"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact selected StartSession release");
-    assertThatThrownBy(
-            () ->
-                resolvedBinding(sourceBindings, sourceOperation, "world", COMMIT, "other-workflow"))
+    assertThatThrownBy(() ->
+            resolvedBinding(sourceBindings, sourceOperation, "world", COMMIT, "other-workflow"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact selected StartSession release");
   }
@@ -435,13 +426,12 @@ class StartSessionLaunchDescriptorProducerTest {
     // Structural projection fixtures only; Common integrity checks do not authenticate a producer.
     List<AuthoredInitialActorCoreProjection> projections =
         java.util.stream.IntStream.range(0, actorCoreBindings.size())
-            .mapToObj(
-                index ->
-                    AuthoredInitialActorCoreProjection.fromValidatedBinding(
-                        UUID.nameUUIDFromBytes(
-                            (index + ":" + actorCoreBindings.get(index).digest())
-                                .getBytes(StandardCharsets.UTF_8)),
-                        actorCoreBindings.get(index)))
+            .mapToObj(index ->
+                AuthoredInitialActorCoreProjection.fromValidatedBinding(
+                    UUID.nameUUIDFromBytes(
+                        (index + ":" + actorCoreBindings.get(index).digest())
+                            .getBytes(StandardCharsets.UTF_8)),
+                    actorCoreBindings.get(index)))
             .toList();
     return new StartSessionLaunchDescriptorProducer.ResolvedBinding(
         request, associationRead, descriptor, projections);
@@ -660,30 +650,28 @@ class StartSessionLaunchDescriptorProducerTest {
       PublishedReleaseBundleDto dto) {
     var participants =
         dto.participantDigests().stream()
-            .map(
-                value ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        value.participantKey(),
-                        value.scopeValue(),
-                        value.baseVersionId(),
-                        value.appliedCommitId(),
-                        value.contentDigest(),
-                        value.digestSchemaVersion(),
-                        value.abilitySchemaDigest(),
-                        value.errorCode(),
-                        value.errorMessage()))
+            .map(value ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    value.participantKey(),
+                    value.scopeValue(),
+                    value.baseVersionId(),
+                    value.appliedCommitId(),
+                    value.contentDigest(),
+                    value.digestSchemaVersion(),
+                    value.abilitySchemaDigest(),
+                    value.errorCode(),
+                    value.errorMessage()))
             .toList();
     var artifacts =
         dto.artifactDigests().stream()
-            .map(
-                value ->
-                    new AuthoredWorldReleaseAttestationEvidence.Artifact(
-                        value.usageKey(),
-                        value.artifactKind(),
-                        value.immutableObjectKey(),
-                        value.contentDigest(),
-                        value.contentType(),
-                        value.artifactSchemaVersion()))
+            .map(value ->
+                new AuthoredWorldReleaseAttestationEvidence.Artifact(
+                    value.usageKey(),
+                    value.artifactKind(),
+                    value.immutableObjectKey(),
+                    value.contentDigest(),
+                    value.contentType(),
+                    value.artifactSchemaVersion()))
             .toList();
     return new GameDesignPublicationTerminalEvidence.ReleaseContent(
         dto.canonicalTenantId(),

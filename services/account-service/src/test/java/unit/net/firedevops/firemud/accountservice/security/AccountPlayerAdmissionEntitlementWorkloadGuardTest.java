@@ -65,12 +65,11 @@ class AccountPlayerAdmissionEntitlementWorkloadGuardTest {
             GrpcPeerIdentity.CONTEXT_KEY,
             GrpcPeerIdentity.parseUri("spiffe://firemud/ns/firemud/sa/game-session-service")
                 .orElseThrow())
-        .run(
-            () -> {
-              assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
-              assertThatThrownBy(guard::requireAuthenticatedGameSessionCaller)
-                  .isInstanceOf(StatusRuntimeException.class);
-            });
+        .run(() -> {
+          assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+          assertThatThrownBy(guard::requireAuthenticatedGameSessionCaller)
+              .isInstanceOf(StatusRuntimeException.class);
+        });
     for (boolean internal : List.of(true, false)) {
       if (internal)
         SessionContext.setContext(

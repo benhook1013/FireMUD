@@ -98,25 +98,23 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
 
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
     when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-        .thenAnswer(
-            invocation ->
-                accountEvidence(
-                    invocation.getArgument(0),
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    changedInput));
+        .thenAnswer(invocation ->
+            accountEvidence(
+                invocation.getArgument(0),
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                changedInput));
     var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                gameSessionEvidence(
-                    invocation.getArgument(0),
-                    fixture,
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.launchAssociation()));
+        .thenAnswer(invocation ->
+            gameSessionEvidence(
+                invocation.getArgument(0),
+                fixture,
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.launchAssociation()));
 
     assertThatThrownBy(
             () -> verifier(account, gameSession).verifyOriginalOperation(fixture.identity()))
@@ -177,24 +175,22 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
     var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-        .thenAnswer(
-            invocation ->
-                accountEvidence(
-                    invocation.getArgument(0),
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.preparationInputJson()));
+        .thenAnswer(invocation ->
+            accountEvidence(
+                invocation.getArgument(0),
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.preparationInputJson()));
     when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                gameSessionEvidence(
-                    invocation.getArgument(0),
-                    fixture,
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.launchAssociation()));
+        .thenAnswer(invocation ->
+            gameSessionEvidence(
+                invocation.getArgument(0),
+                fixture,
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.launchAssociation()));
 
     verifier(account, gameSession).verifyOriginalOperation(fixture.identity());
 
@@ -254,14 +250,13 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       UUID attempt = substitution == 1 ? uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") : ATTEMPT_ID;
       long fence = substitution == 2 ? GAME_SESSION_FENCE + 1L : GAME_SESSION_FENCE;
       when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-          .thenAnswer(
-              invocation ->
-                  accountEvidence(
-                      invocation.getArgument(0),
-                      tuple,
-                      attempt,
-                      fence,
-                      fixture.preparationInputJson()));
+          .thenAnswer(invocation ->
+              accountEvidence(
+                  invocation.getArgument(0),
+                  tuple,
+                  attempt,
+                  fence,
+                  fixture.preparationInputJson()));
 
       assertDenied(verifier(account, gameSession), fixture.identity());
       verifyNoInteractions(gameSession);
@@ -275,23 +270,22 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
       var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
       when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-          .thenAnswer(
-              invocation -> {
-                var evidence =
-                    accountEvidence(
-                        invocation.getArgument(0),
-                        ORIGINAL_TUPLE,
-                        ATTEMPT_ID,
-                        GAME_SESSION_FENCE,
-                        fixture.preparationInputJson());
-                if (substituteId) {
-                  when(evidence.accountWorldParticipationId())
-                      .thenReturn(uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
-                } else {
-                  when(evidence.accountWorldParticipationFence()).thenReturn(ACCOUNT_FENCE + 1L);
-                }
-                return evidence;
-              });
+          .thenAnswer(invocation -> {
+            var evidence =
+                accountEvidence(
+                    invocation.getArgument(0),
+                    ORIGINAL_TUPLE,
+                    ATTEMPT_ID,
+                    GAME_SESSION_FENCE,
+                    fixture.preparationInputJson());
+            if (substituteId) {
+              when(evidence.accountWorldParticipationId())
+                  .thenReturn(uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+            } else {
+              when(evidence.accountWorldParticipationFence()).thenReturn(ACCOUNT_FENCE + 1L);
+            }
+            return evidence;
+          });
 
       assertDenied(verifier(account, gameSession), fixture.identity());
       verifyNoInteractions(gameSession);
@@ -308,15 +302,14 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       UUID attempt = substitution == 1 ? uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") : ATTEMPT_ID;
       long fence = substitution == 2 ? GAME_SESSION_FENCE + 1L : GAME_SESSION_FENCE;
       when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-          .thenAnswer(
-              invocation ->
-                  gameSessionEvidence(
-                      invocation.getArgument(0),
-                      fixture,
-                      tuple,
-                      attempt,
-                      fence,
-                      fixture.launchAssociation()));
+          .thenAnswer(invocation ->
+              gameSessionEvidence(
+                  invocation.getArgument(0),
+                  fixture,
+                  tuple,
+                  attempt,
+                  fence,
+                  fixture.launchAssociation()));
 
       assertDenied(verifier(account, gameSession), fixture.identity());
     }
@@ -329,14 +322,13 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
       var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
       when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-          .thenAnswer(
-              invocation ->
-                  accountEvidence(
-                      invocation.getArgument(0),
-                      substituted,
-                      ATTEMPT_ID,
-                      GAME_SESSION_FENCE,
-                      fixture.preparationInputJson()));
+          .thenAnswer(invocation ->
+              accountEvidence(
+                  invocation.getArgument(0),
+                  substituted,
+                  ATTEMPT_ID,
+                  GAME_SESSION_FENCE,
+                  fixture.preparationInputJson()));
 
       assertDenied(verifier(account, gameSession), fixture.identity());
       verifyNoInteractions(gameSession);
@@ -350,15 +342,14 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       var account = exactAccountClient(fixture);
       var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
       when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-          .thenAnswer(
-              invocation ->
-                  gameSessionEvidence(
-                      invocation.getArgument(0),
-                      fixture,
-                      substituted,
-                      ATTEMPT_ID,
-                      GAME_SESSION_FENCE,
-                      fixture.launchAssociation()));
+          .thenAnswer(invocation ->
+              gameSessionEvidence(
+                  invocation.getArgument(0),
+                  fixture,
+                  substituted,
+                  ATTEMPT_ID,
+                  GAME_SESSION_FENCE,
+                  fixture.launchAssociation()));
 
       assertDenied(verifier(account, gameSession), fixture.identity());
     }
@@ -403,30 +394,28 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
     var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     LaunchAssociation substitutedDescriptor = fixture(true).launchAssociation();
     when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                gameSessionEvidence(
-                    invocation.getArgument(0),
-                    exact,
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    substitutedDescriptor));
+        .thenAnswer(invocation ->
+            gameSessionEvidence(
+                invocation.getArgument(0),
+                exact,
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                substitutedDescriptor));
     assertDenied(verifier(account, gameSession), exact.identity());
 
     Fixture substitutedSource = fixtureWithSubstitutedSource();
     var sourceAccount = exactAccountClient(substitutedSource);
     var sourceGameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     when(sourceGameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                gameSessionEvidence(
-                    invocation.getArgument(0),
-                    substitutedSource,
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    exact.launchAssociation()));
+        .thenAnswer(invocation ->
+            gameSessionEvidence(
+                invocation.getArgument(0),
+                substitutedSource,
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                exact.launchAssociation()));
     assertDenied(verifier(sourceAccount, sourceGameSession), substitutedSource.identity());
   }
 
@@ -436,14 +425,13 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
     var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-        .thenAnswer(
-            invocation ->
-                accountEvidence(
-                    invocation.getArgument(0),
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.preparationInputJson() + " "));
+        .thenAnswer(invocation ->
+            accountEvidence(
+                invocation.getArgument(0),
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.preparationInputJson() + " "));
     assertDenied(verifier(account, gameSession), fixture.identity());
     verifyNoInteractions(gameSession);
 
@@ -485,25 +473,23 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
 
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
     when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-        .thenAnswer(
-            invocation ->
-                accountEvidence(
-                    invocation.getArgument(0),
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    substitutedInput));
+        .thenAnswer(invocation ->
+            accountEvidence(
+                invocation.getArgument(0),
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                substitutedInput));
     var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                gameSessionEvidence(
-                    invocation.getArgument(0),
-                    fixture,
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.launchAssociation()));
+        .thenAnswer(invocation ->
+            gameSessionEvidence(
+                invocation.getArgument(0),
+                fixture,
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.launchAssociation()));
 
     assertDenied(verifier(account, gameSession), fixture.identity());
   }
@@ -530,25 +516,23 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
 
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
     when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-        .thenAnswer(
-            invocation ->
-                accountEvidence(
-                    invocation.getArgument(0),
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    substitutedInput));
+        .thenAnswer(invocation ->
+            accountEvidence(
+                invocation.getArgument(0),
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                substitutedInput));
     var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
     when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                gameSessionEvidence(
-                    invocation.getArgument(0),
-                    fixture,
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.launchAssociation()));
+        .thenAnswer(invocation ->
+            gameSessionEvidence(
+                invocation.getArgument(0),
+                fixture,
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.launchAssociation()));
 
     assertDenied(verifier(account, gameSession), fixture.identity());
   }
@@ -586,15 +570,14 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       var account = exactAccountClient(fixture);
       var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
       when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
-          .thenAnswer(
-              invocation ->
-                  gameSessionEvidence(
-                      invocation.getArgument(0),
-                      fixture,
-                      ORIGINAL_TUPLE,
-                      ATTEMPT_ID,
-                      GAME_SESSION_FENCE,
-                      fixture.launchAssociation()));
+          .thenAnswer(invocation ->
+              gameSessionEvidence(
+                  invocation.getArgument(0),
+                  fixture,
+                  ORIGINAL_TUPLE,
+                  ATTEMPT_ID,
+                  GAME_SESSION_FENCE,
+                  fixture.launchAssociation()));
 
       assertThatThrownBy(
               () -> verifier(account, gameSession).verifyOriginalOperation(fixture.identity()))
@@ -1119,14 +1102,13 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       Fixture fixture) {
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
     when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
-        .thenAnswer(
-            invocation ->
-                accountEvidence(
-                    invocation.getArgument(0),
-                    ORIGINAL_TUPLE,
-                    ATTEMPT_ID,
-                    GAME_SESSION_FENCE,
-                    fixture.preparationInputJson()));
+        .thenAnswer(invocation ->
+            accountEvidence(
+                invocation.getArgument(0),
+                ORIGINAL_TUPLE,
+                ATTEMPT_ID,
+                GAME_SESSION_FENCE,
+                fixture.preparationInputJson()));
     return account;
   }
 

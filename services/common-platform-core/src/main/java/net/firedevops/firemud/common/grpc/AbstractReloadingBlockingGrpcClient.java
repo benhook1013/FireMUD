@@ -139,7 +139,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   /** Takes the last published stub without waiting for a TLS reload. */
-  protected final TStub requirePublishedInitializedStub(String unavailableMessage) {
+  private TStub requirePublishedInitializedStub(String unavailableMessage) {
     TStub current = stub;
     if (closed || !explicitlyInitialized || current == null) {
       throw new IllegalStateException(unavailableMessage);
@@ -168,9 +168,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         selected.activeCalls--;
         shutdown = selected.retired && selected.activeCalls == 0;
       }
-      if (shutdown) {
-        selected.channel.shutdown();
-      }
+      if (shutdown) shutdownRetired(selected);
     }
   }
 
@@ -275,24 +273,34 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       closed = true;
       initialGeneration = publishGeneration(null, null);
     }
-    try {
-      retire(initialGeneration);
-    } catch (RuntimeException cleanupFailure) {
-      failure.addSuppressed(cleanupFailure);
+    if (markRetiredAndReadyToShutdown(initialGeneration)) {
+      try {
+        initialGeneration.channel.shutdown();
+      } catch (RuntimeException cleanupFailure) {
+        if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+      }
     }
   }
 
   private void retire(ChannelGeneration previous) {
+    if (markRetiredAndReadyToShutdown(previous)) shutdownRetired(previous);
+  }
+
+  private boolean markRetiredAndReadyToShutdown(ChannelGeneration previous) {
     synchronized (generationLock) {
-      if (previous == null || previous.retired) {
-        return;
-      }
+      if (previous == null || previous.retired) return false;
       previous.retired = true;
-      if (previous.activeCalls != 0) {
-        return;
-      }
+      return previous.activeCalls == 0;
     }
-    previous.channel.shutdown();
+  }
+
+  private void shutdownRetired(ChannelGeneration retired) {
+    try {
+      retired.channel.shutdown();
+    } catch (RuntimeException shutdownFailure) {
+      // Cleanup cannot invalidate a published replacement or replace an RPC outcome.
+      logger.warn("Failed to shut down retired gRPC channel", shutdownFailure);
+    }
   }
 
   private static final class ChannelGeneration {

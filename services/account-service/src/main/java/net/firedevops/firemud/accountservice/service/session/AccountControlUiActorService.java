@@ -139,22 +139,21 @@ public final class AccountControlUiActorService {
   boolean readHeldOriginalDraft(DraftAuthorizationFenceBinding original) {
     outsideSql();
     return Objects.requireNonNull(
-        transaction.execute(
-            ignored -> {
-              var retained = fences.readOriginalBinding(original.operationId());
-              if (retained.isEmpty()) return false;
-              if (!Arrays.equals(retained.get().canonicalBytes(), original.canonicalBytes()))
-                throw io.grpc.Status.FAILED_PRECONDITION.asRuntimeException();
-              var order = fences.read(original);
-              if (order.ordering() != DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER
-                  || order.reservedAt() == null
-                  || order.orderedAt() == null
-                  || !Arrays.equals(order.binding(), original.canonicalBytes())
-                  || fences.readSettlement(original)
-                      != DraftAuthorizationFenceRepository.Settlement.PENDING)
-                throw io.grpc.Status.FAILED_PRECONDITION.asRuntimeException();
-              return true;
-            }));
+        transaction.execute(ignored -> {
+          var retained = fences.readOriginalBinding(original.operationId());
+          if (retained.isEmpty()) return false;
+          if (!Arrays.equals(retained.get().canonicalBytes(), original.canonicalBytes()))
+            throw io.grpc.Status.FAILED_PRECONDITION.asRuntimeException();
+          var order = fences.read(original);
+          if (order.ordering() != DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER
+              || order.reservedAt() == null
+              || order.orderedAt() == null
+              || !Arrays.equals(order.binding(), original.canonicalBytes())
+              || fences.readSettlement(original)
+                  != DraftAuthorizationFenceRepository.Settlement.PENDING)
+            throw io.grpc.Status.FAILED_PRECONDITION.asRuntimeException();
+          return true;
+        }));
   }
 
   /** No transport or World mutation: original Account reservation/order is the only effect. */
@@ -208,46 +207,45 @@ public final class AccountControlUiActorService {
     String tokenHash =
         AccountControlUiIssuanceRepository.hash(compactJwt.getBytes(StandardCharsets.US_ASCII));
     byte[] exactRegistry = registry.readActive(tokenHash);
-    return transaction.execute(
-        ignored -> {
-          var stored = operations.findToken(tokenHash);
-          if (stored == null
-              || stored.scopeKind() != scopeKind
-              || (scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
-                  && !selectedTenant.equals(stored.tenantId()))
-              || !"COMMITTED".equals(stored.status)
-              || !Arrays.equals(stored.activeRegistry, exactRegistry)
-              || !Arrays.equals(
-                  stored.claims, AccountControlUiAuthority.canonical(signed.claims.claims()))) {
-            throw denied();
-          }
-          requireSignerIdentity(stored, signed);
-          requireAcceptedSignerKey(stored, acceptedKey);
-          signers.requireOriginal(stored.signerReceipt);
-          var current =
-              switch (scopeKind) {
-                case ACCOUNT -> authority.captureAccount(stored.accountId);
-                case TENANT -> authority.capture(stored.accountId, selectedTenant, environment);
-              };
-          if (current.scopeKind() != scopeKind) throw denied();
-          if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
-            requireCurrentAccountClaims(current, signed.claims.claims());
-          }
-          if (!Arrays.equals(current.evidence(), stored.sources)) {
-            throw denied();
-          }
-          var committed = operations.requireCommitted(stored);
-          if (!committed.tokenHash().equals(tokenHash)) {
-            throw denied();
-          }
-          if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
-            var original = operations.findToken(tokenHash);
-            if (!sameCommittedOperation(stored, original)
-                || !Arrays.equals(original.activeRegistry, exactRegistry)) throw denied();
-          }
-          requireCurrentOriginalToken(stored);
-          return action.apply(new Current(stored, current));
-        });
+    return transaction.execute(ignored -> {
+      var stored = operations.findToken(tokenHash);
+      if (stored == null
+          || stored.scopeKind() != scopeKind
+          || (scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
+              && !selectedTenant.equals(stored.tenantId()))
+          || !"COMMITTED".equals(stored.status)
+          || !Arrays.equals(stored.activeRegistry, exactRegistry)
+          || !Arrays.equals(
+              stored.claims, AccountControlUiAuthority.canonical(signed.claims.claims()))) {
+        throw denied();
+      }
+      requireSignerIdentity(stored, signed);
+      requireAcceptedSignerKey(stored, acceptedKey);
+      signers.requireOriginal(stored.signerReceipt);
+      var current =
+          switch (scopeKind) {
+            case ACCOUNT -> authority.captureAccount(stored.accountId);
+            case TENANT -> authority.capture(stored.accountId, selectedTenant, environment);
+          };
+      if (current.scopeKind() != scopeKind) throw denied();
+      if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+        requireCurrentAccountClaims(current, signed.claims.claims());
+      }
+      if (!Arrays.equals(current.evidence(), stored.sources)) {
+        throw denied();
+      }
+      var committed = operations.requireCommitted(stored);
+      if (!committed.tokenHash().equals(tokenHash)) {
+        throw denied();
+      }
+      if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+        var original = operations.findToken(tokenHash);
+        if (!sameCommittedOperation(stored, original)
+            || !Arrays.equals(original.activeRegistry, exactRegistry)) throw denied();
+      }
+      requireCurrentOriginalToken(stored);
+      return action.apply(new Current(stored, current));
+    });
   }
 
   /**
@@ -289,29 +287,28 @@ public final class AccountControlUiActorService {
     var acceptedKey = readAcceptedSignerKey(keyId);
     requireAcceptedSignerKey(original, acceptedKey);
     byte[] exactRegistry = registry.readActive(original.tokenHash);
-    return transaction.execute(
-        ignored -> {
-          var observed = operations.findTokenJti(tokenJti);
-          if (!sameCommittedOperation(original, observed)
-              || !Arrays.equals(observed.activeRegistry, exactRegistry)) {
-            throw denied();
-          }
-          requireStoredActorIdentity(observed, actorAccountId, selectedTenant, tokenJti);
-          signers.requireOriginal(observed.signerReceipt);
-          var current = authority.capture(actorAccountId, selectedTenant, environment);
-          if (!Arrays.equals(current.evidence(), observed.sources)
-              || !clock.instant().isBefore(observed.expiresAt)) {
-            throw denied();
-          }
-          operations.requireCommitted(observed);
-          var committed = operations.findTokenJti(tokenJti);
-          if (!sameCommittedOperation(observed, committed)
-              || !Arrays.equals(committed.activeRegistry, exactRegistry)) {
-            throw denied();
-          }
-          requireCurrentOriginalToken(committed);
-          return action.apply(new Current(committed, current));
-        });
+    return transaction.execute(ignored -> {
+      var observed = operations.findTokenJti(tokenJti);
+      if (!sameCommittedOperation(original, observed)
+          || !Arrays.equals(observed.activeRegistry, exactRegistry)) {
+        throw denied();
+      }
+      requireStoredActorIdentity(observed, actorAccountId, selectedTenant, tokenJti);
+      signers.requireOriginal(observed.signerReceipt);
+      var current = authority.capture(actorAccountId, selectedTenant, environment);
+      if (!Arrays.equals(current.evidence(), observed.sources)
+          || !clock.instant().isBefore(observed.expiresAt)) {
+        throw denied();
+      }
+      operations.requireCommitted(observed);
+      var committed = operations.findTokenJti(tokenJti);
+      if (!sameCommittedOperation(observed, committed)
+          || !Arrays.equals(committed.activeRegistry, exactRegistry)) {
+        throw denied();
+      }
+      requireCurrentOriginalToken(committed);
+      return action.apply(new Current(committed, current));
+    });
   }
 
   /**
@@ -343,35 +340,34 @@ public final class AccountControlUiActorService {
     var acceptedKey = readAcceptedSignerKey(keyId);
     requireAcceptedSignerKey(original, acceptedKey);
     byte[] exactRegistry = registry.readActive(original.tokenHash);
-    return transaction.execute(
-        ignored -> {
-          var observed = operations.findTokenJti(tokenJti);
-          if (!sameCommittedOperation(original, observed)
-              || !Arrays.equals(observed.activeRegistry, exactRegistry)) throw denied();
-          Map<String, Object> claims = AccountControlUiIssuanceRepository.object(observed.claims);
-          ControlUiJwtProfileValidator.validateClaims(claims, 1);
-          if (!actorAccountId.toString().equals(claims.get("sub"))
-              || !actorAccountId.toString().equals(claims.get("accountId"))
-              || !tokenJti.toString().equals(claims.get("jti"))
-              || !Long.toString(observed.issuedAt.getEpochSecond())
-                  .equals(String.valueOf(claims.get("iat")))
-              || !Long.toString(observed.issuedAt.getEpochSecond())
-                  .equals(String.valueOf(claims.get("nbf")))
-              || !Long.toString(observed.expiresAt.getEpochSecond())
-                  .equals(String.valueOf(claims.get("exp")))) throw denied();
-          signers.requireOriginal(observed.signerReceipt);
-          var current = authority.captureAccount(actorAccountId);
-          requireCurrentAccountClaims(current, claims);
-          if (!Arrays.equals(current.evidence(), observed.sources)) throw denied();
-          var result = operations.requireCommitted(observed);
-          if (!observed.tokenHash.equals(result.tokenHash())) throw denied();
-          fences.lockProducerSourcesNowait(current.sources());
-          var committed = operations.findTokenJti(tokenJti);
-          if (!sameCommittedOperation(observed, committed)
-              || !Arrays.equals(committed.activeRegistry, exactRegistry)) throw denied();
-          requireCurrentOriginalToken(committed);
-          return action.apply(new Current(committed, current));
-        });
+    return transaction.execute(ignored -> {
+      var observed = operations.findTokenJti(tokenJti);
+      if (!sameCommittedOperation(original, observed)
+          || !Arrays.equals(observed.activeRegistry, exactRegistry)) throw denied();
+      Map<String, Object> claims = AccountControlUiIssuanceRepository.object(observed.claims);
+      ControlUiJwtProfileValidator.validateClaims(claims, 1);
+      if (!actorAccountId.toString().equals(claims.get("sub"))
+          || !actorAccountId.toString().equals(claims.get("accountId"))
+          || !tokenJti.toString().equals(claims.get("jti"))
+          || !Long.toString(observed.issuedAt.getEpochSecond())
+              .equals(String.valueOf(claims.get("iat")))
+          || !Long.toString(observed.issuedAt.getEpochSecond())
+              .equals(String.valueOf(claims.get("nbf")))
+          || !Long.toString(observed.expiresAt.getEpochSecond())
+              .equals(String.valueOf(claims.get("exp")))) throw denied();
+      signers.requireOriginal(observed.signerReceipt);
+      var current = authority.captureAccount(actorAccountId);
+      requireCurrentAccountClaims(current, claims);
+      if (!Arrays.equals(current.evidence(), observed.sources)) throw denied();
+      var result = operations.requireCommitted(observed);
+      if (!observed.tokenHash.equals(result.tokenHash())) throw denied();
+      fences.lockProducerSourcesNowait(current.sources());
+      var committed = operations.findTokenJti(tokenJti);
+      if (!sameCommittedOperation(observed, committed)
+          || !Arrays.equals(committed.activeRegistry, exactRegistry)) throw denied();
+      requireCurrentOriginalToken(committed);
+      return action.apply(new Current(committed, current));
+    });
   }
 
   private static void requireCurrentAccountClaims(

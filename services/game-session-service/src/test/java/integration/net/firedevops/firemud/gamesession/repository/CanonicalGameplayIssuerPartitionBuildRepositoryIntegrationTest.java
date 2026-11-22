@@ -189,23 +189,22 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               fixture.intent().operationId(),
               initialRevision,
               initialRevision);
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .execute(
-                          "INSERT INTO game_session_canonical_issuer_partition_mutation"
-                              + " (mutation_id, issuer_id, partition_id, mutation_kind, owner_operation_id,"
-                              + " expected_revision, successor_revision, exact_intended_change_bytes,"
-                              + " exact_intended_change_digest, status)"
-                              + " VALUES (?, ?, 0, 'ADD_CAPACITY', ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
-                          UUID.randomUUID(),
-                          ISSUER,
-                          UUID.randomUUID(),
-                          initialRevision,
-                          UUID.randomUUID(),
-                          new byte[] {1},
-                          "sha256:" + "a".repeat(64)))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .execute(
+                      "INSERT INTO game_session_canonical_issuer_partition_mutation"
+                          + " (mutation_id, issuer_id, partition_id, mutation_kind, owner_operation_id,"
+                          + " expected_revision, successor_revision, exact_intended_change_bytes,"
+                          + " exact_intended_change_digest, status)"
+                          + " VALUES (?, ?, 0, 'ADD_CAPACITY', ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
+                      UUID.randomUUID(),
+                      ISSUER,
+                      UUID.randomUUID(),
+                      initialRevision,
+                      UUID.randomUUID(),
+                      new byte[] {1},
+                      "sha256:" + "a".repeat(64)))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> assertThat(exception.sqlState()).isEqualTo("23514"));
@@ -221,15 +220,14 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       assertThat(mutationsBefore).isEmpty();
       assertThat(retirementsBefore).isEmpty();
 
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .execute(
-                          "TRUNCATE TABLE"
-                              + " game_session_canonical_issuer_partition_mutation_head,"
-                              + " game_session_canonical_issuer_partition_mutation,"
-                              + " game_session_canonical_issuer_binding_local_retirement CASCADE"))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .execute(
+                      "TRUNCATE TABLE"
+                          + " game_session_canonical_issuer_partition_mutation_head,"
+                          + " game_session_canonical_issuer_partition_mutation,"
+                          + " game_session_canonical_issuer_binding_local_retirement CASCADE"))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> assertThat(exception.sqlState()).isEqualTo("23514"));
@@ -298,19 +296,18 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           .containsExactlyElementsOf(legacyProofBefore);
 
       UUID historicalInitialRevision = UUID.randomUUID();
-      assertThatThrownBy(
-              () ->
-                  historicalSchema
-                      .dsl()
-                      .execute(
-                          "INSERT INTO game_session_canonical_issuer_partition_mutation_head"
-                              + " (issuer_id, partition_id, bootstrap_operation_id, initial_revision,"
-                              + " current_revision, state)"
-                              + " VALUES (?, 0, ?, ?, ?, 'INITIAL_INSTALL_PENDING')",
-                          ISSUER,
-                          historicalFixture.intent().operationId(),
-                          historicalInitialRevision,
-                          historicalInitialRevision))
+      assertThatThrownBy(() ->
+              historicalSchema
+                  .dsl()
+                  .execute(
+                      "INSERT INTO game_session_canonical_issuer_partition_mutation_head"
+                          + " (issuer_id, partition_id, bootstrap_operation_id, initial_revision,"
+                          + " current_revision, state)"
+                          + " VALUES (?, 0, ?, ?, ?, 'INITIAL_INSTALL_PENDING')",
+                      ISSUER,
+                      historicalFixture.intent().operationId(),
+                      historicalInitialRevision,
+                      historicalInitialRevision))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> assertThat(exception.sqlState()).isEqualTo("P0001"));
@@ -338,17 +335,15 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               newProofFixture.intent().operationId(),
               newInitialRevision,
               newInitialRevision);
-      assertThatThrownBy(
-              () ->
-                  insertControlledBootstrapProof(
-                      newProofSchema.dsl(), newProofFixture, newProofPlan, null))
+      assertThatThrownBy(() ->
+              insertControlledBootstrapProof(
+                  newProofSchema.dsl(), newProofFixture, newProofPlan, null))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> assertThat(exception.sqlState()).isEqualTo("23514"));
-      assertThatThrownBy(
-              () ->
-                  insertControlledBootstrapProof(
-                      newProofSchema.dsl(), newProofFixture, newProofPlan, UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              insertControlledBootstrapProof(
+                  newProofSchema.dsl(), newProofFixture, newProofPlan, UUID.randomUUID()))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> {
@@ -784,26 +779,24 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                 }));
         DSLContext measuredReader = DSL.using(measuredConfiguration);
         var readPlan =
-            measuredReader.transactionResult(
-                configuration -> {
-                  DSLContext transaction = DSL.using(configuration);
-                  return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                      .readPreparedPlanInTransaction(
-                          transaction, fixture.intent().operationId(), fixture.requestId());
-                });
+            measuredReader.transactionResult(configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                  .readPreparedPlanInTransaction(
+                      transaction, fixture.intent().operationId(), fixture.requestId());
+            });
         // Count all actual SQL executions, not query strings: even the complete owner read
         // must use fewer round trips than this cohort has rows.
         assertThat(plan.cohortRows().size()).isGreaterThan(24);
         assertThat(readQueries.get()).isPositive().isLessThan(plan.cohortRows().size());
         readQueries.set(0);
         var member =
-            measuredReader.transactionResult(
-                configuration -> {
-                  DSLContext transaction = DSL.using(configuration);
-                  return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                      .readPreparedMemberWorkInTransaction(
-                          transaction, fixture.intent().operationId(), fixture.requestId(), 0);
-                });
+            measuredReader.transactionResult(configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                  .readPreparedMemberWorkInTransaction(
+                      transaction, fixture.intent().operationId(), fixture.requestId(), 0);
+            });
         assertThat(member.work().memberOperationId())
             .isEqualTo(plan.memberWorks().get(0).memberOperationId());
         assertThat(readQueries.get()).isPositive().isLessThan(plan.cohortRows().size());
@@ -820,46 +813,38 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                 .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId());
         assertThat(retry.buildOperationId()).isEqualTo(plan.buildOperationId());
         assertThat(retry.planDigest()).isEqualTo(plan.planDigest());
-        assertThatThrownBy(
-                () ->
-                    prepareSchema
-                        .dsl()
-                        .transaction(
-                            configuration -> {
-                              DSLContext transaction = DSL.using(configuration);
-                              assertThat(
-                                      transaction.execute(
-                                          "UPDATE game_session_canonical_issuer_partition_reservation"
-                                              + " SET coverage_fence = coverage_fence + 1"
-                                              + " WHERE reservation_id = ?",
-                                          fixture.reservationId()))
-                                  .isOne();
-                              new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                                  .readPreparedPlanInTransaction(
-                                      transaction,
-                                      fixture.intent().operationId(),
-                                      fixture.requestId());
-                            }))
+        assertThatThrownBy(() ->
+                prepareSchema
+                    .dsl()
+                    .transaction(configuration -> {
+                      DSLContext transaction = DSL.using(configuration);
+                      assertThat(
+                              transaction.execute(
+                                  "UPDATE game_session_canonical_issuer_partition_reservation"
+                                      + " SET coverage_fence = coverage_fence + 1"
+                                      + " WHERE reservation_id = ?",
+                                  fixture.reservationId()))
+                          .isOne();
+                      new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                          .readPreparedPlanInTransaction(
+                              transaction, fixture.intent().operationId(), fixture.requestId());
+                    }))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Current source row differs");
         for (String changedKeys :
             List.of("ADD COLUMN unexpected_attribute text", "DROP COLUMN created_at")) {
-          assertThatThrownBy(
-                  () ->
-                      prepareSchema
-                          .dsl()
-                          .transaction(
-                              configuration -> {
-                                DSLContext transaction = DSL.using(configuration);
-                                transaction.execute(
-                                    "ALTER TABLE game_session_canonical_issuer_partition_reservation "
-                                        + changedKeys);
-                                new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                                    .readPreparedPlanInTransaction(
-                                        transaction,
-                                        fixture.intent().operationId(),
-                                        fixture.requestId());
-                              }))
+          assertThatThrownBy(() ->
+                  prepareSchema
+                      .dsl()
+                      .transaction(configuration -> {
+                        DSLContext transaction = DSL.using(configuration);
+                        transaction.execute(
+                            "ALTER TABLE game_session_canonical_issuer_partition_reservation "
+                                + changedKeys);
+                        new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                            .readPreparedPlanInTransaction(
+                                transaction, fixture.intent().operationId(), fixture.requestId());
+                      }))
               .isInstanceOf(IllegalStateException.class)
               .hasMessageContaining("Current source row differs");
         }
@@ -899,9 +884,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               () -> owner.prepareInitialBuildPlan(UUID.randomUUID(), fixture.requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Exact pending issuer-bootstrap operation is missing");
-      assertThatThrownBy(
-              () ->
-                  owner.prepareInitialBuildPlan(fixture.intent().operationId(), UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              owner.prepareInitialBuildPlan(fixture.intent().operationId(), UUID.randomUUID()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("request or exact current control tuple changed");
 
@@ -910,10 +894,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           .execute(
               "DELETE FROM game_session_canonical_issuer_layout_bootstrap_control WHERE issuer_id = ?",
               ISSUER);
-      assertThatThrownBy(
-              () ->
-                  owner.prepareInitialBuildPlan(
-                      fixture.intent().operationId(), fixture.requestId()))
+      assertThatThrownBy(() ->
+              owner.prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("lost its positive current control row");
     } finally {
@@ -949,26 +931,24 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       assertThat(workBefore).isNotEmpty();
       assertThat(blockersBefore).isNotEmpty();
 
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_partition_build_plan"
-                              + " SET created_at = created_at + INTERVAL '1 second'"))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_partition_build_plan"
+                          + " SET created_at = created_at + INTERVAL '1 second'"))
           .isInstanceOf(DataAccessException.class)
           .hasMessageContaining("issuer partition build preparation artifacts are immutable");
 
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .execute(
-                          "TRUNCATE TABLE"
-                              + " game_session_canonical_issuer_partition_build_plan,"
-                              + " game_session_canonical_issuer_partition_build_cohort_row,"
-                              + " game_session_canonical_issuer_partition_build_member_work,"
-                              + " game_session_canonical_issuer_partition_build_blocker CASCADE"))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .execute(
+                      "TRUNCATE TABLE"
+                          + " game_session_canonical_issuer_partition_build_plan,"
+                          + " game_session_canonical_issuer_partition_build_cohort_row,"
+                          + " game_session_canonical_issuer_partition_build_member_work,"
+                          + " game_session_canonical_issuer_partition_build_blocker CASCADE"))
           .isInstanceOf(DataAccessException.class)
           .hasMessageContaining("artifacts are immutable");
 
@@ -1003,10 +983,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               "UPDATE game_session_canonical_issuer_layout_bootstrap_intent"
                   + " SET layout_version = layout_version + 1 WHERE operation_id = ?",
               fixture.intent().operationId());
-      assertThatThrownBy(
-              () ->
-                  owner.prepareInitialBuildPlan(
-                      fixture.intent().operationId(), fixture.requestId()))
+      assertThatThrownBy(() ->
+              owner.prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("exact pending bootstrap layout or anchor link");
     } finally {
@@ -1023,10 +1001,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                   + " SET source_row_digest = ? WHERE operation_id = ? AND row_ordinal = 0",
               "sha256:" + "0".repeat(64),
               fixture.intent().operationId());
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerPartitionBuildRepository(cohortSchema.dsl())
-                      .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerPartitionBuildRepository(cohortSchema.dsl())
+                  .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("changed source-row digest");
     } finally {
@@ -1042,10 +1019,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               "UPDATE game_session_canonical_issuer_partition_reservation"
                   + " SET lifecycle = 'BOUND' WHERE reservation_id = ?",
               fixture.reservationId());
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerPartitionBuildRepository(sourceSchema.dsl())
-                      .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerPartitionBuildRepository(sourceSchema.dsl())
+                  .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Current source row differs");
     } finally {
@@ -1061,10 +1037,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               "UPDATE game_session_canonical_issuer_layout_bootstrap_intent"
                   + " SET source_checkpoint_bytes = convert_to('{}', 'UTF8') WHERE operation_id = ?",
               fixture.intent().operationId());
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerPartitionBuildRepository(checkpointSchema.dsl())
-                      .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerPartitionBuildRepository(checkpointSchema.dsl())
+                  .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("source checkpoint digest is invalid");
     } finally {
@@ -1225,57 +1200,48 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                   .toList());
       var retainedBindingRow =
           plan.cohortRows().stream()
-              .filter(
-                  row ->
-                      row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.BINDING)
+              .filter(row ->
+                  row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.BINDING)
               .findFirst()
               .orElseThrow();
       assertThat(retainedBindingRow.sourceRowJson()).contains("TERMINAL_UNRESOLVED");
       assertThat(plan.blockers())
-          .anySatisfy(
-              blocker -> {
-                assertThat(blocker.sourceRowOrdinal()).isEqualTo(retainedBindingRow.rowOrdinal());
-                assertThat(blocker.sourceRowDigest())
-                    .isEqualTo(retainedBindingRow.sourceRowDigest());
-                assertThat(blocker.code())
-                    .isEqualTo(
-                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                            .UNREPRESENTABLE_BINDING);
-              });
+          .anySatisfy(blocker -> {
+            assertThat(blocker.sourceRowOrdinal()).isEqualTo(retainedBindingRow.rowOrdinal());
+            assertThat(blocker.sourceRowDigest()).isEqualTo(retainedBindingRow.sourceRowDigest());
+            assertThat(blocker.code())
+                .isEqualTo(
+                    CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode.UNREPRESENTABLE_BINDING);
+          });
       for (UUID reservationId :
           List.of(unlinkedBoundReservationId, unlinkedReleasePendingReservationId)) {
         var reservationRow =
             plan.cohortRows().stream()
-                .filter(
-                    row ->
-                        row.kind()
-                                == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind
-                                    .RESERVATION
-                            && row.sourceKey().equals(reservationId.toString()))
+                .filter(row ->
+                    row.kind()
+                            == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION
+                        && row.sourceKey().equals(reservationId.toString()))
                 .findFirst()
                 .orElseThrow();
         assertThat(plan.blockers())
-            .anySatisfy(
-                blocker -> {
-                  assertThat(blocker.sourceRowOrdinal()).isEqualTo(reservationRow.rowOrdinal());
-                  assertThat(blocker.sourceRowDigest()).isEqualTo(reservationRow.sourceRowDigest());
-                  assertThat(blocker.code())
-                      .isEqualTo(
-                          CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                              .CONFLICTING_RESERVATION_LINK);
-                });
+            .anySatisfy(blocker -> {
+              assertThat(blocker.sourceRowOrdinal()).isEqualTo(reservationRow.rowOrdinal());
+              assertThat(blocker.sourceRowDigest()).isEqualTo(reservationRow.sourceRowDigest());
+              assertThat(blocker.code())
+                  .isEqualTo(
+                      CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                          .CONFLICTING_RESERVATION_LINK);
+            });
       }
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .transactionResult(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                                .readPreparedPlanInTransaction(
-                                    transaction, intent.operationId(), requestId);
-                          }))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .transactionResult(configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                        .readPreparedPlanInTransaction(
+                            transaction, intent.operationId(), requestId);
+                  }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining(
               "Blocked issuer partition build plan cannot issue member operations");
@@ -1481,36 +1447,35 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           .extracting(CanonicalGameplayIssuerPartitionBuildPlan.MemberWork::reservationLifecycle)
           .containsExactlyInAnyOrder("RESERVED", "RESERVED", "RESERVED", "RELEASED");
       assertThat(plan.memberWorks())
-          .allSatisfy(
-              work -> {
-                assertThat(work.originalPartitionId())
-                    .isEqualTo(
-                        CanonicalGameplayBindingRef.fromExactBytes(work.bindingRef())
-                            .partitionId(partitionCount));
-                assertThat(work.originalLayoutVersion()).isEqualTo(LAYOUT_VERSION);
-                assertThat(work.originalPartitionCount()).isEqualTo(partitionCount);
-                assertThat(work.originalPartitionCapacity()).isEqualTo(partitionCapacity);
-                assertThat(work.originalIssuerCoverageOperationId())
-                    .isNotEqualTo(work.plannedAnchorOperationId());
-                assertThat(work.originalIssuerCoverageOperationFence())
-                    .isEqualTo(originalOperationFence)
-                    .isNotEqualTo(intent.operationFence());
-                assertThat(work.originalCoverageFence())
-                    .isEqualTo(originalCoverageFence)
-                    .isNotEqualTo(intent.coverageFence());
-                if (work.reservationId().equals(prepared.issuerReservationId())) {
-                  assertThat(work.originalInventorySnapshotRevision()).isEqualTo(BigInteger.ONE);
-                } else {
-                  assertThat(work.originalInventorySnapshotRevision())
-                      .isEqualTo(intent.inventorySnapshotRevision());
-                }
-                assertThat(work.plannedPartitionId()).isEqualTo(work.originalPartitionId());
-                assertThat(work.plannedAnchorOperationId()).isEqualTo(intent.operationId());
-                assertThat(work.plannedAnchorOperationFence()).isEqualTo(intent.operationFence());
-                assertThat(work.plannedAnchorCoverageFence()).isEqualTo(intent.coverageFence());
-                assertThat(work.plannedAnchorInventorySnapshotRevision())
-                    .isEqualTo(intent.inventorySnapshotRevision());
-              });
+          .allSatisfy(work -> {
+            assertThat(work.originalPartitionId())
+                .isEqualTo(
+                    CanonicalGameplayBindingRef.fromExactBytes(work.bindingRef())
+                        .partitionId(partitionCount));
+            assertThat(work.originalLayoutVersion()).isEqualTo(LAYOUT_VERSION);
+            assertThat(work.originalPartitionCount()).isEqualTo(partitionCount);
+            assertThat(work.originalPartitionCapacity()).isEqualTo(partitionCapacity);
+            assertThat(work.originalIssuerCoverageOperationId())
+                .isNotEqualTo(work.plannedAnchorOperationId());
+            assertThat(work.originalIssuerCoverageOperationFence())
+                .isEqualTo(originalOperationFence)
+                .isNotEqualTo(intent.operationFence());
+            assertThat(work.originalCoverageFence())
+                .isEqualTo(originalCoverageFence)
+                .isNotEqualTo(intent.coverageFence());
+            if (work.reservationId().equals(prepared.issuerReservationId())) {
+              assertThat(work.originalInventorySnapshotRevision()).isEqualTo(BigInteger.ONE);
+            } else {
+              assertThat(work.originalInventorySnapshotRevision())
+                  .isEqualTo(intent.inventorySnapshotRevision());
+            }
+            assertThat(work.plannedPartitionId()).isEqualTo(work.originalPartitionId());
+            assertThat(work.plannedAnchorOperationId()).isEqualTo(intent.operationId());
+            assertThat(work.plannedAnchorOperationFence()).isEqualTo(intent.operationFence());
+            assertThat(work.plannedAnchorCoverageFence()).isEqualTo(intent.coverageFence());
+            assertThat(work.plannedAnchorInventorySnapshotRevision())
+                .isEqualTo(intent.inventorySnapshotRevision());
+          });
       assertThat(plan.memberWorks())
           .filteredOn(CanonicalGameplayIssuerPartitionBuildPlan.MemberWork::countsTowardCapacity)
           .hasSize(3);
@@ -1688,25 +1653,19 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
             .extracting(CanonicalGameplayIssuerPartitionBuildPlan.Blocker::code)
             .containsOnly(
                 CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode.PARTITION_CAPACITY_EXCEEDED);
-        assertThatThrownBy(
-                () ->
-                    physicalOwner.preparePartitionWork(
-                        intent.operationId(),
-                        requestId,
-                        BigInteger.ZERO,
-                        checkpoint,
-                        physicalBoundaryIncarnation()))
+        assertThatThrownBy(() ->
+                physicalOwner.preparePartitionWork(
+                    intent.operationId(),
+                    requestId,
+                    BigInteger.ZERO,
+                    checkpoint,
+                    physicalBoundaryIncarnation()))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining(
                 "Blocked issuer partition build plan cannot issue member operations");
-        assertThatThrownBy(
-                () ->
-                    physicalOwner.beginOrResumePendingPhysicalProof(
-                        intent.operationId(),
-                        requestId,
-                        0,
-                        checkpoint,
-                        physicalBoundaryIncarnation()))
+        assertThatThrownBy(() ->
+                physicalOwner.beginOrResumePendingPhysicalProof(
+                    intent.operationId(), requestId, 0, checkpoint, physicalBoundaryIncarnation()))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining(
                 "Blocked issuer partition build plan cannot issue member operations");
@@ -1775,11 +1734,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     assertThat(plan.coverageGeneration()).isNull();
     var originalReservation =
         fixture.intent().cohortRows().stream()
-            .filter(
-                row ->
-                    row.kind()
-                            == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION
-                        && row.sourceKey().equals(fixture.extraReservationId().toString()))
+            .filter(row ->
+                row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION
+                    && row.sourceKey().equals(fixture.extraReservationId().toString()))
             .findFirst()
             .orElseThrow();
     var retainedReservation =
@@ -1791,14 +1748,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     assertThat(retainedReservation.sourceRowDigest())
         .isEqualTo(originalReservation.sourceRowDigest());
     assertThat(plan.blockers())
-        .anySatisfy(
-            blocker -> {
-              assertThat(blocker.sourceRowOrdinal()).isEqualTo(originalReservation.rowOrdinal());
-              assertThat(blocker.code())
-                  .isEqualTo(
-                      CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                          .CONFLICTING_RESERVATION_LINK);
-            });
+        .anySatisfy(blocker -> {
+          assertThat(blocker.sourceRowOrdinal()).isEqualTo(originalReservation.rowOrdinal());
+          assertThat(blocker.code())
+              .isEqualTo(
+                  CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                      .CONFLICTING_RESERVATION_LINK);
+        });
     assertThat(plan.memberWorks())
         .extracting(CanonicalGameplayIssuerPartitionBuildPlan.MemberWork::reservationId)
         .contains(fixture.bindingReservationId())
@@ -2404,7 +2360,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         + ")))";
   }
 
-  private static List<String> rowImages(DSLContext dsl, String tableName) {
+  private static String retainedRowImage(DSLContext dsl, String tableName) {
     String image = "to_jsonb(retained_row)";
     if (tableName.equals("game_session_canonical_binding_transition")) {
       // V1035 adds only this nullable field. Keep every other source value and non-null abort UUID.
@@ -2454,6 +2410,11 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
       image = retainedPreBridgeRegionImage(dsl);
     }
+    return image;
+  }
+
+  private static List<String> rowImages(DSLContext dsl, String tableName) {
+    String image = retainedRowImage(dsl, tableName);
     return dsl.fetch(
             "SELECT ("
                 + image
@@ -2464,55 +2425,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static List<String> rowImagesWithXmin(DSLContext dsl, String tableName) {
-    String image = "to_jsonb(retained_row)";
-    if (tableName.equals("game_session_canonical_binding_transition")) {
-      // Preserve xmin and all source data while comparing the one absent-equivalent V1035 field.
-      image =
-          "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
-              + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_candidate_bytes'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_candidate_bytes',"
-              + " 'original_new_candidate_digest', 'original_new_candidate_state',"
-              + " 'original_new_candidate_readback_digest'] ELSE ARRAY[]::text[] END";
-      // Only the wholly absent V1049 extension is absence-equivalent across the upgrade.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_final_session_sha256'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_final_session_sha256',"
-              + " 'original_new_admission_at_ms', 'original_new_continuity_expires_at_ms',"
-              + " 'original_new_session_duration_ms'] ELSE ARRAY[]::text[] END";
-      // Only all-null V1050.2 additions are absence-equivalent; retain material selection evidence.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_abandonment_id' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_state' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_closure_digest' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_orphan_cleanup_id' = 'null'::jsonb"
-              + " AND to_jsonb(retained_row)->'original_new_abandonment_resolution_id' = 'null'::jsonb"
-              + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
-              + " 'original_new_abandonment_closure_digest',"
-              + " 'original_new_abandonment_orphan_cleanup_id', 'original_new_abandonment_resolution_id']"
-              + " ELSE ARRAY[]::text[] END";
-      // V1063 null receipt pointer is absent-equivalent; keep any populated execution digest.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_capacity_execution_digest'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_capacity_execution_digest']"
-              + " ELSE ARRAY[]::text[] END";
-    } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
-      // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
-      image =
-          "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
-              + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
-    } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
-      image = retainedPreBridgeRegionImage(dsl);
-    }
+    String image = retainedRowImage(dsl, tableName);
     return dsl.fetch(
             "SELECT xmin::text || ':' || ("
                 + image

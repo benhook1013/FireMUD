@@ -227,25 +227,23 @@ final class AccountControlUiOwnerSourcesFixture {
           new AccountPlatformRestrictionOperationRepository(
               dsl, generations, outbox, sourceEvidence, restrictionBirths);
       account =
-          tx(
-              () -> {
-                Account candidate = new Account();
-                String suffix = UUID.randomUUID().toString();
-                candidate.setUsername("owner-" + suffix);
-                candidate.setEmail(suffix + "@example.test");
-                candidate.setPasswordHash(hash("test-only-disabled-password"));
-                candidate.setLoginAuthModes("EMAIL_OTP");
-                return accounts.save(candidate);
-              });
+          tx(() -> {
+            Account candidate = new Account();
+            String suffix = UUID.randomUUID().toString();
+            candidate.setUsername("owner-" + suffix);
+            candidate.setEmail(suffix + "@example.test");
+            candidate.setPasswordHash(hash("test-only-disabled-password"));
+            candidate.setLoginAuthModes("EMAIL_OTP");
+            return accounts.save(candidate);
+          });
       var creator = testCreation(account.getAccountUuid(), creationEvidence);
       var fresh =
           new FreshTenantIdentityAssociationRepository(dsl, creationEvidence.targetNamespace());
-      tx(
-          () -> {
-            fresh.importVerified(creator.creationEvidence());
-            generations.initializeTenantIfAbsent(tenant);
-            return null;
-          });
+      tx(() -> {
+        fresh.importVerified(creator.creationEvidence());
+        generations.initializeTenantIfAbsent(tenant);
+        return null;
+      });
       var pairs = new AccountMembershipPairAuthorityRepository(dsl);
       var memberships = new AccountTenantMembershipRepository(dsl, accounts, fresh, pairs);
       var roles = new AccountTenantMembershipRoleSnapshotRepository(dsl);
@@ -376,18 +374,17 @@ final class AccountControlUiOwnerSourcesFixture {
               restrictionOperations,
               dsl);
       challenges = new AccountEmailLoginChallengeRepository(dsl);
-      tx(
-          () -> {
-            var challenge = new AccountEmailLoginChallenge();
-            var now = LocalDateTime.now().withNano(0);
-            challenge.setAccountId(account.getId());
-            challenge.setCodeHash(hash(OTP));
-            challenge.setExpiresAt(now.plusMinutes(5));
-            challenge.setResendAvailableAt(now.plusMinutes(1));
-            challenge.setCreatedAt(now);
-            challenge.setUpdatedAt(now);
-            return challenges.save(challenge);
-          });
+      tx(() -> {
+        var challenge = new AccountEmailLoginChallenge();
+        var now = LocalDateTime.now().withNano(0);
+        challenge.setAccountId(account.getId());
+        challenge.setCodeHash(hash(OTP));
+        challenge.setExpiresAt(now.plusMinutes(5));
+        challenge.setResendAvailableAt(now.plusMinutes(1));
+        challenge.setCreatedAt(now);
+        challenge.setUpdatedAt(now);
+        return challenges.save(challenge);
+      });
       var primaryTarget =
           new AccountServiceImpl(
               accounts,
@@ -501,17 +498,16 @@ final class AccountControlUiOwnerSourcesFixture {
 
   /** Fresh real Account/auth sources only; no tenant membership or current restriction is added. */
   Account createGlobalAccount(String password) {
-    return tx(
-        () -> {
-          Account candidate = new Account();
-          String suffix = UUID.randomUUID().toString();
-          candidate.setUsername("global-owner-" + suffix);
-          candidate.setEmail(suffix + "@example.test");
-          candidate.setPasswordHash(hash(password));
-          candidate.setEmailVerified(true);
-          candidate.setLoginAuthModes(AccountLoginAuthModes.DEFAULT_SERIALIZED);
-          return accounts.save(candidate);
-        });
+    return tx(() -> {
+      Account candidate = new Account();
+      String suffix = UUID.randomUUID().toString();
+      candidate.setUsername("global-owner-" + suffix);
+      candidate.setEmail(suffix + "@example.test");
+      candidate.setPasswordHash(hash(password));
+      candidate.setEmailVerified(true);
+      candidate.setLoginAuthModes(AccountLoginAuthModes.DEFAULT_SERIALIZED);
+      return accounts.save(candidate);
+    });
   }
 
   /**
@@ -520,30 +516,29 @@ final class AccountControlUiOwnerSourcesFixture {
    * The ordinary createGlobalAccount helper deliberately remains uncertified for negative proofs.
    */
   Account createCertifiedGlobalAccount(String password) {
-    return tx(
-        () -> {
-          for (Category category : Category.values()) {
-            ensureControlledFreshEnrollmentPolicy(category);
-          }
-          String suffix = UUID.randomUUID().toString();
-          var result =
-              new AccountFreshEnrollmentRepository(
-                      dsl,
-                      accounts,
-                      new AccountFreshEnrollmentPolicyRepository(dsl),
-                      restrictionOperations)
-                  .enroll(
-                      new AccountFreshEnrollmentRequest(
-                          UUID.randomUUID(),
-                          "global-" + suffix,
-                          suffix + "@example.test",
-                          hash(password),
-                          true,
-                          AccountLoginAuthModes.DEFAULT_SERIALIZED));
-          assertThat(result.accountSecurityLock().receipt()).isPresent();
-          assertThat(result.platformAccessBan().receipt()).isPresent();
-          return accounts.findById(result.accountId()).orElseThrow();
-        });
+    return tx(() -> {
+      for (Category category : Category.values()) {
+        ensureControlledFreshEnrollmentPolicy(category);
+      }
+      String suffix = UUID.randomUUID().toString();
+      var result =
+          new AccountFreshEnrollmentRepository(
+                  dsl,
+                  accounts,
+                  new AccountFreshEnrollmentPolicyRepository(dsl),
+                  restrictionOperations)
+              .enroll(
+                  new AccountFreshEnrollmentRequest(
+                      UUID.randomUUID(),
+                      "global-" + suffix,
+                      suffix + "@example.test",
+                      hash(password),
+                      true,
+                      AccountLoginAuthModes.DEFAULT_SERIALIZED));
+      assertThat(result.accountSecurityLock().receipt()).isPresent();
+      assertThat(result.platformAccessBan().receipt()).isPresent();
+      return accounts.findById(result.accountId()).orElseThrow();
+    });
   }
 
   private void ensureControlledFreshEnrollmentPolicy(Category category) {
@@ -665,22 +660,21 @@ final class AccountControlUiOwnerSourcesFixture {
 
   /** Stores an actual hashed email-OTP challenge for the separate Account's real primary path. */
   AccountEmailLoginChallenge installGlobalOtp(Account globalAccount, String otp) {
-    return tx(
-        () -> {
-          challenges.lockAccountChallenge(globalAccount.getId());
-          if (challenges.findByAccountId(globalAccount.getId()).isPresent()) {
-            throw new IllegalStateException("Global Account already has an email challenge");
-          }
-          var now = LocalDateTime.now().withNano(0);
-          var challenge = new AccountEmailLoginChallenge();
-          challenge.setAccountId(globalAccount.getId());
-          challenge.setCodeHash(hash(otp));
-          challenge.setExpiresAt(now.plusMinutes(5));
-          challenge.setResendAvailableAt(now.plusMinutes(1));
-          challenge.setCreatedAt(now);
-          challenge.setUpdatedAt(now);
-          return challenges.save(challenge);
-        });
+    return tx(() -> {
+      challenges.lockAccountChallenge(globalAccount.getId());
+      if (challenges.findByAccountId(globalAccount.getId()).isPresent()) {
+        throw new IllegalStateException("Global Account already has an email challenge");
+      }
+      var now = LocalDateTime.now().withNano(0);
+      var challenge = new AccountEmailLoginChallenge();
+      challenge.setAccountId(globalAccount.getId());
+      challenge.setCodeHash(hash(otp));
+      challenge.setExpiresAt(now.plusMinutes(5));
+      challenge.setResendAvailableAt(now.plusMinutes(1));
+      challenge.setCreatedAt(now);
+      challenge.setUpdatedAt(now);
+      return challenges.save(challenge);
+    });
   }
 
   <T> T tx(Supplier<T> action) {

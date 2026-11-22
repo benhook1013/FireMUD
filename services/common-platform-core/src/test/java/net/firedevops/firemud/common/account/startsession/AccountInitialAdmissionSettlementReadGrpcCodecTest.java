@@ -58,10 +58,9 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
     var pending =
         new GameSessionCanonicalInitialAdmissionOwnerProof(
             hold, Outcome.PENDING, null, null, null, false, null);
-    assertThatThrownBy(
-            () ->
-                new AccountInitialAdmissionSettlementReadEvidence(
-                    evidence.readRequestId(), evidence.protection(), pending))
+    assertThatThrownBy(() ->
+            new AccountInitialAdmissionSettlementReadEvidence(
+                evidence.readRequestId(), evidence.protection(), pending))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Nonterminal");
     var changed =
@@ -70,16 +69,13 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
     var differentHold =
         new GameSessionCanonicalInitialAdmissionOwnerProof(
             changed, Outcome.ABORTED, null, null, "sha256:" + "a".repeat(64), true, Instant.EPOCH);
-    assertThatThrownBy(
-            () ->
-                new AccountInitialAdmissionSettlementReadEvidence(
-                    evidence.readRequestId(), evidence.protection(), differentHold))
+    assertThatThrownBy(() ->
+            new AccountInitialAdmissionSettlementReadEvidence(
+                evidence.readRequestId(), evidence.protection(), differentHold))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete protected hold");
-    assertThatThrownBy(
-            () ->
-                new AccountInitialAdmissionSettlementReadInput(
-                    new UUID(0L, 0L), evidence.protection()))
+    assertThatThrownBy(() ->
+            new AccountInitialAdmissionSettlementReadInput(new UUID(0L, 0L), evidence.protection()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -104,10 +100,8 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
             request.toBuilder().setAccountProtectionEvidence(0, ByteString.EMPTY).build(),
             request.toBuilder().setUnknownFields(unknown()).build());
     for (var value : invalid) {
-      assertThatThrownBy(
-              () ->
-                  AccountInitialAdmissionSettlementReadGrpcCodec.fromRequest(
-                      value, "world-runtime"))
+      assertThatThrownBy(() ->
+              AccountInitialAdmissionSettlementReadGrpcCodec.fromRequest(value, "world-runtime"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThatThrownBy(
@@ -121,10 +115,9 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
         duplicateWire,
         request.getSerializedSize(),
         request.getSerializedSize());
-    assertThatThrownBy(
-            () ->
-                AccountInitialAdmissionSettlementReadGrpcCodec.fromRequestWireBytes(
-                    duplicateWire, "world-runtime"))
+    assertThatThrownBy(() ->
+            AccountInitialAdmissionSettlementReadGrpcCodec.fromRequestWireBytes(
+                duplicateWire, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -159,10 +152,8 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
                 .build(),
             response.toBuilder().setUnknownFields(unknown()).build());
     for (var value : invalid) {
-      assertThatThrownBy(
-              () ->
-                  AccountInitialAdmissionSettlementReadGrpcCodec.fromResponse(
-                      evidence.input(), value))
+      assertThatThrownBy(() ->
+              AccountInitialAdmissionSettlementReadGrpcCodec.fromResponse(evidence.input(), value))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -182,44 +173,37 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
           request.toBuilder()
               .setAccountProtectionEvidence(0, ByteString.copyFromUtf8(invalid))
               .build();
-      assertThatThrownBy(
-              () ->
-                  AccountInitialAdmissionSettlementReadGrpcCodec.fromRequest(
-                      changed, "world-runtime"))
+      assertThatThrownBy(() ->
+              AccountInitialAdmissionSettlementReadGrpcCodec.fromRequest(changed, "world-runtime"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var response = AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(evidence);
     byte[] proof = response.getCanonicalGameSessionOwnerProof(0).toByteArray();
     byte[] trailing = Arrays.copyOf(proof, proof.length + 1);
-    assertThatThrownBy(
-            () ->
-                AccountInitialAdmissionSettlementReadGrpcCodec.fromResponse(
-                    evidence.input(),
-                    response.toBuilder()
-                        .setCanonicalGameSessionOwnerProof(0, ByteString.copyFrom(trailing))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountInitialAdmissionSettlementReadGrpcCodec.fromResponse(
+                evidence.input(),
+                response.toBuilder()
+                    .setCanonicalGameSessionOwnerProof(0, ByteString.copyFrom(trailing))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountInitialAdmissionSettlementReadGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setAccountProtectionEvidence(
-                            0,
-                            ByteString.copyFrom(
-                                new byte
-                                    [AccountStartSessionAdmissionProtectionEvidence
-                                            .MAX_CANONICAL_BYTES
-                                        + 1]))
-                        .build(),
-                    "world-runtime"))
+    assertThatThrownBy(() ->
+            AccountInitialAdmissionSettlementReadGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setAccountProtectionEvidence(
+                        0,
+                        ByteString.copyFrom(
+                            new byte
+                                [AccountStartSessionAdmissionProtectionEvidence.MAX_CANONICAL_BYTES
+                                    + 1]))
+                    .build(),
+                "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountInitialAdmissionSettlementReadGrpcCodec.fromResponseWireBytes(
-                    evidence.input(),
-                    new byte
-                        [AccountInitialAdmissionSettlementReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES
-                            + 1]))
+    assertThatThrownBy(() ->
+            AccountInitialAdmissionSettlementReadGrpcCodec.fromResponseWireBytes(
+                evidence.input(),
+                new byte
+                    [AccountInitialAdmissionSettlementReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

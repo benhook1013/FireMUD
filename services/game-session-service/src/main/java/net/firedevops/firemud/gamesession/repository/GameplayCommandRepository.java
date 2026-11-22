@@ -511,18 +511,17 @@ public class GameplayCommandRepository {
     GameplayAdmissionPointer pointer = GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
     List<SelectFieldOrAsterisk> values =
         Arrays.stream(fields)
-            .map(
-                field ->
-                    field.equals(GAMEPLAY_COMMAND.WORLD_SLUG)
-                        ? pointer.WORLD_SLUG
-                        : field.equals(GAMEPLAY_COMMAND.REALM_SLUG)
-                            ? pointer.REALM_SLUG
-                            : field.equals(GAMEPLAY_COMMAND.POINTER_VERSION)
-                                ? pointer.POINTER_VERSION
-                                : field.equals(GAMEPLAY_COMMAND.PLAYABLE_STATE_SCOPE)
-                                    ? pointer.STATE_SCOPE
-                                    : (SelectFieldOrAsterisk)
-                                        DSL.val(record.get(field), field.getDataType()))
+            .map(field ->
+                field.equals(GAMEPLAY_COMMAND.WORLD_SLUG)
+                    ? pointer.WORLD_SLUG
+                    : field.equals(GAMEPLAY_COMMAND.REALM_SLUG)
+                        ? pointer.REALM_SLUG
+                        : field.equals(GAMEPLAY_COMMAND.POINTER_VERSION)
+                            ? pointer.POINTER_VERSION
+                            : field.equals(GAMEPLAY_COMMAND.PLAYABLE_STATE_SCOPE)
+                                ? pointer.STATE_SCOPE
+                                : (SelectFieldOrAsterisk)
+                                    DSL.val(record.get(field), field.getDataType()))
             .toList();
     Condition pointerMatch =
         pointer

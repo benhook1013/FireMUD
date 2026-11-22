@@ -336,14 +336,13 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
     assertThatThrownBy(
             () -> limits(1, 1, Duration.ofHours(2), Duration.ofSeconds(1), Duration.ofHours(1)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                limits(
-                    1,
-                    1,
-                    Duration.ofSeconds(1),
-                    Duration.ofSeconds(1),
-                    Duration.ofSeconds(Long.MAX_VALUE)))
+    assertThatThrownBy(() ->
+            limits(
+                1,
+                1,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(Long.MAX_VALUE)))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl);
   }

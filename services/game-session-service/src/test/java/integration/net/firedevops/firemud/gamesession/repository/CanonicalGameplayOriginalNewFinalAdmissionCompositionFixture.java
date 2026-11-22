@@ -83,6 +83,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
   private final AtomicInteger finalReadCalls = new AtomicInteger();
   private final Set<UUID> requestIds = ConcurrentHashMap.newKeySet();
+  private final Object secondAdmissionMonitor = new Object();
+  private boolean secondAdmissionClaimed;
   private RedisClient administrator;
   private StatefulRedisConnection<byte[], byte[]> administration;
   private RedisClient coordination;
@@ -443,15 +445,14 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec.decode(retained);
     var policies =
         published.policies().stream()
-            .map(
-                policy ->
-                    new net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence(
-                        policy.policyId(),
-                        policy.source().commitId(),
-                        policy.source().revisionId(),
-                        policy.source().logicalRevisionId(),
-                        policy.source().policy(),
-                        policy.policyDigest()))
+            .map(policy ->
+                new net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence(
+                    policy.policyId(),
+                    policy.source().commitId(),
+                    policy.source().revisionId(),
+                    policy.source().logicalRevisionId(),
+                    policy.source().policy(),
+                    policy.policyDigest()))
             .toList();
     var complete =
         new net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence(
@@ -515,19 +516,18 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var worldSelector = publishedRelease.worldStartLocationEvidence();
     var participants =
         publishedRelease.participantDigests().stream()
-            .map(
-                participant ->
-                    new net.firedevops.firemud.common.gamedesign
-                        .AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        false,
-                        null,
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        participant.digestSchemaVersion(),
-                        participant.abilitySchemaDigest() != null,
-                        participant.abilitySchemaDigest()))
+            .map(participant ->
+                new net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
+                    .Participant(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    false,
+                    null,
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    participant.digestSchemaVersion(),
+                    participant.abilitySchemaDigest() != null,
+                    participant.abilitySchemaDigest()))
             .toList();
     var release =
         net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.create(
@@ -657,9 +657,15 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   }
 
   public SecondAdmission prepareSecondAdmission() {
-    var admission = new SecondAdmission();
-    requestIds.add(admission.requestId());
-    return admission;
+    synchronized (secondAdmissionMonitor) {
+      if (secondAdmissionClaimed) {
+        throw new IllegalStateException("Second admission has already been prepared");
+      }
+      secondAdmissionClaimed = true;
+      var admission = new SecondAdmission();
+      requestIds.add(admission.requestId());
+      return admission;
+    }
   }
 
   public final class SecondAdmission {

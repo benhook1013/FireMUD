@@ -179,9 +179,8 @@ public final class DirectTextWorldSelectionService {
     }
     List<Choice> matches =
         choices.stream()
-            .filter(
-                choice ->
-                    folded.equals(choice.selector()) || folded.equals(choice.target().tenantSlug()))
+            .filter(choice ->
+                folded.equals(choice.selector()) || folded.equals(choice.target().tenantSlug()))
             .toList();
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }

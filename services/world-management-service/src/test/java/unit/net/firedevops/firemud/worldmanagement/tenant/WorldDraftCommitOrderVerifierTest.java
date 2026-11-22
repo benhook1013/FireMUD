@@ -37,12 +37,11 @@ class WorldDraftCommitOrderVerifierTest {
     var operation = operation("test");
     var client = mock(DraftCommitOrderReadClient.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request = (DraftCommitOrderReadEvidence.Request) invocation.getArgument(0);
-              return DraftCommitOrderReadGrpcCodec.fromResponse(
-                  request, DraftCommitOrderReadGrpcCodec.toHeldResponse(request));
-            });
+        .thenAnswer(invocation -> {
+          var request = (DraftCommitOrderReadEvidence.Request) invocation.getArgument(0);
+          return DraftCommitOrderReadGrpcCodec.fromResponse(
+              request, DraftCommitOrderReadGrpcCodec.toHeldResponse(request));
+        });
     var verifier = new WorldDraftCommitOrderVerifier(client, "test");
 
     CommitOrderProof proof = verifier.verifyHeldOriginalCommitOrder(operation);
@@ -78,19 +77,17 @@ class WorldDraftCommitOrderVerifierTest {
 
     var offline = mock(DraftCommitOrderReadClient.class);
     when(offline.read(any())).thenThrow(new IllegalStateException("Account unavailable"));
-    assertThatThrownBy(
-            () ->
-                new WorldDraftCommitOrderVerifier(offline, "test")
-                    .verifyHeldOriginalCommitOrder(operation))
+    assertThatThrownBy(() ->
+            new WorldDraftCommitOrderVerifier(offline, "test")
+                .verifyHeldOriginalCommitOrder(operation))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unavailable");
 
     var namespaceClient = mock(DraftCommitOrderReadClient.class);
     var otherNamespaceOperation = operation("other");
-    assertThatThrownBy(
-            () ->
-                new WorldDraftCommitOrderVerifier(namespaceClient, "test")
-                    .verifyHeldOriginalCommitOrder(otherNamespaceOperation))
+    assertThatThrownBy(() ->
+            new WorldDraftCommitOrderVerifier(namespaceClient, "test")
+                .verifyHeldOriginalCommitOrder(otherNamespaceOperation))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("namespace");
     verify(namespaceClient, never()).read(any());

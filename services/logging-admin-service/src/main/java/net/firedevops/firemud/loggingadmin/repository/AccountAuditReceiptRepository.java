@@ -55,10 +55,9 @@ public class AccountAuditReceiptRepository {
             .execute();
     AccountAuditReceipt receipt =
         findByIdentity(request, tenantKey)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Account audit receipt identity conflict did not resolve to a receipt"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Account audit receipt identity conflict did not resolve to a receipt"));
     return new AccountAuditReceiptInsertResult(receipt, inserted == 1);
   }
 

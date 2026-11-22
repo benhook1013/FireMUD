@@ -205,11 +205,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .containsExactlyEntriesOf(Map.of(TENANT.toString(), "1"));
     assertThat(value.membershipSource().gameplayAdmissionAllowed()).isTrue();
     assertThat(value.membershipSource().sourceEvidence())
-        .anySatisfy(
-            source -> {
-              assertThat(source.eventId()).isEqualTo("membership-event-1");
-              assertThat(source.eventDigest()).startsWith("sha256:");
-            });
+        .anySatisfy(source -> {
+          assertThat(source.eventId()).isEqualTo("membership-event-1");
+          assertThat(source.eventDigest()).startsWith("sha256:");
+        });
     var order = inOrder(f.accounts, f.issuances, f.memberships, f.scopes, f.demos);
     order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     order.verify(f.issuances).readCurrentCommittedCandidateByJti(f.identity.tokenJti());
@@ -300,11 +299,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     var fence = mock(ReadFence.class);
     var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
     when(f.hosting.prepareCurrentRead(TENANT))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              return fence;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          return fence;
+        });
     when(f.observer.observe(fence.binding()))
         .thenAnswer(
             invocation -> {
@@ -410,11 +408,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       when(connection.getTransactionIsolation())
           .thenReturn(Connection.TRANSACTION_READ_COMMITTED, Connection.TRANSACTION_SERIALIZABLE);
       when(connection.prepareStatement(anyString()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(invocation.getArgument(0, String.class)).endsWith("for update");
-                return statement;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(invocation.getArgument(0, String.class)).endsWith("for update");
+            return statement;
+          });
       when(statement.execute()).thenThrow(new SQLTimeoutException("Controlled timeout", "57014"));
       // The real Spring proxy transfers the remaining transaction budget to jOOQ's JDBC statement.
       // The driver is controlled here; physical PostgreSQL cancellation is separate proof.
@@ -484,10 +481,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
             original.gameInstanceId(),
             original.catalogRevision(),
             original.pointerVersion());
-    assertThatThrownBy(
-            () ->
-                f.owner.evaluate(
-                    new Request(other, f.scope.connectScopeId(), PEER), "controlled-token"))
+    assertThatThrownBy(() ->
+            f.owner.evaluate(
+                new Request(other, f.scope.connectScopeId(), PEER), "controlled-token"))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     verifyNoInteractions(
         f.accounts,
@@ -554,8 +550,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
   @Test
   void callerDeadlineExpiresDuringFinalClockCommit() throws Exception {
-    Fixture f = new Fixture(false);
-    f.transactions.afterThirdCommit = () -> f.time.set(NOW.plusSeconds(60));
+    Instant callerDeadline = NOW.plusSeconds(30);
+    Fixture f = new Fixture(false, "SHARED", callerDeadline);
+    assertThat(callerDeadline).isBefore(Instant.parse(f.scope.connectScopeExpiresAt()));
+    f.transactions.afterThirdCommit = () -> f.time.set(callerDeadline);
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     assertThat(f.transactions.events)
@@ -732,48 +730,47 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
   private static Stream<Arguments> protectedTargetFailures() {
     return Stream.of("resolve", "strict")
-        .flatMap(
-            stage -> {
-              Stream<RuntimeException> outages =
+        .flatMap(stage -> {
+          Stream<RuntimeException> outages =
+              Stream.of(
+                  new CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException(
+                      new IllegalStateException("private target detail")),
+                  io.grpc.Status.UNAVAILABLE
+                      .withDescription("private target detail")
+                      .asRuntimeException(),
+                  io.grpc.Status.DEADLINE_EXCEEDED
+                      .withDescription("private target detail")
+                      .asRuntimeException(),
+                  io.grpc.Status.CANCELLED
+                      .withDescription("private target detail")
+                      .asRuntimeException(),
+                  io.grpc.Status.ABORTED
+                      .withDescription("private target detail")
+                      .asRuntimeException());
+          Stream<RuntimeException> unexpected =
+              Stream.of(
+                  io.grpc.Status.INVALID_ARGUMENT
+                      .withDescription("private target detail")
+                      .asRuntimeException(),
+                  new IllegalArgumentException("private target detail"),
+                  new IllegalStateException(
+                      "Game Session returned invalid current target evidence",
+                      new IllegalArgumentException("private target detail")),
+                  new NullPointerException("private target detail"));
+          return Stream.concat(
+              Stream.concat(
+                  outages.map(
+                      failure -> Arguments.of(stage, failure, io.grpc.Status.Code.UNAVAILABLE)),
                   Stream.of(
-                      new CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException(
-                          new IllegalStateException("private target detail")),
-                      io.grpc.Status.UNAVAILABLE
-                          .withDescription("private target detail")
-                          .asRuntimeException(),
-                      io.grpc.Status.DEADLINE_EXCEEDED
-                          .withDescription("private target detail")
-                          .asRuntimeException(),
-                      io.grpc.Status.CANCELLED
-                          .withDescription("private target detail")
-                          .asRuntimeException(),
-                      io.grpc.Status.ABORTED
-                          .withDescription("private target detail")
-                          .asRuntimeException());
-              Stream<RuntimeException> unexpected =
-                  Stream.of(
-                      io.grpc.Status.INVALID_ARGUMENT
-                          .withDescription("private target detail")
-                          .asRuntimeException(),
-                      new IllegalArgumentException("private target detail"),
-                      new IllegalStateException(
-                          "Game Session returned invalid current target evidence",
-                          new IllegalArgumentException("private target detail")),
-                      new NullPointerException("private target detail"));
-              return Stream.concat(
-                  Stream.concat(
-                      outages.map(
-                          failure -> Arguments.of(stage, failure, io.grpc.Status.Code.UNAVAILABLE)),
-                      Stream.of(
-                          Arguments.of(
-                              stage,
-                              io.grpc.Status.FAILED_PRECONDITION
-                                  .withDescription("private target detail")
-                                  .asRuntimeException(),
-                              io.grpc.Status.Code.FAILED_PRECONDITION))),
-                  unexpected.map(
-                      failure -> Arguments.of(stage, failure, io.grpc.Status.Code.INTERNAL)));
-            });
+                      Arguments.of(
+                          stage,
+                          io.grpc.Status.FAILED_PRECONDITION
+                              .withDescription("private target detail")
+                              .asRuntimeException(),
+                          io.grpc.Status.Code.FAILED_PRECONDITION))),
+              unexpected.map(
+                  failure -> Arguments.of(stage, failure, io.grpc.Status.Code.INTERNAL)));
+        });
   }
 
   @Test
@@ -889,11 +886,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     var original = f.targets.readPublishedRealmAdmissionOwner(resolved.strictSelector());
     doReturn(resolved).when(f.targets).resolvePublishedRealmAdmissionTarget(f.request.target());
     when(f.targets.readPublishedRealmAdmissionOwner(resolved.strictSelector()))
-        .thenAnswer(
-            invocation -> {
-              when(original.currentTarget().characterCreationPolicy()).thenReturn("PLAYER_CREATED");
-              return original;
-            });
+        .thenAnswer(invocation -> {
+          when(original.currentTarget().characterCreationPolicy()).thenReturn("PLAYER_CREATED");
+          return original;
+        });
 
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
         .isExactlyInstanceOf(
@@ -950,91 +946,83 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
   private static void controlledTarget(CanonicalGameplayAdmissionDecisionReadClient targets) {
     when(targets.resolvePublishedRealmAdmissionTarget(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var selector =
-                  invocation.getArgument(
-                      0,
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
-              var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
-              when(target.targetNamespace()).thenReturn(selector.targetNamespace());
-              when(target.canonicalTenantId()).thenReturn(selector.tenantId());
-              when(target.tenantSlug()).thenReturn(selector.tenantSlug());
-              when(target.worldSlug()).thenReturn(selector.worldSlug());
-              when(target.realmId()).thenReturn(selector.realmId());
-              when(target.realmSlug()).thenReturn(selector.realmSlug());
-              when(target.playableStateNamespaceId())
-                  .thenReturn(selector.playableStateNamespaceId());
-              when(target.playableStateScope()).thenReturn(selector.playableStateScope());
-              when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
-              when(target.catalogRevision()).thenReturn(selector.catalogRevision());
-              when(target.pointerVersion()).thenReturn(selector.pointerVersion());
-              when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
-              when(target.ownerProofOutcome())
-                  .thenReturn(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
-              UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
-              when(target.canonicalVersionId()).thenReturn(version);
-              when(target.activeWorldEpoch()).thenReturn(5L);
-              var strict =
-                  new CanonicalGameplayRosterOwnerReadEvidence.Request(
-                      selector.readRequestId(),
-                      selector.accountId(),
-                      selector.targetNamespace(),
-                      selector.tenantId(),
-                      selector.worldSlug(),
-                      selector.realmId(),
-                      selector.realmSlug(),
-                      selector.playableStateNamespaceId(),
-                      selector.playableStateScope(),
-                      selector.gameInstanceId(),
-                      version,
-                      selector.catalogRevision(),
-                      selector.pointerVersion(),
-                      5L);
-              var resolved =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget
-                          .class);
-              when(resolved.selector()).thenReturn(selector);
-              when(resolved.currentTarget()).thenReturn(target);
-              when(resolved.strictSelector()).thenReturn(strict);
-              var read =
-                  mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
-              when(read.selector()).thenReturn(strict);
-              when(read.currentTarget()).thenReturn(target);
-              var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
-              when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
-              var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
-              when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
-              when(source.publishedPolicySetEvidence()).thenReturn(policies);
-              var ownerProof =
-                  mock(
-                      net.firedevops.firemud.common.world
-                          .GameSessionCanonicalInitialAdmissionOwnerProof.class);
-              when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
-              when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
-              when(read.sourceEvidence()).thenReturn(source);
-              var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              when(world.canonicalBytes())
-                  .thenReturn(
-                      "controlled-complete-world-source"
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-              when(world.captureId())
-                  .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
-              when(world.rowVersion()).thenReturn(2L);
-              when(read.worldLifecycleEvidence()).thenReturn(world);
-              when(targets.readPublishedRealmAdmissionOwner(strict))
-                  .thenAnswer(
-                      readCall -> {
-                        assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                            .isFalse();
-                        return read;
-                      });
-              return resolved;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var selector =
+              invocation.getArgument(
+                  0, CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
+          var target = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
+          when(target.targetNamespace()).thenReturn(selector.targetNamespace());
+          when(target.canonicalTenantId()).thenReturn(selector.tenantId());
+          when(target.tenantSlug()).thenReturn(selector.tenantSlug());
+          when(target.worldSlug()).thenReturn(selector.worldSlug());
+          when(target.realmId()).thenReturn(selector.realmId());
+          when(target.realmSlug()).thenReturn(selector.realmSlug());
+          when(target.playableStateNamespaceId()).thenReturn(selector.playableStateNamespaceId());
+          when(target.playableStateScope()).thenReturn(selector.playableStateScope());
+          when(target.canonicalGameInstanceId()).thenReturn(selector.gameInstanceId());
+          when(target.catalogRevision()).thenReturn(selector.catalogRevision());
+          when(target.pointerVersion()).thenReturn(selector.pointerVersion());
+          when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
+          when(target.ownerProofOutcome())
+              .thenReturn(
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED);
+          UUID version = UUID.fromString("33333333-3333-4333-8333-333333333333");
+          when(target.canonicalVersionId()).thenReturn(version);
+          when(target.activeWorldEpoch()).thenReturn(5L);
+          var strict =
+              new CanonicalGameplayRosterOwnerReadEvidence.Request(
+                  selector.readRequestId(),
+                  selector.accountId(),
+                  selector.targetNamespace(),
+                  selector.tenantId(),
+                  selector.worldSlug(),
+                  selector.realmId(),
+                  selector.realmSlug(),
+                  selector.playableStateNamespaceId(),
+                  selector.playableStateScope(),
+                  selector.gameInstanceId(),
+                  version,
+                  selector.catalogRevision(),
+                  selector.pointerVersion(),
+                  5L);
+          var resolved =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget.class);
+          when(resolved.selector()).thenReturn(selector);
+          when(resolved.currentTarget()).thenReturn(target);
+          when(resolved.strictSelector()).thenReturn(strict);
+          var read =
+              mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+          when(read.selector()).thenReturn(strict);
+          when(read.currentTarget()).thenReturn(target);
+          var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
+          when(source.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
+          var policies = mock(PublishedRealmEntryPolicySetEvidence.class);
+          when(policies.policySetDigest()).thenReturn("sha256:" + "b".repeat(64));
+          when(source.publishedPolicySetEvidence()).thenReturn(policies);
+          var ownerProof =
+              mock(
+                  net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof
+                      .class);
+          when(ownerProof.proofDigest()).thenReturn("sha256:" + "c".repeat(64));
+          when(source.gameSessionOwnerProof()).thenReturn(ownerProof);
+          when(read.sourceEvidence()).thenReturn(source);
+          var world = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          when(world.canonicalBytes())
+              .thenReturn(
+                  "controlled-complete-world-source"
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          when(world.captureId())
+              .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
+          when(world.rowVersion()).thenReturn(2L);
+          when(read.worldLifecycleEvidence()).thenReturn(world);
+          when(targets.readPublishedRealmAdmissionOwner(strict))
+              .thenAnswer(readCall -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return read;
+              });
+          return resolved;
+        });
   }
 
   private static final class Fixture {
@@ -1069,19 +1057,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final FreshTenantCreationEvidence source = source();
     private final TenantAuthorityEventV1Codec.Event tenantEvent = tenantEvent(source);
     private final CanonicalJoinScopeV2 scope;
-    private final AccountGameplayDelegationPendingIdentity identity =
-        new AccountGameplayDelegationPendingIdentity(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            ACCOUNT,
-            PEER,
-            UUID.randomUUID(),
-            mock(AccountGameplayCredentialRequestBinding.class),
-            HASH,
-            UUID.randomUUID(),
-            NOW.minusSeconds(10).getEpochSecond(),
-            NOW.minusSeconds(10).getEpochSecond(),
-            NOW.plusSeconds(120).getEpochSecond());
+    private final AccountGameplayDelegationPendingIdentity identity;
     private final DemoTenantEntitlementSnapshot demo =
         new DemoTenantEntitlementSnapshot(
             TENANT,
@@ -1115,6 +1091,23 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     }
 
     private Fixture(boolean exists, String stateScope) throws Exception {
+      this(exists, stateScope, NOW.plusSeconds(120));
+    }
+
+    private Fixture(boolean exists, String stateScope, Instant callerDeadline) throws Exception {
+      identity =
+          new AccountGameplayDelegationPendingIdentity(
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              ACCOUNT,
+              PEER,
+              UUID.randomUUID(),
+              mock(AccountGameplayCredentialRequestBinding.class),
+              HASH,
+              UUID.randomUUID(),
+              NOW.minusSeconds(10).getEpochSecond(),
+              NOW.minusSeconds(10).getEpochSecond(),
+              callerDeadline.getEpochSecond());
       scope =
           new CanonicalJoinScopeV2(
               "private-bearer-" + UUID.randomUUID(),
@@ -1152,33 +1145,32 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       controlledTarget(targets);
       // Controlled retention content, not physical atomicity or Account source authentication.
       when(dsl.execute(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0, String.class);
-                if (!sql.startsWith("INSERT INTO account_tenant_capacity_evaluations "))
-                  throw new AssertionError(sql);
-                if (refuseCapacityRetention)
-                  throw new DataAccessException("Controlled capacity retention refusal");
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                if (missingCapacityRetentionReadback) return 0;
-                Object[] values = (Object[]) invocation.getRawArguments()[1];
-                String id = (String) values[0];
-                if (retainedCapacity.containsKey(id)) return 0;
-                var row = mock(org.jooq.Record.class);
-                when(row.get("evaluation_identity", String.class)).thenReturn(id);
-                when(row.get("snapshot_identity", String.class)).thenReturn((String) values[1]);
-                when(row.get("tenant_uuid", UUID.class)).thenReturn((UUID) values[2]);
-                when(row.get("caller_workload", String.class)).thenReturn((String) values[3]);
-                when(row.get("owner_service", String.class)).thenReturn((String) values[4]);
-                when(row.get("canonical_evidence", byte[].class))
-                    .thenReturn(((byte[]) values[5]).clone());
-                when(row.get("evaluated_at", java.time.OffsetDateTime.class))
-                    .thenReturn((java.time.OffsetDateTime) values[6]);
-                when(row.get("expires_at", java.time.OffsetDateTime.class))
-                    .thenReturn((java.time.OffsetDateTime) values[7]);
-                retainedCapacity.put(id, row);
-                return 1;
-              });
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0, String.class);
+            if (!sql.startsWith("INSERT INTO account_tenant_capacity_evaluations "))
+              throw new AssertionError(sql);
+            if (refuseCapacityRetention)
+              throw new DataAccessException("Controlled capacity retention refusal");
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            if (missingCapacityRetentionReadback) return 0;
+            Object[] values = (Object[]) invocation.getRawArguments()[1];
+            String id = (String) values[0];
+            if (retainedCapacity.containsKey(id)) return 0;
+            var row = mock(org.jooq.Record.class);
+            when(row.get("evaluation_identity", String.class)).thenReturn(id);
+            when(row.get("snapshot_identity", String.class)).thenReturn((String) values[1]);
+            when(row.get("tenant_uuid", UUID.class)).thenReturn((UUID) values[2]);
+            when(row.get("caller_workload", String.class)).thenReturn((String) values[3]);
+            when(row.get("owner_service", String.class)).thenReturn((String) values[4]);
+            when(row.get("canonical_evidence", byte[].class))
+                .thenReturn(((byte[]) values[5]).clone());
+            when(row.get("evaluated_at", java.time.OffsetDateTime.class))
+                .thenReturn((java.time.OffsetDateTime) values[6]);
+            when(row.get("expires_at", java.time.OffsetDateTime.class))
+                .thenReturn((java.time.OffsetDateTime) values[7]);
+            retainedCapacity.put(id, row);
+            return 1;
+          });
       when(dsl.fetchOne(anyString(), any(Object[].class)))
           .thenAnswer(
               invocation -> {
@@ -1234,11 +1226,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       when(caller.identity()).thenReturn(identity);
       when(caller.currentCandidate()).thenReturn(candidate);
       when(callers.verifyPresentedCompactToken("controlled-token"))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return caller;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return caller;
+          });
       Account account = new Account();
       account.setId(10L);
       account.setAccountUuid(ACCOUNT);

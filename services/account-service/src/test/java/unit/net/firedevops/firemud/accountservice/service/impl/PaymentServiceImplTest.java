@@ -38,12 +38,11 @@ class PaymentServiceImplTest {
     when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(true);
     when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
     when(txRepo.save(any()))
-        .thenAnswer(
-            invocation -> {
-              PaymentTransaction tx = invocation.getArgument(0);
-              tx.setId(10L);
-              return tx;
-            });
+        .thenAnswer(invocation -> {
+          PaymentTransaction tx = invocation.getArgument(0);
+          tx.setId(10L);
+          return tx;
+        });
     when(stripeClient.calculatePlatformFee(500L)).thenReturn(25L);
     when(stripeClient.createPaymentIntent(500L, "usd"))
         .thenReturn(new StripeClient.IntentResult("pi", "secret", "pending"));
@@ -92,12 +91,11 @@ class PaymentServiceImplTest {
     when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(true);
     when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
     when(txRepo.save(any()))
-        .thenAnswer(
-            invocation -> {
-              PaymentTransaction tx = invocation.getArgument(0);
-              tx.setId(11L);
-              return tx;
-            });
+        .thenAnswer(invocation -> {
+          PaymentTransaction tx = invocation.getArgument(0);
+          tx.setId(11L);
+          return tx;
+        });
     when(stripeClient.calculatePlatformFee(100L)).thenReturn(5L);
     when(stripeClient.createPaymentIntent(100L, "usd"))
         .thenReturn(new StripeClient.IntentResult("pi2", "donate", "pending"));

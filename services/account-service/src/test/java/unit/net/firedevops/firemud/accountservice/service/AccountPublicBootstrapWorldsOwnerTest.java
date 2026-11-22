@@ -161,13 +161,12 @@ class AccountPublicBootstrapWorldsOwnerTest {
     Fixture f = new Fixture();
     Target target = target(TENANT_A, "tenant-a", "world", "World", 1);
     when(f.targets.listVisiblePublicProductionAdmissionTargets(any()))
-        .thenAnswer(
-            invocation -> {
-              f.readCount++;
-              if (f.readCount == 1) return f.evidence(List.of(target));
-              f.time.set(NOW.plusSeconds(15));
-              return f.evidence(List.of(target));
-            });
+        .thenAnswer(invocation -> {
+          f.readCount++;
+          if (f.readCount == 1) return f.evidence(List.of(target));
+          f.time.set(NOW.plusSeconds(15));
+          return f.evidence(List.of(target));
+        });
     when(f.entitlements.evaluate(TENANT_A))
         .thenReturn(evaluation(TENANT_A, true, NOW.plusSeconds(15)));
 
@@ -280,14 +279,9 @@ class AccountPublicBootstrapWorldsOwnerTest {
     var tenants = IntStream.range(0, 24).mapToObj(index -> UUID.randomUUID()).toList();
     var targets =
         IntStream.range(0, tenants.size())
-            .mapToObj(
-                index ->
-                    target(
-                        tenants.get(index),
-                        "tenant-" + index,
-                        "world-" + index,
-                        "World " + index,
-                        1))
+            .mapToObj(index ->
+                target(
+                    tenants.get(index), "tenant-" + index, "world-" + index, "World " + index, 1))
             .toList();
     f.stubTargetReads(targets, targets.reversed());
     var firstWave = new CountDownLatch(8);
@@ -295,23 +289,22 @@ class AccountPublicBootstrapWorldsOwnerTest {
     var active = new AtomicInteger();
     var peak = new AtomicInteger();
     when(f.entitlements.evaluate(any()))
-        .thenAnswer(
-            invocation -> {
-              int current = active.incrementAndGet();
-              peak.accumulateAndGet(current, Math::max);
-              try {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
-                if (entered.incrementAndGet() <= 8) {
-                  firstWave.countDown();
-                  assertThat(firstWave.await(5, TimeUnit.SECONDS)).isTrue();
-                }
-                return evaluation(invocation.getArgument(0), true, NOW.plusSeconds(15));
-              } finally {
-                active.decrementAndGet();
-              }
-            });
+        .thenAnswer(invocation -> {
+          int current = active.incrementAndGet();
+          peak.accumulateAndGet(current, Math::max);
+          try {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+            assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+            if (entered.incrementAndGet() <= 8) {
+              firstWave.countDown();
+              assertThat(firstWave.await(5, TimeUnit.SECONDS)).isTrue();
+            }
+            return evaluation(invocation.getArgument(0), true, NOW.plusSeconds(15));
+          } finally {
+            active.decrementAndGet();
+          }
+        });
     assertThat(f.owner.listWorlds(TOKEN)).hasSize(24);
     assertThat(peak.get()).isEqualTo(8);
     assertThat(entered.get()).isEqualTo(24);
@@ -342,14 +335,9 @@ class AccountPublicBootstrapWorldsOwnerTest {
     var tenants = IntStream.range(0, 16).mapToObj(index -> UUID.randomUUID()).toList();
     var targets =
         IntStream.range(0, tenants.size())
-            .mapToObj(
-                index ->
-                    target(
-                        tenants.get(index),
-                        "tenant-" + index,
-                        "world-" + index,
-                        "World " + index,
-                        1))
+            .mapToObj(index ->
+                target(
+                    tenants.get(index), "tenant-" + index, "world-" + index, "World " + index, 1))
             .toList();
     first.stubTargetReads(targets, targets);
     second.stubTargetReads(targets, targets);

@@ -3,10 +3,17 @@ package net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.ConnectivityState;
 import io.grpc.Context;
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.ServerStreamTracer;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -56,6 +63,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(90)
 class AccountTenantCapacityClientMtlsTest {
   private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
+  private static final UUID ACCOUNT_RESERVATION_ID =
+      UUID.fromString("a0577a29-9be2-42a0-9770-4c2a90581358");
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
 
@@ -74,16 +83,80 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
+  void blankEndpointIsUnsetAndExplicitAccountEndpointIsPreserved() throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    var factory = new GrpcChannelFactory();
+    try (var client =
+        new AccountTenantCapacityClient(
+            endpoints,
+            pki.clientProperties(directory, pki.identity("client")),
+            factory,
+            "prod",
+            Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC))) {
+      assertThat(client.defaultTarget()).isEqualTo("account-service:6565");
+      for (String blank : new String[] {null, "", " \t "}) {
+        endpoints.setAccountService(blank);
+        assertThat(client.configuredTarget(endpoints)).isNull();
+      }
+      endpoints.setAccountService("account.internal:7443");
+      assertThat(client.configuredTarget(endpoints)).isEqualTo("account.internal:7443");
+    }
+  }
+
+  @Test
   void exactAccountPeerReceivesCompleteRequestAndExactRetryKeepsReservation() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("account", calls, false);
+    AtomicInteger messages = new AtomicInteger();
+    Server server =
+        server(
+            "account",
+            calls,
+            false,
+            new AtomicLong(),
+            new AtomicBoolean(true),
+            null,
+            null,
+            messages);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       var first = client.commit(request, deadline());
-      assertThat(client.commit(request, deadline())).isEqualTo(first);
+      var replay = client.commit(request, deadline());
+      assertThat(first.reservationId()).isEqualTo(ACCOUNT_RESERVATION_ID);
+      assertThat(replay).isEqualTo(first);
       assertThat(first.identity()).isEqualTo(request.identity());
       assertThat(calls).hasValue(2);
+      assertThat(messages).hasValue(2);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void unavailableAfterAccountReceivedRequestDoesNotRetryCommit() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest request,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                calls.incrementAndGet();
+                observer.onError(
+                    Status.UNAVAILABLE.withDescription("Response lost").asRuntimeException());
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+      assertThat(calls).hasValue(1);
     } finally {
       stop(server);
     }
@@ -155,12 +228,10 @@ class AccountTenantCapacityClientMtlsTest {
     assertThat(replay.code())
         .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
     assertThat(replay.durableDenialId()).isEqualTo(denialId);
-    assertThatThrownBy(
-            () ->
-                assertThat(
-                        AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(
-                            null))
-                    .isNotNull())
+    assertThatThrownBy(() ->
+            assertThat(
+                    AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(null))
+                .isNotNull())
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -175,7 +246,10 @@ class AccountTenantCapacityClientMtlsTest {
       assertThatThrownBy(() -> client.commit(request, deadline()))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
-              failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN));
+              failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .isEqualTo("Account capacity commitment response was inexact"));
       assertThat(calls).hasValue(1);
       assertThat(serverFailure.get()).isNull();
     } finally {
@@ -186,12 +260,22 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void wrongAccountPeerIsRejectedBeforeRequestBodyRelease() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("wrong", calls, false);
+    AtomicInteger messages = new AtomicInteger();
+    Server server =
+        server(
+            "wrong", calls, false, new AtomicLong(), new AtomicBoolean(true), null, null, messages);
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(
               () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
-          .isInstanceOf(StatusRuntimeException.class);
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure -> {
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+                assertThat(failure.getStatus().getDescription())
+                    .isEqualTo("Request requires the exact authenticated server workload identity");
+              });
+      assertThat(messages).hasValue(0);
       assertThat(calls).hasValue(0);
     } finally {
       stop(server);
@@ -208,10 +292,11 @@ class AccountTenantCapacityClientMtlsTest {
       assertThatThrownBy(
               () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNKNOWN));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNKNOWN))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .isEqualTo("Account capacity commitment response was inexact"));
       assertThat(calls).hasValue(1);
       assertThat(serverFailure.get()).isNull();
     } finally {
@@ -225,53 +310,158 @@ class AccountTenantCapacityClientMtlsTest {
       long explicitMillis, long incomingMillis, long expectedMaximumMillis) throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicLong observedNanos = new AtomicLong();
-    // Each case owns one server and one successful RPC, so no other call can supply its sample.
+    var channelFactory = new CallOptionsCapturingChannelFactory();
+    // Warm the channel, then reset the sample before the measured RPC.
     Server server = server("account", calls, false, observedNanos, new AtomicBoolean(true));
     var scheduler = Executors.newSingleThreadScheduledExecutor();
-    try (var client = client(server)) {
+    try (var client =
+        client(server, pki.clientProperties(directory, pki.identity("client")), channelFactory)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
+      client.commit(request, deadline());
+      observedNanos.set(0);
+      channelFactory.resetCapturedDeadline();
+      var earliest = Deadline.after(expectedMaximumMillis, TimeUnit.MILLISECONDS);
       try (var context =
           Context.current().withDeadlineAfter(incomingMillis, TimeUnit.MILLISECONDS, scheduler)) {
         var result =
-            context.call(
-                () ->
-                    client.commit(
-                        request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + explicitMillis));
+            context.call(() ->
+                client.commit(
+                    request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + explicitMillis));
         assertThat(result.identity()).isEqualTo(request.identity());
       }
-      assertThat(calls).hasValue(1);
+      assertThat(calls).hasValue(2);
+      // Delivery can consume any portion of the budget; the controlled ticker asserts selection.
       assertThat(observedNanos.get())
           .isPositive()
           .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
+      var latest = Deadline.after(expectedMaximumMillis, TimeUnit.MILLISECONDS);
+      var captured = channelFactory.capturedDeadline.get();
+      assertThat(captured).isNotNull();
+      assertThat(captured.isBefore(earliest)).isFalse();
+      assertThat(latest.isBefore(captured)).isFalse();
     } finally {
       scheduler.shutdownNow();
       stop(server);
     }
   }
 
+  @ParameterizedTest
+  @CsvSource({"1000, 60000, 1000", "3000, 60000, 3000", "60000, 3000, 3000", "60000, 60000, 5000"})
+  void deadlineSelectionKeepsTheWholeChosenBudget(
+      long explicitMillis, long incomingMillis, long expectedMillis) {
+    var nanos = new AtomicLong();
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return nanos.get();
+          }
+        };
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    var incoming = Deadline.after(incomingMillis, TimeUnit.MILLISECONDS, ticker);
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    var selected =
+        AccountTenantCapacityClient.selectDeadline(
+            maximum, sample, incoming, explicitMillis, java.time.Instant.EPOCH);
+    assertThat(selected.timeRemaining(TimeUnit.MILLISECONDS)).isEqualTo(expectedMillis);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"-9223372036854775808, 1, 0", "9223372036854775807, -1, 5000", "0, 0, 0"})
+  void extremeWallClockDeadlinesRemainExpiredOrCapped(
+      long absoluteMillis, long sampledMillis, long expectedMillis) {
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return 0;
+          }
+        };
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum,
+                    sample,
+                    null,
+                    absoluteMillis,
+                    java.time.Instant.ofEpochMilli(sampledMillis))
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(expectedMillis);
+  }
+
   @Test
-  void explicitRemainingBudgetBoundsAStalledAccountCallAndExactRetryStillReplays()
-      throws Exception {
+  void fractionalWallClockSampleDoesNotExtendTheCallerBudget() {
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return 0;
+          }
+        };
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    var selected =
+        AccountTenantCapacityClient.selectDeadline(
+            maximum, sample, null, 1001, java.time.Instant.ofEpochMilli(1000).plusNanos(900_000));
+    assertThat(selected.timeRemaining(TimeUnit.NANOSECONDS)).isEqualTo(100_000);
+  }
+
+  @Test
+  void setupDelayIsNotDeductedTwiceAndOriginalInvocationCapStillApplies() {
+    var nanos = new AtomicLong();
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return nanos.get();
+          }
+        };
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    nanos.set(TimeUnit.SECONDS.toNanos(1)); // Pause before the paired conversion samples.
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, 3000, java.time.Instant.ofEpochMilli(1000))
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(2000);
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, 60000, java.time.Instant.ofEpochMilli(1000))
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(4000);
+    nanos.addAndGet(TimeUnit.MILLISECONDS.toNanos(200)); // Delay after sampling consumes budget.
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, 3000, java.time.Instant.ofEpochMilli(1000))
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(1800);
+  }
+
+  @Test
+  void explicitRemainingBudgetBoundsAStalledAccountCall() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
-    Server server = server("account", calls, false, new AtomicLong(), respond);
+    AtomicLong observedNanos = new AtomicLong();
+    var measuredSecondInvocationEntered = new CountDownLatch(1);
+    Server server =
+        server("account", calls, false, observedNanos, respond, measuredSecondInvocationEntered);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
-      var first = client.commit(request, deadline());
+      client.commit(request, deadline());
       respond.set(false);
-      long started = System.nanoTime();
-      assertThatThrownBy(
-              () -> client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 200L))
+      // Leave dispatch headroom while still bounding this attempt below the client's five seconds.
+      long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
+      assertThatThrownBy(() -> client.commit(request, explicitDeadline))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
-      respond.set(true);
-      assertThat(client.commit(request, deadline())).isEqualTo(first);
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(measuredSecondInvocationEntered.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(calls).hasValue(2); // The timed-out invocation reached the nonresponding handler.
+      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(3));
     } finally {
       stop(server);
     }
@@ -286,9 +476,12 @@ class AccountTenantCapacityClientMtlsTest {
     try {
       var calls = new AtomicInteger();
       var respond = new AtomicBoolean(true);
+      var measuredSecondInvocationEntered = new CountDownLatch(1);
       var tls = pki.clientProperties(directory, pki.identity("client"));
       var factory = new BlockingReloadChannelFactory();
-      server = server("account", calls, false, new AtomicLong(), respond);
+      server =
+          server(
+              "account", calls, false, new AtomicLong(), respond, measuredSecondInvocationEntered);
       try (var client = client(server, tls, factory);
           var executor = Executors.newSingleThreadExecutor()) {
         client.init();
@@ -298,17 +491,18 @@ class AccountTenantCapacityClientMtlsTest {
         try {
           Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
           assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
-          long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L;
+          long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
           var timedOut =
-              executor.submit(
-                  () ->
-                      assertThatThrownBy(() -> client.commit(request, explicitDeadline))
-                          .isInstanceOfSatisfying(
-                              StatusRuntimeException.class,
-                              failure ->
-                                  assertThat(failure.getStatus().getCode())
-                                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
-          timedOut.get(3, TimeUnit.SECONDS);
+              executor.submit(() ->
+                  assertThatThrownBy(() -> client.commit(request, explicitDeadline))
+                      .isInstanceOfSatisfying(
+                          StatusRuntimeException.class,
+                          failure ->
+                              assertThat(failure.getStatus().getCode())
+                                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+          assertThat(measuredSecondInvocationEntered.await(4, TimeUnit.SECONDS)).isTrue();
+          timedOut.get(4, TimeUnit.SECONDS);
+          assertThat(factory.releaseReload.getCount()).isEqualTo(1);
           assertThat(calls).hasValue(2);
         } finally {
           factory.releaseReload.countDown();
@@ -331,25 +525,27 @@ class AccountTenantCapacityClientMtlsTest {
   void incomingDeadlineBoundsAStalledAccountCall() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
-    Server server = server("account", calls, false, new AtomicLong(), respond);
+    AtomicLong observedNanos = new AtomicLong();
+    var measuredSecondInvocationEntered = new CountDownLatch(1);
+    Server server =
+        server("account", calls, false, observedNanos, respond, measuredSecondInvocationEntered);
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 60_000L);
       respond.set(false);
-      long started = System.nanoTime();
-      assertThatThrownBy(
-              () ->
-                  Context.current()
-                      .withDeadlineAfter(200, TimeUnit.MILLISECONDS, scheduler)
-                      .call(() -> client.commit(request, deadline())))
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withDeadlineAfter(3_000, TimeUnit.MILLISECONDS, scheduler)
+                  .call(() -> client.commit(request, deadline())))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(measuredSecondInvocationEntered.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(calls).hasValue(2); // The incoming deadline bounded an actual in-flight call.
+      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(3));
     } finally {
       scheduler.shutdownNow();
       stop(server);
@@ -359,19 +555,20 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void expiredExplicitBudgetSendsNoAccountRequest() throws Exception {
     AtomicInteger calls = new AtomicInteger();
+    var channelFactory = new CallOptionsCapturingChannelFactory();
     Server server = server("account", calls, false);
-    try (var client = client(server)) {
+    try (var client =
+        client(server, pki.clientProperties(directory, pki.identity("client")), channelFactory)) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.commit(
-                      CapacityAdmissionTestFixture.playerRequest(),
-                      CapacityAdmissionTestFixture.NOW.toEpochMilli() - 1L))
+      assertThatThrownBy(() ->
+              client.commit(
+                  CapacityAdmissionTestFixture.playerRequest(),
+                  CapacityAdmissionTestFixture.NOW.toEpochMilli() - 1L))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(channelFactory.callsCreated).hasValue(0);
       assertThat(calls).hasValue(0);
     } finally {
       stop(server);
@@ -421,7 +618,19 @@ class AccountTenantCapacityClientMtlsTest {
       AtomicLong observedNanos,
       AtomicBoolean respond)
       throws Exception {
-    return server(identity, calls, wrongFence, observedNanos, respond, null);
+    return server(identity, calls, wrongFence, observedNanos, respond, null, null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      CountDownLatch measuredSecondInvocationEntered)
+      throws Exception {
+    return server(
+        identity, calls, wrongFence, observedNanos, respond, null, measuredSecondInvocationEntered);
   }
 
   private static Server server(
@@ -432,17 +641,53 @@ class AccountTenantCapacityClientMtlsTest {
       AtomicBoolean respond,
       AtomicReference<Throwable> serverFailure)
       throws Exception {
-    UUID reservationId = UUID.randomUUID();
+    return server(identity, calls, wrongFence, observedNanos, respond, serverFailure, null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      AtomicReference<Throwable> serverFailure,
+      CountDownLatch measuredSecondInvocationEntered)
+      throws Exception {
+    return server(
+        identity,
+        calls,
+        wrongFence,
+        observedNanos,
+        respond,
+        serverFailure,
+        measuredSecondInvocationEntered,
+        null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      AtomicReference<Throwable> serverFailure,
+      CountDownLatch measuredSecondInvocationEntered,
+      AtomicInteger messages)
+      throws Exception {
+    UUID reservationId = ACCOUNT_RESERVATION_ID;
     var service =
         new AccountServiceGrpc.AccountServiceImplBase() {
           @Override
           public void commitTenantCapacityAdmission(
               CommitTenantCapacityAdmissionRequest wire,
               StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
-            calls.incrementAndGet();
             observedNanos.set(
                 Objects.requireNonNull(Context.current().getDeadline())
                     .timeRemaining(TimeUnit.NANOSECONDS));
+            int invocation = calls.incrementAndGet();
+            if (invocation == 2 && measuredSecondInvocationEntered != null) {
+              measuredSecondInvocationEntered.countDown();
+            }
             if (!respond.get()) return;
             assertServerSide(
                 serverFailure,
@@ -494,22 +739,42 @@ class AccountTenantCapacityClientMtlsTest {
             observer.onCompleted();
           }
         };
-    return startServer(identity, service);
+    return startServer(identity, service, messages);
   }
 
   private static Server startServer(
       String identity, AccountServiceGrpc.AccountServiceImplBase service) throws Exception {
+    return startServer(identity, service, null);
+  }
+
+  private static Server startServer(
+      String identity, AccountServiceGrpc.AccountServiceImplBase service, AtomicInteger messages)
+      throws Exception {
     var peer = pki.identity(identity);
-    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(
-            GrpcSslContexts.configure(
-                    SslContextBuilder.forServer(peer.privateKey(), peer.certificate()))
-                .trustManager(pki.caCertificate())
-                .clientAuth(ClientAuth.REQUIRE)
-                .build())
-        .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
-        .build()
-        .start();
+    var builder =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(peer.privateKey(), peer.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()));
+    if (messages != null) {
+      builder.addStreamTracerFactory(
+          new ServerStreamTracer.Factory() {
+            @Override
+            public ServerStreamTracer newServerStreamTracer(String method, Metadata headers) {
+              return new ServerStreamTracer() {
+                @Override
+                public void inboundMessage(int sequence) {
+                  messages.incrementAndGet();
+                }
+              };
+            }
+          });
+    }
+    return builder.build().start();
   }
 
   private static void assertServerSide(
@@ -539,15 +804,101 @@ class AccountTenantCapacityClientMtlsTest {
       if (!initialBuild.getAndSet(false)) {
         reloadStarted.countDown();
         try {
-          if (!releaseReload.await(10, TimeUnit.SECONDS)) {
-            throw new SSLException("Test reload release timed out");
-          }
+          releaseReload.await();
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
           throw new SSLException("Test reload wait interrupted", interrupted);
         }
       }
       return super.buildChannel(target, defaultPort, properties, keepAlive);
+    }
+  }
+
+  private static final class CallOptionsCapturingChannelFactory extends GrpcChannelFactory {
+    private final AtomicReference<Deadline> capturedDeadline = new AtomicReference<>();
+    private final AtomicInteger callsCreated = new AtomicInteger();
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      return new CallOptionsCapturingManagedChannel(
+          super.buildChannel(target, defaultPort, properties, keepAlive), this);
+    }
+
+    private void resetCapturedDeadline() {
+      capturedDeadline.set(null);
+    }
+  }
+
+  private static final class CallOptionsCapturingManagedChannel extends ManagedChannel {
+    private final ManagedChannel delegate;
+    private final CallOptionsCapturingChannelFactory capture;
+
+    private CallOptionsCapturingManagedChannel(
+        ManagedChannel delegate, CallOptionsCapturingChannelFactory capture) {
+      this.delegate = delegate;
+      this.capture = capture;
+    }
+
+    @Override
+    public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> newCall(
+        MethodDescriptor<RequestT, ResponseT> methodDescriptor, CallOptions callOptions) {
+      capture.callsCreated.incrementAndGet();
+      capture.capturedDeadline.set(callOptions.getDeadline());
+      return delegate.newCall(methodDescriptor, callOptions);
+    }
+
+    @Override
+    public String authority() {
+      return delegate.authority();
+    }
+
+    @Override
+    public ManagedChannel shutdown() {
+      assertThat(delegate.shutdown()).isNotNull();
+      return this;
+    }
+
+    @Override
+    public boolean isShutdown() {
+      return delegate.isShutdown();
+    }
+
+    @Override
+    public boolean isTerminated() {
+      return delegate.isTerminated();
+    }
+
+    @Override
+    public ManagedChannel shutdownNow() {
+      assertThat(delegate.shutdownNow()).isNotNull();
+      return this;
+    }
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+      return delegate.awaitTermination(timeout, unit);
+    }
+
+    @Override
+    public ConnectivityState getState(boolean requestConnection) {
+      return delegate.getState(requestConnection);
+    }
+
+    @Override
+    public void notifyWhenStateChanged(ConnectivityState source, Runnable callback) {
+      delegate.notifyWhenStateChanged(source, callback);
+    }
+
+    @Override
+    public void resetConnectBackoff() {
+      delegate.resetConnectBackoff();
+    }
+
+    @Override
+    public void enterIdle() {
+      delegate.enterIdle();
     }
   }
 }

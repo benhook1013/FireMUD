@@ -221,37 +221,35 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
     assertThatThrownBy(() -> tx(database, () -> journal.recordResult(handoff, changedResult)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Changed terminal");
-    assertThatThrownBy(
-            () ->
-                tx(
-                    database,
-                    () -> {
-                      database
-                          .dsl()
-                          .execute(
-                              "UPDATE account_hosted_terms_disclosure_handoffs "
-                                  + "SET result_payload = ? WHERE handoff_id = ?",
-                              "test-only-overwrite".getBytes(StandardCharsets.UTF_8),
-                              handoff.handoffId());
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            tx(
+                database,
+                () -> {
+                  database
+                      .dsl()
+                      .execute(
+                          "UPDATE account_hosted_terms_disclosure_handoffs "
+                              + "SET result_payload = ? WHERE handoff_id = ?",
+                          "test-only-overwrite".getBytes(StandardCharsets.UTF_8),
+                          handoff.handoffId());
+                  return null;
+                }))
         .isInstanceOf(DataAccessException.class);
 
     HostedTermsDisclosureHandoff noDisclosure = handoff(source("definitive-no-disclosure"));
     tx(database, () -> journal.prepare(noDisclosure));
-    assertThatThrownBy(
-            () ->
-                tx(
-                    database,
-                    () ->
-                        journal.recordResult(
-                            noDisclosure,
-                            new DisclosureResult(
-                                noDisclosure.handoffId(),
-                                noDisclosure.requestId(),
-                                HostedTermsEncoding.digest(noDisclosure.canonicalBytes()),
-                                Outcome.DEFINITIVELY_NOT_DISCLOSED,
-                                "test-only-premature-negative".getBytes(StandardCharsets.UTF_8)))))
+    assertThatThrownBy(() ->
+            tx(
+                database,
+                () ->
+                    journal.recordResult(
+                        noDisclosure,
+                        new DisclosureResult(
+                            noDisclosure.handoffId(),
+                            noDisclosure.requestId(),
+                            HostedTermsEncoding.digest(noDisclosure.canonicalBytes()),
+                            Outcome.DEFINITIVELY_NOT_DISCLOSED,
+                            "test-only-premature-negative".getBytes(StandardCharsets.UTF_8)))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("dispatch authorization");
     tx(database, () -> journal.authorizeDispatch(noDisclosure));
@@ -338,9 +336,8 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
       SourceEvidence source =
           ((List<?>) captureSnapshot.get("sourceVector"))
               .stream()
-                  .map(
-                      value ->
-                          SourceEvidence.fromStored(Base64.getDecoder().decode((String) value)))
+                  .map(value ->
+                      SourceEvidence.fromStored(Base64.getDecoder().decode((String) value)))
                   .filter(value -> value.kind() != SourceKind.HOSTED_TERMS)
                   .findFirst()
                   .orElseThrow(() -> new IllegalStateException("Expected a non-terms source"));
@@ -356,14 +353,12 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
       String preparationInput =
           preparationInput(NAMESPACE, controlUi.tenantId(), requestId, gameInstance, 42L);
       AccountStartSessionWorldParticipationAcquisitionService acquisition =
-          proof.worldParticipationAcquisitionService(
-              request ->
-                  new Result(
-                      request,
-                      Instant.ofEpochMilli(
-                          Instant.now().plus(Duration.ofMinutes(1)).toEpochMilli()),
-                      StartSessionAccountRedemptionProjection.fromOriginalTuple(
-                          request.originalTuple())));
+          proof.worldParticipationAcquisitionService(request ->
+              new Result(
+                  request,
+                  Instant.ofEpochMilli(Instant.now().plus(Duration.ofMinutes(1)).toEpochMilli()),
+                  StartSessionAccountRedemptionProjection.fromOriginalTuple(
+                      request.originalTuple())));
       var acquisitionRequest =
           new AcquisitionRequest(
               original.originalTuple().canonicalBytes(),
@@ -612,46 +607,44 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () ->
-                  tx(
-                      database,
-                      () -> {
-                        firstPid.set(
-                            Objects.requireNonNull(
-                                    database.dsl().fetchOne("SELECT pg_backend_pid()"),
-                                    "Expected first transaction PostgreSQL backend PID row")
-                                .get(0, Integer.class));
-                        if (dispatchFirst) {
-                          journal.authorizeDispatch(handoff);
-                        } else {
-                          fences.reserve(original);
-                          fences.claimCommitOrder(original);
-                        }
-                        firstLocked.countDown();
-                        await(releaseFirst);
-                        return null;
-                      }));
+          executor.submit(() ->
+              tx(
+                  database,
+                  () -> {
+                    firstPid.set(
+                        Objects.requireNonNull(
+                                database.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                "Expected first transaction PostgreSQL backend PID row")
+                            .get(0, Integer.class));
+                    if (dispatchFirst) {
+                      journal.authorizeDispatch(handoff);
+                    } else {
+                      fences.reserve(original);
+                      fences.claimCommitOrder(original);
+                    }
+                    firstLocked.countDown();
+                    await(releaseFirst);
+                    return null;
+                  }));
       assertThat(firstLocked.await(10, TimeUnit.SECONDS)).isTrue();
       var second =
-          executor.submit(
-              () ->
-                  tx(
-                      database,
-                      () -> {
-                        secondPid.set(
-                            Objects.requireNonNull(
-                                    database.dsl().fetchOne("SELECT pg_backend_pid()"),
-                                    "Expected second transaction PostgreSQL backend PID row")
-                                .get(0, Integer.class));
-                        secondStarted.countDown();
-                        if (dispatchFirst) {
-                          fences.reserve(original);
-                        } else {
-                          journal.authorizeDispatch(handoff);
-                        }
-                        return null;
-                      }));
+          executor.submit(() ->
+              tx(
+                  database,
+                  () -> {
+                    secondPid.set(
+                        Objects.requireNonNull(
+                                database.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                "Expected second transaction PostgreSQL backend PID row")
+                            .get(0, Integer.class));
+                    secondStarted.countDown();
+                    if (dispatchFirst) {
+                      fences.reserve(original);
+                    } else {
+                      journal.authorizeDispatch(handoff);
+                    }
+                    return null;
+                  }));
       assertThat(secondStarted.await(10, TimeUnit.SECONDS)).isTrue();
       awaitBlocked(database, secondPid.get(), firstPid.get());
       assertThatThrownBy(() -> second.get(200, TimeUnit.MILLISECONDS))

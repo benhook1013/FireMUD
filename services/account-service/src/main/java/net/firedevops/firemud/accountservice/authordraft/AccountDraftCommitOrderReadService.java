@@ -62,27 +62,26 @@ public final class AccountDraftCommitOrderReadService {
       throw invalid("Complete canonical original Account binding is required");
     }
     try {
-      ownerTransaction.execute(
-          status -> {
-            DraftAuthorizationFenceBinding retained =
-                repository
-                    .readOriginalBinding(requested.operationId())
-                    .orElseThrow(AccountDraftCommitOrderReadService::unheld);
-            if (!Arrays.equals(retained.canonicalBytes(), request.originalAccountBinding())) {
-              throw unheld();
-            }
+      ownerTransaction.execute(status -> {
+        DraftAuthorizationFenceBinding retained =
+            repository
+                .readOriginalBinding(requested.operationId())
+                .orElseThrow(AccountDraftCommitOrderReadService::unheld);
+        if (!Arrays.equals(retained.canonicalBytes(), request.originalAccountBinding())) {
+          throw unheld();
+        }
 
-            var fence = repository.read(retained);
-            if (fence.ordering() != Ordering.COMMIT_ORDER
-                || fence.reservedAt() == null
-                || fence.orderedAt() == null
-                || !Arrays.equals(fence.binding(), request.originalAccountBinding())) {
-              throw unheld();
-            }
-            Settlement settlement = repository.readSettlement(retained);
-            if (settlement != Settlement.PENDING) throw unheld();
-            return null;
-          });
+        var fence = repository.read(retained);
+        if (fence.ordering() != Ordering.COMMIT_ORDER
+            || fence.reservedAt() == null
+            || fence.orderedAt() == null
+            || !Arrays.equals(fence.binding(), request.originalAccountBinding())) {
+          throw unheld();
+        }
+        Settlement settlement = repository.readSettlement(retained);
+        if (settlement != Settlement.PENDING) throw unheld();
+        return null;
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (DataAccessException | org.jooq.exception.DataAccessException unavailable) {

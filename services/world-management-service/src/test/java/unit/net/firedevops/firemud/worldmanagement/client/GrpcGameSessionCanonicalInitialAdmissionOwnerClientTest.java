@@ -71,10 +71,9 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientTest {
     CommonGrpcClientProperties plaintext = tlsProperties(temporary);
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
-                    endpoints, plaintext, new PassingChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
+                endpoints, plaintext, new PassingChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("require workload mTLS");
   }

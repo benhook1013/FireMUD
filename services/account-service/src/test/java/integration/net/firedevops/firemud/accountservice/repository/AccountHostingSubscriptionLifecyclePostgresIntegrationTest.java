@@ -666,11 +666,9 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(firstInvoiceImage(c)).isEqualTo(evidenceBefore);
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
-    assertThatThrownBy(
-            () ->
-                f.service()
-                    .reconcile(
-                        UUID.randomUUID(), f.creation().requestId(), 2, f.providerId(), null))
+    assertThatThrownBy(() ->
+            f.service()
+                .reconcile(UUID.randomUUID(), f.creation().requestId(), 2, f.providerId(), null))
         .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
     assertThat(f.transport().reads).isZero();
     assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
@@ -1180,27 +1178,23 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         "23514",
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s -> {
-                      assertThat(f.owner().apply(prepared, actualSdk).outcome())
-                          .isEqualTo(Outcome.COMMITTED);
-                      var sameTransactionFence =
-                          f.owner().prepareCurrentRead(f.creation().tenantId());
-                      assertThat(
-                              f.owner()
-                                  .readCurrent(sameTransactionFence, actualSdk)
-                                  .allowPublicJoin())
-                          .isTrue();
-                      // A real monotonic generation advance without its source event must fail at
-                      // transaction
-                      // completion, after the lifecycle owner's ordinary writes and exact readback
-                      // have executed.
-                      c.dsl()
-                          .execute(
-                              "UPDATE account_authority_generations SET generation = generation + 1, source_version = source_version + 1 "
-                                  + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
-                              f.creation().tenantId());
-                    }));
+                .executeWithoutResult(s -> {
+                  assertThat(f.owner().apply(prepared, actualSdk).outcome())
+                      .isEqualTo(Outcome.COMMITTED);
+                  var sameTransactionFence = f.owner().prepareCurrentRead(f.creation().tenantId());
+                  assertThat(
+                          f.owner().readCurrent(sameTransactionFence, actualSdk).allowPublicJoin())
+                      .isTrue();
+                  // A real monotonic generation advance without its source event must fail at
+                  // transaction
+                  // completion, after the lifecycle owner's ordinary writes and exact readback
+                  // have executed.
+                  c.dsl()
+                      .execute(
+                          "UPDATE account_authority_generations SET generation = generation + 1, source_version = source_version + 1 "
+                              + "WHERE scope_kind = 'TENANT' AND tenant_uuid = ?",
+                          f.creation().tenantId());
+                }));
     for (String table :
         List.of(
             "subscription_lifecycle_observations",
@@ -1263,13 +1257,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     f.transport().duringRead =
         () ->
             c.tx()
-                .executeWithoutResult(
-                    s ->
-                        c.dsl()
-                            .execute(
-                                "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
-                                UUID.randomUUID(),
-                                f.creation().tenantId()));
+                .executeWithoutResult(s ->
+                    c.dsl()
+                        .execute(
+                            "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
+                            UUID.randomUUID(),
+                            f.creation().tenantId()));
     UUID reconciliationRequest = UUID.randomUUID();
     assertSqlState(
         "23514",
@@ -2354,27 +2347,24 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isNull();
     // Effective hosting cutoff is not proof that the provider can no longer charge. Neither the
     // typed replacement owner nor structural SQL may strand that still-held original operation.
-    assertThatThrownBy(
-            () ->
-                in(
-                    c,
-                    () ->
-                        c.intents()
-                            .retainPending(
-                                new AccountSubscriptionCreateRequest(
-                                    UUID.randomUUID(),
-                                    f.creation().tenantId(),
-                                    f.creation().owner(),
-                                    f.creation().planCode(),
-                                    f.instrument().instrumentUuid(),
-                                    1,
-                                    new ProducerEvidence(
-                                        f.creation().owner().accountUuid(),
-                                        UUID.randomUUID(),
-                                        DIGEST),
-                                    new AccountSubscriptionCreateRequest.ReplacementFence(
-                                        f.creation().subscriptionId(),
-                                        canceled.current().rowVersion())))))
+    assertThatThrownBy(() ->
+            in(
+                c,
+                () ->
+                    c.intents()
+                        .retainPending(
+                            new AccountSubscriptionCreateRequest(
+                                UUID.randomUUID(),
+                                f.creation().tenantId(),
+                                f.creation().owner(),
+                                f.creation().planCode(),
+                                f.instrument().instrumentUuid(),
+                                1,
+                                new ProducerEvidence(
+                                    f.creation().owner().accountUuid(), UUID.randomUUID(), DIGEST),
+                                new AccountSubscriptionCreateRequest.ReplacementFence(
+                                    f.creation().subscriptionId(),
+                                    canceled.current().rowVersion())))))
         .isInstanceOf(AccountSubscriptionIntentRepository.ConflictException.class);
     assertSqlState(
         "23514",
@@ -2616,11 +2606,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(resolutionImage(c)).isEqualTo(retained);
     assertThat(c.intents().findCurrentByTenant(f.request.tenantId()).orElseThrow().subscriptionId())
         .isEqualTo(successor.subscriptionId());
-    assertThatThrownBy(
-            () ->
-                in(
-                    c,
-                    () -> owner.prepareTerminalResolution(withReason(f.request, "changed reason"))))
+    assertThatThrownBy(() ->
+            in(c, () -> owner.prepareTerminalResolution(withReason(f.request, "changed reason"))))
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
     assertThat(failedImage(c, f.request.failedRequestId())).isEqualTo(f.failureImage);
   }
@@ -2685,11 +2672,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo(result);
     assertThat(callbacks).hasValue(2);
     assertThat(resolutionImage(c)).isEqualTo(committed);
-    assertThatThrownBy(
-            () ->
-                in(
-                    c,
-                    () -> owner.prepareTerminalResolution(withReason(f.request, "changed reason"))))
+    assertThatThrownBy(() ->
+            in(c, () -> owner.prepareTerminalResolution(withReason(f.request, "changed reason"))))
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
     assertSqlState(
         "23514",
@@ -2731,20 +2715,19 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       var sdk = f.fixture.observer().observe(prepared.binding());
       if (failure.equals("stale")) f.fixture.clock().advance(Duration.ofSeconds(11));
       AtomicInteger callbacks = new AtomicInteger();
-      assertThatThrownBy(
-              () ->
-                  in(
-                      c,
-                      () ->
-                          f.fixture
-                              .owner()
-                              .applyTerminalResolution(
-                                  prepared,
-                                  sdk,
-                                  target -> {
-                                    callbacks.incrementAndGet();
-                                    return authorized(f);
-                                  })))
+      assertThatThrownBy(() ->
+              in(
+                  c,
+                  () ->
+                      f.fixture
+                          .owner()
+                          .applyTerminalResolution(
+                              prepared,
+                              sdk,
+                              target -> {
+                                callbacks.incrementAndGet();
+                                return authorized(f);
+                              })))
           .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
       assertThat(callbacks).hasValue(0);
       assertThat(resolutionImage(c)).isEqualTo(before);
@@ -2759,23 +2742,21 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     f.fixture.transport().json = response(f.fixture, "canceled");
     var sdk = f.fixture.observer().observe(prepared.binding());
     List<String> before = resolutionImage(c);
-    assertThatThrownBy(
-            () ->
-                in(
-                    c,
-                    () ->
-                        f.fixture
-                            .owner()
-                            .applyTerminalResolution(
-                                prepared,
-                                sdk,
-                                target -> {
-                                  assertThat(
-                                          count(c, "subscription_lifecycle_terminal_resolutions"))
-                                      .isZero();
-                                  throw new IllegalStateException(
-                                      "controlled primary authentication denial");
-                                })))
+    assertThatThrownBy(() ->
+            in(
+                c,
+                () ->
+                    f.fixture
+                        .owner()
+                        .applyTerminalResolution(
+                            prepared,
+                            sdk,
+                            target -> {
+                              assertThat(count(c, "subscription_lifecycle_terminal_resolutions"))
+                                  .isZero();
+                              throw new IllegalStateException(
+                                  "controlled primary authentication denial");
+                            })))
         .hasMessage("controlled primary authentication denial");
     assertThat(resolutionImage(c)).isEqualTo(before);
     c.setup()
@@ -2845,30 +2826,29 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             () -> in(c, () -> f.fixture.owner().applyTerminalResolution(prepared, sdk, null)))
         .isInstanceOf(NullPointerException.class);
     for (String changed : List.of("actor", "issuance", "hash", "stale-auth")) {
-      assertThatThrownBy(
-              () ->
-                  in(
-                      c,
-                      () ->
-                          f.fixture
-                              .owner()
-                              .applyTerminalResolution(
-                                  prepared,
-                                  sdk,
-                                  target ->
-                                      new AuthorizedActor(
-                                          changed.equals("actor")
-                                              ? UUID.randomUUID()
-                                              : f.request.actorAccountId(),
-                                          changed.equals("issuance")
-                                              ? UUID.randomUUID()
-                                              : f.request.controlUiIssuanceOperationId(),
-                                          changed.equals("hash")
-                                              ? "b".repeat(64)
-                                              : f.request.controlUiTokenHash(),
-                                          changed.equals("stale-auth")
-                                              ? f.fixture.clock().instant().minusSeconds(1)
-                                              : f.fixture.clock().instant()))))
+      assertThatThrownBy(() ->
+              in(
+                  c,
+                  () ->
+                      f.fixture
+                          .owner()
+                          .applyTerminalResolution(
+                              prepared,
+                              sdk,
+                              target ->
+                                  new AuthorizedActor(
+                                      changed.equals("actor")
+                                          ? UUID.randomUUID()
+                                          : f.request.actorAccountId(),
+                                      changed.equals("issuance")
+                                          ? UUID.randomUUID()
+                                          : f.request.controlUiIssuanceOperationId(),
+                                      changed.equals("hash")
+                                          ? "b".repeat(64)
+                                          : f.request.controlUiTokenHash(),
+                                      changed.equals("stale-auth")
+                                          ? f.fixture.clock().instant().minusSeconds(1)
+                                          : f.fixture.clock().instant()))))
           .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
     }
     assertThat(resolutionImage(c)).isEqualTo(before);
@@ -2902,19 +2882,17 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var a =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(go);
-                return attemptResolution(f, first, firstSdk);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(go);
+            return attemptResolution(f, first, firstSdk);
+          });
       var b =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(go);
-                return attemptResolution(f, second, secondSdk);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(go);
+            return attemptResolution(f, second, secondSdk);
+          });
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       go.countDown();
       assertThat(List.of(a.get(20, TimeUnit.SECONDS), b.get(20, TimeUnit.SECONDS)))
@@ -3309,13 +3287,13 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
           "This is a JSON test fixture whose text block intentionally retains LF characters independent of the host console line separator.")
   private static String response(Fixture f, String status) {
     return """
-        {"id":"%s","object":"subscription","customer":"%s","default_payment_method":"%s",
-         "livemode":false,"status":"%s","cancel_at_period_end":false,"cancel_at":null,"canceled_at":null,"ended_at":null,
-         "metadata":{"firemud_metadata_schema_version":"1","firemud_operation_type":"subscription_provisioning",
-          "firemud_operation_id":"%s","firemud_subscription_id":"%s"},
-         "items":{"object":"list","data":[{"id":"si_controlled","object":"subscription_item","subscription":"%s",
-          "quantity":1,"current_period_start":%d,"current_period_end":%d,"price":{"id":"%s","object":"price"}}],"has_more":false}}
-        """
+    {"id":"%s","object":"subscription","customer":"%s","default_payment_method":"%s",
+     "livemode":false,"status":"%s","cancel_at_period_end":false,"cancel_at":null,"canceled_at":null,"ended_at":null,
+     "metadata":{"firemud_metadata_schema_version":"1","firemud_operation_type":"subscription_provisioning",
+      "firemud_operation_id":"%s","firemud_subscription_id":"%s"},
+     "items":{"object":"list","data":[{"id":"si_controlled","object":"subscription_item","subscription":"%s",
+      "quantity":1,"current_period_start":%d,"current_period_end":%d,"price":{"id":"%s","object":"price"}}],"has_more":false}}
+    """
         .formatted(
             f.providerId(),
             f.creation().providerCustomerId(),

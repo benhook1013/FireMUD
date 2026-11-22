@@ -53,11 +53,10 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       try (Fixture f = fixture(null, history)) {
         var original = f.owner().read(request());
         assertThat(original.catalog().families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(history);
-                  assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(history);
+              assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
+            });
         assertThat(f.owner().readExact(original.request())).isEqualTo(original);
         assertThat(
                 f.dsl
@@ -92,38 +91,32 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           .isEqualTo(
               catalog.schemaFacts().stream().filter(fact -> fact.kind() == FactKind.TABLE).count());
       assertThat(catalog.families())
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("region_instance.weather");
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.UNSUPPORTED_WEATHER);
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("instance");
-                assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.LEGACY_EXCLUDED);
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("character_location");
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.NOT_INITIALIZED_ACTOR_LOCATION);
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId())
-                    .isEqualTo("world_canonical_initial_player_location_operation");
-                assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.PROVENANCE_ONLY);
-              });
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("region_instance.weather");
+            assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.UNSUPPORTED_WEATHER);
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("instance");
+            assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.LEGACY_EXCLUDED);
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("character_location");
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.NOT_INITIALIZED_ACTOR_LOCATION);
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId())
+                .isEqualTo("world_canonical_initial_player_location_operation");
+            assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.PROVENANCE_ONLY);
+          });
       assertThat(f.count("region_instance")).isZero();
       assertThat(f.count("character_location")).isZero();
       assertThat(f.count("world_event")).isZero();
       assertThat(catalog.families())
-          .noneMatch(
-              family ->
-                  family.familyId().equals("npc_location")
-                      || family.familyId().equals("population_schedule_instance")
-                      || family.familyId().equals("generation_run"));
+          .noneMatch(family ->
+              family.familyId().equals("npc_location")
+                  || family.familyId().equals("population_schedule_instance")
+                  || family.familyId().equals("generation_run"));
       assertThat(catalog.schemaFacts())
           .anyMatch(fact -> fact.kind() == FactKind.MIGRATION)
           .anyMatch(fact -> fact.kind() == FactKind.ROUTINE)
@@ -283,18 +276,16 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
 
   private static void assertCatalogDrift(Runnable read) {
     assertThatThrownBy(read::run)
-        .satisfies(
-            failure -> {
-              if (failure instanceof org.jooq.exception.DataAccessException sql) {
-                assertThat(sql.sqlState()).isEqualTo("23514");
-                assertThat(sql).hasMessageContaining("Unclassified or changed World schema family");
-              } else {
-                assertThat(failure)
-                    .isInstanceOf(
-                        WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class)
-                    .hasMessageContaining("drift invalidates its epoch");
-              }
-            });
+        .satisfies(failure -> {
+          if (failure instanceof org.jooq.exception.DataAccessException sql) {
+            assertThat(sql.sqlState()).isEqualTo("23514");
+            assertThat(sql).hasMessageContaining("Unclassified or changed World schema family");
+          } else {
+            assertThat(failure)
+                .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class)
+                .hasMessageContaining("drift invalidates its epoch");
+          }
+        });
   }
 
   @Test
@@ -318,13 +309,11 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
         var original = f.owner().read(read);
         assertThat(original.catalog().catalogEpoch()).isEqualTo(5);
         assertThat(original.catalog().schemaFacts())
-            .anyMatch(
-                fact ->
-                    fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_option_probe"))
-            .anyMatch(
-                fact ->
-                    fact.kind() == FactKind.VIEW
-                        && fact.identity().equals("catalog_materialized_probe"));
+            .anyMatch(fact ->
+                fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_option_probe"))
+            .anyMatch(fact ->
+                fact.kind() == FactKind.VIEW
+                    && fact.identity().equals("catalog_materialized_probe"));
         var snapshots = f.retainedRows("world_runtime_family_catalog_snapshot");
         var epochs = f.retainedRows("world_runtime_family_catalog_epoch");
         f.dsl.execute(change);
@@ -520,18 +509,15 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(current.catalog().catalogEpoch()).isEqualTo(3);
       assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
       assertThat(current.catalog().schemaFacts())
-          .anyMatch(
-              fact ->
-                  fact.kind() == FactKind.MIGRATION
-                      && fact.identity().equals("catalog-installation:1046"))
-          .anyMatch(
-              fact ->
-                  fact.kind() == FactKind.MIGRATION
-                      && fact.identity().equals("catalog-installation:1047"))
-          .anyMatch(
-              fact ->
-                  fact.kind() == FactKind.MIGRATION
-                      && fact.identity().equals("catalog-installation:1048"));
+          .anyMatch(fact ->
+              fact.kind() == FactKind.MIGRATION
+                  && fact.identity().equals("catalog-installation:1046"))
+          .anyMatch(fact ->
+              fact.kind() == FactKind.MIGRATION
+                  && fact.identity().equals("catalog-installation:1047"))
+          .anyMatch(fact ->
+              fact.kind() == FactKind.MIGRATION
+                  && fact.identity().equals("catalog-installation:1048"));
       assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(2);
       migration(f.source, f.schema, "1048").validate();
     }
@@ -586,16 +572,14 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThatThrownBy(
               () -> f.dsl.execute("UPDATE world_runtime_family_catalog_epoch SET catalog_epoch=2"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE world_runtime_family_classification SET fresh_disposition='LEGACY_EXCLUDED' WHERE family_id='instance'"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE world_runtime_family_classification SET fresh_disposition='LEGACY_EXCLUDED' WHERE family_id='instance'"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO world_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 4,catalog_bytes,catalog_digest FROM world_runtime_family_catalog_epoch WHERE catalog_epoch=3"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO world_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
+                      + " SELECT 4,catalog_bytes,catalog_digest FROM world_runtime_family_catalog_epoch WHERE catalog_epoch=3"))
           .hasMessageContaining("exact classified installed schema");
     }
   }
@@ -612,10 +596,9 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
               .orElseThrow();
       Context.current()
           .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-          .run(
-              () ->
-                  service.readWorldRuntimeFamilyCatalog(
-                      WorldRuntimeFamilyCatalogCodec.toRequest(read), collector));
+          .run(() ->
+              service.readWorldRuntimeFamilyCatalog(
+                  WorldRuntimeFamilyCatalogCodec.toRequest(read), collector));
       assertThat(collector.error).isNull();
       assertThat(collector.completed).isTrue();
       var evidence = WorldRuntimeFamilyCatalogCodec.fromResponse(read, collector.value);

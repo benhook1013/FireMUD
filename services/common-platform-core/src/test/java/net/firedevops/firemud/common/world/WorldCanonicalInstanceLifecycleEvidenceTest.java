@@ -108,10 +108,9 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             + "\"}";
     assertThat(stored).contains(assignmentField);
     String legacyShape = stored.replace("," + assignmentField, "");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    legacyShape.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                legacyShape.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("missing or unsupported fields");
     assertInvalidStoredAssignments(stored, assignmentField, "{}", "nonempty");
@@ -181,11 +180,10 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             request.expectedDescriptorRequestDigest(),
             request.expectedDescriptorResultDigest(),
             request.expectedReleaseAttestationDigest());
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(
-                    changedInstance,
-                    WorldCanonicalInstanceLifecycleGrpcCodec.toResponse(request, evidence)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(
+                changedInstance,
+                WorldCanonicalInstanceLifecycleGrpcCodec.toResponse(request, evidence)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed exact read request");
 
@@ -312,36 +310,34 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             evidence.startLocation().tenantId(),
             evidence.startLocation().versionId(),
             uuid("66666666-6666-4666-8666-666666666666"));
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    request,
-                    evidence.launchBinding(),
-                    changedSelector,
-                    evidence.runtimeRoomInstanceId(),
-                    evidence.lifecycleStatus(),
-                    evidence.lifecycleEpoch(),
-                    evidence.rowVersion(),
-                    evidence.captureId(),
-                    evidence.graphSha256(),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                request,
+                evidence.launchBinding(),
+                changedSelector,
+                evidence.runtimeRoomInstanceId(),
+                evidence.lifecycleStatus(),
+                evidence.lifecycleEpoch(),
+                evidence.rowVersion(),
+                evidence.captureId(),
+                evidence.graphSha256(),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("release selector");
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    request,
-                    evidence.launchBinding(),
-                    evidence.startLocation(),
-                    evidence.runtimeRoomInstanceId(),
-                    evidence.lifecycleStatus(),
-                    evidence.lifecycleEpoch(),
-                    evidence.rowVersion(),
-                    evidence.captureId(),
-                    "f".repeat(64),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                request,
+                evidence.launchBinding(),
+                evidence.startLocation(),
+                evidence.runtimeRoomInstanceId(),
+                evidence.lifecycleStatus(),
+                evidence.lifecycleEpoch(),
+                evidence.rowVersion(),
+                evidence.captureId(),
+                "f".repeat(64),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("graph digest");
   }
@@ -355,22 +351,21 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
     // Independent retained-v1 fixture; its GD digest is not the selected-v2 content hash.
     var v1Participants =
         release.participantDigests().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+            .map(participant ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    participant.baseVersionIdPresent(),
+                    participant.baseVersionId(),
+                    participant.appliedCommitId(),
+                    "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                        ? "e".repeat(64)
+                        : participant.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                         participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionIdPresent(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
-                            ? "e".repeat(64)
-                            : participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant.participantKey(),
-                            AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION),
-                        participant.abilitySchemaDigestPresent(),
-                        participant.abilitySchemaDigest()))
+                        AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION),
+                    participant.abilitySchemaDigestPresent(),
+                    participant.abilitySchemaDigest()))
             .toList();
     var v1Release =
         AuthoredWorldReleaseAttestationEvidence.create(
@@ -407,56 +402,53 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             null,
             null,
             v1Release.evidenceDigest());
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    v1Request,
-                    new CompleteLaunchBindingEvidence(descriptor, v1Release),
-                    evidence.startLocation(),
-                    evidence.runtimeRoomInstanceId(),
-                    evidence.lifecycleStatus(),
-                    evidence.lifecycleEpoch(),
-                    evidence.rowVersion(),
-                    evidence.captureId(),
-                    evidence.graphSha256(),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                v1Request,
+                new CompleteLaunchBindingEvidence(descriptor, v1Release),
+                evidence.startLocation(),
+                evidence.runtimeRoomInstanceId(),
+                evidence.lifecycleStatus(),
+                evidence.lifecycleEpoch(),
+                evidence.rowVersion(),
+                evidence.captureId(),
+                evidence.graphSha256(),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete selected-release selector evidence");
 
     assertInvalid(evidence, evidence.runtimeRoomInstanceId(), evidence.lifecycleEpoch(), -1);
     assertInvalid(evidence, evidence.runtimeRoomInstanceId(), 0, evidence.rowVersion());
     assertInvalid(evidence, 0, evidence.lifecycleEpoch(), evidence.rowVersion());
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    evidence.request(),
-                    evidence.launchBinding(),
-                    evidence.startLocation(),
-                    evidence.runtimeRoomInstanceId(),
-                    evidence.lifecycleStatus(),
-                    evidence.lifecycleEpoch(),
-                    evidence.rowVersion(),
-                    NIL,
-                    evidence.graphSha256(),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                evidence.request(),
+                evidence.launchBinding(),
+                evidence.startLocation(),
+                evidence.runtimeRoomInstanceId(),
+                evidence.lifecycleStatus(),
+                evidence.lifecycleEpoch(),
+                evidence.rowVersion(),
+                NIL,
+                evidence.graphSha256(),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("captureId");
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    evidence.request(),
-                    evidence.launchBinding(),
-                    evidence.startLocation(),
-                    evidence.runtimeRoomInstanceId(),
-                    evidence.lifecycleStatus(),
-                    evidence.lifecycleEpoch(),
-                    evidence.rowVersion(),
-                    evidence.captureId(),
-                    "A".repeat(64),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                evidence.request(),
+                evidence.launchBinding(),
+                evidence.startLocation(),
+                evidence.runtimeRoomInstanceId(),
+                evidence.lifecycleStatus(),
+                evidence.lifecycleEpoch(),
+                evidence.rowVersion(),
+                evidence.captureId(),
+                "A".repeat(64),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("graphSha256");
   }
@@ -464,63 +456,47 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
   @Test
   void requestOnlyAcceptsProvedSharedPublicProductionIdentity() throws Exception {
     Request request = evidence().request();
-    assertThatThrownBy(
-            () ->
-                copyRequest(
-                    request, NIL, null, null, null, null, null, null, null, null, null, null))
+    assertThatThrownBy(() ->
+            copyRequest(request, NIL, null, null, null, null, null, null, null, null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("readRequestId");
-    assertThatThrownBy(
-            () ->
-                copyRequest(
-                    request,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    "ISOLATED",
-                    null,
-                    null,
-                    null,
-                    null,
-                    null))
+    assertThatThrownBy(() ->
+            copyRequest(
+                request, null, null, null, null, null, "ISOLATED", null, null, null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SHARED scope only");
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    request.schemaVersion(),
-                    request.readRequestId(),
-                    request.targetNamespace(),
-                    request.canonicalTenantId(),
-                    request.worldSlug(),
-                    request.canonicalGameInstanceId(),
-                    request.playableStateNamespaceId(),
-                    request.playableStateScope(),
-                    false,
-                    request.controlPlaneRequestId(),
-                    request.canonicalVersionId(),
-                    request.expectedDescriptorRequestDigest(),
-                    request.expectedDescriptorResultDigest(),
-                    request.expectedReleaseAttestationDigest()))
+    assertThatThrownBy(() ->
+            new Request(
+                request.schemaVersion(),
+                request.readRequestId(),
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.worldSlug(),
+                request.canonicalGameInstanceId(),
+                request.playableStateNamespaceId(),
+                request.playableStateScope(),
+                false,
+                request.controlPlaneRequestId(),
+                request.canonicalVersionId(),
+                request.expectedDescriptorRequestDigest(),
+                request.expectedDescriptorResultDigest(),
+                request.expectedReleaseAttestationDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("public-production evidence");
-    assertThatThrownBy(
-            () ->
-                copyRequest(
-                    request,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    "not-a-digest",
-                    null,
-                    null))
+    assertThatThrownBy(() ->
+            copyRequest(
+                request,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "not-a-digest",
+                null,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("expectedDescriptorRequestDigest");
   }
@@ -565,27 +541,24 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
         maxJson.replace(
             "\"runtimeRoomInstanceId\":\"" + Long.MAX_VALUE + "\"",
             "\"runtimeRoomInstanceId\":\"9223372036854775808\"");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    overflow.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                overflow.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("supported integer range");
     String negative =
         maxJson.replace(
             "\"lifecycleEpoch\":\"" + Long.MAX_VALUE + "\"", "\"lifecycleEpoch\":\"-1\"");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    negative.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                negative.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical positive decimal");
     String leadingZero =
         maxJson.replace("\"rowVersion\":\"" + Long.MAX_VALUE + "\"", "\"rowVersion\":\"01\"");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    leadingZero.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                leadingZero.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical nonnegative decimal");
   }
@@ -595,24 +568,21 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
     WorldCanonicalInstanceLifecycleEvidence evidence = evidence();
     String stored = new String(evidence.canonicalBytes(), StandardCharsets.UTF_8);
     String unknownField = stored.substring(0, 1) + "\"unsupported\":true," + stored.substring(1);
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    unknownField.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                unknownField.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
     String duplicate =
         stored.replace("\"schemaVersion\":1", "\"schemaVersion\":1,\"schemaVersion\":1");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    duplicate.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                duplicate.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> Request.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("strict UTF-8");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(new byte[] {(byte) 0xc3, 0x28}))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("strict UTF-8");
 
@@ -632,38 +602,35 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
             .toBuilder()
             .setUnknownFields(unknown)
             .build();
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(evidence.request(), response))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(evidence.request(), response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(
-                    evidence.request(),
-                    ReadWorldCanonicalInstanceLifecycleResponse.newBuilder()
-                        .setCanonicalResponseBytes(ByteString.EMPTY)
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(
+                evidence.request(),
+                ReadWorldCanonicalInstanceLifecycleResponse.newBuilder()
+                    .setCanonicalResponseBytes(ByteString.EMPTY)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("required");
   }
 
   private static void assertRejectedRequest(
       WorldCanonicalInstanceLifecycleEvidence evidence, Request changed, String message) {
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    changed,
-                    evidence.launchBinding(),
-                    evidence.startLocation(),
-                    evidence.runtimeRoomInstanceId(),
-                    evidence.lifecycleStatus(),
-                    evidence.lifecycleEpoch(),
-                    evidence.rowVersion(),
-                    evidence.captureId(),
-                    evidence.graphSha256(),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                changed,
+                evidence.launchBinding(),
+                evidence.startLocation(),
+                evidence.runtimeRoomInstanceId(),
+                evidence.lifecycleStatus(),
+                evidence.lifecycleEpoch(),
+                evidence.rowVersion(),
+                evidence.captureId(),
+                evidence.graphSha256(),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(message);
   }
@@ -673,20 +640,19 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
       long runtimeRoomInstanceId,
       long lifecycleEpoch,
       long rowVersion) {
-    assertThatThrownBy(
-            () ->
-                with(
-                    evidence,
-                    evidence.request(),
-                    evidence.launchBinding(),
-                    evidence.startLocation(),
-                    runtimeRoomInstanceId,
-                    evidence.lifecycleStatus(),
-                    lifecycleEpoch,
-                    rowVersion,
-                    evidence.captureId(),
-                    evidence.graphSha256(),
-                    evidence.preparationInputDigest()))
+    assertThatThrownBy(() ->
+            with(
+                evidence,
+                evidence.request(),
+                evidence.launchBinding(),
+                evidence.startLocation(),
+                runtimeRoomInstanceId,
+                evidence.lifecycleStatus(),
+                lifecycleEpoch,
+                rowVersion,
+                evidence.captureId(),
+                evidence.graphSha256(),
+                evidence.preparationInputDigest()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -764,10 +730,9 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
       String stored, String assignmentField, String replacement, String message) {
     String malformed =
         stored.replace(assignmentField, "\"operationalRegionAssignments\":" + replacement);
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                    malformed.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                malformed.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(message);
   }

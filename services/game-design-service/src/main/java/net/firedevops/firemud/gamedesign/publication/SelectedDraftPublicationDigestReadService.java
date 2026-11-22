@@ -120,11 +120,10 @@ public final class SelectedDraftPublicationDigestReadService {
     GameDesignPublicationOperationRepository.Readback readback =
         owner
             .read(publicationRequest.derivedWorkflowIdentity())
-            .orElseThrow(
-                () ->
-                    Status.NOT_FOUND
-                        .withDescription("Selected publication operation unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.NOT_FOUND
+                    .withDescription("Selected publication operation unavailable")
+                    .asRuntimeException());
     GameDesignPublicationOperation operation = readback.operation();
     requireOperationCorrelation(operation, publicationRequest);
 
@@ -133,22 +132,20 @@ public final class SelectedDraftPublicationDigestReadService {
     GameDesignSourceRepository.Capture frozen =
         owner
             .readSourceCapture(operation)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Complete selected source capture unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Complete selected source capture unavailable")
+                    .asRuntimeException());
     requireCapture(operation, frozen);
 
     DraftCommitBinding selected = operation.account().input().selection().selectedCommit();
     GameDesignSourceRepository.SynchronizedSources synchronizedSources =
         owner
             .readSynchronized(selected.target(), selected.commitId())
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Complete synchronized selected sources unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Complete synchronized selected sources unavailable")
+                    .asRuntimeException());
     requireFrozenSources(selected, frozen, synchronizedSources);
     if (receipt.isPresent()
         && !SelectedGameplayRuleSourceJoin.matches(
@@ -233,33 +230,27 @@ public final class SelectedDraftPublicationDigestReadService {
           capture.policy().operation().canonicalBytes(),
           capture
               .asset()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException("Complete frozen asset source capture unavailable"))
+              .orElseThrow(() ->
+                  new IllegalStateException("Complete frozen asset source capture unavailable"))
               .operation()
               .canonicalBytes(),
           capture
               .branding()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Complete frozen branding source capture unavailable"))
+              .orElseThrow(() ->
+                  new IllegalStateException("Complete frozen branding source capture unavailable"))
               .operation()
               .canonicalBytes(),
           capture
               .templateConfig()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Complete frozen templateConfig source capture unavailable"))
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Complete frozen templateConfig source capture unavailable"))
               .operation()
               .canonicalBytes(),
           capture
               .gameplay()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Complete frozen gameplay source capture unavailable"))
+              .orElseThrow(() ->
+                  new IllegalStateException("Complete frozen gameplay source capture unavailable"))
               .operation()
               .canonicalBytes()
         }) {
@@ -281,10 +272,8 @@ public final class SelectedDraftPublicationDigestReadService {
     TemplateConfigSourceSnapshot templateConfig =
         synchronizedSources
             .templateConfig()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Selected template-config source snapshot unavailable"));
+            .orElseThrow(() ->
+                new IllegalStateException("Selected template-config source snapshot unavailable"));
     GameplayRuleSnapshot gameplay =
         synchronizedSources
             .gameplayEvidence()
@@ -304,40 +293,35 @@ public final class SelectedDraftPublicationDigestReadService {
         || !Arrays.equals(
             frozen
                 .asset()
-                .orElseThrow(
-                    () ->
-                        new IllegalStateException(
-                            "Complete frozen asset source capture unavailable"))
+                .orElseThrow(() ->
+                    new IllegalStateException("Complete frozen asset source capture unavailable"))
                 .snapshot()
                 .canonicalBytes(),
             synchronizedSources.asset().canonicalBytes())
         || !Arrays.equals(
             frozen
                 .branding()
-                .orElseThrow(
-                    () ->
-                        new IllegalStateException(
-                            "Complete frozen branding source capture unavailable"))
+                .orElseThrow(() ->
+                    new IllegalStateException(
+                        "Complete frozen branding source capture unavailable"))
                 .snapshot()
                 .canonicalBytes(),
             branding.canonicalBytes())
         || !Arrays.equals(
             frozen
                 .templateConfig()
-                .orElseThrow(
-                    () ->
-                        new IllegalStateException(
-                            "Complete frozen templateConfig source capture unavailable"))
+                .orElseThrow(() ->
+                    new IllegalStateException(
+                        "Complete frozen templateConfig source capture unavailable"))
                 .snapshot()
                 .canonicalBytes(),
             templateConfig.canonicalBytes())
         || !Arrays.equals(
             frozen
                 .gameplay()
-                .orElseThrow(
-                    () ->
-                        new IllegalStateException(
-                            "Complete frozen gameplay source capture unavailable"))
+                .orElseThrow(() ->
+                    new IllegalStateException(
+                        "Complete frozen gameplay source capture unavailable"))
                 .snapshot()
                 .canonicalBytes(),
             gameplay.canonicalBytes())) {

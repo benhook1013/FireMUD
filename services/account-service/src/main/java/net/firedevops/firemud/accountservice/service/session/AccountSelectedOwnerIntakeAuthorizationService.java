@@ -75,14 +75,13 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
 
     SelectedOwnerIntakeSourceReadScope scope =
         findScope(originalCreatorCredential, intakeRequestId, owner, selected)
-            .orElseGet(
-                () ->
-                    reserveSourceRead(
-                        originalCreatorCredential,
-                        intakeRequestId,
-                        owner,
-                        selected,
-                        requireEnvironment(environmentCapture.get())));
+            .orElseGet(() ->
+                reserveSourceRead(
+                    originalCreatorCredential,
+                    intakeRequestId,
+                    owner,
+                    selected,
+                    requireEnvironment(environmentCapture.get())));
     var recovery = recover(scope);
     if (recovery.state() == AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED)
       throw denied("Original selected-owner intake reservation was aborted");
@@ -188,10 +187,9 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
         AccountControlUiIssuanceRepository.hash(
             originalCreatorCredential.getBytes(StandardCharsets.US_ASCII));
     return Objects.requireNonNull(
-        ownerTransaction.execute(
-            ignored ->
-                repository.findSourceReadScope(
-                    intakeRequestId, owner, selected, namespace, tokenHash)));
+        ownerTransaction.execute(ignored ->
+            repository.findSourceReadScope(
+                intakeRequestId, owner, selected, namespace, tokenHash)));
   }
 
   private AccountSelectedOwnerIntakeSourceReservationRepository.Recovery recover(
@@ -215,11 +213,10 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
     Objects.requireNonNull(requested, "finalized selected-owner authorization is required");
     requireScope(requested.content().scope());
     outsideSql();
-    ownerTransaction.execute(
-        ignored -> {
-          repository.readFinalAuthorization(requested);
-          return null;
-        });
+    ownerTransaction.execute(ignored -> {
+      repository.readFinalAuthorization(requested);
+      return null;
+    });
     return requested;
   }
 

@@ -114,14 +114,12 @@ class AccountStartSessionAdmissionProtectionServiceTest {
             any(byte[].class)))
         .thenReturn(Optional.of(storedProtection));
     when(h.currentAttemptReader.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var read =
-                  (OriginalStartSessionCurrentAttemptEvidence.Request) invocation.getArgument(0);
-              return new OriginalStartSessionCurrentAttemptEvidence.Result(
-                  read, EXPIRY, fixture.request().accountRedemptionProjectionBytes());
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var read = (OriginalStartSessionCurrentAttemptEvidence.Request) invocation.getArgument(0);
+          return new OriginalStartSessionCurrentAttemptEvidence.Result(
+              read, EXPIRY, fixture.request().accountRedemptionProjectionBytes());
+        });
     doAnswer(
             invocation -> {
               @SuppressWarnings("unchecked")
@@ -219,23 +217,21 @@ class AccountStartSessionAdmissionProtectionServiceTest {
             fixture.protection().accountProtectionFence()))
         .thenReturn(Optional.empty(), Optional.of(expected));
     when(h.client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
-              assertThat(read.protection().canonicalBytes())
-                  .containsExactly(fixture.protection().canonicalBytes());
-              return new AccountInitialAdmissionSettlementReadEvidence(
-                  read.readRequestId(), read.protection(), fixture.committedTerminal());
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
+          assertThat(read.protection().canonicalBytes())
+              .containsExactly(fixture.protection().canonicalBytes());
+          return new AccountInitialAdmissionSettlementReadEvidence(
+              read.readRequestId(), read.protection(), fixture.committedTerminal());
+        });
     when(h.repository.settleExact(any())).thenReturn(expected);
 
     var actual =
-        withGameSessionPeerResult(
-            () ->
-                h.service.settle(
-                    fixture.protection().accountProtectionId(),
-                    fixture.protection().accountProtectionFence()));
+        withGameSessionPeerResult(() ->
+            h.service.settle(
+                fixture.protection().accountProtectionId(),
+                fixture.protection().accountProtectionFence()));
 
     assertThat(actual.canonicalBytes()).containsExactly(canonicalSettlement.canonicalBytes());
     assertThat(h.transactions.begins).isEqualTo(3);
@@ -272,11 +268,10 @@ class AccountStartSessionAdmissionProtectionServiceTest {
         .thenReturn(Optional.of(receipt));
 
     var actual =
-        withGameSessionPeerResult(
-            () ->
-                h.service.settle(
-                    fixture.protection().accountProtectionId(),
-                    fixture.protection().accountProtectionFence()));
+        withGameSessionPeerResult(() ->
+            h.service.settle(
+                fixture.protection().accountProtectionId(),
+                fixture.protection().accountProtectionFence()));
 
     assertThat(actual.canonicalBytes()).containsExactly(receipt.canonicalBytes());
     verifyNoInteractions(h.client);
@@ -303,21 +298,19 @@ class AccountStartSessionAdmissionProtectionServiceTest {
             fixture.protection().accountProtectionFence()))
         .thenReturn(Optional.empty(), Optional.of(expected));
     when(h.client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
-              return new AccountInitialAdmissionSettlementReadEvidence(
-                  read.readRequestId(), read.protection(), aborted);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
+          return new AccountInitialAdmissionSettlementReadEvidence(
+              read.readRequestId(), read.protection(), aborted);
+        });
     when(h.repository.settleExact(any())).thenReturn(expected);
 
     var actual =
-        withGameSessionPeerResult(
-            () ->
-                h.service.settle(
-                    fixture.protection().accountProtectionId(),
-                    fixture.protection().accountProtectionFence()));
+        withGameSessionPeerResult(() ->
+            h.service.settle(
+                fixture.protection().accountProtectionId(),
+                fixture.protection().accountProtectionFence()));
 
     assertThat(actual.outcome())
         .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
@@ -338,21 +331,19 @@ class AccountStartSessionAdmissionProtectionServiceTest {
             fixture.protection().accountProtectionFence()))
         .thenReturn(Optional.empty());
     when(h.client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
-              return new AccountInitialAdmissionSettlementReadEvidence(
-                  UUID.randomUUID(), read.protection(), fixture.committedTerminal());
-            });
+        .thenAnswer(invocation -> {
+          var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
+          return new AccountInitialAdmissionSettlementReadEvidence(
+              UUID.randomUUID(), read.protection(), fixture.committedTerminal());
+        });
 
-    withGameSessionPeer(
-        () ->
-            assertCode(
-                Status.Code.FAILED_PRECONDITION,
-                () ->
-                    h.service.settle(
-                        fixture.protection().accountProtectionId(),
-                        fixture.protection().accountProtectionFence())));
+    withGameSessionPeer(() ->
+        assertCode(
+            Status.Code.FAILED_PRECONDITION,
+            () ->
+                h.service.settle(
+                    fixture.protection().accountProtectionId(),
+                    fixture.protection().accountProtectionFence())));
     verify(h.repository, never()).settleExact(any());
 
     for (RuntimeException malformed :
@@ -372,13 +363,11 @@ class AccountStartSessionAdmissionProtectionServiceTest {
           .thenReturn(Optional.empty());
       doThrow(malformed).when(invalid.client).read(any());
       var failure =
-          statusFailure(
-              () ->
-                  withGameSessionPeer(
-                      () ->
-                          invalid.service.settle(
-                              fixture.protection().accountProtectionId(),
-                              fixture.protection().accountProtectionFence())));
+          statusFailure(() ->
+              withGameSessionPeer(() ->
+                  invalid.service.settle(
+                      fixture.protection().accountProtectionId(),
+                      fixture.protection().accountProtectionFence())));
       assertThat(Status.fromThrowable(failure).getCode())
           .isEqualTo(Status.Code.FAILED_PRECONDITION);
       assertThat(failure.getCause()).isSameAs(malformed);
@@ -397,13 +386,11 @@ class AccountStartSessionAdmissionProtectionServiceTest {
     var localFailure = new IllegalStateException("closed local dependency reader");
     doThrow(localFailure).when(unavailable.client).read(any());
     var localStatusFailure =
-        statusFailure(
-            () ->
-                withGameSessionPeer(
-                    () ->
-                        unavailable.service.settle(
-                            fixture.protection().accountProtectionId(),
-                            fixture.protection().accountProtectionFence())));
+        statusFailure(() ->
+            withGameSessionPeer(() ->
+                unavailable.service.settle(
+                    fixture.protection().accountProtectionId(),
+                    fixture.protection().accountProtectionFence())));
     assertThat(Status.fromThrowable(localStatusFailure).getCode())
         .isEqualTo(Status.Code.UNAVAILABLE);
     assertThat(Status.fromThrowable(localStatusFailure).getDescription())
@@ -425,13 +412,11 @@ class AccountStartSessionAdmissionProtectionServiceTest {
           Status.fromCode(code).withDescription("trusted upstream detail").asRuntimeException();
       doThrow(upstream).when(dependency.client).read(any());
       var failure =
-          statusFailure(
-              () ->
-                  withGameSessionPeer(
-                      () ->
-                          dependency.service.settle(
-                              fixture.protection().accountProtectionId(),
-                              fixture.protection().accountProtectionFence())));
+          statusFailure(() ->
+              withGameSessionPeer(() ->
+                  dependency.service.settle(
+                      fixture.protection().accountProtectionId(),
+                      fixture.protection().accountProtectionFence())));
       assertThat(Status.fromThrowable(failure).getCode())
           .isEqualTo(infrastructureCodes().contains(code) ? code : Status.Code.FAILED_PRECONDITION);
       assertThat(failure.getCause()).isSameAs(upstream);

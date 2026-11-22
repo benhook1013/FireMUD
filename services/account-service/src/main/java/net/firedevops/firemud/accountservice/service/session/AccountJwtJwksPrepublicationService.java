@@ -165,24 +165,23 @@ public final class AccountJwtJwksPrepublicationService {
     String desiredJwks = appendPendingPublicKey(sourceJwks, current.result());
     String marker = generationMarker(current.result(), current.request(), apiIdentity);
     PrepublicationIntent intent =
-        accountTransaction.execute(
-            status -> {
-              PrepublicationIntent persisted =
-                  publicationRepository.recordPrepublicationIntent(
-                      binding.accountBinding(),
-                      trustFence(binding),
-                      current.result(),
-                      current.request(),
-                      apiIdentity.bindingDigest(),
-                      apiIdentity.configRevision(),
-                      snapshot.uid(),
-                      snapshot.resourceVersion(),
-                      AccountJwtJwksPublicationRepository.snapshotDigest(snapshot.data()),
-                      desiredJwks,
-                      marker);
-              requireUnchangedBindings(binding, apiIdentity);
-              return persisted;
-            });
+        accountTransaction.execute(status -> {
+          PrepublicationIntent persisted =
+              publicationRepository.recordPrepublicationIntent(
+                  binding.accountBinding(),
+                  trustFence(binding),
+                  current.result(),
+                  current.request(),
+                  apiIdentity.bindingDigest(),
+                  apiIdentity.configRevision(),
+                  snapshot.uid(),
+                  snapshot.resourceVersion(),
+                  AccountJwtJwksPublicationRepository.snapshotDigest(snapshot.data()),
+                  desiredJwks,
+                  marker);
+          requireUnchangedBindings(binding, apiIdentity);
+          return persisted;
+        });
     if (intent == null) {
       throw new PublicationRejectedException("Account JWT JWKS intent was not persisted");
     }
@@ -202,16 +201,14 @@ public final class AccountJwtJwksPrepublicationService {
     PublicationEvidence evidence =
         current
             .publication()
-            .orElseThrow(
-                () ->
-                    new PublicationRejectedException(
-                        "Account JWT JWKS publication evidence is not available"));
+            .orElseThrow(() ->
+                new PublicationRejectedException(
+                    "Account JWT JWKS publication evidence is not available"));
     PrepublicationIntent intent = evidence.intent();
     evidence
         .receipt()
-        .orElseThrow(
-            () ->
-                new PublicationRejectedException("Account JWT JWKS API readback is not available"));
+        .orElseThrow(() ->
+            new PublicationRejectedException("Account JWT JWKS API readback is not available"));
     requireIntentApiIdentity(intent, apiIdentity);
 
     byte[] markerBytes =
@@ -267,19 +264,18 @@ public final class AccountJwtJwksPrepublicationService {
           "Mounted Account public JWT projection changed during correspondence observation");
     }
     MountObservation observation =
-        accountTransaction.execute(
-            status -> {
-              MountObservation persisted =
-                  publicationRepository.recordMountedCorrespondence(
-                      binding.accountBinding(),
-                      trustFence(binding),
-                      current.result().operationId(),
-                      sha256(markerBytes),
-                      AccountJwtJwksPublicationRepository.publicDataDigest(mountedJwks, marker),
-                      localObservation.publicKeyFingerprint());
-              requireUnchangedBindings(binding, apiIdentity);
-              return persisted;
-            });
+        accountTransaction.execute(status -> {
+          MountObservation persisted =
+              publicationRepository.recordMountedCorrespondence(
+                  binding.accountBinding(),
+                  trustFence(binding),
+                  current.result().operationId(),
+                  sha256(markerBytes),
+                  AccountJwtJwksPublicationRepository.publicDataDigest(mountedJwks, marker),
+                  localObservation.publicKeyFingerprint());
+          requireUnchangedBindings(binding, apiIdentity);
+          return persisted;
+        });
     if (observation == null) {
       throw new PublicationRejectedException(
           "Mounted Account JWT correspondence was not persisted");
@@ -316,10 +312,9 @@ public final class AccountJwtJwksPrepublicationService {
     }
 
     var publication =
-        accountTransaction.execute(
-            status ->
-                publicationRepository.readPreparedPublicationForRecovery(
-                    binding.accountBinding(), trust));
+        accountTransaction.execute(status ->
+            publicationRepository.readPreparedPublicationForRecovery(
+                binding.accountBinding(), trust));
     if (publication == null
         || !publication.intent().operationId().equals(promotion.generationOperationId())
         || !publication.intent().intentDigest().equals(promotion.prepublicationIntentDigest())
@@ -456,22 +451,21 @@ public final class AccountJwtJwksPrepublicationService {
     }
     requireUnchangedBindings(binding, apiIdentity);
     PublicationReceipt persisted =
-        accountTransaction.execute(
-            status -> {
-              PublicationReceipt receipt =
-                  publicationRepository.recordPublicationReceipt(
-                      binding.accountBinding(),
-                      trustFence(binding),
-                      intent.operationId(),
-                      apiIdentity.bindingDigest(),
-                      apiIdentity.configRevision(),
-                      observation.uid(),
-                      observation.resourceVersion(),
-                      intent.jwksJson(),
-                      intent.generationMarkerJson());
-              requireUnchangedBindings(binding, apiIdentity);
-              return receipt;
-            });
+        accountTransaction.execute(status -> {
+          PublicationReceipt receipt =
+              publicationRepository.recordPublicationReceipt(
+                  binding.accountBinding(),
+                  trustFence(binding),
+                  intent.operationId(),
+                  apiIdentity.bindingDigest(),
+                  apiIdentity.configRevision(),
+                  observation.uid(),
+                  observation.resourceVersion(),
+                  intent.jwksJson(),
+                  intent.generationMarkerJson());
+          requireUnchangedBindings(binding, apiIdentity);
+          return receipt;
+        });
     if (persisted == null) {
       throw new PublicationRejectedException("Account JWT JWKS API receipt was not persisted");
     }
@@ -480,27 +474,26 @@ public final class AccountJwtJwksPrepublicationService {
 
   private CurrentGeneration loadCurrentGeneration(Binding binding, BindingIdentity apiIdentity) {
     CurrentGeneration current =
-        accountTransaction.execute(
-            status -> {
-              GenerationResult result =
-                  desiredStateRepository.readCurrentGenerationResult(
-                      binding.accountBinding(), trustFence(binding));
-              GenerationRequest request =
-                  desiredStateRepository.readCurrentGenerationRequest(
-                      binding.accountBinding(), trustFence(binding));
-              Optional<PublicationEvidence> publication =
-                  publicationRepository.readCurrentPublication(
-                      binding.accountBinding(), trustFence(binding));
-              if (!result.binding().equals(binding.accountBinding())
-                  || !result.trustFence().equals(trustFence(binding))
-                  || !request.operationId().equals(result.operationId())
-                  || !request.generationReceiptDigest().equals(result.receiptDigest())) {
-                throw new PublicationRejectedException(
-                    "Account JWT generation receipt does not match the current protected binding");
-              }
-              requireUnchangedBindings(binding, apiIdentity);
-              return new CurrentGeneration(result, request, publication);
-            });
+        accountTransaction.execute(status -> {
+          GenerationResult result =
+              desiredStateRepository.readCurrentGenerationResult(
+                  binding.accountBinding(), trustFence(binding));
+          GenerationRequest request =
+              desiredStateRepository.readCurrentGenerationRequest(
+                  binding.accountBinding(), trustFence(binding));
+          Optional<PublicationEvidence> publication =
+              publicationRepository.readCurrentPublication(
+                  binding.accountBinding(), trustFence(binding));
+          if (!result.binding().equals(binding.accountBinding())
+              || !result.trustFence().equals(trustFence(binding))
+              || !request.operationId().equals(result.operationId())
+              || !request.generationReceiptDigest().equals(result.receiptDigest())) {
+            throw new PublicationRejectedException(
+                "Account JWT generation receipt does not match the current protected binding");
+          }
+          requireUnchangedBindings(binding, apiIdentity);
+          return new CurrentGeneration(result, request, publication);
+        });
     if (current == null) {
       throw new PublicationRejectedException("Current Account JWT generation is unavailable");
     }
@@ -740,11 +733,10 @@ public final class AccountJwtJwksPrepublicationService {
       Optional<AccountJwtSignerDesiredStateRepository.ActiveSigner> active) {
     Map<String, Object> marker = new LinkedHashMap<>();
     marker.put("present", active.isPresent());
-    active.ifPresent(
-        signer -> {
-          marker.put("generation", signer.generation());
-          marker.put("kid", signer.kid());
-        });
+    active.ifPresent(signer -> {
+      marker.put("generation", signer.generation());
+      marker.put("kid", signer.kid());
+    });
     return marker;
   }
 

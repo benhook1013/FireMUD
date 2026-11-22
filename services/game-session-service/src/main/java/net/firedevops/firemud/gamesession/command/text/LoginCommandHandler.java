@@ -375,11 +375,10 @@ public final class LoginCommandHandler {
   private long resolveBootstrapGameInstanceId(long sessionId) {
     return sessionRoutingNormalizationService
         .resolveProjectedSessionContext(Long.toString(sessionId))
-        .map(
-            context ->
-                context.bootstrapGameInstanceId() > 0
-                    ? context.bootstrapGameInstanceId()
-                    : context.gameInstanceId())
+        .map(context ->
+            context.bootstrapGameInstanceId() > 0
+                ? context.bootstrapGameInstanceId()
+                : context.gameInstanceId())
         .filter(candidate -> candidate > 0)
         .orElse(0L);
   }
@@ -410,18 +409,17 @@ public final class LoginCommandHandler {
         gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId);
     Optional<GameplayAdmissionPointerSnapshot> maybePointer =
         GameplayAdmissionPointerSnapshots.singularCompletePointer(pointers);
-    return maybePointer.filter(
-        pointer ->
-            GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-                pointers,
-                tenantId,
-                gameInstanceId,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                expectedPlayableStateScope != null
-                    ? expectedPlayableStateScope
-                    : pointer.stateScope()));
+    return maybePointer.filter(pointer ->
+        GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+            pointers,
+            tenantId,
+            gameInstanceId,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            expectedPlayableStateScope != null
+                ? expectedPlayableStateScope
+                : pointer.stateScope()));
   }
 
   private void clearFailedLoginSessionState(

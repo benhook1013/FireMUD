@@ -84,14 +84,13 @@ public final class AdmittedTextCommandRegistryResolver {
     for (String commandToken : commandTokens) {
       Optional<TextCommandMetadataResolver.ResolvedTextCommandMetadata> metadata =
           resolveDefinition(registry, commandToken)
-              .map(
-                  definition ->
-                      new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                          definition.dispatchGroup(),
-                          definition.promptPolicy(),
-                          definition.actionCategory(),
-                          definition.actionTags(),
-                          definition.capability()));
+              .map(definition ->
+                  new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                      definition.dispatchGroup(),
+                      definition.promptPolicy(),
+                      definition.actionCategory(),
+                      definition.actionTags(),
+                      definition.capability()));
       if (metadata.isPresent()) {
         return metadata;
       }

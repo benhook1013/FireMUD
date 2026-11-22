@@ -135,30 +135,29 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     byte[] bundle = bytes("{\"authoritySourceVersions\":[],\"bundleRef\":{}}");
     byte[] signerReceipt = bytes("test-only-historical-signer-receipt");
     // Historical V126.1 fixture seeding uses real owner IDs but is not a production issuance path.
-    c.tx(
-        () ->
-            c.dsl.execute(
-                "INSERT INTO account_control_ui_issuance_operations"
-                    + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
-                    + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                    + " issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status)"
-                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
-                f.request,
-                operationId,
-                tokenJti,
-                f.actor,
-                f.tenant,
-                "spiffe://test-only/control-ui",
-                UUID.randomUUID(),
-                "historical-test",
-                "c".repeat(64),
-                claims,
-                source,
-                bundle,
-                signerReceipt,
-                issuedAt.getEpochSecond(),
-                expiresAt.getEpochSecond(),
-                recoveryExpiresAt));
+    c.tx(() ->
+        c.dsl.execute(
+            "INSERT INTO account_control_ui_issuance_operations"
+                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
+                + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
+                + " issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
+            f.request,
+            operationId,
+            tokenJti,
+            f.actor,
+            f.tenant,
+            "spiffe://test-only/control-ui",
+            UUID.randomUUID(),
+            "historical-test",
+            "c".repeat(64),
+            claims,
+            source,
+            bundle,
+            signerReceipt,
+            issuedAt.getEpochSecond(),
+            expiresAt.getEpochSecond(),
+            recoveryExpiresAt));
     var before =
         Objects.requireNonNull(
             c.dsl.fetchOne(
@@ -180,16 +179,14 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     var retained = c.tx(() -> c.operations.findRequest(f.request));
     assertThat(retained.status).isEqualTo("PREPARED");
     assertThatThrownBy(retained::expiryMillis).isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.operations.bindCandidate(
-                            retained,
-                            "d".repeat(64),
-                            bytes("test-only-envelope"),
-                            bytes("test-only-binding"),
-                            f.signer)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.operations.bindCandidate(
+                    retained,
+                    "d".repeat(64),
+                    bytes("test-only-envelope"),
+                    bytes("test-only-binding"),
+                    f.signer)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isZero();
     var afterDeniedAdvance =
@@ -227,55 +224,47 @@ class AccountControlUiIssuancePostgresIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     for (String column :
         List.of("claims_payload", "source_payload", "bundle_payload", "signer_receipt")) {
-      assertThatThrownBy(
-              () ->
-                  c.tx(
-                      () ->
-                          c.dsl.execute(
-                              "UPDATE account_control_ui_issuance_operations SET "
-                                  + column
-                                  + " = ? WHERE request_id = ?",
-                              bytes("test-only-rewrite"),
-                              prepared.requestId)))
+      assertThatThrownBy(() ->
+              c.tx(() ->
+                  c.dsl.execute(
+                      "UPDATE account_control_ui_issuance_operations SET "
+                          + column
+                          + " = ? WHERE request_id = ?",
+                      bytes("test-only-rewrite"),
+                      prepared.requestId)))
           .isInstanceOf(DataAccessException.class);
     }
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_control_ui_issuance_operations"
-                                + " SET recovery_expires_at = recovery_expires_at + INTERVAL '1 second' WHERE request_id = ?",
-                            prepared.requestId)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_control_ui_issuance_operations"
+                        + " SET recovery_expires_at = recovery_expires_at + INTERVAL '1 second' WHERE request_id = ?",
+                    prepared.requestId)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_control_ui_response_envelopes"
-                                + " SET encrypted_response = ? WHERE operation_id = ?",
-                            bytes("test-only-envelope-rewrite"),
-                            prepared.operationId)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_control_ui_response_envelopes"
+                        + " SET encrypted_response = ? WHERE operation_id = ?",
+                    bytes("test-only-envelope-rewrite"),
+                    prepared.operationId)))
         .isInstanceOf(DataAccessException.class);
     // A new row cannot evade the actual PostgreSQL-specific recovery bound either.
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "INSERT INTO account_control_ui_issuance_operations"
-                                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
-                                + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                                + " issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
-                                + " SELECT ?, ?, ?, account_uuid, tenant_uuid, caller_workload, caller_context_id, request_mac_key_id,"
-                                + " request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, issued_at_epoch_second,"
-                                + " expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, to_timestamp(issued_at_epoch_second + 61), 'PREPARED'"
-                                + " FROM account_control_ui_issuance_operations WHERE request_id = ?",
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            prepared.requestId)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "INSERT INTO account_control_ui_issuance_operations"
+                        + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
+                        + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
+                        + " issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
+                        + " SELECT ?, ?, ?, account_uuid, tenant_uuid, caller_workload, caller_context_id, request_mac_key_id,"
+                        + " request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, issued_at_epoch_second,"
+                        + " expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, to_timestamp(issued_at_epoch_second + 61), 'PREPARED'"
+                        + " FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    prepared.requestId)))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("account_control_ui_recovery_expiry_bound");
     assertOriginal(prepared, c.tx(() -> c.operations.findRequest(prepared.requestId)));
@@ -316,11 +305,10 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     byte[] revoked = AccountControlUiIssuanceRepository.revokedRegistry(held);
     doReturn(held.pendingRegistry, revoked).when(transport.commands).get(any(byte[].class));
     var receipt = transport.client.revoke(held);
-    c.tx(
-        () -> {
-          c.operations.finishRecoveryFailure(held, receipt);
-          return null;
-        });
+    c.tx(() -> {
+      c.operations.finishRecoveryFailure(held, receipt);
+      return null;
+    });
     assertThat(c.tx(() -> c.operations.findRequest(prepared.requestId)).status)
         .isEqualTo("REVOKED");
     assertThatThrownBy(() -> c.tx(() -> c.operations.requireCommitted(committed.stored)))
@@ -395,29 +383,27 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     Fixture(Context c) {
       this.c = c;
       actor =
-          c.tx(
-              () -> {
-                Account account = new Account();
-                String suffix = UUID.randomUUID().toString();
-                account.setUsername("control-ui-" + suffix);
-                account.setEmail(suffix + "@example.test");
-                account.setPasswordHash("test-only-primary-hash");
-                return new AccountRepository(c.dsl).save(account).getAccountUuid();
-              });
+          c.tx(() -> {
+            Account account = new Account();
+            String suffix = UUID.randomUUID().toString();
+            account.setUsername("control-ui-" + suffix);
+            account.setEmail(suffix + "@example.test");
+            account.setPasswordHash("test-only-primary-hash");
+            return new AccountRepository(c.dsl).save(account).getAccountUuid();
+          });
       // Stipulated external creation evidence only; real source/claim triggers still execute.
-      c.tx(
-          () ->
-              c.dsl.execute(
-                  "INSERT INTO account_fresh_tenant_identity_associations"
-                      + " (schema_version, target_namespace, creation_request_id, operation_id, request_digest,"
-                      + " canonical_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind, evidence_digest)"
-                      + " VALUES (1, 'test-control', ?, ?, ?, ?, 1, ?, 'NEW_GAME_ROW', ?)",
-                  UUID.randomUUID(),
-                  UUID.randomUUID(),
-                  "sha256:" + "a".repeat(64),
-                  tenant,
-                  tenant.toString(),
-                  "sha256:" + "b".repeat(64)));
+      c.tx(() ->
+          c.dsl.execute(
+              "INSERT INTO account_fresh_tenant_identity_associations"
+                  + " (schema_version, target_namespace, creation_request_id, operation_id, request_digest,"
+                  + " canonical_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind, evidence_digest)"
+                  + " VALUES (1, 'test-control', ?, ?, ?, ?, 1, ?, 'NEW_GAME_ROW', ?)",
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              "sha256:" + "a".repeat(64),
+              tenant,
+              tenant.toString(),
+              "sha256:" + "b".repeat(64)));
       when(primary.accountId()).thenReturn(actor);
       when(authority.actor()).thenReturn(actor);
       when(authority.tenant()).thenReturn(tenant);
@@ -463,27 +449,25 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     }
 
     AccountControlUiIssuanceRepository.Stored prepare(long sessionSafetyMarginMillis) {
-      return c.tx(
-          () ->
-              c.operations.prepare(
-                  request,
-                  "spiffe://test-only/control-ui",
-                  UUID.randomUUID(),
-                  "test-mac1",
-                  "c".repeat(64),
-                  primary,
-                  authority,
-                  signer,
-                  Instant.ofEpochSecond(Instant.now().getEpochSecond()),
-                  sessionSafetyMarginMillis));
+      return c.tx(() ->
+          c.operations.prepare(
+              request,
+              "spiffe://test-only/control-ui",
+              UUID.randomUUID(),
+              "test-mac1",
+              "c".repeat(64),
+              primary,
+              authority,
+              signer,
+              Instant.ofEpochSecond(Instant.now().getEpochSecond()),
+              sessionSafetyMarginMillis));
     }
 
     AccountControlUiIssuanceRepository.Stored candidate(
         AccountControlUiIssuanceRepository.Stored original) {
-      return c.tx(
-          () ->
-              c.operations.bindCandidate(
-                  original, "d".repeat(64), encryptedResponse, ownerBinding, signer));
+      return c.tx(() ->
+          c.operations.bindCandidate(
+              original, "d".repeat(64), encryptedResponse, ownerBinding, signer));
     }
   }
 
@@ -507,9 +491,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
       when(connection.sync()).thenReturn(commands);
       when(commands.aclWhoami()).thenReturn("account_coord_app");
       when(commands.scriptLoad(any(byte[].class)))
-          .thenAnswer(
-              invocation ->
-                  AccountControlUiCoordination.digest("SHA-1", invocation.getArgument(0)));
+          .thenAnswer(invocation ->
+              AccountControlUiCoordination.digest("SHA-1", invocation.getArgument(0)));
       doReturn(1L)
           .when(commands)
           .evalsha(

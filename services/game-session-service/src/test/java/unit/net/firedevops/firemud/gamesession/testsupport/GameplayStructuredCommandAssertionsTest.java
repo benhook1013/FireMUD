@@ -104,10 +104,9 @@ class GameplayStructuredCommandAssertionsTest {
             {"eventType":"command_result","commandType":"LOOK","commandId":"look","actionCategory":"META","actionTags":["UI"]}
             """);
 
-    assertThatThrownBy(
-            () ->
-                GameplayStructuredCommandAssertions.requireStructuredCommand(
-                    json, "LOOK", "look", "SESSION", "UI"))
+    assertThatThrownBy(() ->
+            GameplayStructuredCommandAssertions.requireStructuredCommand(
+                json, "LOOK", "look", "SESSION", "UI"))
         .isInstanceOf(AssertionError.class)
         .hasMessageContaining("Expected actionCategory=SESSION");
   }

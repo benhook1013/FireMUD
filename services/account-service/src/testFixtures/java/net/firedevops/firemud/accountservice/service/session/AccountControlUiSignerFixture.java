@@ -227,12 +227,9 @@ final class AccountControlUiSignerFixture {
    */
   void prepareInitialPrepublication() throws Exception {
     prepareInitialGeneration();
-    assertThatThrownBy(
-            () ->
-                f.tx(
-                    () ->
-                        desired.readCurrentCommittedSigner(
-                            BINDING, trust(), API_DIGEST, API_REVISION)))
+    assertThatThrownBy(() ->
+            f.tx(() ->
+                desired.readCurrentCommittedSigner(BINDING, trust(), API_DIGEST, API_REVISION)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
         .hasMessage("Account durable and published active signer fences disagree");
   }
@@ -243,45 +240,41 @@ final class AccountControlUiSignerFixture {
       authenticated
           .when(AccountJwtSignerMaterializerTlsInterceptor::authenticatedBinding)
           .thenReturn(materializerBinding());
-      AccountControlUiSignerFixture.<EnrollBootstrapResponse>rpc(
-          out ->
-              materializer.enrollBootstrap(
-                  EnrollBootstrapRequest.newBuilder().setSchemaVersion(1).build(), out));
+      AccountControlUiSignerFixture.<EnrollBootstrapResponse>rpc(out ->
+          materializer.enrollBootstrap(
+              EnrollBootstrapRequest.newBuilder().setSchemaVersion(1).build(), out));
       GetCurrentGenerationRequestResponse initial =
-          rpc(
-              out ->
-                  materializer.getCurrentGenerationRequest(
-                      GetCurrentGenerationRequestRequest.newBuilder().setSchemaVersion(1).build(),
-                      out));
+          rpc(out ->
+              materializer.getCurrentGenerationRequest(
+                  GetCurrentGenerationRequestRequest.newBuilder().setSchemaVersion(1).build(),
+                  out));
       var request = f.tx(() -> desired.readCurrentGenerationRequest(BINDING, trust()));
       GetCurrentGenerationRequestResponse observed =
-          rpc(
-              out ->
-                  materializer.recordSecretObservation(
-                      RecordSecretObservationRequest.newBuilder()
-                          .setSchemaVersion(1)
-                          .setOperationId(initial.getOperationId())
-                          .setOperationDigest(initial.getOperationDigest())
-                          .setSecretUid(SECRET_UID)
-                          .setObservedResourceVersion("12")
-                          .build(),
-                      out));
+          rpc(out ->
+              materializer.recordSecretObservation(
+                  RecordSecretObservationRequest.newBuilder()
+                      .setSchemaVersion(1)
+                      .setOperationId(initial.getOperationId())
+                      .setOperationDigest(initial.getOperationDigest())
+                      .setSecretUid(SECRET_UID)
+                      .setObservedResourceVersion("12")
+                      .build(),
+                  out));
       var pair = generateRsa3072();
       var publicKey = publicJwk(request.targetKid(), (RSAPublicKey) pair.getPublic());
       RecordGenerationResultResponse recorded =
-          rpc(
-              out ->
-                  materializer.recordGenerationResult(
-                      RecordGenerationResultRequest.newBuilder()
-                          .setSchemaVersion(1)
-                          .setOperationId(initial.getOperationId())
-                          .setGenerationRequestDigest(observed.getGenerationRequestDigest())
-                          .setSecretUid(SECRET_UID)
-                          .setExpectedPriorResourceVersion("12")
-                          .setObservedResourceVersion("13")
-                          .setPublicJwkJson(publicKey.json())
-                          .build(),
-                      out));
+          rpc(out ->
+              materializer.recordGenerationResult(
+                  RecordGenerationResultRequest.newBuilder()
+                      .setSchemaVersion(1)
+                      .setOperationId(initial.getOperationId())
+                      .setGenerationRequestDigest(observed.getGenerationRequestDigest())
+                      .setSecretUid(SECRET_UID)
+                      .setExpectedPriorResourceVersion("12")
+                      .setObservedResourceVersion("13")
+                      .setPublicJwkJson(publicKey.json())
+                      .build(),
+                  out));
       var result = f.tx(() -> desired.readCurrentGenerationResult(BINDING, trust()));
       assertThat(recorded.getOperationId()).isEqualTo(result.operationId().toString());
       assertThat(recorded.getOperationDigest()).isEqualTo(result.operationDigest());
@@ -379,18 +372,16 @@ final class AccountControlUiSignerFixture {
                         () -> readiness.readCurrentExpectedPods(BINDING, trust(), issued, current));
                 for (var pod : pods) {
                   var acceptance = testAuthenticatedAcceptance(issued, pod, now().getEpochSecond());
-                  f.tx(
-                      () ->
-                          readiness.recordPodAcceptance(
-                              BINDING, trust(), issued, pod, acceptance, current));
+                  f.tx(() ->
+                      readiness.recordPodAcceptance(
+                          BINDING, trust(), issued, pod, acceptance, current));
                 }
               });
       assertThat(delivered)
           .hasSize(8)
-          .allSatisfy(
-              entry ->
-                  assertThat(entry.state())
-                      .isEqualTo(AccountJwtReadinessProbeRepository.ProbeState.VERIFIED));
+          .allSatisfy(entry ->
+              assertThat(entry.state())
+                  .isEqualTo(AccountJwtReadinessProbeRepository.ProbeState.VERIFIED));
       assertThat(f.dsl.fetchCount(DSL.table("account_jwt_readiness_pod_receipts"))).isEqualTo(12);
       assertThat(
               f.dsl.fetchCount(
@@ -399,11 +390,9 @@ final class AccountControlUiSignerFixture {
           .isEqualTo(2);
       var prepared = coordinator.prepareCurrentPromotionOnce().orElseThrow();
       GetCurrentPromotionRequestResponse dispatched =
-          rpc(
-              out ->
-                  materializer.getCurrentPromotionRequest(
-                      GetCurrentPromotionRequestRequest.newBuilder().setSchemaVersion(1).build(),
-                      out));
+          rpc(out ->
+              materializer.getCurrentPromotionRequest(
+                  GetCurrentPromotionRequestRequest.newBuilder().setSchemaVersion(1).build(), out));
       var promotion =
           f.tx(() -> desired.readPreparedGenerationForRecovery(BINDING, trust())).promotion();
       assertThat(prepared.operationId()).isEqualTo(promotion.operationId());
@@ -419,27 +408,25 @@ final class AccountControlUiSignerFixture {
       Files.writeString(
           privateRoot.resolve("current.key"), privateBundleJson(request, result, pair));
       RecordPrivatePromotionResultResponse committed =
-          rpc(
-              out ->
-                  materializer.recordPrivatePromotionResult(
-                      RecordPrivatePromotionResultRequest.newBuilder()
-                          .setSchemaVersion(1)
-                          .setPromotionOperationId(promotion.operationId().toString())
-                          .setPromotionRequestDigest(promotion.requestDigest())
-                          .setGenerationOperationId(result.operationId().toString())
-                          .setGenerationOperationDigest(result.operationDigest())
-                          .setSecretUid(SECRET_UID)
-                          .setExpectedPriorResourceVersion(
-                              promotion.expectedPrivateResourceVersion())
-                          .setObservedResourceVersion("14")
-                          .setCurrent(
-                              PromotionPublicKeyIdentity.newBuilder()
-                                  .setGeneration(result.targetGeneration())
-                                  .setKid(result.targetKid())
-                                  .setPublicKeyFingerprint(result.publicKeyFingerprint()))
-                          .addResultingSlots("current")
-                          .build(),
-                      out));
+          rpc(out ->
+              materializer.recordPrivatePromotionResult(
+                  RecordPrivatePromotionResultRequest.newBuilder()
+                      .setSchemaVersion(1)
+                      .setPromotionOperationId(promotion.operationId().toString())
+                      .setPromotionRequestDigest(promotion.requestDigest())
+                      .setGenerationOperationId(result.operationId().toString())
+                      .setGenerationOperationDigest(result.operationDigest())
+                      .setSecretUid(SECRET_UID)
+                      .setExpectedPriorResourceVersion(promotion.expectedPrivateResourceVersion())
+                      .setObservedResourceVersion("14")
+                      .setCurrent(
+                          PromotionPublicKeyIdentity.newBuilder()
+                              .setGeneration(result.targetGeneration())
+                              .setKid(result.targetKid())
+                              .setPublicKeyFingerprint(result.publicKeyFingerprint()))
+                      .addResultingSlots("current")
+                      .build(),
+                  out));
       var durableCommit =
           f.tx(() -> desired.readCurrentCommittedSigner(BINDING, trust(), API_DIGEST, API_REVISION))
               .orElseThrow();
@@ -764,28 +751,26 @@ final class AccountControlUiSignerFixture {
     result.put(
         "profiles",
         validator.profiles().stream()
-            .map(
-                profile ->
-                    Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
+            .map(profile ->
+                Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
             .toList());
     result.put(
         "pods",
         validator.pods().stream()
-            .map(
-                pod ->
-                    Map.ofEntries(
-                        Map.entry("name", pod.name()),
-                        Map.entry("uid", pod.uid()),
-                        Map.entry("resourceVersion", pod.resourceVersion()),
-                        Map.entry("ownerReplicaSetName", pod.ownerName()),
-                        Map.entry("ownerReplicaSetUid", pod.ownerUid()),
-                        Map.entry("podTemplateHash", pod.podTemplateHash()),
-                        Map.entry("image", pod.image()),
-                        Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
-                        Map.entry("podIp", pod.podIp()),
-                        Map.entry("exactPodEndpoint", pod.endpoint().toString()),
-                        Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
-                        Map.entry("leafSpkiSha256", pod.leafSpkiSha256())))
+            .map(pod ->
+                Map.ofEntries(
+                    Map.entry("name", pod.name()),
+                    Map.entry("uid", pod.uid()),
+                    Map.entry("resourceVersion", pod.resourceVersion()),
+                    Map.entry("ownerReplicaSetName", pod.ownerName()),
+                    Map.entry("ownerReplicaSetUid", pod.ownerUid()),
+                    Map.entry("podTemplateHash", pod.podTemplateHash()),
+                    Map.entry("image", pod.image()),
+                    Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
+                    Map.entry("podIp", pod.podIp()),
+                    Map.entry("exactPodEndpoint", pod.endpoint().toString()),
+                    Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
+                    Map.entry("leafSpkiSha256", pod.leafSpkiSha256())))
             .toList());
     result.put("receiverServiceUri", serviceUri);
     result.put("receiverPort", receiverPort);

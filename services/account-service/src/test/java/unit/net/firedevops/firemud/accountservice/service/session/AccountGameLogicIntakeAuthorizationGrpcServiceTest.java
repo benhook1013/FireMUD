@@ -68,25 +68,23 @@ class AccountGameLogicIntakeAuthorizationGrpcServiceTest {
                 .code())
         .isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(
-            authorized(
-                    () ->
-                        invokeAuthorize(
-                            GameLogicIntakeAuthorizationRequest.newBuilder()
-                                .setUnknownFields(
-                                    com.google.protobuf.UnknownFieldSet.newBuilder()
-                                        .addField(
-                                            99,
-                                            com.google.protobuf.UnknownFieldSet.Field.newBuilder()
-                                                .addVarint(1)
-                                                .build())
-                                        .build())
-                                .build()))
+            authorized(() ->
+                    invokeAuthorize(
+                        GameLogicIntakeAuthorizationRequest.newBuilder()
+                            .setUnknownFields(
+                                com.google.protobuf.UnknownFieldSet.newBuilder()
+                                    .addField(
+                                        99,
+                                        com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                            .addVarint(1)
+                                            .build())
+                                    .build())
+                            .build()))
                 .code())
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(
-            authorized(
-                    () ->
-                        invokeAuthorize(request().toBuilder().setTargetNamespace("other").build()))
+            authorized(() ->
+                    invokeAuthorize(request().toBuilder().setTargetNamespace("other").build()))
                 .code())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(owner, terms);
@@ -120,21 +118,19 @@ class AccountGameLogicIntakeAuthorizationGrpcServiceTest {
     var binding = authorization(decoded);
     var captures = new AtomicInteger();
     when(terms.captureCurrentEnvironmentBoundary())
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              captures.incrementAndGet();
-              return captured;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          captures.incrementAndGet();
+          return captured;
+        });
     when(owner.authorizeWithEnvironmentCapture(
             eq(CREDENTIAL), eq(decoded.intakeRequestId()), eq(decoded.selected()), any()))
-        .thenAnswer(
-            call -> {
-              Supplier<?> capture = call.getArgument(3);
-              assertThat(capture.get()).isSameAs(captured);
-              return binding;
-            });
+        .thenAnswer(call -> {
+          Supplier<?> capture = call.getArgument(3);
+          assertThat(capture.get()).isSameAs(captured);
+          return binding;
+        });
 
     var result = authorized(() -> invokeAuthorize(safeRequest));
     assertThat(result.error()).isNull();
@@ -282,16 +278,15 @@ class AccountGameLogicIntakeAuthorizationGrpcServiceTest {
         (io.grpc.ServerMethodDefinition<
                 GameLogicIntakeAuthorizationRequest, GameLogicIntakeAuthorizationResponse>)
             receiver.bindService().getMethods().stream()
-                .filter(
-                    candidate ->
-                        candidate
-                            .getMethodDescriptor()
-                            .getFullMethodName()
-                            .equals(
-                                net.firedevops.firemud.account.v1
-                                    .AccountGameLogicIntakeAuthorizationServiceGrpc
-                                    .getAuthorizeIntakeMethod()
-                                    .getFullMethodName()))
+                .filter(candidate ->
+                    candidate
+                        .getMethodDescriptor()
+                        .getFullMethodName()
+                        .equals(
+                            net.firedevops.firemud.account.v1
+                                .AccountGameLogicIntakeAuthorizationServiceGrpc
+                                .getAuthorizeIntakeMethod()
+                                .getFullMethodName()))
                 .findFirst()
                 .orElseThrow();
     io.grpc.ServerCall<GameLogicIntakeAuthorizationRequest, GameLogicIntakeAuthorizationResponse>

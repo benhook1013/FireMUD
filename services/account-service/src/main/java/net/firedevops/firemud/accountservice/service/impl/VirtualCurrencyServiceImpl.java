@@ -39,16 +39,15 @@ public class VirtualCurrencyServiceImpl implements VirtualCurrencyService {
     CurrencyBalance balance =
         balanceRepository
             .findByTenantIdAndAccountIdAndCurrencyCode(tenantId, accountId, currencyCode)
-            .orElseGet(
-                () -> {
-                  Account account = requireAccountMembership(tenantId, accountId);
-                  CurrencyBalance cb = new CurrencyBalance();
-                  cb.setAccount(account);
-                  cb.setCurrencyCode(currencyCode);
-                  cb.setBalance(0L);
-                  cb.setTenantId(tenantId);
-                  return cb;
-                });
+            .orElseGet(() -> {
+              Account account = requireAccountMembership(tenantId, accountId);
+              CurrencyBalance cb = new CurrencyBalance();
+              cb.setAccount(account);
+              cb.setCurrencyCode(currencyCode);
+              cb.setBalance(0L);
+              cb.setTenantId(tenantId);
+              return cb;
+            });
     balance.setBalance(balance.getBalance() + amount);
     balanceRepository.save(balance);
     return balance.getBalance();

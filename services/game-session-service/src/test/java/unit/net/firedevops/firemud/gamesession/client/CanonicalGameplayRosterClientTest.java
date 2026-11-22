@@ -80,22 +80,21 @@ class CanonicalGameplayRosterClientTest {
     var route = publishedRoute();
     var stub = mockStub();
     when(stub.listPreseededRoster(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
-              var actor = actor(ACTOR_UUID, "Pilot One");
-              return CanonicalGameplayRosterResponse.newBuilder()
-                  .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
-                  .setTarget(request.getExpectedTarget())
-                  .setSnapshotUuid(SNAPSHOT_UUID.toString())
-                  .setSnapshotDigest(
-                      snapshotDigest(
-                          ACCOUNT_UUID,
-                          request.getExpectedTarget(),
-                          List.of(ACTOR_UUID.toString(), "Pilot One")))
-                  .addActors(actor)
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+          var actor = actor(ACTOR_UUID, "Pilot One");
+          return CanonicalGameplayRosterResponse.newBuilder()
+              .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+              .setTarget(request.getExpectedTarget())
+              .setSnapshotUuid(SNAPSHOT_UUID.toString())
+              .setSnapshotDigest(
+                  snapshotDigest(
+                      ACCOUNT_UUID,
+                      request.getExpectedTarget(),
+                      List.of(ACTOR_UUID.toString(), "Pilot One")))
+              .addActors(actor)
+              .build();
+        });
     var client = newClient(stub);
 
     var roster = client.listPreseededRoster(route, listContext());
@@ -152,10 +151,9 @@ class CanonicalGameplayRosterClientTest {
       var stub = mockStub();
       var owner = mockReferenceOwner();
       when(owner.begin(any()))
-          .thenAnswer(
-              call ->
-                  CanonicalGameplayRosterReferenceEvidence.response(
-                      call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
+          .thenAnswer(call ->
+              CanonicalGameplayRosterReferenceEvidence.response(
+                  call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
       when(owner.selectOriginal(any(), any()))
           .thenAnswer(call -> closedOriginal(call.getArgument(0), state, true));
       var client = newClient(stub, owner);
@@ -176,16 +174,15 @@ class CanonicalGameplayRosterClientTest {
     var rosterStub = mockStub();
     var rosterOwner = mockReferenceOwner();
     when(rosterOwner.begin(any()))
-        .thenAnswer(
-            call ->
-                closedOriginal(
-                    call.getArgument(0),
-                    new ClosedDereferenceState(
-                        CanonicalGameplayRosterReferenceState
-                            .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
-                        "",
-                        false),
-                    false));
+        .thenAnswer(call ->
+            closedOriginal(
+                call.getArgument(0),
+                new ClosedDereferenceState(
+                    CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
+                    "",
+                    false),
+                false));
     var replayedRoster =
         newClient(rosterStub, rosterOwner).listPreseededRoster(publishedRoute(), listContext());
     assertThat(replayedRoster.snapshotUuid()).isEqualTo(SNAPSHOT_UUID);
@@ -196,21 +193,19 @@ class CanonicalGameplayRosterClientTest {
     var assignmentStub = mockStub();
     var assignmentOwner = mockReferenceOwner();
     when(assignmentOwner.begin(any()))
-        .thenAnswer(
-            call ->
-                CanonicalGameplayRosterReferenceEvidence.response(
-                    call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
+        .thenAnswer(call ->
+            CanonicalGameplayRosterReferenceEvidence.response(
+                call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
     when(assignmentOwner.selectOriginal(any(), any()))
-        .thenAnswer(
-            call ->
-                closedOriginal(
-                    call.getArgument(0),
-                    new ClosedDereferenceState(
-                        CanonicalGameplayRosterReferenceState
-                            .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
-                        "",
-                        false),
-                    true));
+        .thenAnswer(call ->
+            closedOriginal(
+                call.getArgument(0),
+                new ClosedDereferenceState(
+                    CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
+                    "",
+                    false),
+                true));
     var assignmentClient = newClient(assignmentStub, assignmentOwner);
     var roster = validatedRoster(assignmentClient, assignmentStub);
     clearInvocations(assignmentStub, assignmentOwner);
@@ -227,10 +222,9 @@ class CanonicalGameplayRosterClientTest {
     var owner = mockReferenceOwner();
     var closedBeforeDispatch = new IllegalStateException("original closed before dispatch");
     when(owner.begin(any()))
-        .thenAnswer(
-            call ->
-                CanonicalGameplayRosterReferenceEvidence.response(
-                    call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
+        .thenAnswer(call ->
+            CanonicalGameplayRosterReferenceEvidence.response(
+                call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
     doThrow(closedBeforeDispatch).when(owner).markRosterReadStarted(any());
     var client = newClient(stub, owner);
 
@@ -279,78 +273,67 @@ class CanonicalGameplayRosterClientTest {
     assertThatThrownBy(() -> client.listPreseededRoster(publishedRoute(), null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("context is required");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(), listContext().toBuilder().setAccountId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(), listContext().toBuilder().setAccountId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("account_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(), listContext().toBuilder().setSessionId("").build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(), listContext().toBuilder().setSessionId("").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("session_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(), listContext().toBuilder().setRequestId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(), listContext().toBuilder().setRequestId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("request_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder()
-                        .setPlayableStateNamespaceId(SNAPSHOT_UUID.toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder()
+                    .setPlayableStateNamespaceId(SNAPSHOT_UUID.toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("playable_state_namespace_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setTenantId(ACCOUNT_UUID.toString()).build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder().setTenantId(ACCOUNT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tenant_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setRealmId(ACCOUNT_UUID.toString()).build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder().setRealmId(ACCOUNT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("realm_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setGameInstanceId(ACCOUNT_UUID.toString()).build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder().setGameInstanceId(ACCOUNT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("game_instance_id");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(), listContext().toBuilder().setPlayableStateScope("2").build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(), listContext().toBuilder().setPlayableStateScope("2").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact SHARED or ISOLATED");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setPlayableStateScope("ISOLATED").build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder().setPlayableStateScope("ISOLATED").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match the expected target");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setCharacterId(ACTOR_UUID.toString()).build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder().setCharacterId(ACTOR_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must not select an actor");
-    assertThatThrownBy(
-            () ->
-                client.listPreseededRoster(
-                    publishedRoute(), listContext().toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            client.listPreseededRoster(
+                publishedRoute(), listContext().toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unknown fields");
 
@@ -400,16 +383,15 @@ class CanonicalGameplayRosterClientTest {
   void rejectsChangedAccountAndCompleteTargetEcho() throws Exception {
     var stub = mockStub();
     when(stub.listPreseededRoster(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
-              return CanonicalGameplayRosterResponse.newBuilder()
-                  .setCanonicalAccountUuid(TENANT_UUID.toString())
-                  .setTarget(request.getExpectedTarget())
-                  .setSnapshotUuid(SNAPSHOT_UUID.toString())
-                  .setSnapshotDigest("a".repeat(64))
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+          return CanonicalGameplayRosterResponse.newBuilder()
+              .setCanonicalAccountUuid(TENANT_UUID.toString())
+              .setTarget(request.getExpectedTarget())
+              .setSnapshotUuid(SNAPSHOT_UUID.toString())
+              .setSnapshotDigest("a".repeat(64))
+              .build();
+        });
 
     assertThatThrownBy(() -> newClient(stub).listPreseededRoster(publishedRoute(), listContext()))
         .isInstanceOf(IllegalStateException.class)
@@ -436,27 +418,23 @@ class CanonicalGameplayRosterClientTest {
   void rejectsDuplicateMalformedAndUnsupportedActors() throws Exception {
     var stub = mockStub();
     when(stub.listPreseededRoster(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
-              var duplicate = actor(ACTOR_UUID, "Pilot One");
-              return CanonicalGameplayRosterResponse.newBuilder()
-                  .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
-                  .setTarget(request.getExpectedTarget())
-                  .setSnapshotUuid(SNAPSHOT_UUID.toString())
-                  .setSnapshotDigest(
-                      snapshotDigest(
-                          ACCOUNT_UUID,
-                          request.getExpectedTarget(),
-                          List.of(
-                              ACTOR_UUID.toString(),
-                              "Pilot One",
-                              ACTOR_UUID.toString(),
-                              "Pilot One")))
-                  .addActors(duplicate)
-                  .addActors(duplicate)
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+          var duplicate = actor(ACTOR_UUID, "Pilot One");
+          return CanonicalGameplayRosterResponse.newBuilder()
+              .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+              .setTarget(request.getExpectedTarget())
+              .setSnapshotUuid(SNAPSHOT_UUID.toString())
+              .setSnapshotDigest(
+                  snapshotDigest(
+                      ACCOUNT_UUID,
+                      request.getExpectedTarget(),
+                      List.of(
+                          ACTOR_UUID.toString(), "Pilot One", ACTOR_UUID.toString(), "Pilot One")))
+              .addActors(duplicate)
+              .addActors(duplicate)
+              .build();
+        });
 
     assertThatThrownBy(() -> newClient(stub).listPreseededRoster(publishedRoute(), listContext()))
         .isInstanceOf(IllegalStateException.class)
@@ -507,17 +485,16 @@ class CanonicalGameplayRosterClientTest {
   void rejectsBadSnapshotDigestAndPropagatesEntityTransportFailures() throws Exception {
     var stub = mockStub();
     when(stub.listPreseededRoster(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
-              return CanonicalGameplayRosterResponse.newBuilder()
-                  .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
-                  .setTarget(request.getExpectedTarget())
-                  .setSnapshotUuid(SNAPSHOT_UUID.toString())
-                  .setSnapshotDigest("a".repeat(64))
-                  .addActors(actor(ACTOR_UUID, "Pilot One"))
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+          return CanonicalGameplayRosterResponse.newBuilder()
+              .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+              .setTarget(request.getExpectedTarget())
+              .setSnapshotUuid(SNAPSHOT_UUID.toString())
+              .setSnapshotDigest("a".repeat(64))
+              .addActors(actor(ACTOR_UUID, "Pilot One"))
+              .build();
+        });
     assertThatThrownBy(() -> newClient(stub).listPreseededRoster(publishedRoute(), listContext()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("snapshot_digest does not bind");
@@ -551,11 +528,10 @@ class CanonicalGameplayRosterClientTest {
     var client = newClient(stub);
     var roster = validatedRoster(client, stub);
     when(stub.readSelectedPreseededAssignment(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
-              return selectedAssignmentResponse(request);
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
+          return selectedAssignmentResponse(request);
+        });
 
     var verified = client.readSelectedPreseededAssignment(roster, selectedContext());
 
@@ -593,33 +569,28 @@ class CanonicalGameplayRosterClientTest {
     var client = newClient(stub);
     var roster = validatedRoster(client, stub);
 
-    assertThatThrownBy(
-            () ->
-                client.readSelectedPreseededAssignment(
-                    roster,
-                    selectedContext().toBuilder().setAccountId(TENANT_UUID.toString()).build()))
+    assertThatThrownBy(() ->
+            client.readSelectedPreseededAssignment(
+                roster, selectedContext().toBuilder().setAccountId(TENANT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("account does not match");
-    assertThatThrownBy(
-            () ->
-                client.readSelectedPreseededAssignment(
-                    roster,
-                    selectedContext().toBuilder()
-                        .setPlayableStateNamespaceId(SNAPSHOT_UUID.toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            client.readSelectedPreseededAssignment(
+                roster,
+                selectedContext().toBuilder()
+                    .setPlayableStateNamespaceId(SNAPSHOT_UUID.toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("playable_state_namespace_id");
-    assertThatThrownBy(
-            () ->
-                client.readSelectedPreseededAssignment(
-                    roster,
-                    selectedContext().toBuilder().setCharacterId(SNAPSHOT_UUID.toString()).build()))
+    assertThatThrownBy(() ->
+            client.readSelectedPreseededAssignment(
+                roster,
+                selectedContext().toBuilder().setCharacterId(SNAPSHOT_UUID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exactly once");
-    assertThatThrownBy(
-            () ->
-                client.readSelectedPreseededAssignment(
-                    roster, selectedContext().toBuilder().setRequestId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            client.readSelectedPreseededAssignment(
+                roster, selectedContext().toBuilder().setRequestId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("request_id");
 
@@ -633,25 +604,23 @@ class CanonicalGameplayRosterClientTest {
     var roster = validatedRoster(client, stub);
     var responseNumber = new AtomicInteger();
     when(stub.readSelectedPreseededAssignment(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
-              var response = selectedAssignmentResponse(request).toBuilder();
-              return switch (responseNumber.getAndIncrement()) {
-                case 0 ->
-                    response
-                        .setSnapshot(
-                            request.getExpectedSnapshot().toBuilder()
-                                .setSnapshotUuid(ASSIGNMENT_UUID.toString()))
-                        .build();
-                default ->
-                    response
-                        .setSnapshot(
-                            request.getExpectedSnapshot().toBuilder()
-                                .setSnapshotDigest("a".repeat(64)))
-                        .build();
-              };
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
+          var response = selectedAssignmentResponse(request).toBuilder();
+          return switch (responseNumber.getAndIncrement()) {
+            case 0 ->
+                response
+                    .setSnapshot(
+                        request.getExpectedSnapshot().toBuilder()
+                            .setSnapshotUuid(ASSIGNMENT_UUID.toString()))
+                    .build();
+            default ->
+                response
+                    .setSnapshot(
+                        request.getExpectedSnapshot().toBuilder().setSnapshotDigest("a".repeat(64)))
+                    .build();
+          };
+        });
 
     assertThatThrownBy(() -> client.readSelectedPreseededAssignment(roster, selectedContext()))
         .isInstanceOf(IllegalStateException.class)
@@ -668,20 +637,19 @@ class CanonicalGameplayRosterClientTest {
     var roster = validatedRoster(client, stub);
     var responseNumber = new AtomicInteger();
     when(stub.readSelectedPreseededAssignment(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
-              var response = selectedAssignmentResponse(request).toBuilder();
-              return switch (responseNumber.getAndIncrement()) {
-                case 0 -> response.setRequestUuid(UUID.randomUUID().toString()).build();
-                case 1 -> response.setCanonicalAccountUuid(TENANT_UUID.toString()).build();
-                case 2 -> response.setSelectedCharacterUuid(SNAPSHOT_UUID.toString()).build();
-                default ->
-                    response
-                        .setTarget(request.getExpectedTarget().toBuilder().setPointerVersion(99L))
-                        .build();
-              };
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
+          var response = selectedAssignmentResponse(request).toBuilder();
+          return switch (responseNumber.getAndIncrement()) {
+            case 0 -> response.setRequestUuid(UUID.randomUUID().toString()).build();
+            case 1 -> response.setCanonicalAccountUuid(TENANT_UUID.toString()).build();
+            case 2 -> response.setSelectedCharacterUuid(SNAPSHOT_UUID.toString()).build();
+            default ->
+                response
+                    .setTarget(request.getExpectedTarget().toBuilder().setPointerVersion(99L))
+                    .build();
+          };
+        });
 
     assertThatThrownBy(() -> client.readSelectedPreseededAssignment(roster, selectedContext()))
         .isInstanceOf(IllegalStateException.class)
@@ -707,13 +675,10 @@ class CanonicalGameplayRosterClientTest {
             .addField(101, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
     when(stub.readSelectedPreseededAssignment(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
-              return selectedAssignmentResponse(request).toBuilder()
-                  .setUnknownFields(unknown)
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterSelectedAssignmentRequest request = invocation.getArgument(0);
+          return selectedAssignmentResponse(request).toBuilder().setUnknownFields(unknown).build();
+        });
     assertThatThrownBy(() -> client.readSelectedPreseededAssignment(roster, selectedContext()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unknown fields");
@@ -881,35 +846,28 @@ class CanonicalGameplayRosterClientTest {
   void rejectsNilAccountBeforeClientUseAndRequiresWorkloadMtls() {
     var factory = mock(GrpcChannelFactory.class);
     var uninitialized = newClientWithoutStub(factory);
-    assertThatThrownBy(
-            () ->
-                uninitialized.listPreseededRoster(
-                    publishedRoute(),
-                    listContext().toBuilder().setAccountId(new UUID(0L, 0L).toString()).build()))
+    assertThatThrownBy(() ->
+            uninitialized.listPreseededRoster(
+                publishedRoute(),
+                listContext().toBuilder().setAccountId(new UUID(0L, 0L).toString()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil");
     verifyNoInteractions(factory);
 
     var plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    factory,
-                    NAMESPACE,
-                    referenceOwner()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterClient(
+                new ServiceEndpointsProperties(), plaintext, factory, NAMESPACE, referenceOwner()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayRosterClient(
-                    new ServiceEndpointsProperties(),
-                    mtlsProperties(),
-                    factory,
-                    "invalid.ns",
-                    referenceOwner()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayRosterClient(
+                new ServiceEndpointsProperties(),
+                mtlsProperties(),
+                factory,
+                "invalid.ns",
+                referenceOwner()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(factory);
@@ -1116,21 +1074,20 @@ class CanonicalGameplayRosterClientTest {
       CanonicalGameplayRosterClient client,
       CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub stub) {
     when(stub.listPreseededRoster(any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
-              return CanonicalGameplayRosterResponse.newBuilder()
-                  .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
-                  .setTarget(request.getExpectedTarget())
-                  .setSnapshotUuid(SNAPSHOT_UUID.toString())
-                  .setSnapshotDigest(
-                      snapshotDigest(
-                          ACCOUNT_UUID,
-                          request.getExpectedTarget(),
-                          List.of(ACTOR_UUID.toString(), "Pilot One")))
-                  .addActors(actor(ACTOR_UUID, "Pilot One"))
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+          return CanonicalGameplayRosterResponse.newBuilder()
+              .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+              .setTarget(request.getExpectedTarget())
+              .setSnapshotUuid(SNAPSHOT_UUID.toString())
+              .setSnapshotDigest(
+                  snapshotDigest(
+                      ACCOUNT_UUID,
+                      request.getExpectedTarget(),
+                      List.of(ACTOR_UUID.toString(), "Pilot One")))
+              .addActors(actor(ACTOR_UUID, "Pilot One"))
+              .build();
+        });
     return client.listPreseededRoster(publishedRoute(), listContext());
   }
 
@@ -1363,52 +1320,48 @@ class CanonicalGameplayRosterClientTest {
         mock(
             net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
     when(owner.begin(any()))
-        .thenAnswer(
-            call ->
-                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                    .response(
-                        call.getArgument(0),
-                        1L,
-                        java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
-                        null));
+        .thenAnswer(call ->
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+                call.getArgument(0),
+                1L,
+                java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                null));
     when(owner.read(any()))
-        .thenAnswer(
-            call -> {
-              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
-                  request = call.getArgument(0);
-              var receipt =
-                  rosterResponse(
-                      CanonicalGameplayRosterRequest.newBuilder()
-                          .setExpectedTarget(
-                              net.firedevops.firemud.common.world
-                                  .CanonicalGameplayRosterReferenceEvidence.target(request))
-                          .build(),
-                      "Pilot One");
-              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                  .response(
-                      request,
-                      1L,
-                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
-                      receipt);
-            });
+        .thenAnswer(call -> {
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request =
+              call.getArgument(0);
+          var receipt =
+              rosterResponse(
+                  CanonicalGameplayRosterRequest.newBuilder()
+                      .setExpectedTarget(
+                          net.firedevops.firemud.common.world
+                              .CanonicalGameplayRosterReferenceEvidence.target(request))
+                      .build(),
+                  "Pilot One");
+          return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+              .response(
+                  request,
+                  1L,
+                  java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                  receipt);
+        });
     when(owner.selectOriginal(any(), any()))
-        .thenAnswer(
-            call -> {
-              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
-                  request = call.getArgument(0);
-              UUID selectedCharacter = call.getArgument(1);
-              var original = owner.read(request);
-              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                  .requireResponse(
-                      request,
-                      original.toBuilder()
-                          .setSelectionInput(
-                              net.firedevops.firemud.gamesession.v1
-                                  .CanonicalGameplayRosterSelectionInput.newBuilder()
-                                  .setSchemaVersion(1))
-                          .setSelectedCharacterUuid(selectedCharacter.toString())
-                          .build());
-            });
+        .thenAnswer(call -> {
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request =
+              call.getArgument(0);
+          UUID selectedCharacter = call.getArgument(1);
+          var original = owner.read(request);
+          return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+              .requireResponse(
+                  request,
+                  original.toBuilder()
+                      .setSelectionInput(
+                          net.firedevops.firemud.gamesession.v1
+                              .CanonicalGameplayRosterSelectionInput.newBuilder()
+                              .setSchemaVersion(1))
+                      .setSelectedCharacterUuid(selectedCharacter.toString())
+                      .build());
+        });
     var beans = new StaticListableBeanFactory();
     beans.addBean("controlledReferenceOwner", owner);
     return beans.getBeanProvider(

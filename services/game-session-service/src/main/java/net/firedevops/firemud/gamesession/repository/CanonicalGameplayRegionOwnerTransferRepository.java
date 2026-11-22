@@ -101,12 +101,11 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   FrozenOriginal frozenOriginal(UUID transitionId) {
     noSql();
     return sql()
-        .transactionResult(
-            configuration -> {
-              DSLContext transaction = DSL.using(configuration);
-              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              return readFrozenOriginal(transaction, transitionId);
-            });
+        .transactionResult(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return readFrozenOriginal(transaction, transitionId);
+        });
   }
 
   private FrozenOriginal readFrozenOriginal(DSLContext tx, UUID transitionId) {
@@ -200,19 +199,17 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayRegionRuntimeStatus prior) {
     noSql();
     sql()
-        .transaction(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              // Bridge retries take inventory before region. Retained tag validation below must
-              // join this transaction, so no separate connection waits behind our own clock lock.
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
-              requireOldOwner(tx, source, prior);
-              var row = current(tx, original.transferId(), true);
-              if (!sourceDigest(source, prior).equals(row.get("source_digest", String.class))
-                  || !original.equals(
-                      readFrozenOriginal(tx, original.candidate().bindingDecisionId())))
-                throw unavailable();
-            });
+        .transaction(configuration -> {
+          var tx = DSL.using(configuration);
+          // Bridge retries take inventory before region. Retained tag validation below must
+          // join this transaction, so no separate connection waits behind our own clock lock.
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
+          requireOldOwner(tx, source, prior);
+          var row = current(tx, original.transferId(), true);
+          if (!sourceDigest(source, prior).equals(row.get("source_digest", String.class))
+              || !original.equals(readFrozenOriginal(tx, original.candidate().bindingDecisionId())))
+            throw unavailable();
+        });
   }
 
   UUID begin(
@@ -221,46 +218,45 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     noSql();
     String sourceDigest = sourceDigest(source, prior);
     return sql()
-        .transactionResult(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-              requireOldOwner(tx, source, prior);
-              Record old =
-                  tx.fetchOne(
-                      "SELECT * FROM " + TRANSFER + " WHERE old_owner_fence=?",
-                      prior.executorFence().longValueExact());
-              if (old != null) {
-                if (!sourceDigest.equals(old.get("source_digest", String.class))
-                    || !"FROZEN".equals(old.get("state", String.class))) throw unavailable();
-                return old.get("transfer_id", UUID.class);
-              }
-              if (!exists(
-                  tx,
-                  "SELECT 1" + PENDING,
+        .transactionResult(configuration -> {
+          var tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+          requireOldOwner(tx, source, prior);
+          Record old =
+              tx.fetchOne(
+                  "SELECT * FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                  prior.executorFence().longValueExact());
+          if (old != null) {
+            if (!sourceDigest.equals(old.get("source_digest", String.class))
+                || !"FROZEN".equals(old.get("state", String.class))) throw unavailable();
+            return old.get("transfer_id", UUID.class);
+          }
+          if (!exists(
+              tx,
+              "SELECT 1" + PENDING,
+              source.tenantId(),
+              source.gameInstanceId(),
+              source.regionId())) return null;
+          UUID id = UUID.randomUUID();
+          String intentDigest =
+              digest(bytes("region-owner-transfer/v1/" + id + "/" + sourceDigest));
+          if (tx.execute(
+                  "INSERT INTO "
+                      + TRANSFER
+                      + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,old_lease_correlation,source_digest,intent_digest,state) VALUES (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
+                  id,
                   source.tenantId(),
                   source.gameInstanceId(),
-                  source.regionId())) return null;
-              UUID id = UUID.randomUUID();
-              String intentDigest =
-                  digest(bytes("region-owner-transfer/v1/" + id + "/" + sourceDigest));
-              if (tx.execute(
-                      "INSERT INTO "
-                          + TRANSFER
-                          + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,old_lease_correlation,source_digest,intent_digest,state) VALUES (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
-                      id,
-                      source.tenantId(),
-                      source.gameInstanceId(),
-                      source.regionId(),
-                      prior.regionEpoch(),
-                      prior.ownerInstanceId(),
-                      prior.executorFence().longValueExact(),
-                      prior.leaseTokenCorrelation(),
-                      sourceDigest,
-                      intentDigest)
-                  != 1) throw unavailable();
-              return id;
-            });
+                  source.regionId(),
+                  prior.regionEpoch(),
+                  prior.ownerInstanceId(),
+                  prior.executorFence().longValueExact(),
+                  prior.leaseTokenCorrelation(),
+                  sourceDigest,
+                  intentDigest)
+              != 1) throw unavailable();
+          return id;
+        });
   }
 
   /**
@@ -270,58 +266,57 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   List<Item> capture(UUID transferId) {
     noSql();
     sql()
-        .transaction(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              Record transfer = current(tx, transferId, true);
-              var rows =
-                  tx.fetch(
-                      "SELECT DISTINCT e.execution_digest"
-                          + PENDING
-                          + " AND NOT EXISTS (SELECT 1 FROM "
+        .transaction(configuration -> {
+          var tx = DSL.using(configuration);
+          Record transfer = current(tx, transferId, true);
+          var rows =
+              tx.fetch(
+                  "SELECT DISTINCT e.execution_digest"
+                      + PENDING
+                      + " AND NOT EXISTS (SELECT 1 FROM "
+                      + ITEM
+                      + " i WHERE i.transfer_id=? AND i.execution_digest=e.execution_digest)"
+                      + " ORDER BY e.execution_digest LIMIT ?",
+                  transfer.get("tenant_id", UUID.class),
+                  transfer.get("game_instance_id", UUID.class),
+                  transfer.get("region_id", UUID.class),
+                  transferId,
+                  PAGE_SIZE);
+          long ordinal =
+              tx.fetchSingle(
+                      "SELECT coalesce(max(target_ordinal),-1) FROM "
                           + ITEM
-                          + " i WHERE i.transfer_id=? AND i.execution_digest=e.execution_digest)"
-                          + " ORDER BY e.execution_digest LIMIT ?",
-                      transfer.get("tenant_id", UUID.class),
-                      transfer.get("game_instance_id", UUID.class),
-                      transfer.get("region_id", UUID.class),
-                      transferId,
-                      PAGE_SIZE);
-              long ordinal =
-                  tx.fetchSingle(
-                          "SELECT coalesce(max(target_ordinal),-1) FROM "
-                              + ITEM
-                              + " WHERE transfer_id=?",
-                          transferId)
-                      .get(0, Long.class);
-              for (Record row : rows) {
-                String executionDigest = row.get("execution_digest", String.class);
-                // The actual retained execution and original candidate, never a caller selector.
-                Record retained =
-                    tx.fetchSingle(
-                        "SELECT canonical_execution,tenant_gameplay_tag FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
-                        executionDigest);
-                var execution = decode(retained.get("canonical_execution", byte[].class));
-                ordinal = Math.incrementExact(ordinal);
-                String tag = retained.get("tenant_gameplay_tag", String.class);
-                String namespace = execution.request().targetNamespace();
-                int allocation =
-                    tags.requireRetainedAllocation(
-                        tx, execution.request().identity().tenantId(), tag, namespace);
-                tx.execute(
-                    "INSERT INTO "
-                        + ITEM
-                        + " (transfer_id,target_ordinal,execution_digest,canonical_execution,candidate_digest,tenant_gameplay_tag,workload_namespace,allocation_version) VALUES (?,?,?,?,?,?,?,?)",
-                    transferId,
-                    ordinal,
-                    executionDigest,
-                    execution.canonicalBytes(),
-                    execution.candidateDigest(),
-                    tag,
-                    namespace,
-                    allocation);
-              }
-            });
+                          + " WHERE transfer_id=?",
+                      transferId)
+                  .get(0, Long.class);
+          for (Record row : rows) {
+            String executionDigest = row.get("execution_digest", String.class);
+            // The actual retained execution and original candidate, never a caller selector.
+            Record retained =
+                tx.fetchSingle(
+                    "SELECT canonical_execution,tenant_gameplay_tag FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                    executionDigest);
+            var execution = decode(retained.get("canonical_execution", byte[].class));
+            ordinal = Math.incrementExact(ordinal);
+            String tag = retained.get("tenant_gameplay_tag", String.class);
+            String namespace = execution.request().targetNamespace();
+            int allocation =
+                tags.requireRetainedAllocation(
+                    tx, execution.request().identity().tenantId(), tag, namespace);
+            tx.execute(
+                "INSERT INTO "
+                    + ITEM
+                    + " (transfer_id,target_ordinal,execution_digest,canonical_execution,candidate_digest,tenant_gameplay_tag,workload_namespace,allocation_version) VALUES (?,?,?,?,?,?,?,?)",
+                transferId,
+                ordinal,
+                executionDigest,
+                execution.canonicalBytes(),
+                execution.candidateDigest(),
+                tag,
+                namespace,
+                allocation);
+          }
+        });
     List<Item> result = new ArrayList<>();
     for (Record row :
         sql()
@@ -408,82 +403,78 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   FenceDispatch fenceDispatch(
       Item item, CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before) {
     return sql()
-        .transactionResult(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              Record transfer = current(tx, item.transferId(), true);
-              requireObservation(readCurrent(tx, item.transferId(), item.ordinal()), before);
-              String incarnation = transfer.get("incarnation_digest", String.class);
-              if (incarnation != null && !incarnation.equals(before.incarnationDigest()))
-                throw unavailable();
-              Record prior =
-                  tx.fetchOne(
-                      "SELECT * FROM "
-                          + ITEM
-                          + " WHERE execution_digest=? AND fence_dispatch_id IS NOT NULL",
-                      item.execution().digest());
-              if (prior != null) {
-                if (!before.incarnationDigest().equals(prior.get("fence_dispatch_incarnation")))
-                  throw unavailable();
-                if (prior.get("fence_prepare_ids", UUID[].class) == null
-                    || !item.transferId().equals(prior.get("transfer_id", UUID.class))
-                    || item.ordinal() != prior.get("target_ordinal", Long.class)
-                    || prior.get("fence_readback", byte[].class) != null)
-                  return new FenceDispatch(item, null);
-                return new FenceDispatch(
-                    item,
-                    prior.get("fence_dispatch_id", UUID.class),
-                    before.incarnationDigest(),
-                    prior.get("fence_prepare_seal", UUID.class),
-                    this);
-              }
-              if (exists(
-                  tx,
-                  "SELECT 1 FROM "
+        .transactionResult(configuration -> {
+          var tx = DSL.using(configuration);
+          Record transfer = current(tx, item.transferId(), true);
+          requireObservation(readCurrent(tx, item.transferId(), item.ordinal()), before);
+          String incarnation = transfer.get("incarnation_digest", String.class);
+          if (incarnation != null && !incarnation.equals(before.incarnationDigest()))
+            throw unavailable();
+          Record prior =
+              tx.fetchOne(
+                  "SELECT * FROM "
                       + ITEM
-                      + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
-                  item.execution().digest())) return new FenceDispatch(item, null);
-              if (clock.millis() >= before.expiresAtEpochMillis()) throw unavailable();
-              UUID dispatchId = UUID.randomUUID();
-              if (tx.execute(
-                      "UPDATE "
-                          + ITEM
-                          + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?,fence_prepare_ids=ARRAY[]::uuid[] WHERE transfer_id=? AND target_ordinal=? AND execution_digest=? AND fence_readback IS NULL AND fence_dispatch_id IS NULL",
-                      dispatchId,
-                      before.incarnationDigest(),
-                      item.transferId(),
-                      item.ordinal(),
-                      item.execution().digest())
-                  != 1) throw unavailable();
-              return new FenceDispatch(item, dispatchId, before.incarnationDigest(), null, this);
-            });
+                      + " WHERE execution_digest=? AND fence_dispatch_id IS NOT NULL",
+                  item.execution().digest());
+          if (prior != null) {
+            if (!before.incarnationDigest().equals(prior.get("fence_dispatch_incarnation")))
+              throw unavailable();
+            if (prior.get("fence_prepare_ids", UUID[].class) == null
+                || !item.transferId().equals(prior.get("transfer_id", UUID.class))
+                || item.ordinal() != prior.get("target_ordinal", Long.class)
+                || prior.get("fence_readback", byte[].class) != null)
+              return new FenceDispatch(item, null);
+            return new FenceDispatch(
+                item,
+                prior.get("fence_dispatch_id", UUID.class),
+                before.incarnationDigest(),
+                prior.get("fence_prepare_seal", UUID.class),
+                this);
+          }
+          if (exists(
+              tx,
+              "SELECT 1 FROM " + ITEM + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
+              item.execution().digest())) return new FenceDispatch(item, null);
+          if (clock.millis() >= before.expiresAtEpochMillis()) throw unavailable();
+          UUID dispatchId = UUID.randomUUID();
+          if (tx.execute(
+                  "UPDATE "
+                      + ITEM
+                      + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?,fence_prepare_ids=ARRAY[]::uuid[] WHERE transfer_id=? AND target_ordinal=? AND execution_digest=? AND fence_readback IS NULL AND fence_dispatch_id IS NULL",
+                  dispatchId,
+                  before.incarnationDigest(),
+                  item.transferId(),
+                  item.ordinal(),
+                  item.execution().digest())
+              != 1) throw unavailable();
+          return new FenceDispatch(item, dispatchId, before.incarnationDigest(), null, this);
+        });
   }
 
   private PreparationSubmission issuePreparation(FenceDispatch dispatch) {
     return sql()
-        .transactionResult(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              current(tx, dispatch.item.transferId(), true);
-              Record row = lockedDispatch(tx, dispatch);
-              UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
-              if (issued == null
-                  || issued.length >= 16
-                  || row.get("fence_prepare_seal", UUID.class) != null
-                  || row.get("fence_readback", byte[].class) != null) throw unavailable();
-              UUID nonce = UUID.randomUUID();
-              if (tx.execute(
-                      "UPDATE "
-                          + ITEM
-                          + " SET fence_prepare_ids=array_append(fence_prepare_ids,?::uuid) WHERE transfer_id=? AND target_ordinal=? AND fence_prepare_seal IS NULL",
-                      nonce,
-                      dispatch.item.transferId(),
-                      dispatch.item.ordinal())
-                  != 1) throw unavailable();
-              // Only this acknowledged transaction creator gets the non-reconstructible one-use
-              // capability.
-              return new PreparationSubmission(dispatch.item, dispatch.id, nonce);
-            });
+        .transactionResult(configuration -> {
+          var tx = DSL.using(configuration);
+          current(tx, dispatch.item.transferId(), true);
+          Record row = lockedDispatch(tx, dispatch);
+          UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
+          if (issued == null
+              || issued.length >= 16
+              || row.get("fence_prepare_seal", UUID.class) != null
+              || row.get("fence_readback", byte[].class) != null) throw unavailable();
+          UUID nonce = UUID.randomUUID();
+          if (tx.execute(
+                  "UPDATE "
+                      + ITEM
+                      + " SET fence_prepare_ids=array_append(fence_prepare_ids,?::uuid) WHERE transfer_id=? AND target_ordinal=? AND fence_prepare_seal IS NULL",
+                  nonce,
+                  dispatch.item.transferId(),
+                  dispatch.item.ordinal())
+              != 1) throw unavailable();
+          // Only this acknowledged transaction creator gets the non-reconstructible one-use
+          // capability.
+          return new PreparationSubmission(dispatch.item, dispatch.id, nonce);
+        });
   }
 
   private Record lockedDispatch(DSLContext tx, FenceDispatch dispatch) {
@@ -504,54 +495,52 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.PreparedTransferReceipt receipt) {
     receipt.requireExact(dispatch.item.execution(), dispatch.id, dispatch.incarnation);
     sql()
-        .transaction(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              current(tx, dispatch.item.transferId(), true);
-              Record row = lockedDispatch(tx, dispatch);
-              UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
-              if (issued == null || !Arrays.asList(issued).contains(receipt.nonce()))
-                throw unavailable();
-              UUID sealed = row.get("fence_prepare_seal", UUID.class);
-              if (sealed != null) {
-                if (!sealed.equals(receipt.nonce())) throw unavailable();
-                return;
-              }
-              if (receipt.applied() || row.get("fence_readback", byte[].class) != null)
-                throw unavailable();
-              if (tx.execute(
-                      "UPDATE "
-                          + ITEM
-                          + " SET fence_prepare_seal=? WHERE transfer_id=? AND target_ordinal=? AND fence_prepare_seal IS NULL",
-                      receipt.nonce(),
-                      dispatch.item.transferId(),
-                      dispatch.item.ordinal())
-                  != 1) throw unavailable();
-            });
+        .transaction(configuration -> {
+          var tx = DSL.using(configuration);
+          current(tx, dispatch.item.transferId(), true);
+          Record row = lockedDispatch(tx, dispatch);
+          UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
+          if (issued == null || !Arrays.asList(issued).contains(receipt.nonce()))
+            throw unavailable();
+          UUID sealed = row.get("fence_prepare_seal", UUID.class);
+          if (sealed != null) {
+            if (!sealed.equals(receipt.nonce())) throw unavailable();
+            return;
+          }
+          if (receipt.applied() || row.get("fence_readback", byte[].class) != null)
+            throw unavailable();
+          if (tx.execute(
+                  "UPDATE "
+                      + ITEM
+                      + " SET fence_prepare_seal=? WHERE transfer_id=? AND target_ordinal=? AND fence_prepare_seal IS NULL",
+                  receipt.nonce(),
+                  dispatch.item.transferId(),
+                  dispatch.item.ordinal())
+              != 1) throw unavailable();
+        });
     dispatch.sealedNonce = receipt.nonce();
   }
 
   private boolean claimApply(FenceDispatch dispatch) {
     return sql()
-        .transactionResult(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              current(tx, dispatch.item.transferId(), true);
-              Record row = lockedDispatch(tx, dispatch);
-              if (!dispatch.sealedNonce().equals(row.get("fence_prepare_seal", UUID.class)))
-                throw unavailable();
-              if (Boolean.TRUE.equals(row.get("fence_apply_issued", Boolean.class))) return false;
-              if (tx.execute(
-                      "UPDATE "
-                          + ITEM
-                          + " SET fence_apply_issued=true WHERE transfer_id=? AND target_ordinal=? AND NOT fence_apply_issued",
-                      dispatch.item.transferId(),
-                      dispatch.item.ordinal())
-                  != 1) throw unavailable();
-              // Only the acknowledged issuer may submit APPLY. Every reconstructed owner observes
-              // only.
-              return true;
-            });
+        .transactionResult(configuration -> {
+          var tx = DSL.using(configuration);
+          current(tx, dispatch.item.transferId(), true);
+          Record row = lockedDispatch(tx, dispatch);
+          if (!dispatch.sealedNonce().equals(row.get("fence_prepare_seal", UUID.class)))
+            throw unavailable();
+          if (Boolean.TRUE.equals(row.get("fence_apply_issued", Boolean.class))) return false;
+          if (tx.execute(
+                  "UPDATE "
+                      + ITEM
+                      + " SET fence_apply_issued=true WHERE transfer_id=? AND target_ordinal=? AND NOT fence_apply_issued",
+                  dispatch.item.transferId(),
+                  dispatch.item.ordinal())
+              != 1) throw unavailable();
+          // Only the acknowledged issuer may submit APPLY. Every reconstructed owner observes
+          // only.
+          return true;
+        });
   }
 
   void retainFence(
@@ -565,54 +554,50 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     if (!before.incarnationDigest().equals(after.incarnationDigest())
         || !item.execution().digest().equals(actual.executionDigest())) throw unavailable();
     sql()
-        .transaction(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              Record transfer = current(tx, item.transferId(), true);
-              String retained = transfer.get("incarnation_digest", String.class);
-              if (retained != null && !retained.equals(after.incarnationDigest()))
-                throw unavailable();
-              tx.execute(
-                  "UPDATE "
-                      + TRANSFER
-                      + " SET incarnation_digest=? WHERE transfer_id=? AND incarnation_digest IS NULL",
-                  after.incarnationDigest(),
-                  item.transferId());
-              Record row =
-                  tx.fetchSingle(
-                      "SELECT * FROM "
-                          + ITEM
-                          + " WHERE transfer_id=? AND target_ordinal=? FOR UPDATE",
-                      item.transferId(),
-                      item.ordinal());
-              byte[] prior = row.get("fence_readback", byte[].class);
-              if (prior != null && !Arrays.equals(prior, actual.canonicalReadback()))
-                throw unavailable();
-              UUID dispatchId = row.get("fence_dispatch_id", UUID.class);
-              if (dispatchId != null
-                  && (!actual.provesDispatchEnded(dispatchId)
-                      || !before.incarnationDigest().equals(row.get("fence_dispatch_incarnation"))))
-                throw unavailable();
-              if (exists(
-                  tx,
-                  "SELECT 1 FROM "
-                      + ITEM
-                      + " WHERE execution_digest=? AND fence_readback IS NOT NULL"
-                      + " AND (fence_readback IS DISTINCT FROM ? OR incarnation_digest IS DISTINCT FROM ?)",
-                  item.execution().digest(),
-                  actual.canonicalReadback(),
-                  after.incarnationDigest())) throw unavailable();
-              tx.execute(
-                  "UPDATE "
-                      + ITEM
-                      + " SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,after_payload_digest=? WHERE transfer_id=? AND target_ordinal=? AND fence_readback IS NULL",
-                  actual.canonicalReadback(),
-                  after.incarnationDigest(),
-                  before.payloadDigest(),
-                  after.payloadDigest(),
+        .transaction(configuration -> {
+          var tx = DSL.using(configuration);
+          Record transfer = current(tx, item.transferId(), true);
+          String retained = transfer.get("incarnation_digest", String.class);
+          if (retained != null && !retained.equals(after.incarnationDigest())) throw unavailable();
+          tx.execute(
+              "UPDATE "
+                  + TRANSFER
+                  + " SET incarnation_digest=? WHERE transfer_id=? AND incarnation_digest IS NULL",
+              after.incarnationDigest(),
+              item.transferId());
+          Record row =
+              tx.fetchSingle(
+                  "SELECT * FROM " + ITEM + " WHERE transfer_id=? AND target_ordinal=? FOR UPDATE",
                   item.transferId(),
                   item.ordinal());
-            });
+          byte[] prior = row.get("fence_readback", byte[].class);
+          if (prior != null && !Arrays.equals(prior, actual.canonicalReadback()))
+            throw unavailable();
+          UUID dispatchId = row.get("fence_dispatch_id", UUID.class);
+          if (dispatchId != null
+              && (!actual.provesDispatchEnded(dispatchId)
+                  || !before.incarnationDigest().equals(row.get("fence_dispatch_incarnation"))))
+            throw unavailable();
+          if (exists(
+              tx,
+              "SELECT 1 FROM "
+                  + ITEM
+                  + " WHERE execution_digest=? AND fence_readback IS NOT NULL"
+                  + " AND (fence_readback IS DISTINCT FROM ? OR incarnation_digest IS DISTINCT FROM ?)",
+              item.execution().digest(),
+              actual.canonicalReadback(),
+              after.incarnationDigest())) throw unavailable();
+          tx.execute(
+              "UPDATE "
+                  + ITEM
+                  + " SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,after_payload_digest=? WHERE transfer_id=? AND target_ordinal=? AND fence_readback IS NULL",
+              actual.canonicalReadback(),
+              after.incarnationDigest(),
+              before.payloadDigest(),
+              after.payloadDigest(),
+              item.transferId(),
+              item.ordinal());
+        });
   }
 
   /** Private capability is minted only after a complete current physical verification pass. */
@@ -677,38 +662,33 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     requireObservation(readCurrent(item.transferId(), item.ordinal()), after);
     if (!before.incarnationDigest().equals(after.incarnationDigest())) throw unavailable();
     sql()
-        .transaction(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              Record transfer = current(tx, item.transferId(), true);
-              if (!after
-                  .incarnationDigest()
-                  .equals(transfer.get("incarnation_digest", String.class))) throw unavailable();
-              Record row =
-                  tx.fetchSingle(
-                      "SELECT fence_readback FROM "
-                          + ITEM
-                          + " WHERE transfer_id=? AND target_ordinal=?",
-                      item.transferId(),
-                      item.ordinal());
-              if (!Arrays.equals(
-                  actual.canonicalReadback(), row.get("fence_readback", byte[].class)))
-                throw unavailable();
-              tx.execute(
-                  "UPDATE "
+        .transaction(configuration -> {
+          var tx = DSL.using(configuration);
+          Record transfer = current(tx, item.transferId(), true);
+          if (!after.incarnationDigest().equals(transfer.get("incarnation_digest", String.class)))
+            throw unavailable();
+          Record row =
+              tx.fetchSingle(
+                  "SELECT fence_readback FROM "
                       + ITEM
-                      + " SET verified_round=? WHERE transfer_id=? AND target_ordinal=?",
-                  transfer.get("verification_round", UUID.class),
+                      + " WHERE transfer_id=? AND target_ordinal=?",
                   item.transferId(),
                   item.ordinal());
-              tx.execute(
-                  "UPDATE "
-                      + TRANSFER
-                      + " SET verification_cursor=? WHERE transfer_id=? AND verification_cursor<?",
-                  item.ordinal(),
-                  item.transferId(),
-                  item.ordinal());
-            });
+          if (!Arrays.equals(actual.canonicalReadback(), row.get("fence_readback", byte[].class)))
+            throw unavailable();
+          tx.execute(
+              "UPDATE " + ITEM + " SET verified_round=? WHERE transfer_id=? AND target_ordinal=?",
+              transfer.get("verification_round", UUID.class),
+              item.transferId(),
+              item.ordinal());
+          tx.execute(
+              "UPDATE "
+                  + TRANSFER
+                  + " SET verification_cursor=? WHERE transfer_id=? AND verification_cursor<?",
+              item.ordinal(),
+              item.transferId(),
+              item.ordinal());
+        });
   }
 
   boolean finishVerification(UUID transferId) {
@@ -819,12 +799,11 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       return within(deadline, ignored -> readCurrent(transferId, targetOrdinal, deadline));
     if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
     return sql()
-        .transactionResult(
-            configuration -> {
-              DSLContext transaction = DSL.using(configuration);
-              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              return readCurrent(transaction, transferId, targetOrdinal);
-            });
+        .transactionResult(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return readCurrent(transaction, transferId, targetOrdinal);
+        });
   }
 
   private Context readCurrent(DSLContext transaction, UUID transferId, long targetOrdinal) {
@@ -914,12 +893,11 @@ final class CanonicalGameplayRegionOwnerTransferRepository
 
   private Item readItem(UUID transferId, long ordinal, String executionDigest) {
     return sql()
-        .transactionResult(
-            configuration -> {
-              DSLContext transaction = DSL.using(configuration);
-              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              return loadItem(transaction, transferId, ordinal, executionDigest);
-            });
+        .transactionResult(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return loadItem(transaction, transferId, ordinal, executionDigest);
+        });
   }
 
   private Item loadItem(DSLContext tx, UUID transferId, long ordinal, String executionDigest) {
