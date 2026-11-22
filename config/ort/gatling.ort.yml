@@ -9,3 +9,10 @@ resolutions:
         distributing, copying, reusing, or modifying its code or generated
         components. This resolution does not change the LicenseRef text or
         generated notices.
+    - message: '^The license LicenseRef-Gatling-Highcharts-3\.16\.0 is currently not covered by policy rules\. The license was declared in package ''Maven:io\.gatling\.highcharts:gatling-charts-highcharts:3\.16\.1''\.$'
+      reason: NOT_MODIFIED_EXCEPTION
+      comment: >-
+        User-approved exception for this exact artifact and byte-identical
+        license text, limited to internal use of the delivered, unchanged
+        Gatling Highcharts 3.16.1 report generator. No distributing, copying,
+        reusing, or modifying its code or generated components.

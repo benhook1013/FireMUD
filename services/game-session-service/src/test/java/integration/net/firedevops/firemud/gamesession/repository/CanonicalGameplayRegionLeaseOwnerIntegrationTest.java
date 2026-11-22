@@ -146,6 +146,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   void transferInstallationIncarnationReadReturnsByFrozenDeadlineWhenSourceStalls()
       throws Exception {
     WorldFixture world = WorldFixture.open();
+    var operationClock = Clock.fixed(NOW, ZoneOffset.UTC);
     var blockedSource = new BlockingStableIncarnationSource();
     var owner =
         new CanonicalGameplayRegionLeaseOwner(
@@ -163,23 +164,30 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 "controlled-sha",
                 "controlled-image"),
             Duration.ofSeconds(30),
-            Clock.systemUTC());
+            operationClock);
     var source = source(world.originalEvidence());
-    long deadline = System.currentTimeMillis() + 300L;
+    long deadline = operationClock.millis() + 300L;
     var transferOwner = mock(CanonicalGameplayRegionOwnerTransferCoordinator.class);
-    long startedAt = System.nanoTime();
-    CompletableFuture<CanonicalGameplayRegionIncarnationSource.StableEvidence> read =
-        CompletableFuture.supplyAsync(
-            () -> owner.readInstallationIncarnation(transferOwner, deadline, source));
+    record ReadOutcome(Throwable failure, long elapsedNanos) {}
+    var read =
+        CompletableFuture.supplyAsync(() -> {
+          long startedAt = System.nanoTime();
+          Throwable failure =
+              catchThrowable(() -> owner.readInstallationIncarnation(transferOwner, deadline, source));
+          return new ReadOutcome(failure, System.nanoTime() - startedAt);
+        });
 
     try {
       assertThat(blockedSource.entered.await(2, TimeUnit.SECONDS)).isTrue();
-      Throwable failure = catchThrowable(() -> read.get(2, TimeUnit.SECONDS));
-      long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
-      assertThat(failure).isInstanceOf(java.util.concurrent.ExecutionException.class);
-      assertThat(failure.getCause())
+      // The latch keeps the source unavailable; this longer wait is only a test watchdog.
+      var outcome = read.get(2, TimeUnit.SECONDS);
+      assertThat(blockedSource.release.getCount()).isEqualTo(1L);
+      assertThat(outcome.failure())
+          .isInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW capacity execution budget is unavailable");
-      assertThat(elapsedMillis).isLessThan(2_000L);
+      assertThat(TimeUnit.NANOSECONDS.toMillis(outcome.elapsedNanos()))
+          .as("elapsed caller time for the 300 ms budget, including scheduling allowance")
+          .isBetween(250L, 1_000L);
     } finally {
       blockedSource.release.countDown();
     }
@@ -646,6 +654,70 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
       assertThat(redis.admin().type(redisKey)).isEqualTo("string");
       assertThat(redis.admin().pttl(redisKey)).isPositive();
+
+      // Exercise the receiving repository's ordinary path with an actual, current Redis grant.
+      // This does not change the service's frozen-transfer coordinator or select a new route.
+      world.resetReads();
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      assertThat(redis.admin().get(redisKey)).isNull();
+      assertThat(
+              CanonicalGameplayRegionOwnerTransferRepository.frozen(
+                  dsl,
+                  qualifiedSource.tenantId(),
+                  qualifiedSource.gameInstanceId(),
+                  qualifiedSource.regionId()))
+          .isFalse();
+      var ordinaryIdentity =
+          new RuntimeIdentity(
+              "game-session-service",
+              "instance-ordinary",
+              "localhost",
+              NOW,
+              "controlled-test",
+              "controlled-sha",
+              "controlled-image");
+      long retainedEpoch = ownerStatusBeforeSqlOutage.regionEpoch();
+      var ordinaryGrant =
+          redisOwner.acquire(
+              qualifiedSource, retainedEpoch, Duration.ofSeconds(30), ordinaryIdentity);
+      redisOwner.requireGrantScope(ordinaryGrant, qualifiedSource, retainedEpoch, ordinaryIdentity);
+      redisOwner.requireCurrent(ordinaryGrant);
+      redisOwner.verifyInitializedTimeline(ordinaryGrant, preparation);
+      var ordinarySuccessor =
+          statusRepository.installOwner(
+              qualifiedSource,
+              retainedEpoch,
+              ownerStatusBeforeSqlOutage,
+              ordinaryGrant.tokenCorrelation(),
+              ordinaryGrant.ownerService(),
+              ordinaryGrant.ownerInstanceId(),
+              Instant.now());
+      redisOwner.requireGrantScope(ordinaryGrant, qualifiedSource, retainedEpoch, ordinaryIdentity);
+      redisOwner.requireCurrent(ordinaryGrant);
+      redisOwner.verifyInitializedTimeline(ordinaryGrant, preparation);
+      assertThat(
+              incarnationSource
+                  .readCurrent(
+                      CanonicalGameplayRegionIncarnationSource.RegionScope.from(qualifiedSource))
+                  .stableCanonicalBytes())
+          .containsExactly(currentIncarnation.stableCanonicalBytes());
+      assertThat(ordinarySuccessor.executorFence())
+          .isGreaterThan(ownerStatusBeforeSqlOutage.executorFence());
+      assertThat(ordinarySuccessor.regionEpoch()).isEqualTo(retainedEpoch);
+      assertThat(ordinarySuccessor.leaseTokenCorrelation())
+          .isEqualTo(ordinaryGrant.tokenCorrelation());
+      assertThat(ordinarySuccessor.lastCommittedTickId())
+          .isEqualTo(ownerStatusBeforeSqlOutage.lastCommittedTickId());
+      assertThat(ordinarySuccessor.lastCommittedTickBatchId())
+          .isEqualTo(ownerStatusBeforeSqlOutage.lastCommittedTickBatchId());
+      assertThat(statusRepository.find(qualifiedSource)).contains(ordinarySuccessor);
+      assertThat(
+              CanonicalGameplayRegionOwnerTransferRepository.frozen(
+                  dsl,
+                  qualifiedSource.tenantId(),
+                  qualifiedSource.gameInstanceId(),
+                  qualifiedSource.regionId()))
+          .isFalse();
     }
   }
 
@@ -933,6 +1005,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         var entered = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
         var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
+        var acknowledgedClaim =
+            new AtomicReference<
+                CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>();
+        var recoveredClaim =
+            new AtomicReference<
+                CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>();
         try (var context = io.grpc.Context.current().withCancellation();
             var session =
                 deadlineBoundRedisOwner.prepareTimelineInitialization(
@@ -971,9 +1049,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                 }
                                 if (!released)
                                   throw new AssertionError("test release was not signalled");
-                                return claimAfterCancellation
-                                    ? statusRepository.beginInitialTimeline(preparation, NOW)
-                                    : permit;
+                                var completedClaim =
+                                    claimAfterCancellation
+                                        ? statusRepository.beginInitialTimeline(preparation, NOW)
+                                        : permit;
+                                completedClaim.ifPresent(acknowledgedClaim::set);
+                                return completedClaim;
                               },
                               abandoned ->
                                   abandoned.ifPresent(permit -> {
@@ -983,6 +1064,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                         CanonicalGameplayRegionLeaseRedisOwner
                                             .revokeUndispatchedInitialization(permit));
                                     owner.recoverNoWrite(preparation, retained);
+                                    recoveredClaim.set(permit);
                                   }),
                               lifetime);
                           outcome.complete(
@@ -1004,6 +1086,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               .isInstanceOf(IllegalStateException.class);
           release.countDown();
           lifetime.get(5, java.util.concurrent.TimeUnit.SECONDS);
+          assertThat(acknowledgedClaim.get()).as("actual acknowledged SQL claim").isNotNull();
+          assertThat(recoveredClaim.get())
+              .as("same claim completed through the abandoned-result callback")
+              .isSameAs(acknowledgedClaim.get());
           assertThat(
                   testSchema
                       .dsl()

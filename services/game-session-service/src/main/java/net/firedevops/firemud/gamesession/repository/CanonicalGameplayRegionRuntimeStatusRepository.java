@@ -940,10 +940,12 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             }
             throw unavailable();
           }
-          if (prior == null || !current.equals(prior)) throw unavailable();
-          // Past-outcome custody remains with the original. Only exact terminal retention
-          // or privately qualified future exclusion permits this normal owner handoff.
-          // Lease expiry alone cannot satisfy either condition.
+          if (prior == null || !current.equals(prior)) {
+            throw new ExistingOwnerReplacementRefused();
+          }
+          // The caller must hold the fresh Redis grant for this exact region generation.
+          // An ordinary replacement cannot take unresolved predecessor execution custody.
+          // Where a frozen transfer exists, the completion checks below still govern.
           // Capacity authorization takes this same row lock before creating that custody.
           if (transaction.fetchExists(
                   DSL.selectOne()
@@ -1195,6 +1197,15 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static IllegalStateException unavailable(Throwable cause) {
     return new IllegalStateException(
         "Canonical Game Session region ownership is unavailable", cause);
+  }
+
+  /** Internal cause of the unchanged unavailable error for an existing-owner replacement. */
+  static final class ExistingOwnerReplacementRefused extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    private ExistingOwnerReplacementRefused() {
+      super("Canonical Game Session region ownership is unavailable");
+    }
   }
 
   /** Fresh authenticated World assignment supplied by the closed resolver, never caller fields. */

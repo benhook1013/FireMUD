@@ -283,7 +283,7 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"3000, 60000, 3000", "60000, 3000, 3000", "60000, 60000, 5000"})
+  @CsvSource({"1000, 60000, 1000", "3000, 60000, 3000", "60000, 3000, 3000", "60000, 60000, 5000"})
   void deadlineSelectionKeepsTheWholeChosenBudget(
       long explicitMillis, long incomingMillis, long expectedMillis) {
     var nanos = new AtomicLong();
@@ -380,20 +380,24 @@ class AccountTenantCapacityClientMtlsTest {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
     AtomicLong observedNanos = new AtomicLong();
-    Server server = server("account", calls, false, observedNanos, respond);
+    var measuredSecondInvocationEntered = new CountDownLatch(1);
+    Server server =
+        server("account", calls, false, observedNanos, respond, measuredSecondInvocationEntered);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, deadline());
       respond.set(false);
-      assertThatThrownBy(() ->
-              client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L))
+      // Leave dispatch headroom while still bounding this attempt below the client's five seconds.
+      long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
+      assertThatThrownBy(() -> client.commit(request, explicitDeadline))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(failure ->
               assertThat(Status.fromThrowable(failure).getCode())
                   .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(measuredSecondInvocationEntered.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(calls).hasValue(2); // The timed-out invocation reached the nonresponding handler.
-      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
+      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(3));
     } finally {
       stop(server);
     }
@@ -408,9 +412,12 @@ class AccountTenantCapacityClientMtlsTest {
     try {
       var calls = new AtomicInteger();
       var respond = new AtomicBoolean(true);
+      var measuredSecondInvocationEntered = new CountDownLatch(1);
       var tls = pki.clientProperties(directory, pki.identity("client"));
       var factory = new BlockingReloadChannelFactory();
-      server = server("account", calls, false, new AtomicLong(), respond);
+      server =
+          server(
+              "account", calls, false, new AtomicLong(), respond, measuredSecondInvocationEntered);
       try (var client = client(server, tls, factory);
           var executor = Executors.newSingleThreadExecutor()) {
         client.init();
@@ -420,7 +427,7 @@ class AccountTenantCapacityClientMtlsTest {
         try {
           Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
           assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
-          long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L;
+          long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
           var timedOut =
               executor.submit(() ->
                   assertThatThrownBy(() -> client.commit(request, explicitDeadline))
@@ -429,7 +436,9 @@ class AccountTenantCapacityClientMtlsTest {
                           failure ->
                               assertThat(failure.getStatus().getCode())
                                   .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
-          timedOut.get(3, TimeUnit.SECONDS);
+          assertThat(measuredSecondInvocationEntered.await(4, TimeUnit.SECONDS)).isTrue();
+          timedOut.get(4, TimeUnit.SECONDS);
+          assertThat(factory.releaseReload.getCount()).isEqualTo(1);
           assertThat(calls).hasValue(2);
         } finally {
           factory.releaseReload.countDown();
@@ -453,7 +462,9 @@ class AccountTenantCapacityClientMtlsTest {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
     AtomicLong observedNanos = new AtomicLong();
-    Server server = server("account", calls, false, observedNanos, respond);
+    var measuredSecondInvocationEntered = new CountDownLatch(1);
+    Server server =
+        server("account", calls, false, observedNanos, respond, measuredSecondInvocationEntered);
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     try (var client = client(server)) {
       client.init();
@@ -462,14 +473,15 @@ class AccountTenantCapacityClientMtlsTest {
       respond.set(false);
       assertThatThrownBy(() ->
               Context.current()
-                  .withDeadlineAfter(1_000, TimeUnit.MILLISECONDS, scheduler)
+                  .withDeadlineAfter(3_000, TimeUnit.MILLISECONDS, scheduler)
                   .call(() -> client.commit(request, deadline())))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(failure ->
               assertThat(Status.fromThrowable(failure).getCode())
                   .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(measuredSecondInvocationEntered.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(calls).hasValue(2); // The incoming deadline bounded an actual in-flight call.
-      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
+      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(3));
     } finally {
       scheduler.shutdownNow();
       stop(server);
@@ -539,7 +551,19 @@ class AccountTenantCapacityClientMtlsTest {
       AtomicLong observedNanos,
       AtomicBoolean respond)
       throws Exception {
-    return server(identity, calls, wrongFence, observedNanos, respond, null);
+    return server(identity, calls, wrongFence, observedNanos, respond, null, null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      CountDownLatch measuredSecondInvocationEntered)
+      throws Exception {
+    return server(
+        identity, calls, wrongFence, observedNanos, respond, null, measuredSecondInvocationEntered);
   }
 
   private static Server server(
@@ -549,6 +573,18 @@ class AccountTenantCapacityClientMtlsTest {
       AtomicLong observedNanos,
       AtomicBoolean respond,
       AtomicReference<Throwable> serverFailure)
+      throws Exception {
+    return server(identity, calls, wrongFence, observedNanos, respond, serverFailure, null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      AtomicReference<Throwable> serverFailure,
+      CountDownLatch measuredSecondInvocationEntered)
       throws Exception {
     UUID reservationId = UUID.randomUUID();
     var service =
@@ -560,7 +596,10 @@ class AccountTenantCapacityClientMtlsTest {
             observedNanos.set(
                 Objects.requireNonNull(Context.current().getDeadline())
                     .timeRemaining(TimeUnit.NANOSECONDS));
-            calls.incrementAndGet();
+            int invocation = calls.incrementAndGet();
+            if (invocation == 2 && measuredSecondInvocationEntered != null) {
+              measuredSecondInvocationEntered.countDown();
+            }
             if (!respond.get()) return;
             assertServerSide(
                 serverFailure,
