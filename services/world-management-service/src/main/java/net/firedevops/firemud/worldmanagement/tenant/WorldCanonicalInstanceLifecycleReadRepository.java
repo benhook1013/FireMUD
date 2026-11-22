@@ -23,6 +23,8 @@ import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
+import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -156,6 +158,57 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
   }
 
   public record FixtureStartRoom(WorldRunOwnedFixtureLifecycleEvidence lifecycle, String roomKey) {}
+
+  /**
+   * Reads the existing room snapshot only after the exact ACTIVE fixture and its mapped starter
+   * room match the requested room key in the same owner snapshot. Private numeric selectors are
+   * resolved solely from retained World evidence; inconsistent room readback is refused.
+   */
+  public Optional<FixtureStartRoomView> readRunOwnedFixtureStartRoomView(
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      String expectedRoomKey,
+      String preferredLocale,
+      RoomService rooms) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(expectedRoomKey, "expectedRoomKey");
+    Objects.requireNonNull(rooms, "rooms");
+    requireNoActiveTransaction("World run-owned fixture start-room view read");
+    return Optional.ofNullable(
+        transaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadOwnerTransaction();
+              var fixture = readRunOwnedFixtureSnapshotInCurrentOwnerTransaction(request);
+              if (fixture == null || !"ACTIVE".equals(fixture.lifecycle().lifecycleStatus())) {
+                return null;
+              }
+              long roomId = requireRunOwnedFixtureStartRoom(fixture.association());
+              if (!("R-" + roomId).equals(expectedRoomKey)) {
+                return null;
+              }
+              if (!Boolean.FALSE.equals(
+                  dsl.fetchValue(
+                      "SELECT EXISTS (SELECT 1 FROM character_location"
+                          + " WHERE canonical_game_instance_id = ? AND runtime_room_instance_id = ?)",
+                      request.canonicalGameInstanceId(),
+                      roomId))) {
+                throw invalid("Run-owned starter LOOK does not support populated World occupancy");
+              }
+              var keys = fixture.association().runOwnedFixture().worldPrivateKeys();
+              RoomSnapshotDto snapshot =
+                  rooms.getRoomSnapshot(
+                      keys.tenantId(), keys.gameInstanceId(), roomId, preferredLocale);
+              if (snapshot == null
+                  || !Long.valueOf(roomId).equals(snapshot.roomInstanceRowId())
+                  || !Long.valueOf(keys.tenantId()).equals(snapshot.tenantId())
+                  || !Long.valueOf(keys.gameInstanceId()).equals(snapshot.gameInstanceId())) {
+                throw invalid("Run-owned fixture room snapshot differs from its mapped room scope");
+              }
+              return new FixtureStartRoomView(fixture.lifecycle(), snapshot);
+            }));
+  }
+
+  public record FixtureStartRoomView(
+      WorldRunOwnedFixtureLifecycleEvidence lifecycle, RoomSnapshotDto snapshot) {}
 
   private record RunOwnedFixtureSnapshot(
       WorldCanonicalInstanceAssociation association,

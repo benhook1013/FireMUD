@@ -172,7 +172,7 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     discovery_selector = world
     login_wait_seconds = 0
 else:
-    steps = authenticated_telnet_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect)
+    steps = authenticated_telnet_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect, look_expect)
     discovery_selector = None
     # Authenticated LOGIN answers UNAVAILABLE until the Account JWT signer is promoted, which the
     # pre-v1 stand-ins complete a few minutes after Account starts.
@@ -191,5 +191,5 @@ run_telnet_smoke_session(
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment mutation extension passed.")
 else:
-    print("Telnet LOGIN + WORLDS + REALMS + JOIN + PLAY baseline smoke test passed.")
+    print("Telnet LOGIN + WORLDS + REALMS + JOIN + PLAY + LOOK baseline smoke test passed.")
 PYTHON

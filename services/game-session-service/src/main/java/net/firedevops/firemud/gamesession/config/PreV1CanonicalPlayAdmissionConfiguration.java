@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import net.firedevops.firemud.gamesession.client.AccountPlayerAdmissionEntitlementClient;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.data.PreV1CanonicalPlayBootstrapDriver;
 import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
@@ -77,7 +79,9 @@ public class PreV1CanonicalPlayAdmissionConfiguration {
       AccountPlayerAdmissionEntitlementClient entitlements,
       AccountGameplayAdmissionLeaseClient leases,
       AccountTenantCapacityClient capacity,
-      AccountPublicJwksCache jwks) {
+      AccountPublicJwksCache jwks,
+      GameLogicClient gameLogic,
+      LookTextRenderer lookRenderer) {
     PreV1CanonicalPlayConfiguration.requireWaivers(environment);
     return new PreV1CanonicalPlayAdmissionOwner(
         dsl,
@@ -93,6 +97,8 @@ public class PreV1CanonicalPlayAdmissionConfiguration {
         leases,
         capacity,
         jwks,
+        gameLogic,
+        lookRenderer,
         Clock.systemUTC());
   }
 }

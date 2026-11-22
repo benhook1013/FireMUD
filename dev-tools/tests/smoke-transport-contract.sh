@@ -2017,12 +2017,14 @@ with patch(
 
 
 telnet_steps = smoke_common.authenticated_telnet_play_steps(
-    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY"
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK"
 )
-assert [step[2] for step in telnet_steps] == ["LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY"]
+assert [step[2] for step in telnet_steps] == ["LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY", "LOOK"]
 assert telnet_steps[2][:2] == ("REALMS demo", ["OK REALMS"])
 assert telnet_steps[3][:2] == ("JOIN demo", ["OK JOIN"])
 assert telnet_steps[4][:2] == ("PLAY demo", ["OK PLAY"])
+
+assert telnet_steps[5][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
 
 
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
@@ -2079,8 +2081,8 @@ for script in \
   if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
     grep -Fq 'discovery_selector = world' "$script" ||
       { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
-    grep -Fq 'authenticated_telnet_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect)' "$script" ||
-      { echo "$script baseline must use the authenticated Telnet PLAY plan" >&2; exit 1; }
+    grep -Fq 'authenticated_telnet_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect, look_expect)' "$script" ||
+      { echo "$script baseline must use the authenticated Telnet PLAY and LOOK plan" >&2; exit 1; }
   else
     grep -Fq 'discovery_selector=world' "$script" ||
       { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }

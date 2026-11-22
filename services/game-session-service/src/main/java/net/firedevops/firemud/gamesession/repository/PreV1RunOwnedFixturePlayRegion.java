@@ -129,6 +129,7 @@ final class PreV1RunOwnedFixturePlayRegion {
         assignment.operationalRegionId(),
         expectedRegionEpoch,
         request,
+        lifecycleSelector,
         startRoom.roomKey(),
         bridge);
   }
@@ -333,6 +334,7 @@ final class PreV1RunOwnedFixturePlayRegion {
       UUID operationalRegionId,
       long regionEpoch,
       CanonicalInitialPlayerLocationRequest request,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleSelector,
       String roomKey,
       CanonicalGameplayRegionBindingBridgeOwner bridge) {
     Prepared {
@@ -340,6 +342,7 @@ final class PreV1RunOwnedFixturePlayRegion {
       requireNonNil(operationalRegionId, "operationalRegionId");
       if (regionEpoch <= 0L) throw new IllegalArgumentException("regionEpoch must be positive");
       Objects.requireNonNull(request, "request");
+      Objects.requireNonNull(lifecycleSelector, "lifecycleSelector");
       Objects.requireNonNull(roomKey, "roomKey");
       Objects.requireNonNull(bridge, "bridge");
     }

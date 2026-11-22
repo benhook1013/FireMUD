@@ -94,6 +94,7 @@ firemud:
         - world_management.v1.WorldCanonicalInitialAdmissionHoldService/ReadCanonicalInitialAdmissionHoldState
         - world_management.v1.WorldCanonicalInstanceLifecycleReadService/ReadWorldCanonicalInstanceLifecycle
         - world_management.v1.WorldCanonicalInstanceLifecycleReadService/ReadRunOwnedFixtureStartRoom
+        - world_management.v1.RunOwnedFixtureLookWorldService/ReadRunOwnedFixtureLookRoom
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

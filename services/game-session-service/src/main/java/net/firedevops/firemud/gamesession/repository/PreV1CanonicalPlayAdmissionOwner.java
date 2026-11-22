@@ -15,18 +15,24 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import net.firedevops.firemud.gamesession.client.AccountPlayerAdmissionEntitlementClient;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.data.PreV1CanonicalPlayBootstrapDriver;
 import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureLookRoomRequest;
 import org.jooq.DSLContext;
 import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
@@ -47,6 +53,8 @@ public final class PreV1CanonicalPlayAdmissionOwner {
   private final AccountGameplayAdmissionLeaseClient leases;
   private final AccountTenantCapacityClient capacity;
   private final AccountPublicJwksCache jwks;
+  private final GameLogicClient gameLogic;
+  private final LookTextRenderer lookRenderer;
   private final Clock clock;
 
   public PreV1CanonicalPlayAdmissionOwner(
@@ -62,6 +70,8 @@ public final class PreV1CanonicalPlayAdmissionOwner {
       AccountGameplayAdmissionLeaseClient leases,
       AccountTenantCapacityClient capacity,
       AccountPublicJwksCache jwks,
+      GameLogicClient gameLogic,
+      LookTextRenderer lookRenderer,
       Clock clock) {
     this.dsl = dsl;
     this.standIns = standIns;
@@ -74,6 +84,8 @@ public final class PreV1CanonicalPlayAdmissionOwner {
     this.leases = leases;
     this.capacity = capacity;
     this.jwks = jwks;
+    this.gameLogic = gameLogic;
+    this.lookRenderer = lookRenderer;
     this.clock = clock;
   }
 
@@ -258,13 +270,7 @@ public final class PreV1CanonicalPlayAdmissionOwner {
                 decision.leaseExpiresAtEpochMillis().longValueExact(),
                 capacityRequest);
         requireCurrent(scope, original, login, transport, current);
-        return new Admitted(
-            target,
-            identity,
-            transitionId,
-            generation,
-            region.roomKey(),
-            result.continuityExpiresAtMillis());
+        return new Admitted(region.lifecycleSelector(), region.roomKey(), result);
       } finally {
         Arrays.fill(compact, (byte) 0);
       }
@@ -318,11 +324,70 @@ public final class PreV1CanonicalPlayAdmissionOwner {
     return new IllegalStateException("Run-owned canonical PLAY unavailable");
   }
 
-  public record Admitted(
-      CanonicalPlayableTarget target,
-      CanonicalGameplayBindingIdentity binding,
-      UUID transitionId,
-      BigInteger bindingGeneration,
-      String roomKey,
-      long expiresAtMillis) {}
+  public PlayerOutput look(Admitted admitted) {
+    requireCurrentAdmission(admitted);
+    var view =
+        gameLogic.resolveRunOwnedFixtureLook(
+            ReadRunOwnedFixtureLookRoomRequest.newBuilder()
+                .setLifecycle(
+                    WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(admitted.lifecycle))
+                .setExpectedRoomInstanceKey(admitted.roomKey)
+                .build());
+    var room = view.getRoomInstance();
+    if (view.hasError()
+        || !view.hasRoomInstance()
+        || !admitted.lifecycle.canonicalTenantId().toString().equals(room.getTenantId())
+        || !admitted.lifecycle.canonicalGameInstanceId().toString().equals(room.getGameInstanceId())
+        || !admitted.roomKey.equals(room.getRoomInstanceId())) {
+      throw unavailable();
+    }
+    requireCurrentAdmission(admitted);
+    return lookRenderer.toPlayerOutput(view);
+  }
+
+  private void requireCurrentAdmission(Admitted admitted) {
+    fixture.loadFixedVerifiedEvidence().requireVerifiedFixture();
+    var result = admitted.finalAdmission;
+    var readOwner =
+        new CanonicalGameplayOriginalNewFinalAdmissionReadRepository(
+            dsl,
+            standIns.coordination(),
+            standIns.tags(),
+            admitted.lifecycle.targetNamespace(),
+            clock);
+    var current =
+        readOwner.readActualOriginalFinalAdmission(
+            result.finalReadSelector(), admitted.lifecycle.targetNamespace());
+    if (!result.finalSessionSha256().equals(current.canonicalSessionSha256())
+        || result.continuityExpiresAtMillis() != current.continuityExpiresAtMillis()) {
+      throw unavailable();
+    }
+    // The fixture has no World placement for its stand-in actors. Only a lone viewer is known.
+    if (!Boolean.FALSE.equals(
+        dsl.fetchValue(
+            "SELECT EXISTS (SELECT 1 FROM game_session_canonical_gameplay_binding_inventory"
+                + " WHERE tenant_id = ? AND game_instance_id = ? AND transition_id <> ?"
+                + " AND lifecycle <> 'TERMINAL')",
+            admitted.lifecycle.canonicalTenantId(),
+            admitted.lifecycle.canonicalGameInstanceId(),
+            result.transitionId()))) {
+      throw unavailable();
+    }
+  }
+
+  public static final class Admitted {
+    private final WorldCanonicalInstanceLifecycleEvidence.Request lifecycle;
+    private final String roomKey;
+    private final CanonicalGameplayOriginalNewFinalAdmissionCoordinator.FinalAdmissionResult
+        finalAdmission;
+
+    private Admitted(
+        WorldCanonicalInstanceLifecycleEvidence.Request lifecycle,
+        String roomKey,
+        CanonicalGameplayOriginalNewFinalAdmissionCoordinator.FinalAdmissionResult finalAdmission) {
+      this.lifecycle = lifecycle;
+      this.roomKey = roomKey;
+      this.finalAdmission = finalAdmission;
+    }
+  }
 }

@@ -72,11 +72,28 @@ services:
     environment:
       <<: *grpc-mtls-environment
       FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_RUN_ID: ${FIREMUD_SMOKE_RUN_ID:-}
+      FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
+      FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
     depends_on:
       account-service:
         condition: service_healthy
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/entity-management-service:/app/certs:ro
+      - type: bind
+        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
+        target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:?run-owned smoke must prepare a claimed authored-world receipt directory}
+        target: /app/run-owned-authored-world-source
+        read_only: true
+        bind:
+          create_host_path: false
 
   game-design-service:
     environment:
@@ -119,6 +136,8 @@ services:
   game-logic-service:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-logic-service:/app/certs:ro
 

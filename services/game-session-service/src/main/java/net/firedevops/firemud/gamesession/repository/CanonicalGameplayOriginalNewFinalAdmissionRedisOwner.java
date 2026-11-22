@@ -23,6 +23,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.Selector;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -1299,6 +1301,38 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
 
     String finalSessionSha256() {
       return finalSessionSha256;
+    }
+
+    Selector finalAdmissionReadSelector() {
+      var finalized = session();
+      var candidate = source.candidate();
+      var lease = candidate.leaseEvidence();
+      var carrier = lease.carrier();
+      var identity = candidate.bindingIdentity();
+      byte[] handle = finalized.opaqueRebindHandle();
+      try {
+        return new Selector(
+            UUID.fromString((String) carrier.get("requestId")),
+            identity.accountId(),
+            identity.tenantId(),
+            UUID.fromString(identity.sessionId()),
+            candidate.bindingDecisionId(),
+            UUID.fromString((String) carrier.get("leaseId")),
+            lease.leaseFence().longValueExact(),
+            lease.sha256(),
+            finalized.authTokenHash(),
+            Long.parseLong(finalized.tokenGeneration()),
+            Long.parseLong(finalized.issuanceFence()),
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.canonicalJsonSha256(
+                carrier.get("bindingScope")),
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.canonicalJsonSha256(
+                carrier.get("membershipBaseline")),
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.canonicalJsonSha256(
+                carrier.get("outboxCheckpoints")),
+            digest("SHA-256", handle));
+      } finally {
+        wipe(handle);
+      }
     }
 
     long admissionAtMillis() {

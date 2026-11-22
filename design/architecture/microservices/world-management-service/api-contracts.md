@@ -220,6 +220,8 @@ This is **as-of World-owner catalog evidence only**. It selects ADR 0137's permi
 
 ## LOOK Snapshot Contract
 
+The run-owned Compose fixture can use the protected `RunOwnedFixtureLookWorldService/ReadRunOwnedFixtureLookRoom` read. World requires the authenticated same-namespace Game Logic workload and the exact ACTIVE fixture lifecycle selector. In one owner snapshot it resolves the retained physical starter-room mapping, checks the requested room key, verifies that no World-owned character location is present there, and reads the existing scoped room snapshot. The returned tenant and game instance are canonical UUIDs. The returned scope marker identifies the fixture snapshot. The target causal-floor contract below governs durable runtime reads. This fixture read is held for populated rooms and requires the pre-v1 waiver.
+
 `GetRoomSnapshot` is the canonical endpoint feeding Game Logic's `ResolveLook`. The current and target fence contracts are intentionally separate.
 
 ### Current room-snapshot contract

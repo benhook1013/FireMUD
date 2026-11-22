@@ -112,6 +112,7 @@ public final class AuthenticatedDirectTextCommandReceiver {
               });
         }
         case PLAY -> play(connection, command);
+        case LOOK -> look(connection, command);
         case LOGOUT -> success("Logged out");
         default -> failure("FEATURE_UNAVAILABLE", "Command unavailable");
       };
@@ -187,6 +188,22 @@ public final class AuthenticatedDirectTextCommandReceiver {
                     }
                   });
         });
+  }
+
+  private TextCommandInterpretationResult look(
+      AuthenticatedDirectTextSessions.Connection connection, TextCommand command) {
+    if (!command.args().isEmpty()) return failure("INVALID_ARGUMENT", "Usage: LOOK");
+    var admitted = connection.admitted;
+    if (admitted == null || !connection.isCurrent()) return admissionUnavailable();
+    try {
+      var result = required(admissions).look(admitted);
+      if (!connection.isCurrent() || connection.admitted != admitted) {
+        return admissionUnavailable();
+      }
+      return new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of(result));
+    } catch (RuntimeException unavailable) {
+      return failure("ROOM_UNAVAILABLE", "The current room is unavailable");
+    }
   }
 
   private static TextCommandInterpretationResult admissionUnavailable() {
