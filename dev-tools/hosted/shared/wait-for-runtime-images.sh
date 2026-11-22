@@ -90,14 +90,9 @@ if any(not isinstance(run, dict) for run in workflow_runs):
 
 def is_matching_run(run):
     if wait_mode == "branch":
-        display_title = run.get("display_title", "")
-        tokens = display_title.split()
         return (
             run.get("event") == "workflow_run"
-            and display_title.startswith("Build Runtime Images trusted-branch ")
-            and "branch-develop" in tokens
-            and f"sha-{head_sha}" in tokens
-            and len(tokens) == 6
+            and run.get("display_title") == f"Build Runtime Images trusted-branch branch-develop sha-{head_sha}"
         )
 
     # A base refresh is dispatched as the typed pr-runtime-base-refresh event;
@@ -412,6 +407,7 @@ use_completed_duplicate_publication() {
           ($jobs | length) == 1 and ($jobs[0] |
             .run_id == $id and ((has("run_attempt") | not) or .run_attempt == $attempt) and
             .status == "completed" and .conclusion == "success" and
+            (.steps | type == "array") and
             ([.steps[] | select(.name == "Publish fixed PR image tags")] as $steps |
               ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
       ' <<<"$jobs" >/dev/null || continue
@@ -463,24 +459,54 @@ branch_publication_attempt() {
 
 verify_branch_publication() {
   local run_id="$1" selected_state="$2" endpoint run attempt jobs latest
+  local promotion_conclusion="${3:-success}"
   endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
   run="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 1
   [[ "$(jq -c '{workflow_runs:[.]}' <<<"$run" | read_run_state)" == "$selected_state" ]] || return 1
   attempt="$(branch_publication_attempt "$run_id" <<<"$run")" || return 1
   jobs="$(fetch_alternate_run_metadata "$deadline" "${endpoint}/attempts/${attempt}/jobs?per_page=100")" || return 1
-  jq -e --argjson id "$run_id" --argjson attempt "$attempt" '
+  jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg conclusion "$promotion_conclusion" '
     (.jobs | type == "array") and (.total_count == (.jobs | length)) and
     ([.jobs[] | select(.name == "Promote Smoke-Tested Runtime Images")] as $jobs |
       ($jobs | length) == 1 and ($jobs[0] |
         .run_id == $id and ((has("run_attempt") | not) or .run_attempt == $attempt) and
-        .status == "completed" and .conclusion == "success" and
-        ([.steps[] | select(.name == "Promote smoke-tested service digests")] as $steps |
-          ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
+        .status == "completed" and .conclusion == $conclusion and
+        (if $conclusion == "skipped" then
+          # A wholly skipped native promotion job is positive no-op evidence,
+          # not a missing, failed, or partially executed promotion step.
+          (.steps == null or .steps == [])
+        else
+          (.steps | type == "array") and
+          ([.steps[] | select(.name == "Promote smoke-tested service digests")] as $steps |
+            ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")
+        end)))
   ' <<<"$jobs" >/dev/null || return 1
   latest="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 1
   [[ "$(branch_publication_attempt "$run_id" <<<"$latest")" == "$attempt" &&
      "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$selected_state" ]] &&
     (( SECONDS < deadline ))
+}
+
+find_earlier_branch_publication() {
+  local selected_id="$1" selected_state="$2" inventory="$3"
+  local candidates candidate state candidate_id status conclusion
+  # Only an authoritatively skipped exact current attempt may be bypassed.
+  # Keep failures and unavailable or ambiguous proof as barriers to fallback.
+  verify_branch_publication "$selected_id" "$selected_state" skipped || return 1
+  candidates="$(read_run_state "" alternates <<<"$inventory")" || return 1
+  while IFS= read -r candidate; do
+    (( SECONDS < deadline )) || break
+    IFS=$'\t' read -r state candidate_id status conclusion _ <<<"$candidate"
+    [[ "$candidate_id" != "$selected_id" ]] || continue
+    [[ "$state" == "found" && "$status" == "completed" && "$conclusion" == "success" ]] || return 1
+    if verify_branch_publication "$candidate_id" "$candidate"; then
+      printf 'Earlier trusted branch runtime-image run %s has verified promotion for %s after a newer skipped promotion.\n' \
+        "$candidate_id" "$image_tag"
+      return 0
+    fi
+    verify_branch_publication "$candidate_id" "$candidate" skipped || return 1
+  done <<<"$candidates"
+  return 1
 }
 
 wait_for_pr_publisher() {
@@ -644,9 +670,13 @@ while (( SECONDS < deadline )); do
 
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
     if [[ "${wait_mode}" == "branch" ]] && ! verify_branch_publication "$run_id" "$run_state"; then
+      if find_earlier_branch_publication "$run_id" "$run_state" "$workflow_payload"; then
+        exit 0
+      fi
       printf 'Trusted branch runtime-image run %s has no verified promotion for %s yet.\n' "$run_id" "$image_tag" >&2
       # A successful no-op can never provide promotion proof for an obsolete
-      # target. Only a positive trusted ref read can end this wait early.
+      # target. Without promotion proof, only a positive trusted ref read can
+      # end this wait early.
       if current_branch_ref="$(fetch_alternate_run_metadata "$deadline" "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch_name}")" &&
         current_branch_sha="$(jq -ser --arg ref "refs/heads/${branch_name}" '
           select(length == 1) | .[0] | select(.ref == $ref) | .object.sha

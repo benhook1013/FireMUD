@@ -33,7 +33,7 @@ if [[ "$*" == *"/pulls/7" ]]; then
 fi
 if [[ "$*" == *"/git/ref/heads/"* ]]; then
   case "${GH_FIXTURE:-}" in
-    branch_runs|branch_unpromoted_current)
+    branch_runs|branch_unpromoted_current|branch_newer_noop|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
       printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$head_sha"
       ;;
     branch_ref_unavailable)
@@ -102,16 +102,61 @@ case "${GH_FIXTURE:-}" in
     esac
     ;;
   branch_wrong)
-    printf '[{"workflow_runs":[{"id":104,"status":"completed","conclusion":"success","event":"workflow_run","head_sha":"dddddddddddddddddddddddddddddddddddddd","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z"}]}]' "$head_sha"
+    printf '[{"workflow_runs":[{"id":104,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z"},{"id":105,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/105","display_title":"Build Runtime Images trusted-branch sha-%s branch-develop","created_at":"2026-09-21T00:03:00Z"}]}]' "$head_sha" "$head_sha"
     ;;
-  success_runs|wrong_runs)
+  branch_newer_noop|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
+    source="$(printf '{"id":103,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
+    older_sha="$head_sha"
+    [[ "$GH_FIXTURE" != branch_older_mismatch ]] || older_sha="$base_sha"
+    older="$(printf '{"id":102,"run_attempt":1,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/102","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:01:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$older_sha")"
+    case "$*" in
+      *actions/runs/103)
+        printf '%s' "$source"
+        ;;
+      *actions/runs/102)
+        printf '%s' "$older"
+        ;;
+      *actions/runs/103/attempts/2/jobs?per_page=100)
+        case "$GH_FIXTURE" in
+          branch_newer_failed)
+            printf '%s' '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"failure","steps":[]}]}'
+            ;;
+          branch_newer_ambiguous)
+            # An absent promotion job is not affirmative skipped-work proof.
+            printf '%s' '{"total_count":0,"jobs":[]}'
+            ;;
+          *)
+            printf '%s' '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"skipped","steps":[]}]}'
+            ;;
+        esac
+        ;;
+      *actions/runs/102/attempts/1/jobs?per_page=100)
+        conclusion=success
+        [[ "$GH_FIXTURE" != branch_older_unproved ]] || conclusion=failure
+        printf '{"total_count":1,"jobs":[{"run_id":102,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"%s","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"%s"}]}]}' "$conclusion" "$conclusion"
+        ;;
+      *actions/workflows/runtime-images.yml/runs?*)
+        printf '[{"workflow_runs":[%s,%s]}]' "$source" "$older"
+        ;;
+      *)
+        echo "Unexpected branch fallback API request in $GH_FIXTURE fixture" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
+    source_event=pull_request
     publisher_merge="$merge_sha"
     if [[ "$GH_FIXTURE" == wrong_runs ]]; then
       publisher_merge=dddddddddddddddddddddddddddddddddddddddd
     fi
     publisher_title="Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${publisher_merge} mode-required"
-    source="$(printf '{"id":101,"run_attempt":1,"status":"completed","conclusion":"success","event":"pull_request","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha" "$source_title")"
+    if [[ "$GH_FIXTURE" == typed_publisher_* ]]; then
+      source_event=repository_dispatch
+      publisher_title+=" source-run-101"
+    fi
+    source="$(printf '{"id":101,"run_attempt":1,"status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_event" "$head_sha" "$source_title")"
     publisher="$(printf '{"id":102,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_title")"
     case "$*" in
       "api repos/example/firemud")
@@ -124,7 +169,27 @@ case "${GH_FIXTURE:-}" in
         printf '%s' "$publisher"
         ;;
       *actions/runs/102/attempts/2/jobs?per_page=100)
-        printf '%s' '{"total_count":1,"jobs":[{"run_id":102,"run_attempt":2,"name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}'
+        publication_step='{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}'
+        unrelated_step='{"name":"Load fixed-tag images","status":"completed","conclusion":"success"}'
+        case "$GH_FIXTURE" in
+          publisher_steps_absent)
+            steps=null
+            ;;
+          typed_publisher_step_absent)
+            steps="[$unrelated_step]"
+            ;;
+          publisher_duplicate_steps)
+            steps="[$publication_step,$publication_step]"
+            ;;
+          *)
+            steps="[$publication_step]"
+            ;;
+        esac
+        jq -cn --argjson steps "$steps" '
+          {run_id:102,run_attempt:2,name:"Publish Fixed PR Merge Image Tags",status:"completed",conclusion:"success"}
+          + (if $steps == null then {} else {steps:$steps} end)
+          | {total_count:1,jobs:[.]}
+        '
         ;;
       *actions/workflows/publish-pr-runtime-images.yml/runs?*event=workflow_run*)
         printf '{"total_count":1,"workflow_runs":[%s]}' "$publisher"
@@ -208,6 +273,30 @@ GH_FIXTURE=success_runs \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-success.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-success.out"
 
+# A typed native callback binds the exact source run in its title, and both
+# producer events still require one positive publication step for the attempt.
+GH_FIXTURE=typed_publisher_success \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/typed-publisher-success.out"
+grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/typed-publisher-success.out"
+
+for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent; do
+  publisher_status=0
+  publisher_output="$(
+    GH_FIXTURE="$publisher_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+      HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=1 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+      timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+  )" || publisher_status=$?
+  if [[ "$publisher_status" != 1 ]]; then
+    printf 'publisher proof must refuse with status 1 for %s, got %s\n' "$publisher_fixture" "$publisher_status" >&2
+    exit 1
+  fi
+  grep -Fq 'publisher 102 completed successfully, but its exact current-attempt fixed-tag publication proof is unavailable' <<<"$publisher_output"
+done
+
 # A publisher with a mismatched merge token must not satisfy the PR wait.
 if wrong_merge_output="$(
   GH_FIXTURE=wrong_runs \
@@ -228,6 +317,30 @@ GH_FIXTURE=branch_runs \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-success.out"
 grep -Fq "Matching runtime-images workflow 103 succeeded for ${head_sha} after" "$TEMP_DIR/branch-success.out"
+
+# A later successful callback with a wholly skipped promotion cannot hide exact
+# immutable-commit promotion proof from an earlier callback.
+GH_FIXTURE=branch_newer_noop \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-earlier-success.out"
+grep -Fq "Earlier trusted branch runtime-image run 102 has verified promotion for ${head_sha} after a newer skipped promotion." "$TEMP_DIR/branch-earlier-success.out"
+
+# No fallback for a failed/unknown newer promotion, a different immutable commit,
+# or an older callback lacking the existing positive promotion-step evidence.
+for branch_fixture in branch_newer_failed branch_newer_ambiguous branch_older_mismatch branch_older_unproved; do
+  branch_fallback_status=0
+  branch_fallback_output="$(
+    GH_FIXTURE="$branch_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      timeout 15s bash "$WAITER" "$head_sha" 2>&1
+  )" || branch_fallback_status=$?
+  if [[ "$branch_fallback_status" != 1 ]]; then
+    printf 'branch fallback must refuse with status 1 for %s, got %s\n' "$branch_fixture" "$branch_fallback_status" >&2
+    exit 1
+  fi
+  grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_fallback_output"
+  grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha} after" <<<"$branch_fallback_output"
+done
 
 branch_obsolete_status=0
 branch_obsolete_output="$(
@@ -272,7 +385,7 @@ if branch_timeout_output="$(
     HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
     timeout 15s bash "$WAITER" "$head_sha" 2>&1
 )"; then
-  echo "branch waiter accepted a non-develop runtime image run" >&2
+  echo "branch waiter accepted a runtime image run without the exact develop title" >&2
   exit 1
 fi
 grep -Fq "No trusted branch runtime-image publication appeared for branch develop and exact head SHA ${head_sha} after" <<<"$branch_timeout_output"
