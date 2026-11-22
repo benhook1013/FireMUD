@@ -8,6 +8,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -94,6 +95,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -127,6 +129,8 @@ import tools.jackson.databind.json.JsonMapper;
       "firemud.mail.verification-url=https://account.test/verify-email?token=%s"
     })
 class AccountApplicationIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
   @Container
@@ -1415,7 +1419,7 @@ class AccountApplicationIntegrationTest {
         paid =
             integration.net.firedevops.firemud.accountservice.repository
                 .CanonicalHostingSubscriptionTestFixture.create(dataSource);
-        paid.completeFirstInvoice();
+        paid.withCheckoutDirectory(invoiceCheckoutDirectory).completeFirstInvoice();
         hosting = paid.lifecycleRepository();
         observer = paid.observer();
         tenantId = paid.tenantId();

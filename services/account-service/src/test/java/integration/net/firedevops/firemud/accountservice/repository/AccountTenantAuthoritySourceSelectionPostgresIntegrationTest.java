@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +23,7 @@ import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Cod
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -34,6 +36,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
@@ -250,7 +254,7 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
     throw new AssertionError("Expected PostgreSQL guard refusal", failure);
   }
 
-  private static Context context() {
+  private Context context() {
     String schema = "source_selection_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
@@ -278,13 +282,14 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
     var demos =
         new AccountDemoTenantEntitlementRepository(
             f.dsl(), identities, generations, billing, events);
-    return new Context(f, events, demos);
+    return new Context(f, events, demos, invoiceCheckoutDirectory);
   }
 
   private record Context(
       CanonicalHostingSubscriptionTestFixture.Fixture fixture,
       AccountTenantAuthorityEventRepository events,
-      AccountDemoTenantEntitlementRepository demos) {
+      AccountDemoTenantEntitlementRepository demos,
+      Path invoiceCheckoutDirectory) {
     private SourceSelection select() {
       return Objects.requireNonNull(
           fixture
@@ -321,7 +326,10 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
     }
 
     private UUID activatePaid() {
-      return fixture.completeFirstInvoice().requestId();
+      return fixture
+          .withCheckoutDirectory(invoiceCheckoutDirectory)
+          .completeFirstInvoice()
+          .requestId();
     }
   }
 }

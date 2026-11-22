@@ -79,6 +79,7 @@ public final class AccountRecentReauthenticationService {
    */
   public AccountRecentReauthenticationEvidence reauthenticate(Request request) {
     requireRequest(request);
+    if (!AccountRecentReauthenticationPolicy.PURPOSE.equals(request.purpose)) throw conflict();
     return reauthenticate(
         request,
         action -> transaction.execute(ignored -> action.get()),
@@ -93,6 +94,8 @@ public final class AccountRecentReauthenticationService {
       String bearer,
       Consumer<AccountRecentReauthenticationEvidence> bind) {
     requireRequest(request);
+    if (!AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(request.purpose)
+        || request.billingContext == null) throw conflict();
     // Exact retained retries authenticate against the existing request MAC. Fresh requests
     // perform the expensive verifier before taking the shared producer locks.
     boolean retained =

@@ -2,7 +2,10 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2Factory;
 import java.io.IOException;
@@ -141,6 +144,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     Context c = context();
     installBillingPolicy(c);
     Account account = c.account("PASSWORD");
+    var actors = controlledBillingActors(c, account);
     for (Instant expiry :
         List.of(
             Instant.parse("2026-11-01T01:02:03.123400Z"),
@@ -168,9 +172,15 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
               account.getEmail(),
               PASSWORD);
 
-      var original = c.service.reauthenticate(request);
+      var fenceCallbacks = new ArrayList<UUID>();
+      var original =
+          c.service.reauthenticateAndBindBilling(
+              request, actors, "controlled-bearer", e -> fenceCallbacks.add(e.evidenceId()));
       Record row = c.evidenceRow(original.evidenceId());
-      var replay = c.service.reauthenticate(request);
+      var replay =
+          c.service.reauthenticateAndBindBilling(
+              request, actors, "controlled-bearer", e -> fenceCallbacks.add(e.evidenceId()));
+      assertThat(fenceCallbacks).containsExactly(original.evidenceId(), original.evidenceId());
 
       assertThat(original.billingContext()).isEqualTo(binding);
       assertThat(
@@ -1254,7 +1264,16 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         });
     Record original = c.evidenceRow(evidenceId);
     String xmin = c.evidenceXmin(evidenceId);
+    String credentialRead =
+        "SELECT to_jsonb(credential)::text AS image"
+            + " FROM account_recent_reauthentication_replay_credentials credential"
+            + " WHERE evidence_id = ?";
+    String replayCredential =
+        c.dsl.fetchSingle(credentialRead, evidenceId).get("image", String.class);
+    assertThat(replayCredential).isNotNull();
     c.migrateToLatest();
+    assertThat(c.dsl.fetchSingle(credentialRead, evidenceId).get("image", String.class))
+        .isEqualTo(replayCredential);
     assertHistoricalEvidence(c, evidenceId, original);
     var repository = new AccountRecentReauthenticationRepository(c.dsl);
     var retained = c.tx(() -> repository.findByRequest(requestId).orElseThrow());
@@ -1281,7 +1300,15 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             binding,
             account.getEmail(),
             PASSWORD);
-    assertThatThrownBy(() -> c.service.reauthenticate(changed))
+    var actors = controlledBillingActors(c, account);
+    assertThatThrownBy(() ->
+            c.service.reauthenticateAndBindBilling(
+                changed,
+                actors,
+                "controlled-bearer",
+                ignored -> {
+                  throw new AssertionError("Changed legacy binding must not reach invoice fence");
+                }))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
     assertHistoricalEvidence(c, evidenceId, original);
     assertThat(c.evidenceXmin(evidenceId)).isEqualTo(xmin);
@@ -2009,6 +2036,19 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         row.get("recent_age_seconds", Long.class),
         row.get("max_clock_skew_seconds", Long.class),
         row.get("issued_at", java.time.OffsetDateTime.class).toInstant());
+  }
+
+  private static AccountControlUiActorService controlledBillingActors(Context c, Account account) {
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(account.getAccountUuid());
+    var actors = mock(AccountControlUiActorService.class);
+    when(actors.withCurrentAccount(eq("controlled-bearer"), any()))
+        .thenAnswer(call -> {
+          java.util.function.Function<AccountControlUiActorService.AccountAuthenticatedActor, ?>
+              action = call.getArgument(1);
+          return c.tx(() -> action.apply(actor));
+        });
+    return actors;
   }
 
   private static void installBillingPolicy(Context c) {

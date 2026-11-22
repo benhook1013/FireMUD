@@ -19,6 +19,7 @@ import integration.net.firedevops.firemud.accountservice.repository.CanonicalHos
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
@@ -58,6 +59,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -78,6 +80,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final AtomicLong ROWS = new AtomicLong(10_000);
 
@@ -111,7 +115,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(
             one(
                     c,
-                    "SELECT completion.committed_transaction_id = receipt.committed_transaction_id AS same_transaction "
+                    "SELECT completion.committed_transaction_id = receipt.committed_transaction_id AND audit.xmin::text::bigint = (completion.committed_transaction_id & 4294967295::bigint) AS same_transaction "
                         + "FROM subscription_first_invoice_completions completion JOIN subscription_lifecycle_receipts receipt "
                         + "ON receipt.request_id = completion.lifecycle_request_id JOIN account_audit_outbox audit "
                         + "ON audit.audit_event_id = completion.audit_event_id WHERE completion.lifecycle_request_id = ?",
@@ -339,6 +343,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -417,6 +422,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -456,6 +462,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1340,6 +1347,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1449,6 +1457,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1561,6 +1570,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       Fixture f = fixture(c);
       var checkout =
           CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+              invoiceCheckoutDirectory,
               c.source(),
               c.dsl(),
               c.tx(),
@@ -1628,6 +1638,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1669,12 +1680,63 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void exactSignedPaymentWithoutConsentWhileCheckoutAwaitsPaymentRequiresReconciliation()
+      throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var owner =
+        new net.firedevops.firemud.accountservice.service.session
+            .AccountHostingFirstInvoicePaymentService(
+            mock(
+                net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.service.session
+                    .AccountRecentReauthenticationService.class),
+            checkout.payments(),
+            new StripeEventInboxRepository(c.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            f.service(),
+            new DataSourceTransactionManager(c.source()));
+    var before = firstInvoiceImage(c);
+    var signed = checkout.signedSuccess();
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("RECONCILING");
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("RECONCILING");
+    assertThat(firstInvoiceImage(c)).isEqualTo(before);
+    assertThat(count(c, "subscription_first_invoice_confirmations")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(count(c, "stripe_event_inbox")).isOne();
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+  }
+
+  @Test
   void verifiedPaidInboxEventRetainedDuringProviderReadWinsBeforeCancellationApply()
       throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1737,6 +1799,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1777,6 +1840,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1915,6 +1979,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -1964,6 +2029,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             c.source(),
             c.dsl(),
             c.tx(),
@@ -2490,10 +2556,10 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
   }
 
-  private static AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch paidClaim(
-      Fixture f) {
+  private AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch paidClaim(Fixture f) {
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             f.context().source(),
             f.context().dsl(),
             f.context().tx(),
@@ -2510,10 +2576,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     return authorized;
   }
 
-  private static AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch paidClaimAt1046(
+  private AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch paidClaimAt1046(
       Fixture f) throws StripeException {
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
             f.context().source(),
             f.context().dsl(),
             f.context().tx(),
@@ -3062,7 +3129,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   private record FailedResolution(
       Fixture fixture, Request request, String failureImage, long auditRowsBefore) {}
 
-  private static void activate(Fixture f) {
+  private void activate(Fixture f) {
     // Terminal initial provider evidence may release a hold without authorizing a payment.
     boolean terminal = f.transport().json.contains("\"status\":\"canceled\"");
     if (terminal) {

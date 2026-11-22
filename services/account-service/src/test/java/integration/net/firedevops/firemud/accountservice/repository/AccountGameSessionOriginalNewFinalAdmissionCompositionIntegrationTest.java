@@ -1146,20 +1146,26 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var result = worker.submit(() -> owner.commit(request, GS));
       try {
         long waitUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        boolean waiting;
+        java.time.OffsetDateTime observedWaitingAt;
         do {
-          waiting =
+          observedWaitingAt =
               session
                   .dsl
                   .fetchSingle(
-                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
+                      "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
                           + "? = ANY(pg_blocking_pids(pid)) "
-                          + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%')",
+                          + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%') "
+                          + "THEN clock_timestamp() END",
                       blocker)
-                  .get(0, boolean.class);
-          if (!waiting) Thread.sleep(10);
-        } while (!waiting && System.nanoTime() < waitUntil);
-        assertThat(waiting).as("the actual owner must wait on the held usage row").isTrue();
+                  .get(0, java.time.OffsetDateTime.class);
+          if (observedWaitingAt == null) Thread.sleep(10);
+        } while (observedWaitingAt == null && System.nanoTime() < waitUntil);
+        assertThat(observedWaitingAt)
+            .as("the actual owner must wait on the held usage row")
+            .isNotNull();
+        assertThat(observedWaitingAt.toInstant())
+            .as("PostgreSQL observed the blocked owner before the evidence expired")
+            .isBefore(request.evidence().expiresAt());
         waitForDatabaseTime(session.dsl, request.evidence().expiresAt());
       } finally {
         lock.rollback();

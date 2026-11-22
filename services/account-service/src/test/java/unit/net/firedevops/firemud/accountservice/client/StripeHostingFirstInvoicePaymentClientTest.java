@@ -245,8 +245,16 @@ class StripeHostingFirstInvoicePaymentClientTest {
   void recoveryOfAlreadyDispatchedIntentNeverConfirmsOrCreatesAnother(String status)
       throws Exception {
     var transport = new Transport(invoice(status), intent(status));
+    var spent = dispatch();
+    when(spent.initialCommandAvailable()).thenReturn(false);
+    when(spent.takeInitialCommandPermission()).thenReturn(false);
     var handoff =
-        client(transport).confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim);
+        client(transport)
+            .confirm(
+                spent,
+                () -> {
+                  throw new AssertionError("Post-claim recovery cannot claim a command");
+                });
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
     assertThat(handoff.status()).isEqualTo(status);
     assertThat(handoff.clientSecret())
@@ -413,7 +421,12 @@ class StripeHostingFirstInvoicePaymentClientTest {
         List.of(
             invoice("succeeded").replace("\"amount_received\":2400", "\"amount_received\":2300"),
             invoice("requires_confirmation").replace("\"amount_due\":2400", "\"amount_due\":2300"),
-            invoice("requires_confirmation").replace("\"has_more\":false", "\"has_more\":true"),
+            invoice("requires_confirmation")
+                .replace("\"lines\":{\"has_more\":false", "\"lines\":{\"has_more\":true"),
+            invoice("requires_confirmation")
+                .replace(
+                    "\"payments\":{\"object\":\"list\",\"has_more\":false",
+                    "\"payments\":{\"object\":\"list\",\"has_more\":true"),
             invoice("requires_confirmation")
                 .replace("\"starting_balance\":0", "\"starting_balance\":100"),
             invoice("requires_confirmation").replace("\"total\":2400", "\"total\":2500"),
@@ -485,7 +498,12 @@ class StripeHostingFirstInvoicePaymentClientTest {
             terminalInvoice().replace("\"status\":\"void\"", "\"status\":\"paid\""),
             terminalInvoice().replace("\"amount_paid\":0", "\"amount_paid\":1"),
             terminalInvoice().replace("\"amount_remaining\":0", "\"amount_remaining\":1"),
-            terminalInvoice().replace("\"has_more\":false", "\"has_more\":true"),
+            terminalInvoice()
+                .replace("\"lines\":{\"has_more\":false", "\"lines\":{\"has_more\":true"),
+            terminalInvoice()
+                .replace(
+                    "\"payments\":{\"object\":\"list\",\"has_more\":false",
+                    "\"payments\":{\"object\":\"list\",\"has_more\":true"),
             terminalInvoice().replace("\"price\":\"price_exact\"", "\"price\":\"price_other\""),
             terminalInvoice().replace("\"id\":\"pi_exact\"", "\"id\":\"pi_other\""))) {
       var transport = new Transport(response, intent("canceled"));

@@ -450,6 +450,7 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
                   return 1;
                 }
                 if (sql.startsWith("INSERT INTO subscription_first_invoice_command_claims")) {
+                  assertThat(values[0]).isEqualTo(originalId);
                   if (commandClaimed) return 0;
                   commandClaimed = true;
                   return 1;

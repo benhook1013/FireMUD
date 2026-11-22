@@ -381,14 +381,14 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
-  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockIsOneSecondAhead() {
-    Clock aheadOfDatabase = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(1));
+  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockLeadsDatabaseTime() {
+    MutableClock aheadOfDatabase = new MutableClock(Instant.EPOCH, ZoneOffset.UTC);
     Fixture f = fixture(false, aheadOfDatabase);
-    assertThat(aheadOfDatabase.instant()).isAfter(databaseNow(f.dsl));
-
     Instant databaseBeforeEvaluation = databaseNow(f.dsl);
+    aheadOfDatabase.setInstant(databaseBeforeEvaluation.plusSeconds(5));
     var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
     Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(aheadOfDatabase.instant()).isAfter(databaseAfterEvaluation);
     assertThat(value.evaluatedAt()).isAfterOrEqualTo(databaseBeforeEvaluation);
     assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
 
@@ -419,14 +419,14 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
-  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockTrailsByOneSecond() {
-    Clock behindDatabase = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-1));
+  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockTrailsDatabaseTime() {
+    MutableClock behindDatabase = new MutableClock(Instant.EPOCH, ZoneOffset.UTC);
     Fixture f = fixture(false, behindDatabase);
-    assertThat(behindDatabase.instant()).isBefore(databaseNow(f.dsl));
-
     Instant databaseBeforeEvaluation = databaseNow(f.dsl);
+    behindDatabase.setInstant(databaseBeforeEvaluation.plusSeconds(-5));
     var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
     Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(behindDatabase.instant()).isBefore(databaseBeforeEvaluation);
     assertThat(value.evaluatedAt()).isAfterOrEqualTo(databaseBeforeEvaluation);
     assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
 

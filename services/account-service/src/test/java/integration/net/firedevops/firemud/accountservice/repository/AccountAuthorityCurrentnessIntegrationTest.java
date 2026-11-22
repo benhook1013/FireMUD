@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +30,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -36,6 +38,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Canonical hosting lifecycle/source currentness and separate realm-grant tombstone/CAS proof. */
 class AccountAuthorityCurrentnessIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
 
@@ -65,7 +69,8 @@ class AccountAuthorityCurrentnessIntegrationTest {
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var fixture = CanonicalHostingSubscriptionTestFixture.create(dataSource);
-    var initialCommit = fixture.completeFirstInvoice();
+    var initialCommit =
+        fixture.withCheckoutDirectory(invoiceCheckoutDirectory).completeFirstInvoice();
     UUID initialRequest = initialCommit.requestId();
     long initialExpectedVersion =
         fixture

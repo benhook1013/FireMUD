@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import com.stripe.exception.ApiConnectionException;
 import com.sun.net.httpserver.HttpServer;
@@ -52,8 +53,11 @@ class StripeFirstInvoiceHttpClientTest {
               .setHttpClient(
                   new StripeFirstInvoiceHttpClient(Duration.ofSeconds(1), Duration.ofMillis(500)))
               .build();
-      assertThatThrownBy(() -> stripe.invoices().retrieve("in_exact"))
-          .isInstanceOf(ApiConnectionException.class);
+      assertTimeoutPreemptively(
+          Duration.ofMillis(1750),
+          () ->
+              assertThatThrownBy(() -> stripe.invoices().retrieve("in_exact"))
+                  .isInstanceOf(ApiConnectionException.class));
       assertThat(streaming.getCount()).isZero();
       assertThat(closed.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(attempts.get()).isOne();

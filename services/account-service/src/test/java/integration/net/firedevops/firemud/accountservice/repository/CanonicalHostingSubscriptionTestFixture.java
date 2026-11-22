@@ -318,9 +318,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
   }
 
   /** Separate factory for protected HTTPS owner tests that supply their own genuine actor. */
-  public static Fixture createAwaitingPayment(DataSource source, Account account) {
+  public static Fixture createAwaitingPayment(
+      DataSource source, Account account, Path checkoutDirectory) {
     var fixture = create(source, account);
-    fixture.awaitFirstInvoice();
+    fixture.withCheckoutDirectory(checkoutDirectory).awaitFirstInvoice();
     fixture.providerStatus("incomplete");
     return fixture;
   }
@@ -351,6 +352,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
   /** Actual dispatch/capture owner. Commercial/security policy rows are explicit test inputs. */
   public static FirstInvoiceCheckout prepareFirstInvoice(
+      Path checkoutDirectory,
       DataSource source,
       DSLContext dsl,
       TransactionTemplate transaction,
@@ -359,6 +361,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       String providerId,
       MutableClock clock,
       AccountHostingSubscriptionLifecycleRepository lifecycle) {
+    Objects.requireNonNull(checkoutDirectory, "test-owned checkout directory required");
     in(
         transaction,
         () -> {
@@ -397,7 +400,15 @@ public final class CanonicalHostingSubscriptionTestFixture {
       var invoice =
           in(transaction, () -> payments.retainAwaitingPayment(dispatch, providerId, observed));
       return new FirstInvoiceCheckout(
-          source, dsl, transaction, clock, payments, provider, transport, invoice);
+          checkoutDirectory,
+          source,
+          dsl,
+          transaction,
+          clock,
+          payments,
+          provider,
+          transport,
+          invoice);
     } catch (StripeException failure) {
       throw new IllegalStateException("Controlled existing-invoice capture failed", failure);
     }
@@ -419,6 +430,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final AccountRepository accounts;
 
     private FirstInvoiceCheckout(
+        Path checkoutDirectory,
         DataSource source,
         DSLContext dsl,
         TransactionTemplate transaction,
@@ -472,7 +484,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
               null,
               manager);
       try {
-        Path custody = Files.createTempDirectory("hosting-first-invoice-test-only-custody-");
+        Path custody = Files.createTempDirectory(checkoutDirectory, "hosting-first-invoice-");
         for (String purpose : List.of("encryption", "request-mac")) {
           byte[] bytes = new byte[32];
           Arrays.fill(bytes, (byte) (purpose.equals("encryption") ? 11 : 29));
@@ -495,6 +507,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
                 new AccountControlUiResponseCryptography(
                     new AccountControlUiKeyring(custody), clock));
       } catch (IOException failure) {
+        // JUnit owns the containing directory even when checkout construction does not finish.
         throw new IllegalStateException("Test-only custody setup failed", failure);
       }
     }
@@ -970,6 +983,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final AccountGameplayAdmissionPaidSource admissionPaidSource;
     private final DataSource source;
     private FirstInvoiceCheckout checkout;
+    private Path checkoutDirectory;
 
     private Fixture(
         JdbcTemplate jdbc,
@@ -1091,11 +1105,22 @@ public final class CanonicalHostingSubscriptionTestFixture {
       return admissionPaidSource;
     }
 
+    /** Uses a JUnit-owned directory for both successful and partially constructed checkouts. */
+    public Fixture withCheckoutDirectory(Path directory) {
+      Objects.requireNonNull(directory, "test-owned checkout directory required");
+      if (checkoutDirectory != null && !checkoutDirectory.equals(directory)) {
+        throw new IllegalStateException("Cannot replace the checkout directory");
+      }
+      checkoutDirectory = directory;
+      return this;
+    }
+
     /** Retains the actual existing invoice without granting payment or hosting authority. */
     public FirstInvoiceCheckout awaitFirstInvoice() {
       if (checkout == null)
         checkout =
             prepareFirstInvoice(
+                Objects.requireNonNull(checkoutDirectory, "test-owned checkout directory required"),
                 source,
                 dsl,
                 transaction,

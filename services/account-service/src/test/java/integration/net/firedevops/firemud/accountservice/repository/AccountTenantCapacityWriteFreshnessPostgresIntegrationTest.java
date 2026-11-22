@@ -1,5 +1,6 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
+import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.capacityFreshnessTableImages;
 import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.capacityTableImages;
 import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.configureFlyway;
 import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.hex;
@@ -94,7 +95,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
       var capacity = populateCapacity(database.dsl(), database.write());
       addExpiredEvaluation(database, capacity);
       configureFlyway(database.data(), database.schema(), "1046.5").migrate();
-      var before = capacityTableImages(database.dsl());
+      var before = capacityFreshnessTableImages(database.dsl());
 
       assertThatThrownBy(() ->
               database
@@ -105,7 +106,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                   }))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"))
           .hasStackTraceContaining("stale at the reservation write boundary");
-      assertThat(capacityTableImages(database.dsl())).isEqualTo(before);
+      assertThat(capacityFreshnessTableImages(database.dsl())).isEqualTo(before);
 
       database
           .write()
@@ -123,7 +124,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                       capacity.tenantUuid(),
                       capacity.requestId(),
                       capacity.admissionId()));
-      var terminal = capacityTableImages(database.dsl());
+      var terminal = capacityFreshnessTableImages(database.dsl());
       assertThatThrownBy(() ->
               database
                   .write()
@@ -168,7 +169,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                   }))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"))
           .hasStackTraceContaining("stale at the reservation write boundary");
-      assertThat(capacityTableImages(database.dsl())).isEqualTo(terminal);
+      assertThat(capacityFreshnessTableImages(database.dsl())).isEqualTo(terminal);
     }
   }
 
@@ -178,7 +179,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
       var capacity = populateCapacity(database.dsl(), database.write());
       addExpiredEvaluation(database, capacity);
       configureFlyway(database.data(), database.schema(), "1046.5").migrate();
-      var before = capacityTableImages(database.dsl());
+      var before = capacityFreshnessTableImages(database.dsl());
 
       assertThatThrownBy(() ->
               database
@@ -193,7 +194,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
             assertThat(postgresFailure.getServerErrorMessage().getConstraint())
                 .isEqualTo("account_tenant_capacity_attempt_freshness");
           });
-      assertThat(capacityTableImages(database.dsl())).isEqualTo(before);
+      assertThat(capacityFreshnessTableImages(database.dsl())).isEqualTo(before);
     }
   }
 
@@ -202,7 +203,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
     try (var database = database()) {
       var capacity = populateCapacity(database.dsl(), database.write());
       configureFlyway(database.data(), database.schema(), "1046.5").migrate();
-      var before = capacityTableImages(database.dsl());
+      var before = capacityFreshnessTableImages(database.dsl());
       assertThatThrownBy(() ->
               database
                   .write()
@@ -213,7 +214,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                             "INSERT INTO account_tenant_capacity_evaluations "
                                 + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) "
                                 + "SELECT ?, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, "
-                                + "clock_timestamp(), clock_timestamp() + INTERVAL '1 second' "
+                                + "clock_timestamp(), clock_timestamp() + INTERVAL '3 seconds' "
                                 + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
                             expiredEvaluation(),
                             capacity.evaluationIdentity());
@@ -254,6 +255,16 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                             attemptId,
                             mutationDigest,
                             expiredEvaluation());
+                    assertThat(
+                            database
+                                .dsl()
+                                .fetchSingle(
+                                    "SELECT clock_timestamp() < expires_at "
+                                        + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+                                    expiredEvaluation())
+                                .get(0, Boolean.class))
+                        .as("the reservation insert completed before PostgreSQL's expiry deadline")
+                        .isTrue();
                     incrementUsage(database.dsl(), capacity);
                     database
                         .dsl()
@@ -264,7 +275,7 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                   }))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"))
           .hasStackTraceContaining("stale at the reservation write boundary");
-      assertThat(capacityTableImages(database.dsl())).isEqualTo(before);
+      assertThat(capacityFreshnessTableImages(database.dsl())).isEqualTo(before);
     }
   }
 

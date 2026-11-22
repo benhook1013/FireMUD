@@ -837,7 +837,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         .retainedConflictRequestId(verified);
   }
 
-  /** Selects a retained canceled invoice whose exact signed payment still needs operator work. */
+  /** Selects an exact signed payment without consent for held or canceled original checkout. */
   public boolean requiresUnconsentedLatePaymentReconciliation(VerifiedEvent verified) {
     transaction();
     if (!"payment_intent.succeeded".equals(verified.eventType())) return false;
@@ -846,7 +846,10 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         dsl.fetchOne(
             "SELECT i.subscription_id, i.captured_at FROM subscription_first_invoices i "
                 + "JOIN subscription s USING (subscription_id) "
-                + "WHERE i.payment_intent_id = ? AND s.status = 'canceled' "
+                + "WHERE i.payment_intent_id = ? AND (s.status = 'canceled' OR "
+                + "(s.status = 'provisioning' AND EXISTS (SELECT 1 FROM subscription_provisioning_work w "
+                + "WHERE w.subscription_id = i.subscription_id AND w.request_id = i.creation_request_id "
+                + "AND w.phase = 'AWAITING_PAYMENT'))) "
                 + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_confirmations c "
                 + "WHERE c.subscription_id = i.subscription_id)",
             object.path("id").asText());

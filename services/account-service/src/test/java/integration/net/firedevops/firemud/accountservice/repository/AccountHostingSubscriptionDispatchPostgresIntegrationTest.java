@@ -16,6 +16,7 @@ import integration.net.firedevops.firemud.accountservice.repository.CanonicalHos
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -52,6 +53,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -68,6 +70,8 @@ import tools.jackson.databind.json.JsonMapper;
 /** Actual owner/SDK composition with controlled enrollment publications and provider transport. */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final AtomicLong GAME_ROWS = new AtomicLong(90000);
 
@@ -81,7 +85,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
       throws Exception {
     var source = unpaidCancellationDataSource(null);
     var f = CanonicalHostingSubscriptionTestFixture.create(source);
-    var checkout = f.awaitFirstInvoice();
+    var checkout = f.withCheckoutDirectory(invoiceCheckoutDirectory).awaitFirstInvoice();
     if (claimed) {
       checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     }
@@ -121,7 +125,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
       throws Exception {
     var source = unpaidCancellationDataSource(null);
     var f = CanonicalHostingSubscriptionTestFixture.create(source);
-    var checkout = f.awaitFirstInvoice();
+    var checkout = f.withCheckoutDirectory(invoiceCheckoutDirectory).awaitFirstInvoice();
     var signed = checkout.signedSuccess();
     var verified = checkout.verifier().verify(signed.payload(), signed.signature());
     var repeatableRead = new TransactionTemplate(new DataSourceTransactionManager(source));
@@ -152,7 +156,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   void newNoSendMarkerUsesItsActualTransactionIdentityAndUpgradePreservesRetainedMarker() {
     var source = unpaidCancellationDataSource("1046.7");
     var f = CanonicalHostingSubscriptionTestFixture.create(source);
-    var checkout = f.awaitFirstInvoice();
+    var checkout = f.withCheckoutDirectory(invoiceCheckoutDirectory).awaitFirstInvoice();
     checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     String markerImage =
         f.dsl()
@@ -168,7 +172,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .isEqualTo(markerImage);
 
     var another = CanonicalHostingSubscriptionTestFixture.create(source);
-    var open = another.awaitFirstInvoice();
+    var open = another.withCheckoutDirectory(invoiceCheckoutDirectory).awaitFirstInvoice();
     var dispatch =
         open.prepareConfirmationDispatch(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     in(
@@ -692,6 +696,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(((StripeHostingSubscriptionProvisioner.Pending) lost.providerResult()).reason())
         .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
     assertThat(f.transport().creates).isEqualTo(1);
+    Instant originalProviderCreation = f.transport().providerCreatedAt;
+    assertThat(originalProviderCreation).isNotNull();
     f.transport().emptySearchesRemaining = 1;
     awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
@@ -699,6 +705,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
             provisioning.provision(second, UUID.randomUUID(), UUID.randomUUID());
     assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(f.clock().instant()).isAfter(originalProviderCreation);
+    assertThat(result.invoice().expiresAt())
+        .isEqualTo(originalProviderCreation.plus(Duration.ofHours(23)));
     assertThat(f.transport().creates).isEqualTo(1);
     assertThat(f.transport().searches).isEqualTo(2);
     assertThat(f.transport().lists).isEqualTo(1);
@@ -1373,6 +1382,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private final String paymentMethod;
     private final Clock clock;
     private boolean exists;
+    private Instant providerCreatedAt;
     private boolean loseCreateResponse;
     private Runnable duringCreate;
     private int emptySearchesRemaining;
@@ -1451,6 +1461,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
                 + "]}";
       } else if (path.equals("/v1/subscriptions") && method == RequestMethod.POST) {
         creates++;
+        if (!exists)
+          providerCreatedAt = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         exists = true;
         assertThat(options.getIdempotencyKey())
             .isEqualTo(creation.subscriptionProvisioningRequestId().toString());
@@ -1507,7 +1519,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
           + "\",\"default_payment_method\":\""
           + paymentMethod
           + "\",\"livemode\":false,\"status\":\"incomplete\",\"latest_invoice\":\"in_exact\",\"created\":"
-          + clock.instant().getEpochSecond()
+          + Objects.requireNonNull(providerCreatedAt).getEpochSecond()
           + ",\"cancel_at_period_end\":false,"
           + "\"metadata\":{\"firemud_metadata_schema_version\":\"1\",\"firemud_operation_type\":\"subscription_provisioning\","
           + "\"firemud_operation_id\":\""

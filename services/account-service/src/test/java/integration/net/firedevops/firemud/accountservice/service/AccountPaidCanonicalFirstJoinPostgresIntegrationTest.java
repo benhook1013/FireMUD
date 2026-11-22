@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -58,6 +60,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * real Stripe, World hold, protected admission transport, custody or runtime activation is proved.
  */
 class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final String PREFIX = "paid_first_join_";
   private static final String CALLER = "controlled-paid-join-caller";
   private static final AccountPostgresIntegrationFixture POSTGRES =
@@ -211,7 +215,8 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
 
     private Context(CanonicalHostingSubscriptionTestFixture.Fixture hosting, boolean wrongPolicy) {
       this.hosting = hosting;
-      var committed = hosting.completeFirstInvoice();
+      var committed =
+          hosting.withCheckoutDirectory(invoiceCheckoutDirectory).completeFirstInvoice();
       assertThat(committed.outcome())
           .isEqualTo(
               net.firedevops.firemud.accountservice.repository

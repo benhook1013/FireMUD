@@ -1807,7 +1807,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       var demoRequest = entitlementRequest(tenantId, source);
       caller.transaction.execute(status -> caller.demoEntitlements.provision(demoRequest, source));
     }
-    hosting.completeFirstInvoice();
+    hosting.withCheckoutDirectory(temporaryDirectory).completeFirstInvoice();
     var scope = canonicalJoinScope(caller.account.getAccountUuid(), tenantId);
     var provenance =
         new VerifiedTenantProvenance(

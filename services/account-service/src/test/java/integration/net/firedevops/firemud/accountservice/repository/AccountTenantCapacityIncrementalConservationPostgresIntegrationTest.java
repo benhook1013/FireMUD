@@ -298,7 +298,8 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
       DSLContext dsl = database.dsl();
       CapacityFixture capacity = populateCapacity(dsl, database.transaction());
       addFinalizedHistory(database, capacity, 4096);
-      dsl.execute("ANALYZE account_tenant_capacity_reservations");
+      dsl.execute("VACUUM (ANALYZE) account_tenant_capacity_reservations");
+      assertIndexOnlyHistoryDetected(database, capacity);
       assertBoundedFunctions(dsl);
       database
           .transaction()
@@ -562,10 +563,36 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
             .get(0, String.class));
   }
 
+  private static void assertIndexOnlyHistoryDetected(Database database, CapacityFixture capacity) {
+    DSLContext dsl = database.dsl();
+    database
+        .transaction()
+        .executeWithoutResult(status -> {
+          dsl.execute("SET LOCAL enable_seqscan = off");
+          dsl.execute("SET LOCAL enable_bitmapscan = off");
+          dsl.execute("SET LOCAL max_parallel_workers_per_gather = 0");
+          long before = reservationRowsRead(dsl);
+          List<String> plan =
+              dsl.fetch(
+                      "EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) SELECT count(request_id) "
+                          + "FROM account_tenant_capacity_reservations WHERE tenant_uuid = ?",
+                      capacity.tenantUuid())
+                  .getValues(0, String.class);
+          assertThat(plan).anyMatch(line -> line.contains("Index Only Scan"));
+          assertThat(plan).anyMatch(line -> line.trim().equals("Heap Fetches: 0"));
+          assertThat(reservationRowsRead(dsl) - before)
+              .as("the bounded-work oracle must detect the index-only history scan")
+              .isGreaterThanOrEqualTo(4096L);
+        });
+  }
+
   private static long reservationRowsRead(DSLContext dsl) {
     return Objects.requireNonNull(
         dsl.fetchSingle(
-                "SELECT seq_tup_read + idx_tup_fetch FROM pg_stat_xact_user_tables "
+                "SELECT seq_tup_read + idx_tup_fetch + "
+                    + "(SELECT COALESCE(SUM(pg_stat_get_xact_tuples_returned(indexrelid)), 0) "
+                    + "FROM pg_index WHERE indrelid = stats.relid) "
+                    + "FROM pg_stat_xact_user_tables stats "
                     + "WHERE relid = 'account_tenant_capacity_reservations'::regclass")
             .get(0, Long.class));
   }
