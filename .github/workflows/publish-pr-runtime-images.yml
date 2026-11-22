@@ -679,11 +679,19 @@ jobs:
                 if (!Number.isSafeInteger(event.id) || event.id !== sourceId ||
                     !Number.isSafeInteger(event.run_attempt) || event.run_attempt <= 0 ||
                     !isTrustedWorkflowPath(event.path)) throw new Error("publication callback path or run identity is not trusted");
-                for (const field of ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
+                for (const field of ["id", "workflow_id", "run_attempt", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
                   if (run[field] !== event[field]) throw new Error(`source API ${field} differs from callback`);
                 }
                 for (const field of ["repository", "head_repository"]) {
                   if (run[field]?.full_name !== event[field]?.full_name) throw new Error(`source API ${field} differs from callback`);
+                }
+                // Native PR callbacks and run lookups may differ only in whether
+                // this exact PR's canonical merge ref is included in the path.
+                const mergePath = `${workflow.path}@refs/pull/${title[1]}/merge`;
+                if (run.path !== event.path && !(run.event === "pull_request" &&
+                    ((run.path === workflow.path && event.path === mergePath) ||
+                     (event.path === workflow.path && run.path === mergePath)))) {
+                  throw new Error("source API path differs from callback");
                 }
               }
               if (run.status === "completed") {

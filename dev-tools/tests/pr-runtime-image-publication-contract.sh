@@ -322,6 +322,57 @@ for (const publishable of ["false", "", undefined]) {
   const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
   await assert.rejects(resolve({runs: [prSource]}), /publication source run provenance is not trusted/);
   assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
+  const mergePath = `${source.path}@refs/pull/42/merge`;
+  for (const [apiPath, callbackPath] of [[source.path, mergePath], [mergePath, source.path]]) {
+    const apiRun = {...prSource, path: apiPath};
+    const callbackRun = {...prSource, path: callbackPath};
+    const context = {...prCallback, payload: {repository, workflow_run: callbackRun}};
+    const resolved = await resolve({runs: [apiRun], context});
+    assert.deepEqual(JSON.parse(resolved.output.source), apiRun, "path equivalence preserves the exact native API source");
+    assert.equal(resolved.output.artifact_name, direct.output.artifact_name);
+    for (const change of [
+      {id: 4243}, {id: "4242"}, {workflow_id: 778}, {workflow_id: "777"},
+      {run_attempt: 2}, {run_attempt: "1"}, {run_attempt: 0},
+      {repository: {full_name: "fork/FireMUD"}}, {head_repository: {full_name: "fork/FireMUD"}},
+      {head_sha: sha("d")}, {head_branch: "other"}, {event: "repository_dispatch"},
+      {display_title: title.replace("pr-42", "pr-43")},
+      {display_title: title.replace(`base-${sha("b")}`, `base-${sha("d")}`)},
+      {display_title: title.replace(`merge-${sha("c")}`, `merge-${sha("d")}`)},
+      {display_title: title.replace("mode-required", "mode-optional")},
+      {conclusion: "failure"},
+    ]) {
+      await assert.rejects(resolve({runs: [{...apiRun, ...change}], context}),
+        `path equivalence must not mask API identity drift: ${JSON.stringify(change)}`);
+      await assert.rejects(resolve({runs: [apiRun], context: {
+        ...context, payload: {repository, workflow_run: {...callbackRun, ...change}},
+      }}), `path equivalence must not mask callback identity drift: ${JSON.stringify(change)}`);
+    }
+    await assert.rejects(resolve({runs: [{...apiRun, status: "in_progress"}], context}), /bounded wait/);
+    // A typed refresh must retain exact path equality, even for a PR-shaped suffix.
+    await assert.rejects(resolve({runs: [{...source, path: apiPath}], context: {
+      ...callbackContext, payload: {repository, workflow_run: {...source, path: callbackPath}},
+    }}), /source API path differs from callback/);
+  }
+  for (const suffix of ["refs/pull/43/merge", "refs/pull/042/merge", "refs/pull/42/head",
+      "refs/pull/42/merge/extra", "refs/pull/42/merge-other", "refs/heads/feature/ci"]) {
+    const wrongPath = `${source.path}@${suffix}`;
+    for (const [apiPath, callbackPath] of [[source.path, wrongPath], [wrongPath, source.path],
+        [mergePath, wrongPath], [wrongPath, mergePath]]) {
+      await assert.rejects(resolve({runs: [{...prSource, path: apiPath}], context: {
+        ...prCallback, payload: {repository, workflow_run: {...prSource, path: callbackPath}},
+      }}), /source API path differs from callback/);
+    }
+  }
+  for (const eventSource of [source, prSource]) {
+    for (const path of [source.path, `${source.path}@refs/heads/feature/ci`, mergePath]) {
+      assert.equal((await resolve({runs: [{...eventSource, path}], context: {
+        ...callbackContext, payload: {repository, workflow_run: {...eventSource, path}},
+      }})).output.title, direct.output.title, "already equal trusted paths remain valid");
+    }
+    await assert.rejects(resolve({runs: [{...eventSource, path: `${source.path}@refs/heads/feature/ci`}], context: {
+      ...callbackContext, payload: {repository, workflow_run: {...eventSource, path: `${source.path}@refs/heads/other`}},
+    }}), /source API path differs from callback/);
+  }
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
   const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
