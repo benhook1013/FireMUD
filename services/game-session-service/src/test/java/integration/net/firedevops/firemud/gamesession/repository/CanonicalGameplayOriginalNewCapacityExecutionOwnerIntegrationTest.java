@@ -506,26 +506,35 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
               stoppingOwner.authorize(
                   source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
           .isInstanceOf(RuntimeException.class);
+      assertThat(stoppedAfterCommit).isTrue();
+      String originalKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
+      assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("INSTALL_DISPATCHED");
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(
+                      source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .isNotInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class)
+          .hasMessage("Original NEW capacity execution is indeterminate");
+      assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("INSTALL_DISPATCHED");
     }
-    assertThat(stoppedAfterCommit).isTrue();
-    String originalKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
-    assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
-    assertThat(
-            fixture
-                .dsl()
-                .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
-                    controlledCapacity.digest())
-                .get(0, String.class))
-        .isEqualTo("INSTALL_DISPATCHED");
-    assertThat(
-            fixture
-                .dsl()
-                .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
-                    controlledCapacity.digest())
-                .get(0, String.class))
-        .isEqualTo("INSTALL_DISPATCHED");
     assertThatThrownBy(() ->
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
