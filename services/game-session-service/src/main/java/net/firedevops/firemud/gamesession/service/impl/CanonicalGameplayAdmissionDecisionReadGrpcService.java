@@ -782,42 +782,8 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     return toTarget(decision.targetEvidence());
   }
 
-  private static Target toTarget(
-      net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget target) {
-    return new Target(
-        target.targetNamespace(),
-        target.tenantSlug(),
-        target.canonicalTenantId(),
-        target.worldSlug(),
-        target.worldDisplayName(),
-        target.realmId(),
-        target.realmSlug(),
-        target.realmDisplayName(),
-        target.gameSessionTenantId(),
-        target.gameInstanceId(),
-        target.playableStateNamespaceId(),
-        target.playableStateScope(),
-        target.canonicalGameInstanceId(),
-        target.canonicalVersionId(),
-        target.runtimeVersionId(),
-        target.catalogRevision(),
-        target.pointerVersion(),
-        target.admissionPointerSnapshotDigest(),
-        target.activeWorldEpoch(),
-        target.initialAdmissionRequestId(),
-        target.initialAdmissionRequestDigest(),
-        CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind.valueOf(
-            target.initialAdmissionOriginKind().name()),
-        target.expectedPriorPointerVersion(),
-        target.holdId(),
-        target.holdFence(),
-        target.holdBindingDigest(),
-        target.auditEventId(),
-        target.ownerProofDigest(),
-        OwnerProofOutcome.valueOf(target.ownerProofOutcome().name()),
-        target.positiveDurableAbort(),
-        target.ownerProofTerminalAt(),
-        target.characterCreationPolicy());
+  private static Target toTarget(CanonicalPlayableTarget target) {
+    return target.admissionDecisionTarget();
   }
 
   private static boolean hasConnectionFailureSqlState(Throwable failure) {

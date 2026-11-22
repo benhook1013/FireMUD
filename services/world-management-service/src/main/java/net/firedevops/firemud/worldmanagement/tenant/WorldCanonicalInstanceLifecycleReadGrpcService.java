@@ -7,6 +7,8 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureStartRoomRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureStartRoomResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceLifecycleReadServiceGrpc;
@@ -131,6 +133,58 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
     }
     responseObserver.onNext(response);
     responseObserver.onCompleted();
+  }
+
+  @Override
+  public void readRunOwnedFixtureStartRoom(
+      ReadRunOwnedFixtureStartRoomRequest request,
+      StreamObserver<ReadRunOwnedFixtureStartRoomResponse> observer) {
+    if (!requireAuthenticatedGameSessionPeer(observer)) return;
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
+      return;
+    }
+    WorldCanonicalInstanceLifecycleEvidence.Request selector;
+    try {
+      if (request == null
+          || !request.hasLifecycle()
+          || !request.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException("A complete fixture lifecycle selector is required");
+      }
+      selector = WorldCanonicalInstanceLifecycleGrpcCodec.fromRequest(request.getLifecycle());
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(Status.INVALID_ARGUMENT.asRuntimeException());
+      return;
+    }
+    if (!trustedNamespace.equals(selector.targetNamespace())) {
+      observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
+      return;
+    }
+    final ReadRunOwnedFixtureStartRoomResponse response;
+    try {
+      var placement = repository.readRunOwnedFixtureStartRoom(selector);
+      if (placement.isEmpty()) {
+        observer.onError(Status.NOT_FOUND.asRuntimeException());
+        return;
+      }
+      var startRoom = placement.orElseThrow();
+      response =
+          ReadRunOwnedFixtureStartRoomResponse.newBuilder()
+              .setLifecycle(
+                  WorldCanonicalInstanceLifecycleGrpcCodec.toFixtureResponse(
+                      selector, startRoom.lifecycle()))
+              .setRoomInstanceKey(startRoom.roomKey())
+              .build();
+    } catch (RuntimeException unavailable) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("The run-owned fixture start room is unavailable")
+              .asRuntimeException());
+      return;
+    }
+    observer.onNext(response);
+    observer.onCompleted();
   }
 
   private boolean requireAuthenticatedGameSessionPeer(StreamObserver<?> responseObserver) {

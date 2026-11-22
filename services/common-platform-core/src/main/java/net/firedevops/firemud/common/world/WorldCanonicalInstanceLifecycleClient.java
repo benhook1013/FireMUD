@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureStartRoomRequest;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceLifecycleReadServiceGrpc;
 
 /** Explicit mTLS client for the exact World canonical instance lifecycle read. */
@@ -111,6 +112,46 @@ public final class WorldCanonicalInstanceLifecycleClient
     } catch (IllegalArgumentException invalid) {
       throw new IllegalStateException(
           "World returned invalid run-owned fixture lifecycle evidence", invalid);
+    }
+  }
+
+  /** Reads the World-owned first room and same-snapshot lifecycle of an exact ACTIVE fixture. */
+  public FixtureStartRoom readRunOwnedFixtureStartRoom(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    if (!workloadNamespace.equals(request.targetNamespace())) {
+      throw new IllegalArgumentException(
+          "World canonical lifecycle request must use the configured workload namespace");
+    }
+    var response =
+        requireStub()
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .readRunOwnedFixtureStartRoom(
+                ReadRunOwnedFixtureStartRoomRequest.newBuilder()
+                    .setLifecycle(WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request))
+                    .build());
+    try {
+      if (!response.hasLifecycle() || !response.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException("World fixture start room has no exact lifecycle");
+      }
+      return new FixtureStartRoom(
+          WorldCanonicalInstanceLifecycleGrpcCodec.fromFixtureResponse(
+              request, response.getLifecycle()),
+          response.getRoomInstanceKey());
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "World returned invalid fixture start room evidence", invalid);
+    }
+  }
+
+  public record FixtureStartRoom(WorldRunOwnedFixtureLifecycleEvidence lifecycle, String roomKey) {
+    public FixtureStartRoom {
+      Objects.requireNonNull(lifecycle, "lifecycle");
+      if (!"ACTIVE".equals(lifecycle.lifecycleStatus())
+          || roomKey == null
+          || !roomKey.matches("R-[1-9][0-9]{0,18}")) {
+        throw new IllegalArgumentException("World fixture start room evidence is unavailable");
+      }
     }
   }
 

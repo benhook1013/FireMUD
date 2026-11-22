@@ -6,10 +6,14 @@ import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferen
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 
-/** Constructed only by the exact authenticated, purpose-specific Entity response readers. */
+/**
+ * Constructed only by the exact authenticated, purpose-specific Entity response readers, or by the
+ * gate-waived pre-v1 run-owned fixture stand-in.
+ */
 public sealed interface CanonicalGameplayRuntimeActorReference
     permits CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference,
-        CanonicalPlayerCreatedRuntimeReferenceClient.RuntimeActorReference {
+        CanonicalPlayerCreatedRuntimeReferenceClient.RuntimeActorReference,
+        PreV1RunOwnedFixtureActorReference {
   String workloadNamespace();
 
   CanonicalRuntimeEntityId runtimeEntityId();

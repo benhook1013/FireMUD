@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.impl;
 import com.google.protobuf.Any;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.TlsServerCredentials;
@@ -58,8 +59,13 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
             RuntimePlayerAdmissionEntitlementGrpcCodec.MAX_REQUEST_WIRE_BYTES);
-    factory.addService(ServerInterceptors.interceptForward(this, guard));
+    factory.addService(bindProtectedService());
     return factory.createServer();
+  }
+
+  /** Binds the receiver and its method guard to the same private caller context. */
+  public ServerServiceDefinition bindProtectedService() {
+    return ServerInterceptors.interceptForward(this, guard);
   }
 
   @Override

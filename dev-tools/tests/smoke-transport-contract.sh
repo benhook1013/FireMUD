@@ -2016,11 +2016,13 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
-telnet_steps = smoke_common.authenticated_telnet_login_steps(
-    "demo@example.com", "swordfish", "demo", "OK LOGIN"
+telnet_steps = smoke_common.authenticated_telnet_play_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY"
 )
-assert [step[2] for step in telnet_steps] == ["LOGIN", "PLAY"]
-assert telnet_steps[1][:2] == ("PLAY demo", ["ERROR ADMISSION_UNAVAILABLE"])
+assert [step[2] for step in telnet_steps] == ["LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY"]
+assert telnet_steps[2][:2] == ("REALMS demo", ["OK REALMS"])
+assert telnet_steps[3][:2] == ("JOIN demo", ["OK JOIN"])
+assert telnet_steps[4][:2] == ("PLAY demo", ["OK PLAY"])
 
 
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
@@ -2075,11 +2077,10 @@ for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
   if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
-    # Authenticated Telnet WORLDS/PLAY/LOOK is deferred to the canonical admission chain.
     grep -Fq 'discovery_selector = world' "$script" ||
       { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
-    grep -Fq 'authenticated_telnet_login_steps(login_email, password, world, login_expect)' "$script" ||
-      { echo "$script baseline must use the authenticated Telnet LOGIN plan" >&2; exit 1; }
+    grep -Fq 'authenticated_telnet_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect)' "$script" ||
+      { echo "$script baseline must use the authenticated Telnet PLAY plan" >&2; exit 1; }
   else
     grep -Fq 'discovery_selector=world' "$script" ||
       { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }

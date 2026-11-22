@@ -125,7 +125,7 @@ public class AccountGameplayAdmissionReceiversConfiguration {
   }
 
   @Bean
-  AccountPlayerAdmissionEntitlementGrpcService accountPlayerAdmissionEntitlementReceiver(
+  BindableService accountPlayerAdmissionEntitlementReceiver(
       DSLContext dsl,
       AccountRepository accounts,
       AccountGameplayAdmissionCallerVerifier verifier,
@@ -153,7 +153,7 @@ public class AccountGameplayAdmissionReceiversConfiguration {
             transactions,
             Clock.systemUTC(),
             namespace);
-    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace);
+    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace)::bindProtectedService;
   }
 
   @Bean

@@ -24,6 +24,30 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
       RuntimeIdentity runtimeIdentity,
       Duration leaseTtl,
       Clock clock) {
+    return compose(
+        dsl,
+        coordinationRedis,
+        coordinationUri,
+        scriptCatalog,
+        incarnationSource,
+        CanonicalGameplayRegionLeaseOwner.PlacementSource.world(
+            Objects.requireNonNull(worldRegionResolver, "worldRegionResolver")),
+        runtimeIdentity,
+        leaseTtl,
+        clock);
+  }
+
+  /** Same composition over an explicit placement port (World, or the pre-v1 fixture stand-in). */
+  static CanonicalGameplayRegionLeaseOwner compose(
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      RedisURI coordinationUri,
+      RedisScriptCatalog scriptCatalog,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalGameplayRegionLeaseOwner.PlacementSource placementSource,
+      RuntimeIdentity runtimeIdentity,
+      Duration leaseTtl,
+      Clock clock) {
     Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(coordinationRedis, "coordinationRedis");
     Objects.requireNonNull(scriptCatalog, "scriptCatalog");
@@ -34,7 +58,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
         new CanonicalGameplayRegionLeaseRedisOwner(
             coordinationRedis, coordinationUri, scriptCatalog),
         incarnationSource,
-        Objects.requireNonNull(worldRegionResolver, "worldRegionResolver"),
+        Objects.requireNonNull(placementSource, "placementSource"),
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity"),
         Objects.requireNonNull(leaseTtl, "leaseTtl"),
         Objects.requireNonNull(clock, "clock"));

@@ -928,6 +928,21 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         new WorldCanonicalInitialAdmissionHoldRepository(
             dsl, transactionManager, associationRepository(), lifecycleRepository);
 
+    var room = lifecycleRepository.readRunOwnedFixtureStartRoom(lifecycleRequest).orElseThrow();
+    var privateKeys = association.runOwnedFixture().worldPrivateKeys();
+    long storedStartRoom =
+        dsl.fetchSingle(
+                "SELECT room_instance_row_id FROM room_instance "
+                    + "WHERE tenant_id = ? AND game_instance_id = ? AND name = ?",
+                privateKeys.tenantId(),
+                privateKeys.gameInstanceId(),
+                "Candle-lit Antechamber")
+            .get(0, Long.class);
+    assertThat(room.roomKey()).isEqualTo("R-" + storedStartRoom);
+    assertThat(room.lifecycle())
+        .isEqualTo(lifecycleRepository.readRunOwnedFixture(lifecycleRequest).orElseThrow());
+    assertThat(room.lifecycle().lifecycleStatus()).isEqualTo("ACTIVE");
+
     var hold = holds.acquire(holdRequest, lifecycleRequest);
     assertThat(holds.acquire(holdRequest, lifecycleRequest)).isEqualTo(hold);
     var state = holds.readState(hold, lifecycleRequest).orElseThrow();

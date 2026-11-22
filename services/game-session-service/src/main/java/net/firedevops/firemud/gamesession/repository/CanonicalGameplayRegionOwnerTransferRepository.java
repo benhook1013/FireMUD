@@ -1196,8 +1196,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !source.canonicalRegionId().equals(prior.canonicalRegionId())
         || source.lifecycleEpoch() != prior.lifecycleEpoch()
         || source.lifecycleRowVersion() != prior.lifecycleRowVersion()
-        || !source.captureId().equals(prior.captureId())
-        || !source.graphSha256().equals(prior.graphSha256())
+        || !Objects.equals(source.captureId(), prior.captureId())
+        || !Objects.equals(source.graphSha256(), prior.graphSha256())
         || !source.preparationInputDigest().equals(prior.preparationInputDigest())
         || !CanonicalGameplayRegionRuntimeStatusRepository.sameLifecycleRequestExceptReadRequestId(
             source.lifecycleRequest(), prior.lifecycleRequest())) throw unavailable();

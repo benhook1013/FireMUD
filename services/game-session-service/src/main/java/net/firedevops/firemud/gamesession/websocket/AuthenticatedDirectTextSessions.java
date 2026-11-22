@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionS
 import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCredentialPresentation;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyCustody;
@@ -106,7 +107,13 @@ public final class AuthenticatedDirectTextSessions {
     private volatile InitialGameplayLoginCredentialPresentation credentials;
     private volatile InitialGameplayLoginOwner.Outcome outcome;
     DirectTextWorldSelectionService.SelectionSnapshot menu;
-    DirectTextAuthenticatedLobbyScope selectedScope;
+    volatile DirectTextAuthenticatedLobbyScope selectedScope;
+    volatile PreV1CanonicalPlayAdmissionOwner.Admitted admitted;
+    private final AtomicBoolean playStarted = new AtomicBoolean();
+
+    boolean beginPlay() {
+      return playStarted.compareAndSet(false, true);
+    }
 
     private Connection(
         WebSocketSession socket, AuthenticatedDirectTextIngress ingress, Connection predecessor) {
@@ -129,6 +136,8 @@ public final class AuthenticatedDirectTextSessions {
         }
         menu = null;
         selectedScope = null;
+        admitted = null;
+        playStarted.set(false);
         credentials =
             InitialGameplayLoginCredentialPresentation.fromAuthenticatedTcp(
                 ingress, email, ownedSecret);
@@ -234,6 +243,8 @@ public final class AuthenticatedDirectTextSessions {
           outcome = null;
           menu = null;
           selectedScope = null;
+          admitted = null;
+          playStarted.set(false);
         } finally {
           lifetime.writeLock().unlock();
         }

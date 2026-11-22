@@ -75,6 +75,8 @@ public final class PreV1CanonicalPlayManualFactory {
         new PreV1RegionIncarnationSource(observer::redisRunId),
         new PreV1CanonicalGameplayStoreBootstrap(dsl, coordination, scripts, observer, issuerState),
         new PreV1CanonicalPlayBudgets(
-            dsl, new GameSessionCanonicalRealmCatalogRepository(dsl), tags, workloadNamespace));
+            dsl, new GameSessionCanonicalRealmCatalogRepository(dsl), tags, workloadNamespace),
+        waivers,
+        new PreV1RunOwnedFixtureActorSource(waivers, workloadNamespace));
   }
 }

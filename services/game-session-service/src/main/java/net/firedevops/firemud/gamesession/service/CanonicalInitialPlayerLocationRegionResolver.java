@@ -68,6 +68,29 @@ public final class CanonicalInitialPlayerLocationRegionResolver {
 
   /** Immutable resolved observation; consumers must still revalidate at their binding gate. */
   public static final class ResolvedRegion {
+    /**
+     * Pre-v1 gate waiver (ADR 0185) stand-in for the run-owned fixture: a Game Session-built
+     * observation over a fixture assignment. World places no fixture actor, so this is not a World
+     * placement read; the observation and assignment must name the same exact regions.
+     */
+    public static ResolvedRegion preV1RunOwnedFixture(
+        CanonicalInitialPlayerLocationRegionResponse observation,
+        CanonicalRegionBootstrapAssignmentResolver.Assignment fixtureAssignment) {
+      Objects.requireNonNull(observation, "observation");
+      Objects.requireNonNull(fixtureAssignment, "fixtureAssignment");
+      if (!fixtureAssignment.runOwnedFixture()
+          || !observation
+              .getCanonicalRegionInstanceUuid()
+              .equals(fixtureAssignment.canonicalRegionId().toString())
+          || !observation
+              .getOperationalRegionUuid()
+              .equals(fixtureAssignment.operationalRegionId().toString())) {
+        throw new IllegalArgumentException(
+            "Run-owned fixture observation must name its exact fixture assignment");
+      }
+      return new ResolvedRegion(observation, fixtureAssignment);
+    }
+
     private final CanonicalInitialPlayerLocationRegionResponse observation;
     private final CanonicalRegionBootstrapAssignmentResolver.Assignment lifecycleAssignment;
 
