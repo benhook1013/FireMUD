@@ -1548,7 +1548,8 @@ jobs:
               if (replacement.conclusion === "success") {
                 // Ordinary success has one canonical proof path. A contradictory
                 // snapshot cannot be retried through the diagnostic exception path.
-                return await verifyCanonicalSmokeProducer(replacement, candidate, identity, true);
+                const proof = await verifyCanonicalSmokeProducer(replacement, candidate, identity, true);
+                return proof === true ? "ordinary" : proof;
               }
               const playProof = await verifyKnownPlayFailure(replacement, candidate, identity, true, true);
               if (playProof === true) return true;
@@ -1765,11 +1766,33 @@ jobs:
                   );
                   return;
                 }
-                core.info(
-                  `Exact pull_request runtime-images run ${matching.id} was cancelled; exact repository_dispatch ` +
-                  `replacement ${replacement.id}/${replacement.run_attempt} passed a fresh terminal proof.`
-                );
-                matching = replacement;
+                if (!await isCurrentCanonicalAttempt(replacement)) {
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
+                const finalIdentity = await resolveCurrentIdentity("Fencing proven cancelled-run replacement", true);
+                if (finalIdentity?.obsolete) return;
+                if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                    identityKey(currentIdentity)) {
+                  if (finalIdentity) {
+                    cancelledRecoveryMoved = true;
+                    requireCurrentIdentity = true;
+                    currentIdentity = finalIdentity;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
+                if (replacementProof === "ordinary") {
+                  core.info(`Exact repository_dispatch replacement ${replacement.id}/${replacement.run_attempt} passed full-stack smoke and authenticated cleanup.`);
+                  return;
+                }
+                if (!finalIdentity.canonicalPlayEligible) {
+                  core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                  return;
+                }
+                core.setOutput("known_play_exception", "true");
+                core.warning("Canonical PLAY transition exception accepted; no runtime qualification or image publication.");
+                return;
               }
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
