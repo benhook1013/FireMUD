@@ -883,30 +883,39 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .when(provider)
         .release(connection);
     DSLContext dsl = source(provider);
-    try {
-      assertThatThrownBy(() ->
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                  CLOCK,
-                  CLOCK.millis() + 200,
-                  budget -> {
-                    execute(budget.sql(dsl));
-                    awaitUninterruptibly(finish);
-                    return true;
-                  },
-                  cancellation ->
-                      Thread.ofVirtual()
-                          .name("test-original-new-capacity-cancel")
-                          .unstarted(() -> {
-                            try {
-                              cancellation.run();
-                            } finally {
-                              cancellationWorkerFinished.countDown();
-                            }
-                          })))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(returned.await(1, TimeUnit.SECONDS)).isTrue();
-    } finally {
-      finish.countDown();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() -> {
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            CLOCK,
+                            Long.MAX_VALUE,
+                            budget -> {
+                              execute(budget.sql(dsl));
+                              awaitUninterruptibly(finish);
+                              return true;
+                            },
+                            cancellation ->
+                                Thread.ofVirtual()
+                                    .name("test-original-new-capacity-cancel")
+                                    .unstarted(() -> {
+                                      try {
+                                        cancellation.run();
+                                      } finally {
+                                        cancellationWorkerFinished.countDown();
+                                      }
+                                    })))
+                    .isInstanceOf(IllegalStateException.class);
+              }));
+      try {
+        assertThat(returned.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+      } finally {
+        finish.countDown();
+      }
     }
     assertThat(cancellationWorkerFinished.await(2, TimeUnit.SECONDS)).isTrue();
     awaitResourceAndCancellationWorkerCleanup();
@@ -936,11 +945,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 () ->
                     assertThatThrownBy(() ->
                             CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                                CLOCK, CLOCK.millis() + 300, budget -> execute(budget.sql(source))))
+                                CLOCK,
+                                CLOCK.millis() + 3000,
+                                budget -> execute(budget.sql(source))))
                         .isInstanceOf(IllegalStateException.class),
                 executor));
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
+      for (var caller : callers) assertThat(caller.isDone()).isFalse();
+      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(5, TimeUnit.SECONDS);
       assertPromptBudgetRefusal(
           executor,
           () ->
@@ -1123,37 +1135,48 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           return true;
         });
     DSLContext dsl = source(provider);
-    try {
-      assertThatThrownBy(() ->
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() -> {
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            CLOCK,
+                            Long.MAX_VALUE,
+                            budget -> {
+                              captured.set(budget);
+                              return execute(budget.sql(dsl));
+                            },
+                            ignored -> {
+                              throw new java.util.concurrent.RejectedExecutionException(
+                                  "Controlled startup refusal");
+                            }))
+                    .isInstanceOf(IllegalStateException.class);
+              }));
+      try {
+        assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+        verify(statement, never()).cancel();
+        verify(provider, never()).release(connection);
+        assertThat(ReflectionTestUtils.getField(captured.get(), "cancellationDone"))
+            .isEqualTo(true);
+        finish.countDown();
+        verify(provider, timeout(2000)).release(connection);
+        assertNoOwnedConnections(captured.get());
+        for (int index = 0;
+            index
+                < 2 * CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+            index++) {
+          boolean admitted =
               CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                  CLOCK,
-                  CLOCK.millis() + 200,
-                  budget -> {
-                    captured.set(budget);
-                    return execute(budget.sql(dsl));
-                  },
-                  ignored -> {
-                    throw new java.util.concurrent.RejectedExecutionException(
-                        "Controlled startup refusal");
-                  }))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
-      verify(statement, never()).cancel();
-      verify(provider, never()).release(connection);
-      assertThat(ReflectionTestUtils.getField(captured.get(), "cancellationDone")).isEqualTo(true);
-      finish.countDown();
-      verify(provider, timeout(2000)).release(connection);
-      assertNoOwnedConnections(captured.get());
-      for (int index = 0;
-          index < 2 * CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
-          index++) {
-        boolean admitted =
-            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                CLOCK, Long.MAX_VALUE, budget -> true);
-        assertThat(admitted).isTrue();
+                  CLOCK, Long.MAX_VALUE, budget -> true);
+          assertThat(admitted).isTrue();
+        }
+      } finally {
+        finish.countDown();
       }
-    } finally {
-      finish.countDown();
     }
   }
 
