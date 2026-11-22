@@ -2026,6 +2026,13 @@ assert telnet_steps[4][:2] == ("PLAY demo", ["OK PLAY"])
 
 assert telnet_steps[5][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
 
+websocket_steps = smoke_common.canonical_fixture_play_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    worlds_first=True,
+)
+assert [step[2] for step in websocket_steps] == ["WORLDS", "LOGIN", "REALMS", "JOIN", "PLAY", "LOOK"]
+assert websocket_steps[2:] == telnet_steps[2:]
+
 
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
     "demo@example.com",
