@@ -1,7 +1,10 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.stripe.exception.StripeException;
 import com.stripe.model.StripeObject;
@@ -77,8 +80,10 @@ import net.firedevops.firemud.accountservice.repository.StripeEventInboxReposito
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiKeyring;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiResponseCryptography;
+import net.firedevops.firemud.accountservice.service.session.AccountHostingFirstInvoicePaymentService;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicyRepository;
@@ -622,35 +627,51 @@ public final class CanonicalHostingSubscriptionTestFixture {
           in(
               transaction,
               () -> payments.ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId()));
-      var billingContext =
-          new AccountRecentReauthenticationEvidence.BillingContext(
-              invoice.ownerAccountId(),
+      String controlledBearer = "controlled-first-invoice-owner";
+      var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+      when(actor.accountId()).thenReturn(invoice.ownerAccountId());
+      var actors = mock(AccountControlUiActorService.class);
+      when(actors.withCurrentAccount(eq(controlledBearer), any()))
+          .thenAnswer(call -> {
+            java.util.function.Function<AccountControlUiActorService.AccountAuthenticatedActor, ?>
+                action = call.getArgument(1);
+            return in(transaction, () -> action.apply(actor));
+          });
+      // Only the checkout's real owner entry issues and binds a fresh billing proof. The
+      // unrelated lifecycle collaborator is unused; consent/dispatch remain controlled below.
+      var owner =
+          new AccountHostingFirstInvoicePaymentService(
+              actors,
+              reauthentication,
+              payments,
+              new StripeEventInboxRepository(dsl),
+              provider,
+              verifier,
+              mock(AccountHostingSubscriptionLifecycleService.class),
+              Objects.requireNonNull(transaction.getTransactionManager()));
+      UUID evidenceId =
+          owner.reauthenticate(
+              controlledBearer,
               invoice.subscriptionId(),
+              UUID.randomUUID(),
               requestId,
-              invoice.digest(),
+              requestId,
               expectedRowVersion,
-              invoice.expiresAt(),
-              requestId,
               0L,
+              invoice.digest(),
+              invoice.expiresAt(),
               AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose
-                  .INITIAL_CONFIRMATION);
-      var evidence =
-          reauthentication.reauthenticate(
-              new AccountRecentReauthenticationService.Request(
-                  UUID.randomUUID(),
-                  invoice.ownerAccountId(),
-                  AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
-                  requestId,
-                  billingContext,
-                  account.getEmail(),
-                  password));
+                  .INITIAL_CONFIRMATION,
+              account.getEmail(),
+              password);
       beforeConsent.run();
       var prepared =
           in(
               transaction,
               () -> {
-                payments.bindReauthenticationContext(
-                    invoice.ownerAccountId(), invoice.subscriptionId(), billingContext, evidence);
+                var evidence =
+                    reauthentication.requireCurrentBillingEvidenceLocked(
+                        evidenceId, invoice.ownerAccountId(), requestId);
                 reauthentication.validateAndConsumeLocked(
                     evidence,
                     invoice.ownerAccountId(),
