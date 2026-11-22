@@ -318,7 +318,7 @@ for (const publishable of ["false", "", undefined]) {
   assert.equal(callback.output.artifact_name, direct.output.artifact_name);
   const prSource = {...source, event: "pull_request", head_sha: sha("a"), head_branch: "feature/ci"};
   const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
-  assert.equal((await resolve({runs: [prSource]})).output.artifact_name, direct.output.artifact_name);
+  await assert.rejects(resolve({runs: [prSource]}), /publication source run provenance is not trusted/);
   assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
@@ -699,7 +699,7 @@ cat > "$artifact_dir/pr-runtime-provenance.json" <<EOF
 EOF
 
 cat > "$fixture_dir/source-run.json" <<EOF
-{"id":${source_run_id},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
+{"id":${source_run_id},"run_attempt":1,"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
 EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
 {"number":${pr_number},"state":"open","user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
@@ -1033,6 +1033,7 @@ run_validation() {
   local source_event="${1:-pull_request}"
   local source_branch="${2:-feature/ci}"
   local source_sha="${3:-$head_sha}"
+  local publication_trigger="${4:-workflow_run}"
   local environment_file="$fixture_dir/github-env"
   : > "$environment_file"
   if [[ -n "${PULL_REQUEST_SEQUENCE_DIR:-}" ]]; then
@@ -1044,7 +1045,9 @@ run_validation() {
   REGISTRY_MARKER="$fixture_dir/registry-marker" \
   PR_RUNTIME_ARTIFACT_ROOT="$artifact_root" \
   CURRENT_REPOSITORY="$repository" \
+  PUBLICATION_TRIGGER="$publication_trigger" \
   SOURCE_RUN_ID="$source_run_id" \
+  SOURCE_RUN_ATTEMPT="${SOURCE_RUN_ATTEMPT:-1}" \
   SOURCE_RUN_URL="https://example.test/runs/$source_run_id" \
   SOURCE_RUN_TITLE="$source_title" \
   SOURCE_RUN_EVENT="$source_event" \
@@ -1074,6 +1077,16 @@ PY
 }
 
 run_validation
+if SOURCE_RUN_ATTEMPT=2 run_validation >/dev/null 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an artifact after the resolved source attempt changed" >&2
+  exit 1
+fi
+grep -Fq 'source workflow attempt changed before artifact validation' "$fixture_dir/attempt-error"
+if run_validation pull_request feature/ci "$head_sha" repository_dispatch 2>"$fixture_dir/typed-source-error"; then
+  echo "typed publication accepted a pull-request producer" >&2
+  exit 1
+fi
+grep -Fq 'typed publication requires a repository_dispatch source run' "$fixture_dir/typed-source-error"
 for valid_ref in \
   "main" \
   "feature+metadata" \
@@ -1260,7 +1273,7 @@ payload = json.loads(path.read_text(encoding="utf-8"))
 payload.update({"event": "repository_dispatch", "head_sha": sys.argv[2], "head_branch": "develop"})
 path.write_text(json.dumps(payload), encoding="utf-8")
 PY
-run_validation repository_dispatch develop "$default_branch_sha"
+run_validation repository_dispatch develop "$default_branch_sha" repository_dispatch
 grep -Fxq "IMAGE_TAG=pr-merge-$merge_sha" "$fixture_dir/github-env"
 if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "typed refresh source validation reached a registry operation" >&2
@@ -1277,7 +1290,7 @@ payload = json.loads(path.read_text(encoding="utf-8"))
 payload["event"] = "workflow_dispatch"
 path.write_text(json.dumps(payload), encoding="utf-8")
 PY
-if run_validation repository_dispatch develop "$default_branch_sha"; then
+if run_validation repository_dispatch develop "$default_branch_sha" repository_dispatch; then
   echo "typed refresh validation accepted a source run with the wrong API event" >&2
   exit 1
 fi

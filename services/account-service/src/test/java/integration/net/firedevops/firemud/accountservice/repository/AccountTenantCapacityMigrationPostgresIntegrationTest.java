@@ -596,9 +596,14 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
       var historicalTenant = source();
-      transaction.executeWithoutResult(status ->
-          new FreshTenantIdentityAssociationRepository(dsl, "prod")
-              .importVerified(historicalTenant));
+      var otherHistoricalTenant = source();
+      assertThat(otherHistoricalTenant.canonicalTenantId())
+          .isNotEqualTo(historicalTenant.canonicalTenantId());
+      transaction.executeWithoutResult(status -> {
+        var tenants = new FreshTenantIdentityAssociationRepository(dsl, "prod");
+        tenants.importVerified(historicalTenant);
+        tenants.importVerified(otherHistoricalTenant);
+      });
 
       Flyway.configure()
           .dataSource(data)
@@ -617,6 +622,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       UUID secondHistoricalAdmission = UUID.randomUUID();
       UUID secondHistoricalAttempt = UUID.randomUUID();
       UUID secondHistoricalDecision = UUID.fromString("00000000-0000-0000-0000-000000001042");
+      UUID otherHistoricalDecision = UUID.fromString("00000000-0000-0000-0000-000000001043");
       String historicalInsert =
           "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)";
       dsl.execute(
@@ -637,6 +643,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           "b".repeat(64),
           new byte[] {4, 5, 6},
           secondHistoricalDecision);
+      dsl.execute(
+          historicalInsert,
+          otherHistoricalTenant.canonicalTenantId(),
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          "6".repeat(64),
+          new byte[] {26, 27, 28},
+          otherHistoricalDecision);
 
       var acceptedTenant = source();
       var operations = new AccountTenantCreationBootstrapOperationRepository(dsl);
@@ -714,18 +729,25 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .target("1040.5")
           .load()
           .migrate();
-      transaction.executeWithoutResult(
-          status -> budgets.provision(historicalTenant.canonicalTenantId(), 3));
+      transaction.executeWithoutResult(status -> {
+        budgets.provision(historicalTenant.canonicalTenantId(), 3);
+        budgets.provision(otherHistoricalTenant.canonicalTenantId(), 3);
+      });
       var provisionedBudgetAtV1040_5 =
           dsl.fetchSingle(
                   "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
                   historicalTenant.canonicalTenantId())
               .intoMap();
+      var otherProvisionedBudgetAtV1040_5 =
+          dsl.fetchSingle(
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                  otherHistoricalTenant.canonicalTenantId())
+              .intoMap();
       var originalDecisions =
           dsl.fetch(
                   "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
               .intoMaps();
-      assertThat(originalDecisions).hasSize(3);
+      assertThat(originalDecisions).hasSize(4);
 
       Flyway.configure()
           .dataSource(data)
@@ -743,19 +765,31 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       historicalTenant.canonicalTenantId())
                   .intoMap())
           .isEqualTo(provisionedBudgetAtV1040_5);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                      otherHistoricalTenant.canonicalTenantId())
+                  .intoMap())
+          .isEqualTo(otherProvisionedBudgetAtV1040_5);
       Long remainingHeadroom =
           transaction.execute(
               status -> budgets.requireReady(historicalTenant.canonicalTenantId(), 3, 1));
       assertThat(remainingHeadroom).isEqualTo(1L);
+      Long otherRemainingHeadroom =
+          transaction.execute(
+              status -> budgets.requireReady(otherHistoricalTenant.canonicalTenantId(), 3, 2));
+      assertThat(otherRemainingHeadroom).isEqualTo(2L);
       assertThat(
               dsl.fetch(
                       "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
                   .intoMaps())
           .isEqualTo(originalDecisions);
       assertThat(refusalSlots(dsl))
-          .containsExactly(
+          .containsExactlyInAnyOrder(
               new RefusalSlot(historicalTenant.canonicalTenantId(), 1, firstHistoricalDecision),
-              new RefusalSlot(historicalTenant.canonicalTenantId(), 2, secondHistoricalDecision));
+              new RefusalSlot(historicalTenant.canonicalTenantId(), 2, secondHistoricalDecision),
+              new RefusalSlot(
+                  otherHistoricalTenant.canonicalTenantId(), 1, otherHistoricalDecision));
       assertThat(
               dsl.fetchOne(
                   "SELECT 1 FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
@@ -770,7 +804,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var expectedSlots =
           List.of(
               new RefusalSlot(historicalTenant.canonicalTenantId(), 1, firstHistoricalDecision),
-              new RefusalSlot(historicalTenant.canonicalTenantId(), 2, secondHistoricalDecision));
+              new RefusalSlot(historicalTenant.canonicalTenantId(), 2, secondHistoricalDecision),
+              new RefusalSlot(
+                  otherHistoricalTenant.canonicalTenantId(), 1, otherHistoricalDecision));
       assertThatThrownBy(() ->
               dsl.execute(
                   "INSERT INTO account_capacity_origin_refusal_slots (tenant_uuid, slot, decision_id) VALUES (?, 3, ?)",
@@ -787,7 +823,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
 
       String insertedDecision =
           "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING";
@@ -805,7 +841,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   "SELECT 1 FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
                   acceptedTenant.canonicalTenantId()))
           .isNull();
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
       assertTenantCapacityInventoryMatches(dsl, acceptedTenant.canonicalTenantId());
 
       var acceptedOriginsBeforeReplay = originRows(dsl, acceptedTenant.canonicalTenantId());
@@ -916,7 +952,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .isEqualTo(acceptedReservationsBeforeReplay);
       assertThat(usageRows(dsl, acceptedTenant.canonicalTenantId()))
           .isEqualTo(acceptedUsageBeforeReplay);
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
 
       UUID freshRequest = UUID.randomUUID();
       UUID freshAdmission = UUID.randomUUID();
@@ -938,19 +974,21 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         assertThat(dsl.execute(insertedDecision, freshRefusal)).isEqualTo(1);
         status.setRollbackOnly();
       });
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
       assertThat(dsl.execute(insertedDecision, freshRefusal)).isEqualTo(1);
       expectedSlots =
           List.of(
               new RefusalSlot(historicalTenant.canonicalTenantId(), 1, firstHistoricalDecision),
               new RefusalSlot(historicalTenant.canonicalTenantId(), 2, secondHistoricalDecision),
-              new RefusalSlot(historicalTenant.canonicalTenantId(), 3, freshDecision));
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+              new RefusalSlot(historicalTenant.canonicalTenantId(), 3, freshDecision),
+              new RefusalSlot(
+                  otherHistoricalTenant.canonicalTenantId(), 1, otherHistoricalDecision));
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
 
       Object[] refusalReplay = freshRefusal.clone();
       refusalReplay[8] = UUID.randomUUID();
       assertThat(dsl.execute(insertedDecision, refusalReplay)).isZero();
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
       assertThat(
               dsl.execute(
                   insertedDecision,
@@ -965,7 +1003,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   UUID.randomUUID(),
                   "CAPACITY_QUOTA_EXCEEDED"))
           .isZero();
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
       assertThat(
               dsl.execute(
                   insertedDecision,
@@ -980,7 +1018,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   UUID.randomUUID(),
                   null))
           .isZero();
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
 
       assertThatThrownBy(() ->
               dsl.execute(
@@ -1001,8 +1039,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                 assertThat(failure.sqlState()).isEqualTo("23514");
                 assertThat(failure).hasMessageContaining("Capacity refusal budget is exhausted");
               });
-      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(5);
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(6);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
 
       assertThatThrownBy(() ->
               dsl.execute(
@@ -1028,7 +1066,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               failure ->
                   assertThat(failure)
                       .hasMessageContaining("Account capacity origin decisions are immutable"));
-      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }
