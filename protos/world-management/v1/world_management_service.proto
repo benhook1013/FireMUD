@@ -10,6 +10,23 @@ import "world-management/v1/world_canonical_instance_lifecycle_read.proto";
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
 
+// Protected World snapshot reads for the exact active run-owned fixture.
+service RunOwnedFixtureLookWorldService {
+  rpc ReadRunOwnedFixtureLookRoom(ReadRunOwnedFixtureLookRoomRequest)
+      returns (ReadRunOwnedFixtureLookRoomResponse);
+}
+
+message ReadRunOwnedFixtureLookRoomRequest {
+  ReadWorldCanonicalInstanceLifecycleRequest lifecycle = 1;
+  string expected_room_instance_key = 2;
+  string preferred_locale = 3;
+}
+
+message ReadRunOwnedFixtureLookRoomResponse {
+  ReadWorldCanonicalInstanceLifecycleResponse lifecycle = 1;
+  RoomSnapshot snapshot = 2;
+}
+
 service WorldManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc PrepareWorldInstance(PrepareWorldInstanceRequest)

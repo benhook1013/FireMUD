@@ -65,12 +65,15 @@ firemud:
     inventory-enabled: true
     command-history-enabled: true
   grpc:
+    workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   auth:
     grpc:
       force-internal-service-outbound: true
+      public-methods:
+        - game_logic.v1.RunOwnedFixtureLookService/ResolveRunOwnedFixtureLook
 
 server:
   compression:

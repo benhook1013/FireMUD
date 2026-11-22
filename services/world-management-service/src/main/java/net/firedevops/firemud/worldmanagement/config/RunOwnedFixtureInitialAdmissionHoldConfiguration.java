@@ -4,7 +4,10 @@ import java.io.IOException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
+import net.firedevops.firemud.worldmanagement.service.RoomService;
+import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedFixtureLookWorldGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldGrpcService;
@@ -19,6 +22,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -70,6 +74,19 @@ public class RunOwnedFixtureInitialAdmissionHoldConfiguration {
       WorldCanonicalInstanceLifecycleReadRepository lifecycle,
       @Value("${firemud.grpc.workload-namespace:}") String namespace) {
     return new WorldCanonicalInstanceLifecycleReadGrpcService(lifecycle, namespace);
+  }
+
+  @Bean
+  @ConditionalOnProperty(name = PreV1GateWaivers.PROPERTY, havingValue = "true")
+  RunOwnedFixtureLookWorldGrpcService runOwnedFixtureLookWorldGrpcService(
+      WorldCanonicalInstanceLifecycleReadRepository lifecycle,
+      RoomService rooms,
+      Environment environment,
+      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
+    if (!PreV1GateWaivers.from(environment).enabled()) {
+      throw new IllegalStateException("Run-owned fixture LOOK requires pre-v1 gate waivers");
+    }
+    return new RunOwnedFixtureLookWorldGrpcService(lifecycle, rooms, namespace);
   }
 
   @Bean

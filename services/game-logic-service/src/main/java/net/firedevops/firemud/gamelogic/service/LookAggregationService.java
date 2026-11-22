@@ -38,36 +38,36 @@ public class LookAggregationService {
 
   public LookResult resolve(LookRequest request) {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(request)) {
-      RoomSnapshot snapshot = fetchSnapshot(request);
-      ListRoomEntitiesResponse entityResponse = fetchEntities(request);
-      requireSameReadFence(snapshot, entityResponse);
-
-      LookResult.Builder builder =
-          LookResult.newBuilder()
-              .setRoomInstance(
-                  RoomInstanceRef.newBuilder()
-                      .setTenantId(snapshot.getTenantId())
-                      .setGameInstanceId(snapshot.getGameInstanceId())
-                      .setRoomInstanceId(snapshot.getRoomInstanceId())
-                      .build())
-              .setRoomName(snapshot.getRoomName())
-              .setShortDescription(snapshot.getShortDescription())
-              .setLongDescription(snapshot.getLongDescription())
-              .setWorldSnapshotId(snapshot.getWorldSnapshotId())
-              .setEntitySnapshotId(entityResponse.getEntitySnapshotId())
-              .setLookSnapshotId(snapshot.getWorldSnapshotId())
-              .addAllRoomFlags(snapshot.getRoomFlagsList())
-              .setAmbientState(toAmbientState(snapshot.getAmbientState()));
-
-      snapshot.getExitsList().forEach(exit -> builder.addExits(toLookExit(exit)));
-      entityResponse.getEntitiesList().stream()
-          .map(this::toRoomEntity)
-          .forEach(builder::addEntities);
-
-      LookResult result = builder.build();
-      LOG.debug("Rendered LOOK text:\n{}", renderer.render(result));
-      return result;
+      return project(fetchSnapshot(request), fetchEntities(request));
     }
+  }
+
+  public LookResult project(RoomSnapshot snapshot, ListRoomEntitiesResponse entityResponse) {
+    requireSameReadFence(snapshot, entityResponse);
+
+    LookResult.Builder builder =
+        LookResult.newBuilder()
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(snapshot.getTenantId())
+                    .setGameInstanceId(snapshot.getGameInstanceId())
+                    .setRoomInstanceId(snapshot.getRoomInstanceId())
+                    .build())
+            .setRoomName(snapshot.getRoomName())
+            .setShortDescription(snapshot.getShortDescription())
+            .setLongDescription(snapshot.getLongDescription())
+            .setWorldSnapshotId(snapshot.getWorldSnapshotId())
+            .setEntitySnapshotId(entityResponse.getEntitySnapshotId())
+            .setLookSnapshotId(snapshot.getWorldSnapshotId())
+            .addAllRoomFlags(snapshot.getRoomFlagsList())
+            .setAmbientState(toAmbientState(snapshot.getAmbientState()));
+
+    snapshot.getExitsList().forEach(exit -> builder.addExits(toLookExit(exit)));
+    entityResponse.getEntitiesList().stream().map(this::toRoomEntity).forEach(builder::addEntities);
+
+    LookResult result = builder.build();
+    LOG.debug("Rendered LOOK text:\n{}", renderer.render(result));
+    return result;
   }
 
   private RoomSnapshot fetchSnapshot(LookRequest request) {

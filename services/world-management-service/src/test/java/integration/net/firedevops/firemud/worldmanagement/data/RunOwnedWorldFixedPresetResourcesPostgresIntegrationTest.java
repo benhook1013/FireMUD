@@ -49,8 +49,12 @@ import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
+import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
+import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
+import net.firedevops.firemud.worldmanagement.service.impl.RoomServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedWorldFixtureLifecycleTestFactory;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
@@ -927,6 +931,42 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var holds =
         new WorldCanonicalInitialAdmissionHoldRepository(
             dsl, transactionManager, associationRepository(), lifecycleRepository);
+
+    var room = lifecycleRepository.readRunOwnedFixtureStartRoom(lifecycleRequest).orElseThrow();
+    var privateKeys = association.runOwnedFixture().worldPrivateKeys();
+    long storedStartRoom =
+        dsl.fetchSingle(
+                "SELECT room_instance_row_id FROM room_instance "
+                    + "WHERE tenant_id = ? AND game_instance_id = ? AND name = ?",
+                privateKeys.tenantId(),
+                privateKeys.gameInstanceId(),
+                "Candle-lit Antechamber")
+            .get(0, Long.class);
+    assertThat(room.roomKey()).isEqualTo("R-" + storedStartRoom);
+    assertThat(room.lifecycle())
+        .isEqualTo(lifecycleRepository.readRunOwnedFixture(lifecycleRequest).orElseThrow());
+    assertThat(room.lifecycle().lifecycleStatus()).isEqualTo("ACTIVE");
+
+    var rooms =
+        new RoomServiceImpl(
+            new RoomInstanceRepository(dsl),
+            null,
+            null,
+            new WorldProperties(),
+            new RoomInstanceExitRepository(dsl),
+            tools.jackson.databind.json.JsonMapper.builder().build());
+    var view =
+        lifecycleRepository
+            .readRunOwnedFixtureStartRoomView(lifecycleRequest, room.roomKey(), "", rooms)
+            .orElseThrow();
+    assertThat(view.lifecycle()).isEqualTo(room.lifecycle());
+    assertThat(view.snapshot().roomInstanceRowId()).isEqualTo(storedStartRoom);
+    assertThat(view.snapshot().roomName()).isEqualTo("Candle-lit Antechamber");
+    assertThat(view.snapshot().longDescription()).isNotBlank();
+    assertThat(
+            lifecycleRepository.readRunOwnedFixtureStartRoomView(
+                lifecycleRequest, "R-0", "", rooms))
+        .isEmpty();
 
     var hold = holds.acquire(holdRequest, lifecycleRequest);
     assertThat(holds.acquire(holdRequest, lifecycleRequest)).isEqualTo(hold);
