@@ -361,7 +361,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
               return;
             int read = executionReads.incrementAndGet();
             if (read == 2 && !keepTombstone) {
-              assertThat(admin.del(new byte[][] {tombstoneKey})).isEqualTo(1L);
+              assertThat(admin.pexpire(tombstoneKey, 0)).isTrue();
+              assertThat(admin.type(tombstoneKey)).isEqualTo("none");
             }
             if (read != 1) return;
             initialReadDone.countDown();
@@ -401,7 +402,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation());
         assertThat(retained.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
-        assertThat(admin.del(new byte[][] {sessionKey})).isEqualTo(1L);
+        assertThat(admin.pexpire(sessionKey, 0)).isTrue();
         assertThat(admin.type(sessionKey)).isEqualTo("none");
       } finally {
         continueFirstClose.countDown();
