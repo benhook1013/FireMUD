@@ -18,8 +18,12 @@ import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.event.command.CommandListener;
+import io.lettuce.core.event.command.CommandStartedEvent;
+import io.lettuce.core.event.command.CommandSucceededEvent;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import io.lettuce.core.protocol.RedisCommand;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -1699,8 +1703,47 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               Duration.ofSeconds(30),
               clock,
               true);
-      assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
-          .isInstanceOf(IllegalStateException.class);
+      // A separate autocommit data source read at actual command dispatch proves the SQL
+      // claim was visible outside its transaction. The earlier Redis PROBE sees PREPARED.
+      var initialize = new AtomicReference<RedisCommand<Object, Object, Object>>();
+      var completed = new CompletableFuture<Object>();
+      var observedOwnerCommand =
+          new CommandListener() {
+            @Override
+            public void commandStarted(CommandStartedEvent event) {
+              if (event.getCommand().getType() != CommandType.EVALSHA) return;
+              String phase =
+                  testSchema
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT phase FROM game_session_region_timeline_preparation"
+                              + " WHERE initialization_operation_id = ?",
+                          preparation.operationId())
+                      .get(0, String.class);
+              if ("INITIALIZING".equals(phase)) {
+                assertThat(initialize.compareAndSet(null, event.getCommand())).isTrue();
+              } else {
+                assertThat(phase).isEqualTo("PREPARED");
+              }
+            }
+
+            @Override
+            public void commandSucceeded(CommandSucceededEvent event) {
+              if (event.getCommand() != initialize.get()) return;
+              completed.complete(event.getCommand().getOutput().get());
+            }
+          };
+      redis.ownerClient().addListener(observedOwnerCommand);
+      try {
+        assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(initialize.get()).as("INITIALIZE after the committed SQL claim").isNotNull();
+        assertThat(completed.get(2, TimeUnit.SECONDS))
+            .as("physical Redis deadline refusal after dispatch, not local pre-dispatch expiry")
+            .isEqualTo(-3L);
+      } finally {
+        redis.ownerClient().removeListener(observedOwnerCommand);
+      }
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
       world.setAfterRead(2, () -> {});

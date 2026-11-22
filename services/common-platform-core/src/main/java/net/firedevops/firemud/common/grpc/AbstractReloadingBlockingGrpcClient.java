@@ -181,7 +181,10 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       target = defaultTarget();
     }
     ManagedChannel newChannel =
-        channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled());
+        channelRetriesEnabled()
+            ? channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled())
+            : channelFactory.buildChannelWithoutRetries(
+                target, defaultPort(), tlsProps, keepAliveEnabled());
     TStub newStub;
     try {
       newStub = buildStub(newChannel);
@@ -211,6 +214,11 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   protected boolean keepAliveEnabled() {
+    return true;
+  }
+
+  /** Retains standard channel behavior unless a dedicated client owns explicit mutation replay. */
+  protected boolean channelRetriesEnabled() {
     return true;
   }
 

@@ -10,6 +10,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -19,6 +20,7 @@ import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssoc
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
@@ -44,21 +46,22 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     POSTGRES.stop();
   }
 
+  private static FluentConfiguration capacityMigrations(DataSource data, String schema) {
+    return Flyway.configure()
+        .dataSource(data)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration");
+  }
+
   @Test
   void duplicateHistoricalOriginAttemptsStopUpgradeWithoutRewritingEvidence() {
     String schema = "capacity_duplicate_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
     var data = POSTGRES.dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1040.1")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1040.1").load().migrate();
       var dsl = DSL.using(data, SQLDialect.POSTGRES);
       UUID attempt = UUID.randomUUID();
       for (int index = 0; index < 2; index++) {
@@ -72,29 +75,12 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             new byte[] {1},
             UUID.randomUUID());
       }
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1040.3")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1040.3").load().migrate();
       var original =
           dsl.fetch(
                   "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
               .intoMaps();
-      assertThatThrownBy(() ->
-              Flyway.configure()
-                  .dataSource(data)
-                  .schemas(schema)
-                  .defaultSchema(schema)
-                  .placeholders(java.util.Map.of("serviceSchema", schema))
-                  .locations("classpath:db/migration")
-                  .target("1040.4")
-                  .load()
-                  .migrate())
+      assertThatThrownBy(() -> capacityMigrations(data, schema).target("1040.4").load().migrate())
           .isInstanceOf(org.flywaydb.core.api.FlywayException.class)
           .hasStackTraceContaining("account_capacity_origin_attempt_unique")
           .satisfies(failure -> {
@@ -121,15 +107,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
     var data = POSTGRES.dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1040.1")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1040.1").load().migrate();
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var tenant = source();
@@ -147,14 +125,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             new byte[] {1},
             UUID.randomUUID());
       }
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).load().migrate();
       var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
       assertThatThrownBy(() ->
               transaction.executeWithoutResult(
@@ -236,15 +207,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
     var data = POSTGRES.dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1038")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1038").load().migrate();
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var repository = new FreshTenantIdentityAssociationRepository(dsl, "prod");
@@ -258,14 +221,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                     operations, new AccountRepository(dsl).save(creator()), existing);
               }));
       assertThat(historical.status()).isEqualTo("IN_PROGRESS");
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).load().migrate();
       var retained = transaction.execute(status -> repository.read(existing.canonicalTenantId()));
       assertThat(retained).contains(existing);
       assertThat(
@@ -351,14 +307,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
     var data = POSTGRES.dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).load().migrate();
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var tenant = source();
@@ -583,15 +532,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
     var data = POSTGRES.dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1038")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1038").load().migrate();
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
@@ -605,15 +546,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         tenants.importVerified(otherHistoricalTenant);
       });
 
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1040.1")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1040.1").load().migrate();
       UUID firstHistoricalRequest = UUID.randomUUID();
       UUID firstHistoricalAdmission = UUID.randomUUID();
       UUID firstHistoricalAttempt = UUID.randomUUID();
@@ -720,15 +653,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             AccountTenantCapacityRepository.at(reconcileDeadline));
       });
 
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1040.5")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1040.5").load().migrate();
       transaction.executeWithoutResult(status -> {
         budgets.provision(historicalTenant.canonicalTenantId(), 3);
         budgets.provision(otherHistoricalTenant.canonicalTenantId(), 3);
@@ -748,17 +673,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
               .intoMaps();
       assertThat(originalDecisions).hasSize(4);
+      var acceptedReservationsAtV1040_5 = reservationRows(dsl, acceptedTenant.canonicalTenantId());
+      var acceptedUsageAtV1040_5 = usageRows(dsl, acceptedTenant.canonicalTenantId());
 
-      Flyway.configure()
-          .dataSource(data)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations("classpath:db/migration")
-          .target("1040.6")
-          .load()
-          .migrate();
+      capacityMigrations(data, schema).target("1040.6").load().migrate();
 
+      assertThat(reservationRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedReservationsAtV1040_5);
+      assertThat(usageRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedUsageAtV1040_5);
       assertThat(
               dsl.fetchSingle(
                       "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",

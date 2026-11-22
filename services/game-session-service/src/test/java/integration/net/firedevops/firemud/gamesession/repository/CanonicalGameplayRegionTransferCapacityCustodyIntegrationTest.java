@@ -274,10 +274,32 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                   .fenceForTransfer(item, dispatch, deadline);
               assertThat(proof.physicalExecutionExists(item.execution())).isTrue();
               proof.losePhysicalExecution(item.execution());
+            } else {
+              var finalOwner =
+                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      proof.redis, proof.scripts, proof.clock, proof.tags);
+              var prepared =
+                  finalOwner.prepareTransferReceipt(
+                      item.execution(), item.candidate(), item.assignment(), dispatch, deadline);
+              dispatch.seal(prepared);
+              assertThat(dispatch.sealed()).isTrue();
+              assertThat(
+                      proof
+                          .sql
+                          .fetchSingle(
+                              "SELECT fence_prepare_seal"
+                                  + " FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                              id)
+                          .get(0, UUID.class))
+                  .isEqualTo(dispatch.sealedNonce());
             }
             return null;
           });
       String retained = proof.itemImage(id);
+      if (!appliedThenLost) {
+        assertThat(retained).contains("\"fence_apply_issued\": false");
+        assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+      }
       proof.recreateTransferOwners();
       if (appliedThenLost) {
         assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
