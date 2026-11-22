@@ -897,7 +897,7 @@ async function runDispatcher({
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
-  fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null,
+  fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -908,7 +908,11 @@ async function runDispatcher({
   const inventoryCalls = [];
   const observationPostCounts = [];
   const timerPostCounts = [];
+  const deadlineSignals = [];
+  const apiRequestRecords = [];
   let waitedMillis = 0;
+  let fakeNow = Date.parse("2026-01-08T00:00:00Z");
+  let expireOnFirstRequest = expireAfterFirstApiRequest;
   const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
   const allTuples = [...tuples, ...sourceTuples];
   const tupleByNumber = new Map(allTuples.map((tuple) => [tuple.prNumber, tuple]));
@@ -953,10 +957,32 @@ async function runDispatcher({
     error: (message) => errors.push(message),
     setFailed: (message) => errors.push(message),
   };
+  const recordApiRequest = (name, options, oneShot = false) => {
+    assert(options && typeof options === "object", `${name} must receive request options`);
+    assert(options.request && typeof options.request === "object", `${name} must receive a deadline request signal`);
+    assert.deepEqual(Object.keys(options.request).sort(), oneShot ? ["retries", "signal"] : ["signal"],
+      `${name} must preserve the exact normal/request option shape`);
+    if (oneShot) assert.equal(options.request.retries, 0, `${name} must disable transport retries`);
+    assert(deadlineSignals.includes(options.request.signal), `${name} must use the actual extracted deadline helper`);
+    assert(Number.isSafeInteger(options.request.signal.timeoutMs) && options.request.signal.timeoutMs > 0,
+      `${name} must receive a positive remaining wall-clock deadline`);
+    apiRequestRecords.push({name, options, abortedAtIssue: options.request.signal.aborted});
+    if (expireOnFirstRequest) {
+      expireOnFirstRequest = false;
+      fakeNow += options.request.signal.timeoutMs;
+      assert.equal(options.request.signal.aborted, true, `${name} mock must observe its wall-clock AbortSignal deadline`);
+      const error = new Error("mock request aborted at its wall-clock deadline");
+      error.name = "TimeoutError";
+      throw error;
+    }
+    return options.request.signal;
+  };
   const github = {
     rest: {
       git: {
-        getRef: async ({ ref }) => {
+        getRef: async (request) => {
+          recordApiRequest("git.getRef", request);
+          const {ref} = request;
           refRequests.push(ref);
           const branchError = typeof branchErrors[ref] === "function" ? branchErrors[ref](refRequests.length) : branchErrors[ref];
           if (branchError) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchError });
@@ -968,12 +994,15 @@ async function runDispatcher({
       },
       pulls: {
         list: async (request) => {
+          recordApiRequest("pulls.list", request);
           pullListRequests.push(request);
           return { data: (request.head ? sourceTuples : tuples)
             .filter((tuple) => request.head || tuple.baseRef === request.base)
             .map(pullRequestFor) };
         },
-        get: async ({ pull_number }) => {
+        get: async (request) => {
+          recordApiRequest("pulls.get", request);
+          const {pull_number} = request;
           const number = String(pull_number);
           const reads = (pullReads.get(number) ?? 0) + 1;
           pullReads.set(number, reads);
@@ -983,18 +1012,23 @@ async function runDispatcher({
             ...(typeof override === "function" ? override(reads) : override ?? {}),
           } };
         },
-        listFiles: async ({ pull_number }) => {
+        listFiles: async (request) => {
+          recordApiRequest("pulls.listFiles", request);
+          const {pull_number} = request;
           if (String(pull_number) === filesFailurePr) throw new Error("fixture changed-files lookup failed");
           return { data: filesByPr[String(pull_number)] ?? [{ filename: "services/example/src/Main.java" }] };
         },
       },
       repos: {
-        getCommit: async ({ ref }) => {
+        getCommit: async (request) => {
+          recordApiRequest("repos.getCommit", request);
+          const {ref} = request;
           const tuple = allTuples.find((candidate) => candidate.mergeSha === ref);
           return { data: { sha: ref, parents: (mergeParents[ref] ?? [tuple.baseSha, tuple.headSha])
             .map((parent) => ({ sha: parent })) } };
         },
         createDispatchEvent: async (request) => {
+          recordApiRequest("repos.createDispatchEvent", request, true);
           dispatches.push(request);
           if (request.event_type === "preview-deploy" && request.client_payload.pr_number === previewFailurePr) {
             throw new Error("ambiguous preview POST timeout");
@@ -1008,7 +1042,8 @@ async function runDispatcher({
               prNumber: payload.pr_number, baseSha: payload.base_sha,
               headSha: payload.head_sha, mergeSha: payload.merge_sha,
             }, "repository_dispatch", "queued", null, {
-              id: 900000 + postedRuns.length, created_at: "2026-01-08T00:00:00Z",
+              id: 900000 + postedRuns.length,
+              created_at: new FakeDate(fakeNow + 1000).toISOString(),
             }));
           }
           if (ambiguousRuntimePost) {
@@ -1022,17 +1057,23 @@ async function runDispatcher({
         },
       },
       actions: {
-        getWorkflow: async ({workflow_id}) => ({ data: workflow_id === "runtime-images.yml"
-          ? {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}
-          : {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})} }),
-        getWorkflowRun: async () => {
+        getWorkflow: async (request) => {
+          recordApiRequest("actions.getWorkflow", request);
+          const {workflow_id} = request;
+          return { data: workflow_id === "runtime-images.yml"
+            ? {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}
+            : {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})} };
+        },
+        getWorkflowRun: async (request) => {
+          recordApiRequest("actions.getWorkflowRun", request);
           ciRunReads += 1;
           return { data: { ...ciRun, ...(ciEvidence.run ?? {}), ...(ciRunReads > 1 ? ciEvidence.latest ?? {} : {}) } };
         },
         listWorkflowRuns: async (request) => {
+          recordApiRequest("actions.listWorkflowRuns", request);
           inventoryCalls.push(request);
           observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh").length);
-          if (visibilityResponse && request.created === "2026-01-07T23:59:59.000Z..*") {
+          if (visibilityResponse && request.created === "2026-01-08T00:00:00.000Z..*") {
             assert.equal(request.event, "repository_dispatch");
             const response = visibilityResponse(request, postedRuns);
             if (response) return {data: response};
@@ -1077,6 +1118,7 @@ async function runDispatcher({
     paginate: async (endpoint, request, map) => {
       if (typeof endpoint === "string") {
         assert.equal(endpoint, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+        recordApiRequest("paginate.jobs", request);
         ciJobRequests.push(request);
         return ciEvidence.jobs ?? [ciGate];
       }
@@ -1092,25 +1134,65 @@ async function runDispatcher({
   };
   const originalDateNow = Date.now;
   const originalSetTimeout = global.setTimeout;
-  let fakeNow = Date.parse("2026-01-08T00:00:00Z");
+  const FakeDate = class extends Date {
+    constructor(...args) { super(...(args.length ? args : [fakeNow])); }
+    static now() { return fakeNow; }
+  };
+  const DeadlineAbortSignal = {
+    timeout(milliseconds) {
+      assert(Number.isSafeInteger(milliseconds) && milliseconds > 0, "AbortSignal.timeout must receive positive remaining wall time");
+      const signal = {
+        timeoutMs: milliseconds,
+        deadline: fakeNow + milliseconds,
+        get aborted() { return fakeNow >= this.deadline; },
+      };
+      deadlineSignals.push(signal);
+      return signal;
+    },
+  };
   global.setTimeout = (resolve, millis) => {
     timerPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh").length);
-    waitedMillis += millis; fakeNow += millis; resolve();
+    waitedMillis += millis;
+    fakeNow += millis;
+    resolve();
   };
   Date.now = () => fakeNow;
+  let fatalError = null;
   try {
-    await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
+    await new AsyncFunction("github", "context", "core", "Date", "AbortSignal", "setTimeout", dispatcherScript)(
+      github, context, core, FakeDate, DeadlineAbortSignal, global.setTimeout,
+    );
+  } catch (error) {
+    if (!expireAfterFirstApiRequest) throw error;
+    fatalError = error;
   } finally {
     Date.now = originalDateNow;
     global.setTimeout = originalSetTimeout;
   }
-  return { dispatches, errors, infos, warnings, inventoryCalls, observationPostCounts, timerPostCounts, waitedMillis, ciJobRequests, pullListRequests, refRequests };
+  return { dispatches, errors, infos, warnings, inventoryCalls, observationPostCounts, timerPostCounts, waitedMillis,
+    ciJobRequests, pullListRequests, refRequests, deadlineSignals, apiRequestRecords, fatalError };
 }
 
 (async () => {
   const tuple = tupleFor(101, "a", "c");
   const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh");
   const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
+  const assertRequestContracts = (result) => {
+    assert.equal(result.fatalError, null, "the mocked dispatcher must complete unless a deadline-abort fixture is selected");
+    for (const {name, options} of result.apiRequestRecords) {
+      const request = options.request;
+      const oneShot = name === "repos.createDispatchEvent";
+      assert.deepEqual(Object.keys(request).sort(), oneShot ? ["retries", "signal"] : ["signal"],
+        `${name} must retain its exact request-options shape`);
+      assert(oneShot ? request.retries === 0 : !Object.hasOwn(request, "retries"),
+        `${name} must be one-shot only for dispatch POSTs`);
+      assert(result.deadlineSignals.includes(request.signal), `${name} must use a source-derived AbortSignal timeout`);
+      assert(Number.isSafeInteger(request.signal.timeoutMs) && request.signal.timeoutMs > 0,
+        `${name} must receive a positive remaining wall-clock deadline`);
+      assert.equal(result.apiRequestRecords.find((call) => call.name === name && call.options === options).abortedAtIssue,
+        false, `${name} must not issue a request with an already-expired signal`);
+    }
+  };
   const source = { ...tuple, headRef: "feature/parent" };
   const child = { ...tupleFor(102, "d", "e", source.headSha), baseRef: source.headRef };
   const prCallback = { event: "pull_request", head_branch: source.headRef, head_sha: source.headSha };
@@ -1125,8 +1207,13 @@ async function runDispatcher({
       head_sha: candidate.headSha, merge_sha: candidate.mergeSha,
     }, "CI callback may dispatch only the independently verified exact source or dependent tuple");
   }
-  assert.deepEqual(reconcile.ciJobRequests, [{ owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100 }],
-    "PR callbacks require exact current native CI attempt jobs");
+  assert.equal(reconcile.ciJobRequests.length, 1, "PR callbacks require one exact current native CI attempt jobs request");
+  const {request: ciJobRequestOptions, ...ciJobRequest} = reconcile.ciJobRequests[0];
+  assert.deepEqual(ciJobRequest, { owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100 },
+    "PR callbacks require the exact current native CI attempt jobs request shape");
+  assert.deepEqual(Object.keys(ciJobRequestOptions).sort(), ["signal"], "CI job listing carries only its AbortSignal request option");
+  assert.equal(reconcile.deadlineSignals[0].timeoutMs, 12 * 60 * 1000, "the first fan-out API call receives the full wall-clock budget");
+  assertRequestContracts(reconcile);
   for (const branch of ["main", "develop", "feature/parent"]) {
     const branchSource = { ...source, headRef: branch, baseRef: branch === "develop" ? "main" : "develop" };
     const dependent = { ...child, baseRef: branch };
@@ -1291,7 +1378,6 @@ async function runDispatcher({
     "main",
     "refs/heads/feature]/test",
     "refs/heads/feature/@/test",
-    "refs/heads/feature./test",
   ]) {
     const refSuffixedPath = await runDispatcher({
       tuples: [tuple],
@@ -1302,7 +1388,7 @@ async function runDispatcher({
     assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
       `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
   }
-  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature[/test"]) {
+  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature./test", "refs/heads/feature[/test"]) {
     const invalidRefPath = await runDispatcher({
       tuples: [tuple],
       inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
@@ -1404,11 +1490,21 @@ async function runDispatcher({
     inventories: { pull_request: [producer(tuple, "pull_request", "in_progress")] },
   });
   assert.deepEqual(numbers(existingFirst), ["102"], "existing first PR must not starve second");
-  assert.equal(existingFirst.errors.length, 0);
+  assert.equal(existingFirst.errors.length, 0, existingFirst.errors.join("\n"));
   const skippedFirst = await runDispatcher({
     tuples: [tuple, sibling], filesByPr: { "101": [{ filename: "README.md" }] },
   });
   assert.deepEqual(numbers(skippedFirst), ["102"], "non-runtime first PR must not starve second");
+  const requestDeadlineAbort = await runDispatcher({tuples: [tuple], expireAfterFirstApiRequest: true});
+  assert.equal(requestDeadlineAbort.fatalError?.name, "TimeoutError",
+    "a request crossing its actual AbortSignal deadline must surface the mocked timeout");
+  assert.equal(requestDeadlineAbort.apiRequestRecords.length, 1,
+    "wall-clock expiry must stop further GitHub API requests");
+  assert.equal(requestDeadlineAbort.apiRequestRecords[0].name, "git.getRef");
+  assert.equal(requestDeadlineAbort.apiRequestRecords[0].options.request.signal.timeoutMs, 12 * 60 * 1000);
+  assert.equal(requestDeadlineAbort.apiRequestRecords[0].options.request.signal.aborted, true,
+    "the API mock observes the signal expiring as its wall clock advances to the deadline");
+  assert.equal(requestDeadlineAbort.dispatches.length, 0, "deadline abort must fail closed before any handoff");
   const failedPost = await runDispatcher({ tuples: [tuple, sibling], postFailurePr: "101" });
   assert.deepEqual(numbers(failedPost), ["101", "102"], "ambiguous first POST must not retry or starve second");
   assert(failedPost.warnings.some(message => message.includes("ambiguous POST timeout")),
@@ -1435,8 +1531,13 @@ async function runDispatcher({
   const cutoffBeforePost = await runDispatcher({tuples: [tuple], fanoutCutoffAfterInventory: true});
   assert.deepEqual(numbers(cutoffBeforePost), [], "the twelve-minute reservation cutoff prevents a new runtime POST");
   assert(cutoffBeforePost.errors.some(message => message.includes("fan-out cutoff") &&
-    message.includes("before the runtime POST for PR #101") && message.includes("#101 remain incomplete")),
-  "a necessary target stopped before its POST is explicitly reported incomplete");
+    message.includes("during runtime tuple proof") && message.includes("#101 remain incomplete")),
+  `a necessary target stopped before its POST is explicitly reported incomplete: ${cutoffBeforePost.errors.join("; ")}`);
+  assertRequestContracts(cutoffBeforePost);
+  assert(cutoffBeforePost.apiRequestRecords.some(({name}) => name === "actions.listWorkflowRuns"),
+    "deadline fixture must issue and observe its bounded inventory request before cutoff");
+  assert(!cutoffBeforePost.apiRequestRecords.some(({name}) => name === "repos.createDispatchEvent"),
+    "an expired fan-out deadline must prevent the runtime POST from reaching the API mock");
   const cutoffAtBoundary = await runDispatcher({
     tuples: [{...tuple, labels: [{name: "preview:priority"}]}, sibling],
     fanoutCutoffAfterPreviewPr: "101",
@@ -1447,7 +1548,7 @@ async function runDispatcher({
   assert(cutoffAtBoundary.errors.some(message => message.includes("fan-out cutoff") &&
     message.includes("at a target boundary") && message.includes("#102 remain incomplete")));
   assert(cutoffAtBoundary.inventoryCalls.some((request, index) =>
-    request.created === "2026-01-07T23:59:59.000Z..*" && cutoffAtBoundary.observationPostCounts[index] === 1),
+    request.created === "2026-01-08T00:00:00.000Z..*" && cutoffAtBoundary.observationPostCounts[index] === 1),
   "runtime handoffs sent before cutoff are still observed");
   assert(!cutoffAtBoundary.errors.some(message => message.includes("visibility is unknown")));
   const transientFirst = await runDispatcher({
@@ -1569,9 +1670,9 @@ async function runDispatcher({
   ], "one timeout must identify every invisible handoff");
   assert.equal(manyInvisible.timerPostCounts[0], 12, "all runtime POSTs precede the first visibility wait");
   assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
-  const visibilityFloor = "2026-01-07T23:59:59.000Z..*";
+  const visibilityFloor = "2026-01-08T00:00:00.000Z..*";
   const observations = manyInvisible.inventoryCalls.filter(request => request.created === visibilityFloor);
-  assert.equal(observations.length, 25, "each five-second observation queries one narrow dispatch page");
+  assert.equal(observations.length, 24, "each five-second interval before the deadline queries one narrow dispatch page");
   assert(observations.every(request => request.event === "repository_dispatch" && request.page === 1 && request.per_page === 100));
   assert(manyInvisible.inventoryCalls.some(request => request.event === "pull_request" && request.created !== visibilityFloor),
     "broad preflight still checks native producers");
@@ -3039,6 +3140,11 @@ function dispatchRun(id, base, head, merge) {
     event: "repository_dispatch",
     run_attempt: 1,
     head_sha: base,
+    head_branch: "develop",
+    workflow_id: 7,
+    path: id === 602 ? ".github/workflows/runtime-images.yml@develop" : ".github/workflows/runtime-images.yml",
+    repository: {full_name: "owner/repo"},
+    head_repository: {full_name: "owner/repo"},
   };
 }
 
@@ -3053,6 +3159,7 @@ const context = {
   repo: { owner: "owner", repo: "repo" },
   sha: mergeSha,
   payload: {
+    repository: {full_name: "owner/repo", default_branch: "develop"},
     pull_request: {
       number: 42,
       created_at: "2026-09-01T00:00:00Z",
@@ -3069,6 +3176,12 @@ const jobQueries = [];
 let repositoryDispatchQueryCount = 0;
 let onRepositoryDispatchQuery = null;
 const github = {
+  request: async (route, {run_id, attempt_number}) => {
+    if (route !== "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}") throw new Error("unexpected exact run lookup");
+    const result = availableRuns.find(row => row.id === run_id && row.run_attempt === attempt_number);
+    if (!result) throw new Error("missing exact run attempt");
+    return {data: result};
+  },
   rest: {
     pulls: {
       get: async () => ({
@@ -3087,6 +3200,13 @@ const github = {
       },
     },
     repos: {
+      getContent: async ({path, ref}) => {
+        if (path !== ".github/workflows/runtime-images.yml" || !availableRuns.some(row => row.event === "repository_dispatch" && row.head_sha === ref)) {
+          throw new Error("typed runtime proof must pin its executed workflow definition");
+        }
+        const bytes = fs.readFileSync(path);
+        return {data: {type: "file", path, size: bytes.length, encoding: "base64", content: bytes.toString("base64")}};
+      },
       getCommit: async ({ ref }) => {
         requestedCommitRefs.push(ref);
         return {
@@ -3098,6 +3218,7 @@ const github = {
       },
     },
     actions: { listWorkflowRuns, listJobsForWorkflowRun,
+      getWorkflow: async ({workflow_id}) => ({data: {id: workflow_id, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
       getWorkflowRun: async ({run_id}) => ({data: availableRuns.find(run => run.id === run_id)}),
     },
   },
@@ -3106,8 +3227,11 @@ const github = {
         method === "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") {
       jobQueries.push(input);
       const run = availableRuns.find(row => row.id === input.run_id);
+      const typed = run?.event === "repository_dispatch";
       return [{
-        name: "PR Full-Stack Smoke",
+        id: 881,
+        name: typed ? "PR Full-Stack Smoke (runtime-required=true)" : "PR Full-Stack Smoke",
+        check_run_url: "https://api.github.com/repos/owner/repo/check-runs/881",
         run_id: input.run_id,
         run_attempt: input.attempt_number,
         head_sha: run?.head_sha,
@@ -3117,7 +3241,11 @@ const github = {
           name: "Run credential-free full-stack smoke",
           status: "completed",
           conclusion: smokeStepConclusion,
-        }],
+        }, ...(typed ? [
+          {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed", conclusion: "skipped"},
+          {name: "Stop smoke stack", status: "completed", conclusion: "success"},
+          {name: "Require successful runtime smoke and authenticated cleanup", status: "completed", conclusion: "success"},
+        ] : [])],
       }];
     }
     throw new Error("unexpected paginated method");
@@ -3272,7 +3400,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (dispatchQuery.created !== "2026-09-01T00:00:00Z..*" || Object.hasOwn(dispatchQuery, "head_sha")) {
         throw new Error("same-anchor replacement lookup must be bounded to PR-created dispatch runs without head-SHA assumptions");
       }
-      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 602) {
+      if (jobQueries.length !== jobStart + 2 || !jobQueries.slice(jobStart).every(query => query.run_id === 602 && query.attempt_number === 1)) {
         throw new Error("Smoke Gate must wait for and validate the exact dispatch replacement smoke job");
       }
       if (currentBaseLookups <= currentBaseLookupStart) {
@@ -3417,7 +3545,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (requestedCommitRefs.at(-1) !== currentMergeSha) {
         throw new Error("dispatch fallback must verify the exact current PR merge commit");
       }
-      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 501) {
+      if (jobQueries.length !== jobStart + 2 || !jobQueries.slice(jobStart).every(query => query.run_id === 501 && query.attempt_number === 1)) {
         throw new Error("Smoke Gate must accept only the successful smoke run for the current tuple");
       }
     });
@@ -3432,12 +3560,12 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       availableRuns = [dispatchRun(506, liveBaseSha, headSha, currentMergeSha)];
       const jobStart = jobQueries.length;
       await check("success", false);
-      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 506) {
+      if (jobQueries.length !== jobStart + 2 || !jobQueries.slice(jobStart).every(query => query.run_id === 506 && query.attempt_number === 1)) {
         throw new Error("missing event merge must require exact current typed refresh proof");
       }
       currentMergeParents = [{ sha: headSha }, { sha: liveBaseSha }];
       await check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run");
-      if (jobQueries.length !== jobStart + 1) {
+      if (jobQueries.length !== jobStart + 2) {
         throw new Error("missing event merge must reject reversed current parents");
       }
       currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];

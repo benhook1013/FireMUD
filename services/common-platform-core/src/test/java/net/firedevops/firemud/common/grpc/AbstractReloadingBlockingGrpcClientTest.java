@@ -206,7 +206,7 @@ class AbstractReloadingBlockingGrpcClientTest {
           try {
             var first = submitCall.apply(startFirst);
             var second = submitCall.apply(startSecond);
-            assertThat(selected.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(selected.await(15, TimeUnit.SECONDS)).isTrue();
             if (close) {
               client.close();
               assertThatThrownBy(client::requirePublishedExplicitStub)

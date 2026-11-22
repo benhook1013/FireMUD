@@ -83,8 +83,9 @@ resolver_script="$fixture_dir/resolver.js"
 dispatch_script="$fixture_dir/dispatch.js"
 smoke_scope_script="$fixture_dir/runtime-smoke-scope.js"
 refresh_selector_script="$fixture_dir/runtime-refresh-selector.js"
+failed_reconcile_script="$fixture_dir/failed-runtime-reconcile.js"
 
-python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" <<'PY'
+python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" "$failed_reconcile_script" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -141,9 +142,18 @@ smoke_scope = next(step for step in image_meta["steps"] if step.get("name") == "
 Path(sys.argv[8]).write_text(smoke_scope["with"]["script"], encoding="utf-8")
 refresh_job = runtime_definition["jobs"]["dispatch-pr-base-refreshes"]
 refresh_script = next(step["with"]["script"] for step in refresh_job["steps"] if "with" in step and "script" in step["with"])
+deadline_start = refresh_script.index("const dispatcherStartedAt = Date.now();")
+deadline_end = refresh_script.index("const workflowRun = context.payload.workflow_run;", deadline_start)
 selector_start = refresh_script.index("const runtimePrefixes = [")
 selector_end = refresh_script.index("const dependencyBotAuthors = new Set([", selector_start)
-Path(sys.argv[9]).write_text(refresh_script[selector_start:selector_end], encoding="utf-8")
+Path(sys.argv[9]).write_text(
+    refresh_script[deadline_start:deadline_end] + refresh_script[selector_start:selector_end],
+    encoding="utf-8",
+)
+publisher_definition = yaml.load(workflow, Loader=yaml.BaseLoader)
+reconcile_job = publisher_definition["jobs"]["reconcile-failed-pr-runtime"]
+reconcile_step = next(step for step in reconcile_job["steps"] if step.get("name") == "Reconcile exact failed original runtime")
+Path(sys.argv[10]).write_text(reconcile_step["with"]["script"], encoding="utf-8")
 handoff = runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1].split("  smoke-full:\n", 1)[0]
 for required in ["needs: [image-meta, pr-local-smoke, pr-controller-smoke]", "github.event_name == 'repository_dispatch'", "github.event.action == 'pr-runtime-base-refresh'", "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", "needs.image-meta.result == 'success'", "needs.pr-local-smoke.result == 'success'", "needs.pr-controller-smoke.result == 'success'", "needs.image-meta.outputs.controller_smoke_required == 'false'", "needs.pr-controller-smoke.result == 'skipped'", "contents: write"]:
     if required not in handoff:
@@ -175,11 +185,12 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", fs.readFileSync(process.argv[2], "utf8"));
 const dispatch = new AsyncFunction("github", "context", fs.readFileSync(process.argv[3], "utf8"));
 const smokeScope = new AsyncFunction("github", "context", "core", fs.readFileSync(process.argv[7], "utf8"));
-const refreshSelector = new AsyncFunction("github", "context", "core", `${fs.readFileSync(process.argv[8], "utf8")}\nreturn hasRuntimeChange;`);
+const refreshSelector = new AsyncFunction("github", "context", "core", "Date", "AbortSignal",
+  `${fs.readFileSync(process.argv[8], "utf8")}\nreturn hasRuntimeChange;`);
 const sha = character => character.repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} head-${sha("a")} merge-${sha("c")} mode-required`;
 const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
-const source = { id: 4242, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
+const source = { id: 4242, workflow_id: 777, run_attempt: 1, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
 async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs = [] } = {}) {
   let reads = 0, clock = 0;
@@ -214,15 +225,39 @@ async function smokeDecision(paths) {
   return outputs.runtime_smoke_required;
 }
 const refreshEntries = [];
+let refreshNow = Date.parse("2026-01-08T00:00:00Z");
+const refreshDeadline = refreshNow + 12 * 60 * 1000;
+const refreshSignals = [];
+const refreshRequests = [];
 const runtimeSelector = refreshSelector(
-  {rest: {pulls: {listFiles: "listFiles"}}, paginate: async () => refreshEntries},
+  {rest: {pulls: {listFiles: "listFiles"}}, paginate: async (_endpoint, request) => {
+    refreshRequests.push(request);
+    refreshNow += 250;
+    return refreshEntries;
+  }},
   {repo: {}, payload: {}},
   {warning: () => {}},
+  {now: () => refreshNow},
+  {timeout: milliseconds => {
+    const signal = {timeoutMs: milliseconds};
+    refreshSignals.push(signal);
+    return signal;
+  }},
 );
 async function refreshDecision(paths) {
   refreshEntries.splice(0, refreshEntries.length, ...paths.map(filename => ({filename})));
+  const requestIndex = refreshRequests.length;
+  const nowBeforeRequest = refreshNow;
   const hasRuntimeChange = await runtimeSelector;
-  return hasRuntimeChange({number: 42, changed_files: refreshEntries.length});
+  const result = await hasRuntimeChange({number: 42, changed_files: refreshEntries.length});
+  assert.equal(refreshRequests.length, requestIndex + 1, "changed-file selection performs exactly one paginated API request");
+  const {request, ...normalOptions} = refreshRequests[requestIndex];
+  assert.deepEqual(normalOptions, {pull_number: 42, per_page: 100}, "changed-file request preserves its exact normal option shape");
+  assert.deepEqual(Object.keys(request).sort(), ["signal"], "changed-file request has only the source-derived AbortSignal option");
+  assert.equal(request.signal, refreshSignals.at(-1));
+  assert.equal(request.signal.timeoutMs, refreshDeadline - nowBeforeRequest,
+    "changed-file request timeout is computed from the remaining actual wall-clock budget");
+  return result;
 }
 const handoffCondition = runtimeWorkflow.split("  dispatch-pr-runtime-publication:\n")[1].match(/^    if: \$\{\{ (.*) \}\}$/m)[1]
   .replace(/needs\.([a-z-]+)/g, (_, key) => `needs[${JSON.stringify(key)}]`);
@@ -255,6 +290,17 @@ for (const publishable of ["false", "", undefined]) {
     assert.equal(await smokeDecision([path]), "true", `${path} must continue to require runtime smoke`);
     assert.equal(await refreshDecision([path]), true, `${path} must continue to select a runtime refresh`);
   }
+  const requestCountBeforeDeadline = refreshRequests.length;
+  const signalCountBeforeDeadline = refreshSignals.length;
+  refreshNow = refreshDeadline;
+  const hasRuntimeChange = await runtimeSelector;
+  await assert.rejects(hasRuntimeChange({number: 42, changed_files: 1}), error =>
+    error.code === "REQUEST_DEADLINE_EXPIRED" && /request not issued/.test(error.message),
+  "changed-file lookup must fail closed at the actual fan-out wall-clock deadline");
+  assert.equal(refreshRequests.length, requestCountBeforeDeadline,
+    "an expired changed-file deadline must not reach the GitHub API mock");
+  assert.equal(refreshSignals.length, signalCountBeforeDeadline,
+    "an expired deadline must not manufacture an already-expired AbortSignal");
   let dispatched;
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
@@ -314,6 +360,210 @@ for (const publishable of ["false", "", undefined]) {
   await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "../4242"}}}}));
   await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: {...source, head_sha: sha("d")}}}}), /differs from callback/);
   console.log("Exact source handoff and terminal-resolution fixtures passed.");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+JS
+
+# Execute the actual failed-source reconciler with mocked GitHub APIs. The clock
+# and AbortSignal mocks preserve its wall-clock semantics without network access.
+node - "$failed_reconcile_script" <<'JS'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const reconcile = new AsyncFunction(
+  "github", "context", "core", "Date", "AbortSignal", "setTimeout",
+  fs.readFileSync(process.argv[2], "utf8"),
+);
+const sha = letter => letter.repeat(40);
+const repository = "benhook1013/FireMUD";
+const owner = "benhook1013";
+const repo = "FireMUD";
+const base = sha("b");
+const head = sha("a");
+const merge = sha("c");
+const sourceTitle = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+const ciTitle = `CI — Validation pr-42 base-${base} head-${head}`;
+const source = {
+  id: 4242, workflow_id: 777, run_attempt: 1, path: ".github/workflows/runtime-images.yml",
+  name: "Build Runtime Images", display_title: sourceTitle, event: "pull_request",
+  status: "completed", conclusion: "failure", repository: {full_name: repository},
+  head_repository: {full_name: repository}, head_sha: head, head_branch: "feature/ci",
+  created_at: "2026-01-01T00:00:00Z",
+};
+const ciRun = {
+  id: 7001, workflow_id: 778, run_attempt: 1, path: ".github/workflows/ci.yml",
+  name: "CI — Validation", display_title: ciTitle, event: "pull_request", status: "completed",
+  conclusion: "success", repository: {full_name: repository}, head_repository: {full_name: repository},
+  head_sha: head, head_branch: "feature/ci",
+};
+const pullRequest = {
+  number: 42, state: "open", head: {sha: head, ref: "feature/ci", repo: {full_name: repository}},
+  base: {ref: "develop", repo: {full_name: repository}}, mergeable: true, merge_commit_sha: merge,
+};
+const gate = {
+  id: 8001, run_id: ciRun.id, run_attempt: ciRun.run_attempt, head_sha: head,
+  workflow_name: "CI — Validation", name: "Validation Gate", status: "completed", conclusion: "success",
+  check_run_url: `https://api.github.com/repos/${repository}/check-runs/8001`,
+  steps: [
+    {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped"},
+    {name: "Enforce validation success", status: "completed", conclusion: "success"},
+  ],
+};
+
+async function runReconcile({ambiguousPost = true, expireFirstRequest = false} = {}) {
+  let now = Date.parse("2026-01-08T00:00:00Z");
+  let expire = expireFirstRequest;
+  let visibleRun = null;
+  let postAttempts = 0;
+  const requests = [];
+  const signals = [];
+  const dispatchRequests = [];
+  const warnings = [];
+  const infos = [];
+  class FixtureDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }
+  const timeoutSignals = {
+    timeout(milliseconds) {
+      assert(Number.isSafeInteger(milliseconds) && milliseconds > 0,
+        "AbortSignal.timeout must receive positive remaining wall-clock time");
+      const expiresAt = now + milliseconds;
+      const signal = {timeoutMs: milliseconds, get aborted() { return now >= expiresAt; }};
+      signals.push(signal);
+      return signal;
+    },
+  };
+  const record = (name, options, expectedNormal, oneShot = false) => {
+    assert(options && typeof options === "object", `${name} must receive its normal request object`);
+    const {request, ...normal} = options;
+    assert.deepEqual(normal, expectedNormal, `${name} must preserve its exact normal request shape`);
+    assert(request && typeof request === "object", `${name} must receive the AbortSignal request option`);
+    assert.deepEqual(Object.keys(request).sort(), oneShot ? ["retries", "signal"] : ["signal"],
+      `${name} must preserve its exact request-option shape`);
+    if (oneShot) assert.equal(request.retries, 0, "repository dispatch must explicitly disable transport retries");
+    assert(signals.includes(request.signal), `${name} must use the source-derived wall-clock AbortSignal`);
+    assert(Number.isSafeInteger(request.signal.timeoutMs) && request.signal.timeoutMs > 0,
+      `${name} must use a positive remaining deadline`);
+    assert.equal(request.signal.aborted, false, `${name} must not be issued with an already-expired signal`);
+    requests.push({name, options, signal: request.signal});
+    if (expire) {
+      expire = false;
+      now += request.signal.timeoutMs;
+      assert.equal(request.signal.aborted, true, "API mock must observe AbortSignal expiry as wall time advances");
+      const error = new Error("mocked API request aborted at its deadline");
+      error.name = "TimeoutError";
+      throw error;
+    }
+    return request.signal;
+  };
+  const context = {
+    eventName: "workflow_run",
+    repo: {owner, repo},
+    payload: {
+      repository: {full_name: repository, default_branch: "develop"},
+      workflow_run: source,
+    },
+  };
+  const github = {
+    rest: {
+      actions: {
+        getWorkflow: async options => {
+          const workflowId = options.workflow_id;
+          record("actions.getWorkflow", options, {owner, repo, workflow_id: workflowId});
+          return {data: workflowId === "runtime-images.yml"
+            ? {id: 777, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}
+            : {id: 778, path: ".github/workflows/ci.yml", name: "CI — Validation"}};
+        },
+        getWorkflowRun: async options => {
+          record("actions.getWorkflowRun", options, {owner, repo, run_id: options.run_id});
+          return {data: options.run_id === source.id ? source : ciRun};
+        },
+        listWorkflowRuns: async options => {
+          const {workflow_id: workflowId, event, head_sha: requestedHead, created, per_page, page} = options;
+          const normal = {owner, repo, workflow_id: workflowId, event, per_page, page};
+          if (requestedHead !== undefined) normal.head_sha = requestedHead;
+          if (created !== undefined) normal.created = created;
+          record("actions.listWorkflowRuns", options, normal);
+          let runs = [];
+          if (workflowId === "ci.yml") runs = [ciRun];
+          if (workflowId === "runtime-images.yml" && event === "repository_dispatch" && visibleRun) runs = [visibleRun];
+          return {data: {total_count: runs.length, workflow_runs: runs}};
+        },
+      },
+      pulls: {
+        get: async options => {
+          record("pulls.get", options, {owner, repo, pull_number: 42});
+          return {data: pullRequest};
+        },
+      },
+      git: {
+        getRef: async options => {
+          record("git.getRef", options, {owner, repo, ref: "heads/develop"});
+          return {data: {ref: "refs/heads/develop", object: {sha: base}}};
+        },
+      },
+      repos: {
+        getCommit: async options => {
+          record("repos.getCommit", options, {owner, repo, ref: merge});
+          return {data: {sha: merge, parents: [{sha: base}, {sha: head}]}};
+        },
+        createDispatchEvent: async options => {
+          record("repos.createDispatchEvent", options, {
+            owner, repo, event_type: "pr-runtime-base-refresh",
+            client_payload: {pr_number: "42", base_ref: "develop", base_sha: base, head_sha: head, merge_sha: merge},
+          }, true);
+          postAttempts += 1;
+          dispatchRequests.push(options);
+          now += 1000;
+          visibleRun = {
+            id: 9001, workflow_id: 777, run_attempt: 1,
+            path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images",
+            display_title: sourceTitle, event: "repository_dispatch", status: "queued", conclusion: null,
+            repository: {full_name: repository}, head_repository: {full_name: repository},
+            head_branch: "develop", head_sha: base, created_at: new FixtureDate().toISOString(),
+          };
+          if (ambiguousPost) throw new Error("simulated ambiguous dispatch response");
+        },
+      },
+    },
+    paginate: async (route, options) => {
+      assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+      record("paginate.jobs", options, {owner, repo, run_id: ciRun.id, attempt_number: 1, per_page: 100});
+      return [gate];
+    },
+  };
+  let failure = null;
+  try {
+    await reconcile(github, context, {warning: message => warnings.push(message), info: message => infos.push(message)},
+      FixtureDate, timeoutSignals, (resolve, milliseconds) => { now += milliseconds; resolve(); });
+  } catch (error) {
+    failure = error;
+  }
+  return {failure, now, requests, signals, dispatchRequests, postAttempts, warnings, infos};
+}
+
+(async () => {
+  const uncertainPost = await runReconcile();
+  assert.equal(uncertainPost.failure, null, "visible exact refresh reconciles an ambiguous response");
+  assert.equal(uncertainPost.postAttempts, 1, "an uncertain repository dispatch POST is never retransmitted");
+  assert.equal(uncertainPost.dispatchRequests.length, 1);
+  assert.equal(uncertainPost.dispatchRequests[0].request.retries, 0,
+    "the production one-shot request explicitly disables Octokit retries");
+  assert(uncertainPost.warnings.some(message => message.includes("no retry issued") && message.includes("ambiguous dispatch response")));
+  assert(uncertainPost.infos.some(message => message.includes("exact refresh is visible")));
+  assert(uncertainPost.requests.some(({name}) => name === "actions.listWorkflowRuns"),
+    "the one-shot handoff must be followed by source-derived visibility observation");
+  assert(uncertainPost.requests.every(({signal}) => signal.timeoutMs > 0),
+    "every mocked GitHub request receives a positive wall-clock AbortSignal budget");
+  const expiredRequest = await runReconcile({expireFirstRequest: true});
+  assert.equal(expiredRequest.failure?.name, "TimeoutError", "request abortion at the wall-clock deadline remains visible");
+  assert.equal(expiredRequest.requests.length, 1, "deadline abortion prevents subsequent GitHub API requests");
+  assert.equal(expiredRequest.requests[0].name, "actions.getWorkflow");
+  assert.equal(expiredRequest.requests[0].signal.timeoutMs, 120000,
+    "the reconciler starts with its exact two-minute pre-dispatch wall-clock budget");
+  assert.equal(expiredRequest.requests[0].signal.aborted, true, "the API mock observed the signal expire");
+  assert.equal(expiredRequest.postAttempts, 0, "deadline abortion fails closed before repository dispatch");
+  process.stdout.write("Failed-source reconciliation deadline and one-shot fixtures passed\n");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 JS
 
@@ -746,7 +996,6 @@ for valid_ref in \
   "refs/heads/develop" \
   "refs/heads/feature]/test" \
   "refs/heads/feature/@/test" \
-  "refs/heads/feature./test" \
   "$head_sha"; do
   set_source_run_path ".github/workflows/runtime-images.yml@$valid_ref"
   run_validation || {
@@ -762,6 +1011,7 @@ for invalid_path in \
   '.github/workflows/runtime-images.yml@@' \
   '.github/workflows/runtime-images.yml@refs/heads/trailing.' \
   '.github/workflows/runtime-images.yml@refs/heads/feature[/test' \
+  '.github/workflows/runtime-images.yml@refs/heads/feature./test' \
   '.github/workflows/runtime-images.yml@.hidden' \
   '.github/workflows/runtime-images.yml@feature/.lock'; do
   set_source_run_path "$invalid_path"
