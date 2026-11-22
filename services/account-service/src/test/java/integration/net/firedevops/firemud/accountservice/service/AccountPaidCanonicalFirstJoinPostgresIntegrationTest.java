@@ -197,7 +197,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
-    return new Context(CanonicalHostingSubscriptionTestFixture.create(source), wrongPolicy);
+    return new Context(
+        CanonicalHostingSubscriptionTestFixture.create(source),
+        wrongPolicy,
+        invoiceCheckoutDirectory);
   }
 
   private static final class Context {
@@ -213,7 +216,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     private final StripeHostingSubscriptionObserver.Result observed;
     private final List<Map<String, Object>> paidAuditRows;
 
-    private Context(CanonicalHostingSubscriptionTestFixture.Fixture hosting, boolean wrongPolicy) {
+    private Context(
+        CanonicalHostingSubscriptionTestFixture.Fixture hosting,
+        boolean wrongPolicy,
+        Path invoiceCheckoutDirectory) {
       this.hosting = hosting;
       var committed =
           hosting.withCheckoutDirectory(invoiceCheckoutDirectory).completeFirstInvoice();

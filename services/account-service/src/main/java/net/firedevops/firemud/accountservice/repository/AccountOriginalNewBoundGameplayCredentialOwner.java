@@ -480,10 +480,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
     if (!expected.equals(finalReadback.anchors())) throw unavailable();
-    long nowMillis = clock.millis();
-    if (nowMillis <= 0L
-        || finalReadback.admissionAtMillis() > nowMillis
-        || nowMillis >= finalReadback.continuityExpiresAtMillis()) throw unavailable();
+    requireCurrentFinalReadback(finalReadback);
 
     VerifiedCaller beforeActivationCaller = verifyCaller(presentedInitialGsACompactJwt, peer);
     if (!AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData
@@ -532,13 +529,18 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
           requireSameGenesisIdentity(beforeGenesis, exact);
           TokenIdentity tokenIdentity = originalNewIdentity(exact);
           new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveReadback(tokenIdentity);
-          return issuance.confirmFinalAdmission(
-              exact,
-              finalReadback.admissionAtMillis(),
-              finalReadback.continuityExpiresAtMillis(),
-              confirmationDigest);
+          requireCurrentFinalReadback(finalReadback);
+          Genesis written =
+              issuance.confirmFinalAdmission(
+                  exact,
+                  finalReadback.admissionAtMillis(),
+                  finalReadback.continuityExpiresAtMillis(),
+                  confirmationDigest);
+          requireCurrentFinalReadback(finalReadback);
+          return written;
         });
     tokenRegistry.requireExactOriginalNewActiveRecord(confirmed);
+    requireCurrentFinalReadback(finalReadback);
     if (!confirmationDigest.equals(confirmed.confirmationReadbackSha256())) throw unavailable();
     return new OriginalAdmissionConfirmation(
         confirmed.lineageId(),
@@ -583,6 +585,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         || !genesis.tokenJti().toString().equals(activation.tokenJti())
         || activation.localAofCount() < 1L
         || activation.replicaAofCount() < 1L) throw unavailable();
+  }
+
+  private void requireCurrentFinalReadback(AuthenticatedFinalAdmissionReadback readback) {
+    long now = clock.millis();
+    if (now <= 0L
+        || readback.admissionAtMillis() > now
+        || now >= readback.continuityExpiresAtMillis()) throw unavailable();
   }
 
   private static String confirmationDigest(

@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -140,6 +142,13 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
     exerciseFinalConfirmation(false, true);
   }
 
+  @Test
+  void paidConfirmationWithElapsedContinuityDoesNotWriteReadback() throws Exception {
+    paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
+    sourceFixture = paidFixture.caller();
+    exerciseFinalConfirmation(false, false, true);
+  }
+
   private void exerciseFinalConfirmation(boolean revokeCallerDuringFinalRead) throws Exception {
     exerciseFinalConfirmation(revokeCallerDuringFinalRead, false);
   }
@@ -147,6 +156,34 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
   private void exerciseFinalConfirmation(
       boolean revokeCallerDuringFinalRead, boolean changePaidSourceDuringObservation)
       throws Exception {
+    exerciseFinalConfirmation(
+        revokeCallerDuringFinalRead, changePaidSourceDuringObservation, false);
+  }
+
+  private void exerciseFinalConfirmation(
+      boolean revokeCallerDuringFinalRead,
+      boolean changePaidSourceDuringObservation,
+      boolean expireContinuityDuringConfirmationObservation)
+      throws Exception {
+    AtomicReference<Clock> selectedOwnerClock = new AtomicReference<>(Clock.systemUTC());
+    Clock ownerClock =
+        new Clock() {
+          @Override
+          public ZoneId getZone() {
+            return selectedOwnerClock.get().getZone();
+          }
+
+          @Override
+          public Clock withZone(ZoneId zone) {
+            return selectedOwnerClock.get().withZone(zone);
+          }
+
+          @Override
+          public Instant instant() {
+            return selectedOwnerClock.get().instant();
+          }
+        };
+    AtomicInteger continuityAdvances = new AtomicInteger();
     DSLContext dsl =
         DSL.using(
             new TransactionAwareDataSourceProxy(sourceFixture.dataSource), SQLDialect.POSTGRES);
@@ -212,6 +249,26 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           when(readback.canonicalSessionDurationMillis()).thenReturn(SESSION_DURATION_MILLIS);
           when(readback.canonicalReadbackSha256()).thenReturn("f".repeat(64));
           finalReadResults.add(readback);
+          if (expireContinuityDuringConfirmationObservation) {
+            selectedOwnerClock.set(
+                Clock.fixed(
+                    Instant.ofEpochMilli(controlledAdmissionAtMillis + 1), ZoneId.of("UTC")));
+            paidFixture
+                .hosting()
+                .transport()
+                .duringRead(() -> {
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive())
+                      .isFalse();
+                  selectedOwnerClock.set(
+                      Clock.fixed(
+                          Instant.ofEpochMilli(
+                              controlledAdmissionAtMillis + SESSION_DURATION_MILLIS),
+                          ZoneId.of("UTC")));
+                  continuityAdvances.incrementAndGet();
+                });
+          }
           if (revokeCallerDuringFinalRead) {
             // The normal revocation owner lawfully changes the genuine LOGIN identity fence
             // after Account began its reverse read, without changing the original NEW lineage.
@@ -254,7 +311,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
                 sourceFixture.signerFixture.signer(),
                 tokenRegistry,
                 responseCryptography,
-                Clock.systemUTC(),
+                ownerClock,
                 controlledFinalReadback)
             : new AccountOriginalNewBoundGameplayCredentialOwner(
                 sourceFixture.dataSource,
@@ -263,7 +320,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
                 sourceFixture.signerFixture.signer(),
                 tokenRegistry,
                 responseCryptography,
-                Clock.systemUTC(),
+                ownerClock,
                 controlledFinalReadback,
                 paidFixture.hosting().admissionPaidSource());
     GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(GAME_SESSION_WORKLOAD).orElseThrow();
@@ -372,6 +429,16 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           Math.addExact(
               Math.multiplyExact(committed.expiresAtEpochSecond(), 1_000L),
               REDIS_CLEANUP_MARGIN_MILLIS);
+      if (expireContinuityDuringConfirmationObservation) {
+        String before = issuancePhysicalImage(dsl);
+        assertFinalConfirmationUnavailable(owner, peer, loginJwt, originalLease);
+        assertThat(finalReadCalls.get()).isOne();
+        assertThat(continuityAdvances.get()).isOne();
+        assertUnconfirmed(dsl, serializable, originalLease);
+        assertThat(issuancePhysicalImage(dsl)).isEqualTo(before);
+        assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+        return;
+      }
       if (revokeCallerDuringFinalRead) {
         String issuanceBefore =
             dsl.fetchSingle(
@@ -678,6 +745,13 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
     var originalLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
     leaseRepository.beginPending(originalLease);
     return originalLease;
+  }
+
+  private static String issuancePhysicalImage(DSLContext dsl) {
+    return dsl.fetchSingle(
+            "SELECT xmin::text || ':' || to_jsonb(issuance)::text"
+                + " FROM account_original_new_bound_gameplay_issuances issuance")
+        .get(0, String.class);
   }
 
   private static Genesis readGenesis(
