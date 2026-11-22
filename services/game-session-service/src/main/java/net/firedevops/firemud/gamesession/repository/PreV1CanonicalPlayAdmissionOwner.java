@@ -1,6 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import io.grpc.StatusRuntimeException;
+import io.grpc.Status;
 import io.lettuce.core.RedisURI;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -270,15 +270,15 @@ public final class PreV1CanonicalPlayAdmissionOwner {
         Arrays.fill(compact, (byte) 0);
       }
     } catch (RuntimeException failure) {
-      StackTraceElement[] trace = failure.getStackTrace();
       Throwable cause = NestedExceptionUtils.getMostSpecificCause(failure);
+      StackTraceElement[] trace = cause.getStackTrace();
       PSQLException postgres = cause instanceof PSQLException sql ? sql : null;
       var databaseError = postgres == null ? null : postgres.getServerErrorMessage();
       LOG.warn(
           "Run-owned PLAY unavailable phase={} type={} grpcStatus={} sqlState={} constraint={} source={}",
           phase,
-          failure.getClass().getSimpleName(),
-          failure instanceof StatusRuntimeException rpc ? rpc.getStatus().getCode() : null,
+          cause.getClass().getSimpleName(),
+          Status.fromThrowable(failure).getCode(),
           postgres == null ? null : postgres.getSQLState(),
           databaseError == null ? null : databaseError.getConstraint(),
           trace.length == 0 ? "unknown" : trace[0]);
