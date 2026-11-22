@@ -900,7 +900,7 @@ async function runDispatcher({
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
   pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
-  pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {},
+  pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {}, runtimeAttemptJobs = {},
   initialTime = "2026-01-08T00:00:00Z",
 }) {
   const dispatches = [];
@@ -1112,6 +1112,7 @@ async function runDispatcher({
         },
         listJobsForWorkflowRunAttempt: async (request) => {
           recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
+          if (request.run_id !== ciRun.id) return {data: runtimeAttemptJobs[request.run_id] ?? {total_count: 0, jobs: []}};
           ciJobRequests.push(request);
           const jobs = ciEvidence.jobs ?? [ciGate];
           return {data: ciEvidence.jobPage ? ciEvidence.jobPage(request, jobs) : {
@@ -1845,8 +1846,27 @@ async function runDispatcher({
     });
     assert.deepEqual(numbers(held), [],
       "legacy failure/PLAY, success and unknown dispositions keep the existing typed refresh hold");
-    assert.deepEqual(held.runtimeRunReads, [], "this narrow rule must not classify other terminal PLAY outcomes");
+    if (conclusion !== "failure") assert.deepEqual(held.runtimeRunReads, [], "unrelated conclusions need no native classification");
     assert.deepEqual(held.errors, []);
+  }
+  const failedTyped = {...terminalTyped("failure"), run_started_at: "2026-01-03T00:01:00Z", updated_at: "2026-01-03T00:04:00Z"};
+  const diagnosticMarker = {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed",
+    conclusion: "skipped", started_at: "2026-01-03T00:02:00Z", completed_at: "2026-01-03T00:02:00Z"};
+  const failedJob = {id: 72, name: "PR Full-Stack Smoke (runtime-required=true)", workflow_name: failedTyped.display_title,
+    run_id: failedTyped.id, run_attempt: failedTyped.run_attempt, head_sha: failedTyped.head_sha, status: "completed", conclusion: "failure",
+    started_at: "2026-01-03T00:01:01Z", completed_at: "2026-01-03T00:03:00Z", steps: [diagnosticMarker]};
+  for (const [jobs, total, expected] of [
+    [[failedJob], 1, ["101"]],
+    [[{...failedJob, steps: [{...diagnosticMarker, conclusion: "success"}]}], 1, []],
+    [[{...failedJob, steps: [{...diagnosticMarker, conclusion: null}]}], 1, []],
+    [[{...failedJob, steps: [diagnosticMarker, diagnosticMarker]}], 1, []],
+    [[{...failedJob, started_at: "2026-01-03T00:00:59Z"}], 1, []],
+    [[failedJob], 2, []],
+  ]) {
+    const result = await runDispatcher({tuples:[tuple], callback:{updated_at: "2026-01-02T00:00:00Z"},
+      inventories: {repository_dispatch:[failedTyped]}, runtimeAttemptJobs: {[failedTyped.id]: {total_count: total, jobs}}});
+    assert.deepEqual(numbers(result), expected);
+    assert.deepEqual(result.errors, []);
   }
   const cancelledTyped = terminalTyped("cancelled");
   for (const changed of [
