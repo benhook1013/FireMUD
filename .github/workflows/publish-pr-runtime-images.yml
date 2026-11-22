@@ -84,6 +84,9 @@ jobs:
               return typeof path === "string" && path.startsWith(prefix) &&
                 validWorkflowRef(path.slice(prefix.length));
             };
+            const samePrPath = (left, right, path, number) => left === right ||
+              left === path && right === `${path}@refs/pull/${number}/merge` ||
+              right === path && left === `${path}@refs/pull/${number}/merge`;
             const trusted = run => run?.workflow_id === workflow.id && matchesPath(run.path, workflow.path) &&
               run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
               [workflow.name, run.display_title].includes(run.name) && positive(run.id) && positive(run.run_attempt);
@@ -91,6 +94,15 @@ jobs:
             // native producer job with a skipped marker is affirmative proof
             // that this exact failed attempt cannot supply that exception.
             const provesOrdinaryTypedFailure = async run => {
+              const matchesSelected = candidate => candidate &&
+                ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "head_branch", "head_sha", "status", "conclusion"]
+                  .every(field => candidate[field] === run[field]) &&
+                [workflow.name, run.display_title].includes(candidate.name) &&
+                candidate.repository?.full_name === repository && candidate.head_repository?.full_name === repository;
+              const {data: attempt} = await github.rest.actions.getWorkflowRunAttempt(prePostOptions({
+                ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
+              }));
+              if (!matchesSelected(attempt)) return false;
               const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(prePostOptions({
                 ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100, page: 1,
               }));
@@ -103,10 +115,26 @@ jobs:
                   job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
               if (markers.length !== 1 || markers[0].status !== "completed" || markers[0].conclusion !== "skipped") return false;
-              const times = [run.run_started_at, job.started_at, markers[0].started_at, markers[0].completed_at,
-                job.completed_at, run.updated_at].map(value =>
-                  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) ? Date.parse(value) : NaN);
-              return times.every((time, index) => Number.isFinite(time) && (index === 0 || time >= times[index - 1]));
+              const timestamp = value => {
+                const match = typeof value === "string" && /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+                const time = match ? Date.parse(value) : NaN;
+                const wall = match ? `${match[1]}.${(match[2] || "").padEnd(3, "0")}Z` : "";
+                const wallMillis = Date.parse(wall);
+                return Number.isFinite(time) && Number.isFinite(wallMillis) && new Date(wallMillis).toISOString() === wall ? time : NaN;
+              };
+              const [start, jobStart, jobEnd, end] = [attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
+              if (![start, jobStart, jobEnd, end].every(Number.isFinite) || end < start ||
+                  jobStart < Math.floor(start / 1000) * 1000 || jobEnd < jobStart || jobEnd > Math.floor(end / 1000) * 1000 + 999) return false;
+              // A skipped step normally has no execution timestamps. If supplied,
+              // both timestamps must still agree with the actually attempted job.
+              const marker = markers[0];
+              if (marker.started_at != null || marker.completed_at != null) {
+                const markerStart = timestamp(marker.started_at), markerEnd = timestamp(marker.completed_at);
+                if (!Number.isFinite(markerStart) || !Number.isFinite(markerEnd) ||
+                    markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
+              }
+              const {data: latest} = await github.rest.actions.getWorkflowRun(prePostOptions({...context.repo, run_id: run.id}));
+              return matchesSelected(latest);
             };
             // Inventory incompleteness is unknown, never permission to dispatch duplicates.
             const inventory = async (workflowId, filter, deadline = prePostDeadline, phase = "Pre-dispatch", validateVisibilityRun = null) => {
@@ -160,7 +188,7 @@ jobs:
                 run.event === "pull_request" && run.status === "completed" && run.conclusion === callback.conclusion &&
                 run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
                 run.head_sha === wakeHead && run.head_branch === callback.head_branch &&
-                run.display_title === callback.display_title && run.path === callback.path &&
+                run.display_title === callback.display_title && samePrPath(run.path, callback.path, ciWorkflow.path, wakeNumber) &&
                 [ciWorkflow.name, callback.display_title].includes(run.name);
               if (!matchesWake(callback)) return;
               wakeCurrent = async () => {
@@ -193,7 +221,7 @@ jobs:
               return trusted(run) && run.id === event.id && run.run_attempt === event.run_attempt &&
                 run.event === "pull_request" && run.status === "completed" && run.conclusion === event.conclusion &&
                 run.head_sha === head && run.display_title === event.display_title && run.head_branch === event.head_branch &&
-                run.path === event.path;
+                samePrPath(run.path, event.path, workflow.path, number);
             };
             if (!await sourceCurrent()) return;
             const currentTuple = async () => {
@@ -229,6 +257,7 @@ jobs:
             const matchesCiIdentity = (run, expected) => run && run.id === expected?.id &&
               run.run_attempt === expected?.run_attempt && positive(run.run_attempt) &&
               run.workflow_id === ciWorkflow.id && matchesPath(run.path, ciWorkflow.path) &&
+              samePrPath(run.path, expected.path, ciWorkflow.path, number) &&
               run.event === "pull_request" &&
               run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
               run.head_sha === head && run.head_branch === event.head_branch && run.display_title === ciTitle &&
@@ -245,7 +274,7 @@ jobs:
               // is positively classified as metadata, never from its conclusion alone.
               const recordMetadataWake = () => {
                 if (validationWake && callback.conclusion === "success" && ci.id === callback.id) {
-                  if (ci.run_attempt !== callback.run_attempt || ci.path !== callback.path ||
+                  if (ci.run_attempt !== callback.run_attempt || !samePrPath(ci.path, callback.path, ciWorkflow.path, number) ||
                       ci.conclusion !== callback.conclusion) return false;
                   skippedExactWake = true;
                 }
@@ -659,9 +688,15 @@ jobs:
             }
             const sourceId = Number(sourceIdText);
             const repository = `${context.repo.owner}/${context.repo.repo}`;
-            const { data: workflow } = await github.rest.actions.getWorkflow({
+            const deadline = Date.now() + 120000;
+            const proofOptions = options => {
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) throw new Error("publication producer proof exceeded its bounded deadline");
+              return {...options, request: {signal: AbortSignal.timeout(remaining)}};
+            };
+            const { data: workflow } = await github.rest.actions.getWorkflow(proofOptions({
               ...context.repo, workflow_id: "runtime-images.yml",
-            });
+            }));
             if (!Number.isSafeInteger(workflow.id) || workflow.id <= 0 ||
                 workflow.name !== "Build Runtime Images" || workflow.path !== ".github/workflows/runtime-images.yml") {
               throw new Error("runtime source workflow identity is not trusted");
@@ -686,25 +721,20 @@ jobs:
                 (left === workflow.path && right === mergePath || right === workflow.path && left === mergePath);
             }
             const titlePattern = /^Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40}) mode-required$/;
-            const deadline = Date.now() + 120000;
-            const proofOptions = options => {
-              const remaining = deadline - Date.now();
-              if (remaining <= 0) throw new Error("publication producer proof exceeded its bounded deadline");
-              return {...options, request: {signal: AbortSignal.timeout(remaining)}};
-            };
             const timestamp = value => {
-              const match = typeof value === "string" && /^(?:\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}(?:\.(\d{1,3}))?Z$/.exec(value);
+              const match = typeof value === "string" && /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
               const time = match ? Date.parse(value) : NaN;
-              if (!Number.isFinite(time) || new Date(time).toISOString() !==
-                  `${value.slice(0, 19)}.${(match[1] || "").padEnd(3, "0")}Z`) {
-                throw new Error("publication producer proof has a missing or invalid UTC timestamp");
+              const wallTime = match ? `${match[1]}.${(match[2] || "").padEnd(3, "0")}Z` : "";
+              const wallMillis = Date.parse(wallTime);
+              if (!Number.isFinite(time) || !Number.isFinite(wallMillis) || new Date(wallMillis).toISOString() !== wallTime) {
+                throw new Error("publication producer proof has a missing or invalid ISO timestamp");
               }
               return time;
             };
             for (;;) {
-              const { data: run } = await github.rest.actions.getWorkflowRun({
+              const { data: run } = await github.rest.actions.getWorkflowRun(proofOptions({
                 ...context.repo, run_id: sourceId,
-              });
+              }));
               const title = typeof run.display_title === "string" && run.display_title.match(titlePattern);
               if (run.id !== sourceId || run.workflow_id !== workflow.id ||
                   !Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0 ||
@@ -828,7 +858,7 @@ jobs:
                   run.conclusion != null || Date.now() >= deadline) {
                 throw new Error("publication source did not reach a real terminal success within the bounded wait");
               }
-              await new Promise(resolve => setTimeout(resolve, 2000));
+              await new Promise(resolve => setTimeout(resolve, Math.min(2000, deadline - Date.now())));
             }
 
   publish:

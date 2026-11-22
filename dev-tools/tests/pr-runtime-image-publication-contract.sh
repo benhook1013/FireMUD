@@ -203,32 +203,42 @@ function producerFor(run, required = true) {
 }
 async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path },
   error = false, jobs = null, nativeAttempt, jobPages = null, attemptError = false, jobError = false,
-  expectException = false, expireAfterAttempt = false, expireAfterJobs = false } = {}) {
+  expectException = false, expireAfterAttempt = false, expireAfterJobs = false,
+  expireAfterWorkflow = false, expireAfterRun = false, requestMillis = 0 } = {}) {
   let reads = 0, clock = 0;
   let selected;
-  const output = {}, proofRequests = [], signals = [];
+  const requestedSourceId = Number(context.eventName === "workflow_run"
+    ? context.payload.workflow_run.id : context.payload.client_payload.source_run_id);
+  const output = {}, proofRequests = [], signals = [], requests = [];
   class FixtureDate extends Date { static now() { return clock; } }
-  const recordProof = (method, options, paged = false) => {
+  const recordRequest = (method, options, expected) => {
     const {request, ...normal} = options;
-    assert.deepEqual(normal, {...baseContext.repo, run_id: selected.id, attempt_number: selected.run_attempt,
-      ...(paged ? {per_page: 100, page: proofRequests.filter(row => row.method === method).length + 1} : {})},
-    `${method} must address the exact selected native attempt with explicit direct pagination`);
+    assert.deepEqual(normal, expected, `${method} must preserve its exact API scope`);
     assert.deepEqual(Object.keys(request), ["signal"]);
     assert.equal(request.signal, signals.at(-1));
     assert.equal(request.signal.timeoutMs, 120000 - clock, "each proof read uses its remaining wall-clock budget");
     assert(request.signal.timeoutMs > 0);
-    proofRequests.push({method, ...normal, signal: request.signal});
+    const recorded = {method, ...normal, signal: request.signal};
+    requests.push(recorded);
+    clock += requestMillis;
+    return recorded;
+  };
+  const recordProof = (method, options, paged = false) => {
+    proofRequests.push(recordRequest(method, options, {...baseContext.repo, run_id: selected.id, attempt_number: selected.run_attempt,
+      ...(paged ? {per_page: 100, page: proofRequests.filter(row => row.method === method).length + 1} : {})}));
   };
   const github = { paginate: async () => { throw Error("producer proof must not use the run-wide paginator"); }, rest: { actions: {
     getWorkflow: async options => {
-      assert.deepEqual(options, {...baseContext.repo, workflow_id: "runtime-images.yml"});
+      recordRequest("getWorkflow", options, {...baseContext.repo, workflow_id: "runtime-images.yml"});
+      if (expireAfterWorkflow) clock += 120000;
       return {data: workflow};
     },
     getWorkflowRun: async options => {
-      assert.deepEqual(options, {...baseContext.repo, run_id: 4242});
+      recordRequest("getWorkflowRun", options, {...baseContext.repo, run_id: requestedSourceId});
       reads++;
       if (error) throw Error("API unavailable");
       selected = runs[Math.min(reads - 1, runs.length - 1)];
+      if (expireAfterRun) clock += 120000;
       return {data: selected};
     },
     getWorkflowRunAttempt: async options => {
@@ -257,17 +267,19 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
   }
   assert.equal(proofRequests[0]?.method, "getWorkflowRunAttempt");
   assert(proofRequests.slice(1).every(row => row.method === "listJobsForWorkflowRunAttempt"));
-  assert.equal(new Set(proofRequests.map(row => row.signal)).size, proofRequests.length,
-    "each direct proof request must receive a fresh timeout signal");
+  assert.equal(new Set(requests.map(row => row.signal)).size, requests.length,
+    "each direct lookup and proof request must receive a fresh timeout signal");
   if (expectException) {
     assert.deepEqual(output, {}, "exception attempts must expose no publication source");
-    return {reads, output, proofRequests};
+    return {reads, output, proofRequests, requests};
   }
   assert.equal(output.title, title);
   assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}`);
   assert.equal(JSON.parse(output.source).status, "completed");
-  return {reads, output, proofRequests};
+  return {reads, output, proofRequests, requests};
 }
+const rejectsResolver = (promise, pattern, message) => assert.rejects(promise,
+  error => error.code !== "ERR_ASSERTION" && pattern.test(error.message), message);
 const runtimeWorkflow = fs.readFileSync(process.argv[4], "utf8");
 const diagnosticPaths = [
   "dev-tools/validation/collect-gradle-compile-failure.py",
@@ -366,6 +378,11 @@ for (const publishable of ["false", "", undefined]) {
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
   const direct = await resolve();
+  const timed = await resolve({requestMillis: 250});
+  assert.deepEqual(timed.requests.map(({method, signal}) => [method, signal.timeoutMs]), [
+    ["getWorkflow", 120000], ["getWorkflowRun", 119750],
+    ["getWorkflowRunAttempt", 119500], ["listJobsForWorkflowRunAttempt", 119250],
+  ], "workflow, run, exact-attempt and jobs reads share one decreasing deadline, without resetting the proof budget");
   const exceptionJob = {...producerFor(source), steps: [{
     name: "Known canonical transition PLAY failure with successful authenticated cleanup",
     number: 24, status: "completed", conclusion: "success"}]};
@@ -416,20 +433,35 @@ for (const publishable of ["false", "", undefined]) {
     {head_sha: sha("a")}, {head_sha: undefined}, {repository: {full_name: "fork/FireMUD"}},
     {head_repository: {full_name: "fork/FireMUD"}}, {status: "in_progress"}, {conclusion: "failure"},
   ]) {
-    await assert.rejects(resolve({runs: [rerun], nativeAttempt: {...attempt2, ...change}, jobs: [rerunProducer]}),
+    await rejectsResolver(resolve({runs: [rerun], nativeAttempt: {...attempt2, ...change}, jobs: [rerunProducer]}),
+      /source attempt (?:\w+ differs|provenance is not trusted)/,
       `exact native attempt identity must not drift: ${JSON.stringify(change)}`);
   }
   await assert.rejects(resolve({nativeAttempt: null}), /source attempt/);
   await assert.rejects(resolve({attemptError: true}), /native attempt unavailable/);
   await assert.rejects(resolve({jobError: true}), /native jobs unavailable/);
+  await rejectsResolver(resolve({expireAfterWorkflow: true}), /bounded deadline/,
+    "a workflow lookup consuming the shared budget prevents the run lookup");
+  await rejectsResolver(resolve({expireAfterRun: true}), /bounded deadline/,
+    "a run lookup consuming the shared budget prevents any attempt proof or source output");
   await assert.rejects(resolve({expireAfterAttempt: true}), /bounded deadline/,
     "expiry after native metadata prevents any job request or source output");
   await assert.rejects(resolve({expireAfterJobs: true}), /bounded deadline/,
     "a last job response arriving after the proof deadline cannot expose a source");
   for (const field of ["created_at", "run_started_at", "updated_at"]) {
-    for (const value of [undefined, null, "", "not-a-date", "2026-02-30T00:00:00Z", "2026-01-08T00:00:00+00:00"]) {
-      await assert.rejects(resolve({nativeAttempt: {...source, [field]: value}}), /UTC timestamp/);
+    for (const value of [undefined, null, "", "not-a-date", "2026-02-30T00:00:00Z", "2026-01-08T00:00:00+24:00",
+      "2026-01-08T00:00:00+00:60", "2026-01-08T24:00:00+00:00", "2026-01-08T00:00:00"]) {
+      await rejectsResolver(resolve({nativeAttempt: {...source, [field]: value}}), /invalid ISO timestamp/);
     }
+  }
+  for (const [offset, hours] of [["+00:00", 0], ["+05:30", 5.5], ["-04:00", -4]]) {
+    const shifted = value => new Date(Date.parse(value) + hours * 3600000).toISOString().replace(/Z$/, offset);
+    const offsetAttempt = Object.fromEntries(Object.entries(source).map(([key, value]) =>
+      [key, ["created_at", "run_started_at", "updated_at"].includes(key) ? shifted(value) : value]));
+    const offsetJob = {...producer, started_at: shifted(producer.started_at), completed_at: shifted(producer.completed_at),
+      steps: [{...uploadStep, started_at: shifted(uploadStep.started_at), completed_at: shifted(uploadStep.completed_at)}]};
+    assert.equal((await resolve({nativeAttempt: offsetAttempt, jobs: [offsetJob]})).output.title, title,
+      "valid native numeric offsets preserve the exact execution instants");
   }
   for (const change of [
     {created_at: "2026-01-08T00:00:02Z"}, {updated_at: "2026-01-07T23:59:59Z"},
@@ -443,7 +475,8 @@ for (const publishable of ["false", "", undefined]) {
     {started_at: undefined}, {completed_at: null}, {started_at: "2026-01-07T23:59:59Z"},
     {completed_at: "2026-01-08T00:00:00Z"}, {completed_at: "2026-01-08T00:04:01Z"},
   ]) {
-    await assert.rejects(resolve({jobs: [{...producer, ...change}]}),
+    await rejectsResolver(resolve({jobs: [{...producer, ...change}]}),
+      /(?:job inventory|one successful attributable artifact producer|actual successful Upload|invalid ISO timestamp|did not execute within)/,
       `producer proof must be complete, successful, attributable and chronological: ${JSON.stringify(change)}`);
   }
   for (const change of [
@@ -452,7 +485,8 @@ for (const publishable of ["false", "", undefined]) {
     {started_at: undefined}, {completed_at: undefined}, {started_at: "2026-01-08T00:00:00Z"},
     {completed_at: "2026-01-08T00:01:59Z"}, {completed_at: "2026-01-08T00:03:01Z"},
   ]) {
-    await assert.rejects(resolve({jobs: [{...producer, steps: [{...uploadStep, ...change}]}]}),
+    await rejectsResolver(resolve({jobs: [{...producer, steps: [{...uploadStep, ...change}]}]}),
+      /(?:actual successful Upload|invalid ISO timestamp|upload did not execute within)/,
       `the actual upload step must prove successful execution inside its producer: ${JSON.stringify(change)}`);
   }
   for (const steps of [[uploadStep, uploadStep], [uploadStep, {...uploadStep, number: 21}],
@@ -524,11 +558,12 @@ for (const publishable of ["false", "", undefined]) {
       {display_title: title.replace("mode-required", "mode-optional")},
       {conclusion: "failure"},
     ]) {
-      await assert.rejects(resolve({runs: [{...apiRun, ...change}], context}),
+      await rejectsResolver(resolve({runs: [{...apiRun, ...change}], context}), /(?:provenance is not trusted|differs from callback)/,
         `path equivalence must not mask API identity drift: ${JSON.stringify(change)}`);
-      await assert.rejects(resolve({runs: [apiRun], context: {
+      await rejectsResolver(resolve({runs: [apiRun], context: {
         ...context, payload: {repository, workflow_run: {...callbackRun, ...change}},
-      }}), `path equivalence must not mask callback identity drift: ${JSON.stringify(change)}`);
+      }}), /(?:provenance is not trusted|callback path or run identity is not trusted|differs from callback)/,
+      `path equivalence must not mask callback identity drift: ${JSON.stringify(change)}`);
     }
     await assert.rejects(resolve({runs: [{...apiRun, status: "in_progress"}], context}), /bounded wait/);
     // A typed refresh must retain exact path equality, even for a PR-shaped suffix.
@@ -587,13 +622,15 @@ for (const publishable of ["false", "", undefined]) {
     await assert.rejects(resolve({runs: [malformed], context: {...callbackContext, payload: {repository, workflow_run: malformed}}}), /provenance/);
   }
   for (const change of [{status: "completed", conclusion: "failure"}, {head_repository: {full_name: "fork/FireMUD"}}, {repository: {full_name: "fork/FireMUD"}}, {workflow_id: 778}, {path: "other.yml"}, {event: "push"}, {head_branch: "feature"}, {display_title: "unbound"}, {head_sha: "bad"}]) {
-    await assert.rejects(resolve({runs: [{...source, ...change}]}));
+    await rejectsResolver(resolve({runs: [{...source, ...change}]}), /publication source run (?:provenance is not trusted|did not succeed)/);
   }
-  await assert.rejects(resolve({runs: [pending]}), /bounded wait/);
+  await rejectsResolver(resolve({runs: [pending]}), /bounded deadline/);
   await assert.rejects(resolve({error: true}), /API unavailable/);
-  await assert.rejects(resolve({context: {...baseContext, ref: "refs/heads/feature"}}));
-  await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "4242", extra: true}}}}));
-  await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "../4242"}}}}));
+  await rejectsResolver(resolve({context: {...baseContext, ref: "refs/heads/feature"}}), /closed default-branch source-run payload/);
+  await rejectsResolver(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "4242", extra: true}}}}),
+    /closed default-branch source-run payload/);
+  await rejectsResolver(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "../4242"}}}}),
+    /source run ID is not a positive safe integer/);
   await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: {...source, head_sha: sha("d")}}}}), /differs from callback/);
   console.log("Exact source handoff, terminal-resolution and bounded artifact-producer proof fixtures passed.");
 })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -653,6 +690,7 @@ async function runReconcile({
   ambiguousPost = true, expireFirstRequest = false, initialDiscoveryUnavailable = false,
   ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
   postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {}, refreshAttemptJobs = {},
+  refreshNativeAttempts = {}, sourceRun = source, sourceCallback = sourceRun,
 } = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
@@ -668,6 +706,7 @@ async function runReconcile({
   const dispatchRequests = [];
   const warnings = [];
   const infos = [];
+  const mockFailures = [];
   class FixtureDate extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
@@ -710,7 +749,7 @@ async function runReconcile({
     repo: {owner, repo},
     payload: {
       repository: {full_name: repository, default_branch: "develop"},
-      workflow_run: source,
+      workflow_run: sourceCallback,
     },
   };
   const github = {
@@ -725,7 +764,7 @@ async function runReconcile({
         },
         getWorkflowRun: async options => {
           record("actions.getWorkflowRun", options, {owner, repo, run_id: options.run_id});
-          if (options.run_id === source.id) return {data: source};
+          if (options.run_id === source.id) return {data: sourceRun};
           const refresh = preflightRefreshRuns.find(run => run.id === options.run_id);
           if (refresh || Object.hasOwn(refreshNativeRuns, options.run_id)) {
             nativeRefreshRunIds.push(options.run_id);
@@ -738,6 +777,16 @@ async function runReconcile({
             return {data: response};
           }
           return {data: ciNativeRuns[options.run_id] ?? ciRun};
+        },
+        getWorkflowRunAttempt: async options => {
+          const {run_id, attempt_number} = options;
+          record("actions.getWorkflowRunAttempt", options, {owner, repo, run_id, attempt_number});
+          const run = preflightRefreshRuns.find(run => run.id === run_id);
+          assert(run, "native attempt proof must address an inventoried typed refresh");
+          assert.equal(attempt_number, run.run_attempt, "native attempt proof must retain the selected attempt");
+          const attempt = Object.hasOwn(refreshNativeAttempts, run_id) ? refreshNativeAttempts[run_id] : run;
+          if (attempt instanceof Error) throw attempt;
+          return {data: attempt};
         },
         listJobsForWorkflowRunAttempt: async options => {
           const {run_id, attempt_number, page} = options;
@@ -824,6 +873,17 @@ async function runReconcile({
     },
 
   };
+  // Production deliberately catches unavailable evidence. A broken mock request
+  // assertion must fail the fixture, not masquerade as that refusal evidence.
+  for (const namespace of Object.values(github.rest)) {
+    for (const [name, method] of Object.entries(namespace)) namespace[name] = async (...args) => {
+      try { return await method(...args); }
+      catch (error) {
+        if (error.code === "ERR_ASSERTION") mockFailures.push(error.message);
+        throw error;
+      }
+    };
+  }
   let failure = null;
   try {
     await reconcile(github, context, {warning: message => warnings.push(message), info: message => infos.push(message)},
@@ -831,6 +891,7 @@ async function runReconcile({
   } catch (error) {
     failure = error;
   }
+  assert.deepEqual(mockFailures, [], "mock contract assertion failures never count as production refusals");
   return {failure, now, requests, signals, inventoryRequests, nativeJobRunIds, nativeRefreshRunIds,
     dispatchRequests, postAttempts, warnings, infos};
 }
@@ -994,14 +1055,69 @@ async function runReconcile({
     status: "completed", conclusion: "failure", started_at: "2026-01-06T00:00:01Z", completed_at: "2026-01-06T00:02:00Z", steps: [marker]};
   for (const [job, expectedPosts] of [
     [failedJob, 1],
+    [{...failedJob, steps: [{...marker, started_at: null, completed_at: null}]}, 1],
+    [{...failedJob, steps: [{name: marker.name, status: "completed", conclusion: "skipped"}]}, 1],
     [{...failedJob, steps: [{...marker, conclusion: "success"}]}, 0],
+    [{...failedJob, steps: [{...marker, conclusion: null}]}, 0],
+    [{...failedJob, steps: []}, 0],
+    [{...failedJob, steps: [marker, marker]}, 0],
+    [{...failedJob, steps: [{...marker, started_at: null}]}, 0],
+    [{...failedJob, completed_at: null}, 0],
+    [{...failedJob, started_at: "2026-02-30T00:00:00Z"}, 0],
     [{...failedJob, started_at: "2026-01-05T23:59:59Z"}, 0],
+    [{...failedJob, started_at: "2026-01-06T00:00:01+00:00", completed_at: "2026-01-06T05:32:00+05:30"}, 1],
   ]) {
     const result = await runReconcile({preflightRefreshRuns: [legacyFailedPlay],
       refreshAttemptJobs: {[legacyFailedPlay.id]: {total_count: 1, jobs: [job]}}});
     assert.equal(result.failure, null);
     assert.equal(result.postAttempts, expectedPosts);
   }
+  const rerunAttempt = {...legacyFailedPlay, run_started_at: "2026-01-06T01:00:00Z", updated_at: "2026-01-06T01:03:00Z"};
+  for (const attempt of [rerunAttempt, {...legacyFailedPlay, run_attempt: 2},
+    {...legacyFailedPlay, repository: {full_name: "fork/FireMUD"}},
+    {...legacyFailedPlay, head_repository: {full_name: "fork/FireMUD"}},
+    {...legacyFailedPlay, path: `${legacyFailedPlay.path}@refs/heads/develop`},
+    null, new Error("fixture exact attempt unavailable")]) {
+    const held = await runReconcile({preflightRefreshRuns: [legacyFailedPlay],
+      refreshNativeAttempts: {[legacyFailedPlay.id]: attempt},
+      refreshAttemptJobs: {[legacyFailedPlay.id]: {total_count: 1, jobs: [failedJob]}}});
+    assert.equal(held.failure, null);
+    assert.equal(held.postAttempts, 0, "only the exact attributable attempt's actual execution window can release a failed refresh hold");
+    assert(held.warnings.some(message => /explicit investigation, not automatic replay/.test(message)));
+  }
+  const supersededFailure = await runReconcile({preflightRefreshRuns: [legacyFailedPlay],
+    refreshNativeRuns: {[legacyFailedPlay.id]: [legacyFailedPlay, {...legacyFailedPlay, run_attempt: 2}]},
+    refreshAttemptJobs: {[legacyFailedPlay.id]: {total_count: 1, jobs: [failedJob]}}});
+  assert.equal(supersededFailure.failure, null);
+  assert.equal(supersededFailure.postAttempts, 0, "latest-run confirmation after native jobs must reject a superseding attempt");
+  assert.deepEqual(supersededFailure.nativeRefreshRunIds, [legacyFailedPlay.id, legacyFailedPlay.id]);
+  const validRerun = {...legacyFailedPlay, run_attempt: 2};
+  const validRerunJob = {...failedJob, run_attempt: 2, started_at: "2026-01-06T01:00:01Z", completed_at: "2026-01-06T01:02:00Z",
+    steps: [{name: marker.name, status: "completed", conclusion: "skipped", started_at: null, completed_at: null}]};
+  const rerunRecovery = await runReconcile({preflightRefreshRuns: [validRerun],
+    refreshNativeAttempts: {[validRerun.id]: {...rerunAttempt, run_attempt: 2}},
+    refreshAttemptJobs: {[validRerun.id]: {total_count: 1, jobs: [validRerunJob]}}});
+  assert.equal(rerunRecovery.failure, null);
+  assert.equal(rerunRecovery.postAttempts, 1, "a freshly executed exact rerun with an unexecuted marker permits recovery despite stale run-wide timestamps");
+  const runtimePath = ".github/workflows/runtime-images.yml";
+  const ciPath = ".github/workflows/ci.yml";
+  for (const [bare, suffixed] of [[runtimePath, `${runtimePath}@refs/pull/42/merge`],
+    [`${runtimePath}@refs/pull/42/merge`, runtimePath]]) {
+    const equivalent = await runReconcile({sourceRun: {...source, path: bare}, sourceCallback: {...source, path: suffixed}});
+    assert.equal(equivalent.failure, null);
+    assert.equal(equivalent.postAttempts, 1, "native runtime callback/API canonical PR merge paths are equivalent");
+  }
+  for (const suffix of ["refs/pull/43/merge", "refs/pull/042/merge", "refs/pull/42/head", "refs/heads/develop"]) {
+    const runtimeDrift = await runReconcile({sourceCallback: {...source, path: `${runtimePath}@${suffix}`}});
+    assert.equal(runtimeDrift.failure, null);
+    assert.equal(runtimeDrift.postAttempts, 0, "unrelated source suffixes cannot use the canonical equivalence");
+    const ciDrift = await runReconcile({ciNativeRuns: {[ciRun.id]: {...ciRun, path: `${ciPath}@${suffix}`}}});
+    assert.equal(ciDrift.failure, null);
+    assert.equal(ciDrift.postAttempts, 0, "unrelated CI suffixes cannot change between inventory and native proof");
+  }
+  const equivalentCi = await runReconcile({ciNativeRuns: {[ciRun.id]: {...ciRun, path: `${ciPath}@refs/pull/42/merge`}}});
+  assert.equal(equivalentCi.failure, null);
+  assert.equal(equivalentCi.postAttempts, 1, "exact native CI merge paths can differ from their bare inventory projection");
   const legacyFailureHold = await runReconcile({preflightRefreshRuns: [typedRefresh, legacyFailedPlay]});
   assert.equal(legacyFailureHold.failure, null);
   assert.equal(legacyFailureHold.postAttempts, 0,
