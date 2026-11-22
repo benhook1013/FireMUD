@@ -149,6 +149,15 @@ public final class PreV1CanonicalPlayAdmissionOwner {
         throw unavailable();
       }
 
+      phase = "issuer-capacity-reservation";
+      var issuerProjection =
+          new CanonicalGameplayIssuerBindingLocalRedisOwner(
+              standIns.coordination(),
+              standIns.scripts(),
+              new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource),
+              issuerSource);
+      issuerProjection.projectAndRead(operation);
+
       phase = "account-admission-lease";
       byte[] compact = login.compactJwtBytes();
       try {
@@ -176,13 +185,7 @@ public final class PreV1CanonicalPlayAdmissionOwner {
                 dsl, standIns.coordination(), standIns.scripts())
             .repair(transitionId);
         phase = "issuer-index-ack";
-        var projection =
-            new CanonicalGameplayIssuerBindingLocalRedisOwner(
-                    standIns.coordination(),
-                    standIns.scripts(),
-                    new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource),
-                    issuerSource)
-                .projectAndRead(operation);
+        var projection = issuerProjection.projectAndRead(operation);
         new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
             .acknowledge(projection);
 
