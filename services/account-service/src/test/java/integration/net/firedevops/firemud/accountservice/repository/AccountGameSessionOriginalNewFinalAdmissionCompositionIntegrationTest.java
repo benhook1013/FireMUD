@@ -35,7 +35,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -468,6 +467,29 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
   }
 
+  // The fresh owner path takes the account row lock after retained-decision lookup;
+  // sequential replay never takes it. A second waiter may queue behind the first waiter.
+  private static void awaitCompetingFreshAccountDecisions(DSLContext inspector, int blocker)
+      throws InterruptedException {
+    long expiry = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    do {
+      long waiting =
+          inspector
+              .fetchSingle(
+                  "WITH RECURSIVE blocked(pid) AS (SELECT CAST(? AS integer) UNION"
+                      + " SELECT activity.pid FROM pg_stat_activity activity JOIN blocked parent"
+                      + " ON parent.pid = ANY(pg_blocking_pids(activity.pid))"
+                      + " WHERE activity.datname = current_database())"
+                      + " SELECT count(*) FROM blocked WHERE pid <> ?",
+                  blocker,
+                  blocker)
+              .get(0, Long.class);
+      if (waiting >= 2) return;
+      Thread.sleep(10);
+    } while (System.nanoTime() < expiry);
+    throw new AssertionError("Both fresh Account decisions did not wait on the held owner row");
+  }
+
   @Test
   void zeroQuotaRetainsOnlyTheExactAccountDenialAndReplaysIt() throws Exception {
     try (Session session = session()) {
@@ -480,18 +502,33 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String before = session.capacityImage() + session.durableImage();
       UUID denialId;
       try (var callers = Executors.newVirtualThreadPerTaskExecutor()) {
-        var start = new CountDownLatch(1);
         java.util.concurrent.Callable<CapacityRefusedException> deny =
-            () -> {
-              if (!start.await(5, TimeUnit.SECONDS))
-                throw new IllegalStateException("Concurrent quota requests did not start");
-              return assertThrows(
-                  CapacityRefusedException.class,
-                  () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
-            };
-        var first = callers.submit(deny);
-        var second = callers.submit(deny);
-        start.countDown();
+            () ->
+                assertThrows(
+                    CapacityRefusedException.class,
+                    () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
+        java.util.concurrent.Future<CapacityRefusedException> first;
+        java.util.concurrent.Future<CapacityRefusedException> second;
+        var player = (TenantCapacityAdmission.PlayerContext) request.context();
+        try (var holder = session.account.dataSource.getConnection()) {
+          holder.setAutoCommit(false);
+          var locked = DSL.using(holder, SQLDialect.POSTGRES);
+          assertThat(
+                  locked.fetchOne(
+                      "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                      player.accountId()))
+              .isNotNull();
+          int blocker = locked.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+          first = callers.submit(deny);
+          second = callers.submit(deny);
+          try {
+            awaitCompetingFreshAccountDecisions(session.dsl, blocker);
+            assertThat(first.isDone()).isFalse();
+            assertThat(second.isDone()).isFalse();
+          } finally {
+            holder.rollback();
+          }
+        }
         denialId = assertExactAccountQuotaDenial(session, request, first.get(6, TimeUnit.SECONDS));
         var repeated = second.get(6, TimeUnit.SECONDS);
         assertThat(repeated.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);

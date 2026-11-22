@@ -18,7 +18,9 @@ import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -30,9 +32,13 @@ import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultTransactionProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Resource boundary only for original-NEW capacity execution, never a shared datasource policy. */
 final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(CanonicalGameplayOriginalNewCapacityExecutionBudget.class);
   static final int MAX_IN_FLIGHT_OPERATIONS = 4;
   private static final Semaphore OPERATIONS = new Semaphore(MAX_IN_FLIGHT_OPERATIONS);
   static final int MAX_BACKGROUND_OPERATIONS = 2;
@@ -262,18 +268,37 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       outstandingAsyncCloses++;
     }
     closeAttempt.whenComplete((ignored, failure) -> {
+      boolean reportFailure = false;
       synchronized (lifecycle) {
-        if (failure != null) {
-          if (!redisCloseFailureRecorded) {
-            redisCloseFailureRecorded = true;
-            REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
-          }
-          return;
+        if (failure == null) {
+          outstandingAsyncCloses--;
+          releaseIfFinished();
+        } else if (!redisCloseFailureRecorded) {
+          redisCloseFailureRecorded = true;
+          REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+          reportFailure = true;
         }
-        outstandingAsyncCloses--;
-        releaseIfFinished();
+      }
+      if (reportFailure) {
+        // This local diagnostic must not emit throwable messages, command data, or selectors.
+        LOG.warn(
+            "Original NEW Redis close failed; operation permit retained (category={})",
+            redisCloseFailureCategory(failure));
       }
     });
+  }
+
+  private static String redisCloseFailureCategory(Throwable failure) {
+    Throwable cause =
+        failure instanceof CompletionException && failure.getCause() != null
+            ? failure.getCause()
+            : failure;
+    if (cause instanceof CancellationException) return "cancelled";
+    if (cause instanceof io.lettuce.core.RedisConnectionException) return "redis-connection";
+    if (cause instanceof io.lettuce.core.RedisCommandTimeoutException
+        || cause instanceof java.util.concurrent.TimeoutException) return "timeout";
+    if (cause instanceof Error) return "error";
+    return "exception";
   }
 
   /** Waits for one Redis close attempt only through this operation's deadline. */
