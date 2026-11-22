@@ -981,7 +981,7 @@ async function scenario(kind, event = "pull_request") {
   const finalGetDrift = kind.startsWith("ordinary-final-get-");
   const ordinary = kind.startsWith("ordinary-");
   const movedBase = "e".repeat(40), movedMerge = "f".repeat(40);
-  const failures = [], refs = [];
+  const failures = [], refs = [], infos = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: ordinary ? null : merge, payload: {
     repository: {default_branch: "develop"},
     pull_request: {number: 42, head: {sha: head, repo: {full_name: repository}},
@@ -1025,7 +1025,8 @@ async function scenario(kind, event = "pull_request") {
   if (kind === "not-required") job.name = "PR Full-Stack Smoke (runtime-required=false)";
   if (kind === "step-skipped") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"}];
   if (kind === "legacy-positive") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}];
-  if (kind === "failed-smoke-step") job.steps[1].conclusion = "failure";
+  if (["failed-smoke-step", "ordinary-failed-smoke-step"].includes(kind)) job.steps[1].conclusion = "failure";
+  if (kind === "ordinary-duplicate-smoke-step") job.steps.push({...job.steps[1]});
   if (kind === "failed-run") source.conclusion = "failure";
   const sourceMutations = {
     "wrong-repository": {repository: {full_name: "other/repo"}},
@@ -1094,6 +1095,9 @@ async function scenario(kind, event = "pull_request") {
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
     if (ordinary) assert.equal(listedAttempt, 1, "attempt jobs cannot precede complete typed list identity");
     snapshots++;
+    if (kind === "ordinary-missing-smoke-step" || kind === "ordinary-delayed-smoke-step" && snapshots <= 2) {
+      return [{...job, steps: job.steps.filter(step => step.name !== "Run credential-free full-stack smoke")}];
+    }
     if (kind === "lagging-cleanup" && snapshots <= 2) {
       return [{...job, steps: job.steps.filter(step => step.name !== "Stop smoke stack")}];
     }
@@ -1151,9 +1155,9 @@ async function scenario(kind, event = "pull_request") {
     yield {data: [source]};
   };
   const clock = {now: () => now, parse: Date.parse};
-  await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
+  await execute(github, context, {info: message => infos.push(message), warning: () => {}, setFailed: message => failures.push(message)},
     clock, (callback, duration) => {now += duration; waitedMillis += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots, exactAttemptReads, observedBaseMove, observedAttemptMove, waitedMillis,
+  return {failures, refs, infos, snapshots, exactAttemptReads, observedBaseMove, observedAttemptMove, waitedMillis,
     typedListReads, postAttemptIdentityReads};
 }
 (async () => {
@@ -1195,6 +1199,21 @@ async function scenario(kind, event = "pull_request") {
   const ordinary = await scenario("ordinary-stable", "repository_dispatch");
   assert.deepEqual(ordinary.failures, [], "unchanged ordinary typed proof passes");
   assert.equal(ordinary.waitedMillis, 0);
+  assert.equal(ordinary.infos.some(message => message.startsWith("Stopping stale smoke gate before accepting full-stack proof ")), false,
+    "unchanged proof clears without the obsolete identity message");
+  const delayedSmoke = await scenario("ordinary-delayed-smoke-step", "repository_dispatch");
+  assert.deepEqual(delayedSmoke.failures, []);
+  assert.equal(delayedSmoke.waitedMillis, 15000, "ordinary typed proof waits for its affirmative successful smoke row");
+  assert(delayedSmoke.snapshots >= 4);
+  const missingSmoke = await scenario("ordinary-missing-smoke-step", "repository_dispatch");
+  assert.equal(missingSmoke.failures.length, 1);
+  assert.match(missingSmoke.failures[0], /after 8 retries/);
+  assert.equal(missingSmoke.waitedMillis, 120000, "absent ordinary smoke evidence cannot outlive the existing snapshot allowance");
+  for (const kind of ["ordinary-duplicate-smoke-step", "ordinary-failed-smoke-step"]) {
+    const invalidSmoke = await scenario(kind, "repository_dispatch");
+    assert.equal(invalidSmoke.failures.length, 1, `${kind} is not ordinary runtime proof`);
+    assert.equal(invalidSmoke.waitedMillis, 0, `${kind} is terminal, not delayed metadata`);
+  }
   const sparseHead = await scenario("ordinary-sparse-head", "repository_dispatch");
   assert.deepEqual(sparseHead.failures, [], "a temporarily missing typed list head waits for a complete run row");
   assert(sparseHead.waitedMillis > 0);
@@ -1235,6 +1254,11 @@ async function scenario(kind, event = "pull_request") {
     const obsolete = await scenario(`ordinary-final-get-${change}`, "repository_dispatch");
     assert(obsolete.postAttemptIdentityReads > 0, `${change} during the final GET must reach the repeated PR fence`);
     assert.deepEqual(obsolete.failures, [], "obsolete gates exit rather than failing the new PR identity");
+    assert.ok(obsolete.infos.includes(
+      `Stopping stale smoke gate before accepting full-stack proof develop@${base}...${head}; ` +
+      `current PR state/base/head is ${change === "closed" ? "closed" : "open"}/` +
+      `${change === "retarget" ? "other" : "develop"}/${change === "head" ? "e".repeat(40) : head}`
+    ), `${change} must exit through the existing obsolete identity diagnostic, not silently accept proof`);
   }
   console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");
 })().catch(error => {console.error(error); process.exitCode = 1;});
@@ -3953,17 +3977,21 @@ const transientTransportCodes = [...transientCodeList[1].matchAll(/"([^"]+)"/g)]
 const isTransientGitHubFailure = new Function("TerminalGitHubRequestError", "retryableStatuses", "transientTransportCodes",
   `${script.slice(retryHelpersStart, retryHelpersEnd)}; return isTransientGitHubFailure;`)(
     TerminalGitHubRequestError, new Set([408, 425, 429]), new Set(transientTransportCodes));
-async function finalAttemptCheck(latest, error = null) {
+async function finalAttemptCheck(latest, error = null, onLookup = () => {},
+  selected = {id: 99, run_attempt: 2, conclusion: "success"}) {
   const start = script.indexOf("async function isCurrentCanonicalAttempt(");
   const end = script.indexOf("async function verifyFailedPullCanonicalRefresh(", start);
   const check = new Function("github", "withTransientGitHubRetry", "owner", "repo",
     "TerminalGitHubRequestError", "retryableStatuses", "isTransientGitHubFailure", "core",
     `${script.slice(start, end)}; return isCurrentCanonicalAttempt;`)(
       {rest: {actions: {getWorkflowRun: async ({run_id}) => {
-        assert.equal(run_id, 99); if (error) throw error; return {data: latest};
+        assert.equal(run_id, selected.id);
+        await onLookup();
+        if (error) throw error;
+        return {data: latest};
       }}}}, (_label, call) => call(), "benhook1013", "FireMUD", TerminalGitHubRequestError,
       new Set([408, 425, 429]), isTransientGitHubFailure, {warning: () => {}});
-  return check({id: 99, run_attempt: 2, conclusion: "success"});
+  return check(selected);
 }
 assert.ok(script.includes("const refreshDiscoveryTimeoutMs = prerequisiteAndQueueAllowanceMinutes * 60 * 1000;"));
 assert.ok(script.includes("const completedSnapshotTimeoutMs = 8 * snapshotSleepMs;"));
@@ -4058,9 +4086,53 @@ async function failedProof(error, event = "pull_request") {
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
+// Exercise the actual marker-consumption branch with real exact-attempt proof,
+// including a completed row whose conclusion arrives after its status.
+async function pendingMarkerSnapshot(conclusions, duplicate = false) {
+  let now = 0, snapshots = 0, proofReads = 0, finalReads = 0, writes = 0, latestJob;
+  const outputs = [], failures = [];
+  const matching = {...source, event: "repository_dispatch", head_sha: workflowSha, head_branch: "develop"};
+  const selectedIdentity = {...identity, sourceEvent: "repository_dispatch", canonicalPlayEligible: true};
+  const core = {warning() {}, setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
+  core.summary = {addHeading() {return this;}, addRaw() {return this;}, async write() {writes++;}};
+  const execute = new Function("matching", "canonicalSmokeJobName", "currentIdentity", "verifyKnownPlayFailure",
+    "verifyCanonicalSmokeProducer", "TerminalGitHubRequestError", "isTransientGitHubFailure", "core",
+    "resolveCurrentIdentity", "identityKey", "isCurrentCanonicalAttempt", "Date", "setTimeout", "sleepMs",
+    "completedSnapshotTimeoutMs", "readJob",
+    `return (async () => { let requireCurrentIdentity = false, incompleteRefreshKey = null, incompleteRefreshObservedAt = null;
+      smokeGatePolling: while (Date.now() < 100) {
+        const fullSmokeJob = readJob(); const typedRuntimeProof = true;
+        let canonicalProducerVerified = (await verifyCanonicalSmokeProducer(matching, fullSmokeJob, currentIdentity, true)) === true;
+        ${failedBranch} break;
+      } })();`);
+  await execute(matching, canonicalSmokeJobName, selectedIdentity, async (run, job, selected, incomplete, ordinary) => {
+    proofReads++;
+    assert.equal(run, matching); assert.equal(job, latestJob); assert.equal(selected, selectedIdentity);
+    assert.equal(incomplete, true);
+    const incompleteMarker = latestJob.steps.find(step => step.name.startsWith("Known canonical transition")).conclusion == null;
+    assert.equal(ordinary, incompleteMarker ? true : undefined);
+    return verify(data => {data.candidate.steps = structuredClone(latestJob.steps);}, "repository_dispatch", true, true, ordinary === true);
+  }, async () => verify(data => {
+    Object.assign(data.run, data.source);
+    data.candidate.steps = structuredClone(latestJob.steps);
+  }, "repository_dispatch", false, true), TerminalGitHubRequestError, isTransientGitHubFailure, core,
+    async () => selectedIdentity, selected => JSON.stringify(selected), async run => {
+      finalReads++;
+      return finalAttemptCheck(matching, null, () => {}, run);
+    }, {now: () => now}, resolve => {now += 10; resolve();}, 10, 30, () => {
+      latestJob = structuredClone({...candidate, head_sha: workflowSha});
+      const marker = latestJob.steps.find(step => step.name.startsWith("Known canonical transition"));
+      const conclusion = conclusions[Math.min(snapshots++, conclusions.length - 1)];
+      if (conclusion === undefined) delete marker.conclusion;
+      else marker.conclusion = conclusion;
+      if (duplicate) latestJob.steps.push({...marker});
+      return latestJob;
+    });
+  return {failures, outputs, now, snapshots, proofReads, finalReads, writes};
+}
 async function selectedProducerFinalFence(event, moved = false, superseded = false, rerunDuringIdentity = false, duringFinal = null) {
   const outputs = [], failures = [], required = [];
-  let proofs = 0, sleeps = 0, attemptChanged = false, afterAttempt = false;
+  let proofs = 0, sleeps = 0, attemptChanged = false, afterAttempt = false, labelRemoved = false;
   const core = {warning: () => {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
   core.summary = {addHeading() {return this;}, addRaw() {return this;}, async write() {}};
   const execute = new Function("fullSmokeJob", "matching", "canonicalSmokeJobName", "currentIdentity",
@@ -4074,18 +4146,25 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
       required.push(current);
       attemptChanged = rerunDuringIdentity;
       if (afterAttempt && ["closed", "head", "retarget"].includes(duringFinal)) return {obsolete: true};
-      return {...identity, canonicalPlayEligible: true,
+      return {...identity, canonicalPlayEligible: !labelRemoved,
         ...(current ? {sourceEvent: "repository_dispatch"} : {}),
         ...(current && (moved || afterAttempt && duringFinal === "base")
           ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); },
-    async () => {afterAttempt = true; return !attemptChanged;}, resolve => {sleeps++; resolve();}, 0);
+    async selected => {
+      afterAttempt = true;
+      if (duringFinal === "label") return finalAttemptCheck({...selected, status: "completed"}, null, () => {
+        labelRemoved = true;
+      }, selected);
+      return !attemptChanged;
+    }, resolve => {sleeps++; resolve();}, 0);
   assert.equal(proofs, superseded ? 2 : 1);
   assert.equal(sleeps, superseded || rerunDuringIdentity ? 1 : 0);
-  const fenceCount = event === "repository_dispatch" && !moved && !rerunDuringIdentity ? 2 : 1;
+  const fenceCount = !(event === "repository_dispatch" && moved) && !rerunDuringIdentity ? 2 : 1;
   assert.deepEqual(required, Array((proofs - (superseded ? 1 : 0)) * fenceCount).fill(event === "repository_dispatch"));
-  assert.deepEqual(failures, []);
-  assert.equal(outputs.length, (event === "repository_dispatch" && (moved || duringFinal)) || rerunDuringIdentity ? 0 : 1,
+  assert.deepEqual(failures, duringFinal === "label"
+    ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
+  assert.equal(outputs.length, duringFinal === "label" || (event === "repository_dispatch" && (moved || duringFinal)) || rerunDuringIdentity ? 0 : 1,
     "an exception must retain its exact attempt through the final live identity read");
 }
 // Execute the failed-run branch so proof errors retain the deterministic failure diagnostic.
@@ -4184,6 +4263,7 @@ async function sameTupleProof(marker, ordinaryProof, exceptionProof) {
 async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   const failures = [], outputs = [];
   let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0, finalChecks = 0, nullReads = 0, directReads = 0;
+  let labelRemovedDuringFinal = false;
   const proofLive = {baseSha: identity.baseSha, mergeSha: identity.mergeSha};
   const core = {info: () => {}, warning: () => {},
     setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
@@ -4262,7 +4342,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         selectedRun, selectedIdentity, true)).accepted;
     }, async () => false, TerminalGitHubRequestError, core, async (_label, requireCurrent) => {
       if (options.finalNull && _label === "Stopping stale canonical transition PLAY exception" && nullReads++ === 0) return null;
-      const eligible = !options.labelRemoved && !(options.withdrawDuringProof && polls > 0);
+      const eligible = !options.labelRemoved && !labelRemovedDuringFinal && !(options.withdrawDuringProof && polls > 0);
       if (requireCurrent) {
         currentChecks++;
         if (options.finalIdentity && polls > 0 && !options.recoverDrift) now += 30;
@@ -4291,6 +4371,9 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       if (options.transientFinal && finalChecks === 1) {
         return finalAttemptCheck(null, Object.assign(new Error("temporary"), {status: 502}));
       }
+      if (options.withdrawDuringFinal) return finalAttemptCheck({...selected, status: "completed"}, null, () => {
+        labelRemovedDuringFinal = true;
+      }, selected);
       return !options.rerunFinal || finalChecks > 1;
     }, async () => "ordinary");
   if (options.ordinaryAfterDrift) {
@@ -4312,7 +4395,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.deepEqual(failures, ["Runtime images run 98 did not complete successfully: run=failure"]);
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
-  } else if (options.labelRemoved || options.withdrawDuringProof) {
+  } else if (options.labelRemoved || options.withdrawDuringProof || options.withdrawDuringFinal) {
     if (options.labelRemoved && statuses[0] === "absent") {
       assert.equal(failures.length, 1);
       assert.match(failures[0], /^Timed out waiting for the exact runtime-images/);
@@ -4346,14 +4429,18 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
 // Exercise the exact production loop through cancellation of an old tuple and
 // a successful refresh of the new tuple. Only independently verified ordinary
 // proof is accepted; a title match and green job are insufficient.
-async function movedCancellation(ordinaryProof, listedOldReplacement = false) {
+async function movedCancellation(ordinaryProof, listedOldReplacement = false, options = {}) {
   let now = 0, typedReads = 0, proofReads = 0, finalReads = 0;
+  let movedLists = 0, exceptionReads = 0;
+  const proofAttempts = [];
   const eventIdentity = {...identity, sourceEvent: "pull_request"};
   const moved = {...identity, baseSha: "d".repeat(40), mergeSha: "e".repeat(40), sourceEvent: "repository_dispatch"};
   const old = {...source, id: 98, event: "pull_request", status: "completed", conclusion: "cancelled",
     head_sha: identity.headSha, head_branch: "feature",
     display_title: `Build Runtime Images secure-pr-artifact pr-3390 base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`};
-  const refresh = {...source, event: "repository_dispatch", status: "completed", conclusion: "success"};
+  const refresh = {...source, event: "repository_dispatch", status: "completed", conclusion: "success",
+    head_sha: workflowSha, head_branch: "develop",
+    display_title: `Build Runtime Images secure-pr-artifact pr-3390 base-${moved.baseSha} head-${moved.headSha} merge-${moved.mergeSha} mode-required`};
   const failures = [], outputs = [];
   const core = {info() {}, warning() {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
   const execute = new Function("repositoryName", "workflowPath", "isRuntimeSourceWorkflowPath", "canonicalSmokeJobName", "withTransientGitHubRetry",
@@ -4361,37 +4448,63 @@ async function movedCancellation(ordinaryProof, listedOldReplacement = false) {
     "isCurrentPullRequestObsolete", "core", "resolveCurrentIdentity", "identityKey",
     "setTimeout", "sleepMs", "Date", "started", "timeoutMs", "pullRequestCheckInterval", "findMatchingRuntimeImagesRun",
     "prNumber", "identityDiagnostic", "cancelledReplacementTimeoutMs", "context",
-    "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "positiveInteger", "isCurrentCanonicalAttempt",
+    "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "snapshotSleepMs", "positiveInteger", "isCurrentCanonicalAttempt",
     "verifySameTupleReplacementProof",
     `return (async () => { let pollIteration = 0; ${actualPollingLoop} })();`);
   await execute(repositoryName, workflowPath, isRuntimeSourceWorkflowPath, canonicalSmokeJobName, (_label, call) => call(),
     async (run, candidate, selected, incomplete, ordinary) => {
+      exceptionReads++;
       assert.equal(run, refresh); assert.equal(candidate, null);
+      assert.ok(Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0,
+        "sparse moved inventory cannot enter the exact exception verifier");
       assert.deepEqual(selected, moved); assert.equal(incomplete, true); assert.equal(ordinary, true);
       return false;
     }, async (run, candidate, selected, required) => {
       proofReads++; assert.equal(run, refresh); assert.equal(candidate, null);
       assert.deepEqual(selected, moved); assert.equal(required, true);
+      assert.ok(Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0,
+        "sparse moved inventory must be re-listed before exact ordinary proof");
+      proofAttempts.push(run.run_attempt);
+      if (options.listAttempts) return verify(data => {
+        data.identity = {...moved};
+        Object.assign(data.run, refresh);
+        Object.assign(data.source, refresh);
+        Object.assign(data.latest, refresh);
+        data.candidate.run_attempt = run.run_attempt;
+        data.currentBase.object.sha = moved.baseSha;
+        data.currentPullRequest.merge_commit_sha = moved.mergeSha;
+      }, "repository_dispatch", false, true);
       return ordinaryProof;
     }, isTransientGitHubFailure, async () => false, core, async (_label, live) => live ? moved : eventIdentity,
     selected => JSON.stringify(selected), resolve => {now += 10; resolve();}, 10,
     {now: () => now}, 0, 100, 1, async (event, _title, selected) => {
       if (event === "pull_request") return old;
       typedReads++;
-      return selected.mergeSha === moved.mergeSha ? refresh
-        : listedOldReplacement ? {...refresh, id: refresh.id - 1} : null;
+      if (selected.mergeSha !== moved.mergeSha) return listedOldReplacement ? {...refresh, id: refresh.id - 1} : null;
+      if (options.listAttempts) {
+        const attempt = options.listAttempts[Math.min(movedLists++, options.listAttempts.length - 1)];
+        if (attempt === undefined) delete refresh.run_attempt;
+        else refresh.run_attempt = attempt;
+      }
+      return refresh;
     }, "3390", "test identity", 20,
     {payload: {pull_request: {head: {ref: "feature", repo: {full_name: repositoryName}}}}},
-    60, 30, value => Number.isSafeInteger(value) && value > 0, async run => {
-      finalReads++; assert.equal(run, refresh); return true;
+    60, 30, 10, value => Number.isSafeInteger(value) && value > 0, async run => {
+      finalReads++; assert.equal(run, refresh);
+      return options.listAttempts ? finalAttemptCheck(refresh, null, () => {}, run) : true;
     }, async () => "ordinary");
-  assert.equal(typedReads, 2); assert.equal(proofReads, 1); assert.equal(finalReads, ordinaryProof ? 1 : 0);
+  if (!options.listAttempts) {
+    assert.equal(typedReads, 2); assert.equal(proofReads, 1); assert.equal(finalReads, ordinaryProof ? 1 : 0);
+    assert.deepEqual(failures, ordinaryProof ? [] : ["Moved cancelled-run recovery did not supply authenticated smoke proof."]);
+  }
   assert.deepEqual(outputs, [], "ordinary proof never publishes an exception output");
-  assert.deepEqual(failures, ordinaryProof ? [] : ["Moved cancelled-run recovery did not supply authenticated smoke proof."]);
+  return {failures, outputs, now, typedReads, movedLists, proofReads, exceptionReads, finalReads, proofAttempts};
 }
 async function sameTupleCancellation(replacementStatus, proofSequence = [], sparseAttempt = false, options = {}) {
   let now = 0, proofReads = 0, runtimeJobReads = 0, sleeps = 0, listedReplacements = 0;
-  const sameIdentity = {...identity, sourceEvent: "pull_request"};
+  let finalIdentityReads = 0, finalAttemptReads = 0;
+  const sameIdentity = {...identity, sourceEvent: "pull_request",
+    ...(options.siblingConclusions ? {canonicalPlayEligible: true} : {})};
   const old = {...source, id: 98, event: "pull_request", status: "completed", conclusion: "cancelled",
     head_sha: identity.headSha, head_branch: "feature",
     repository: {full_name: options.recoverableOriginal ? repositoryName : "other/repo"},
@@ -4427,7 +4540,13 @@ async function sameTupleCancellation(replacementStatus, proofSequence = [], spar
       return [smokeJob];
     }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async () => false,
     async () => true, isTransientGitHubFailure, hasPendingCanonicalSmokeTerminalEvidence, async () => false,
-    async () => false, TerminalGitHubRequestError, core, async () => sameIdentity,
+    async () => false, TerminalGitHubRequestError, core, async label => {
+      if (label === "Fencing proven cancelled-run replacement") {
+        finalIdentityReads++;
+        now += options.finalIdentityReadMs ?? 0;
+      }
+      return sameIdentity;
+    },
     selected => JSON.stringify(selected), resolve => {sleeps++; now += 10; resolve();}, 10,
     {now: () => now}, 0, options.overallMs ?? 1000, 1, async event => {
       if (event === "pull_request") return old;
@@ -4444,16 +4563,30 @@ async function sameTupleCancellation(replacementStatus, proofSequence = [], spar
     },
     "3390", "test identity", 50,
     {payload: {pull_request: {head: {ref: "feature", repo: {full_name: repositoryName}}}}},
-    200, 100, 10, value => Number.isSafeInteger(value) && value > 0, async () => true,
+    200, 100, 10, value => Number.isSafeInteger(value) && value > 0, async () => {
+      finalAttemptReads++;
+      now += options.finalAttemptReadMs ?? 0;
+      return true;
+    },
     async (run, selected) => {
       proofReads++;
       assert.equal(run, replacement);
       assert.ok(Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
       assert.ok(["success", "failure"].includes(run.conclusion));
       assert.deepEqual(selected, sameIdentity);
+      if (options.finalIdentityReadMs || options.finalAttemptReadMs) {
+        assert.equal(now, 0, "proof is complete before only the final reads advance the fake clock");
+      }
+      if (options.siblingConclusions) {
+        const conclusion = options.siblingConclusions[Math.min(proofReads - 1, options.siblingConclusions.length - 1)];
+        return verify(data => {
+          data.jobs.push({id: 999, run_id: run.id, run_attempt: run.run_attempt, head_sha: workflowSha,
+            name: "Dispatch Trusted PR Runtime Publication", status: "completed", conclusion});
+        }, "repository_dispatch", true, true);
+      }
       return proofSequence[Math.min(proofReads - 1, proofSequence.length - 1)] ?? false;
     });
-  return {failures, outputs, now, proofReads, runtimeJobReads, sleeps};
+  return {failures, outputs, now, proofReads, runtimeJobReads, sleeps, finalIdentityReads, finalAttemptReads};
 }
 // Exercise the real resolver, not merely a stub that honors requireCurrent.
 async function refreshFinalIdentity(eventUnavailable = false) {
@@ -4514,6 +4647,40 @@ function markerAccepted(overrides = {}) {
     await failedProof(Object.assign(new Error("unavailable"), {status: 404}), event);
     await failedProof(null, event);
   }
+  for (const missing of [null, undefined]) {
+    for (const conclusion of ["success", "skipped"]) {
+      const marker = await pendingMarkerSnapshot([missing, conclusion]);
+      assert.deepEqual(marker.failures, []);
+      assert.equal(marker.now, 10, "a completed marker needs a valid conclusion before supplying proof");
+      assert.equal(marker.snapshots, 2);
+      assert.equal(marker.proofReads, conclusion === "success" ? 2 : 1);
+      assert.deepEqual(marker.outputs, conclusion === "success" ? [["known_play_exception", "true"]] : []);
+      assert.equal(marker.writes, conclusion === "success" ? 1 : 0);
+      assert.equal(marker.finalReads, conclusion === "success" ? 1 : 0);
+    }
+  }
+  const missingMarker = await pendingMarkerSnapshot([null, undefined, null, undefined, "success"]);
+  assert.deepEqual(missingMarker.failures, ["Runtime smoke proof is missing its unambiguous transition-exception disposition."]);
+  assert.deepEqual(missingMarker.outputs, []);
+  assert.equal(missingMarker.now, 30, "alternating missing marker conclusions retain one current-attempt snapshot allowance");
+  assert.equal(missingMarker.snapshots, 4);
+  assert.equal(missingMarker.finalReads, 0);
+  assert.equal(missingMarker.writes, 0);
+  for (const conclusion of ["failure", "cancelled", "timed_out", "unknown", ""]) {
+    const invalidMarker = await pendingMarkerSnapshot([conclusion, "success"]);
+    assert.deepEqual(invalidMarker.failures, ["Runtime smoke proof is missing its unambiguous transition-exception disposition."]);
+    assert.deepEqual(invalidMarker.outputs, []);
+    assert.equal(invalidMarker.now, 0);
+    assert.equal(invalidMarker.proofReads, 0);
+    assert.equal(invalidMarker.writes, 0);
+  }
+  for (const conclusion of [null, "success", "skipped"]) {
+    const duplicateMarker = await pendingMarkerSnapshot([conclusion], true);
+    assert.equal(duplicateMarker.failures.length, 1);
+    assert.deepEqual(duplicateMarker.outputs, []);
+    assert.equal(duplicateMarker.now, 0, "duplicate markers are terminal even with a missing conclusion");
+    assert.equal(duplicateMarker.proofReads, 0);
+  }
   for (const stage of ["jobs", "proof"]) {
     const terminal = new TerminalGitHubRequestError("permission denied");
     await assert.rejects(failedLegacyProof(stage, terminal), error => error === terminal);
@@ -4533,6 +4700,31 @@ function markerAccepted(overrides = {}) {
   await movedCancellation(false);
   await movedCancellation(true, true);
   await movedCancellation(false, true);
+  for (const attempt of [null, undefined]) {
+    const converged = await movedCancellation(true, false, {listAttempts: [attempt, 2]});
+    assert.deepEqual(converged.failures, []);
+    assert.equal(converged.now, 10, "a sparse moved terminal row waits before exact proof");
+    assert.equal(converged.movedLists, 2);
+    assert.deepEqual(converged.proofAttempts, [2], "only the newly complete exact native attempt is verified");
+    assert.equal(converged.exceptionReads, 0);
+    assert.equal(converged.finalReads, 1);
+  }
+  const sparseMoved = await movedCancellation(true, false, {listAttempts: [null, undefined, null, undefined, 2]});
+  assert.deepEqual(sparseMoved.failures,
+    ["Moved cancelled-run recovery lacks an exact attempt within the snapshot convergence allowance."]);
+  assert.equal(sparseMoved.now, 30, "alternating absent/null attempts cannot reset the sparse snapshot budget");
+  assert.equal(sparseMoved.movedLists, 4);
+  assert.equal(sparseMoved.proofReads, 0);
+  assert.equal(sparseMoved.exceptionReads, 0);
+  assert.equal(sparseMoved.finalReads, 0);
+  for (const attempt of [0, -1, 1.5, "2", false, "", {}]) {
+    const invalidMoved = await movedCancellation(true, false, {listAttempts: [attempt, 2]});
+    assert.deepEqual(invalidMoved.failures, ["Typed runtime smoke producer lacks an exact attempt."]);
+    assert.equal(invalidMoved.now, 0, "invalid supplied attempts are terminal, not sparse metadata");
+    assert.equal(invalidMoved.proofReads, 0);
+    assert.equal(invalidMoved.exceptionReads, 0);
+    assert.equal(invalidMoved.finalReads, 0);
+  }
   assert.deepEqual(await sameTupleProof("success", false, true), {result: true, verifiers: ["exception"]});
   assert.deepEqual(await sameTupleProof("success", true, false), {result: false, verifiers: ["exception"]});
   assert.deepEqual(await sameTupleProof("skipped", true, false), {result: "ordinary", verifiers: ["ordinary"]});
@@ -4564,6 +4756,37 @@ function markerAccepted(overrides = {}) {
   assert.equal(sequencedReplacement.runtimeJobReads, 0,
     "a freshly proved replacement needs only the final currentness fences, without rereading its job inventory");
   assert.equal(sequencedReplacement.now, 10);
+  for (const exception of [false, true]) {
+    const finalReadOverrun = await sameTupleCancellation("completed", exception ? [] : ["ordinary"], false,
+      {overallMs: 25, finalIdentityReadMs: 10, finalAttemptReadMs: 10,
+        ...(exception ? {siblingConclusions: ["skipped"]} : {})});
+    assert.equal(finalReadOverrun.failures.length, 1);
+    assert.match(finalReadOverrun.failures[0], /has no freshly proven exact replacement/);
+    assert.deepEqual(finalReadOverrun.outputs, [], "neither ordinary nor exception proof can clear after the absolute cancellation deadline");
+    assert.equal(finalReadOverrun.now, 30);
+    assert.equal(finalReadOverrun.proofReads, 1);
+    assert.equal(finalReadOverrun.sleeps, 0);
+    assert.equal(finalReadOverrun.finalIdentityReads, 2);
+    assert.equal(finalReadOverrun.finalAttemptReads, 1);
+  }
+  const finalReadsWithinBudget = await sameTupleCancellation("completed", ["ordinary"], false,
+    {overallMs: 31, finalIdentityReadMs: 10, finalAttemptReadMs: 10});
+  assert.deepEqual(finalReadsWithinBudget.failures, [], "the final deadline fence still accepts within the same allowance");
+  assert.equal(finalReadsWithinBudget.now, 30);
+  const delayedSibling = await sameTupleCancellation("completed", [], false, {siblingConclusions: [null, "skipped"]});
+  assert.deepEqual(delayedSibling.failures, []);
+  assert.deepEqual(delayedSibling.outputs, [["known_play_exception", "true"]]);
+  assert.equal(delayedSibling.proofReads, 2, "a completed sibling with no conclusion cannot supply proof before fresh valid evidence");
+  assert.equal(delayedSibling.now, 10, "delayed sibling conclusion converges only after a bounded pause");
+  const missingSiblingConclusion = await sameTupleCancellation("completed", [], false, {siblingConclusions: [null]});
+  assert.match(missingSiblingConclusion.failures[0], /within the snapshot convergence allowance/);
+  assert.deepEqual(missingSiblingConclusion.outputs, []);
+  assert.equal(missingSiblingConclusion.now, 100, "a persistently missing sibling conclusion cannot extend the existing snapshot budget");
+  const failedSibling = await sameTupleCancellation("completed", [], false, {siblingConclusions: ["failure", "skipped"]});
+  assert.match(failedSibling.failures[0], /contradictory identity or invalid terminal smoke proof/);
+  assert.deepEqual(failedSibling.outputs, []);
+  assert.equal(failedSibling.proofReads, 1, "an explicit terminal sibling failure is rejected without waiting for generic green history");
+  assert.equal(failedSibling.now, 0);
   const invalidReplacement = await sameTupleCancellation("completed", [false]);
   assert.equal(invalidReplacement.failures.length, 1);
   assert.match(invalidReplacement.failures[0], /contradictory identity or invalid terminal smoke proof/);
@@ -4626,6 +4849,29 @@ function markerAccepted(overrides = {}) {
     "repository_dispatch", true, true), true);
   assert.equal(await verify(data => {data.jobs.push({id: 999, status: "completed", conclusion: "failure"});},
     "repository_dispatch", true, true), false);
+  const nullableSibling = data => {
+    data.jobs.push({id: 999, run_id: data.source.id, run_attempt: data.source.run_attempt,
+      head_sha: data.source.head_sha, status: "completed", conclusion: null});
+  };
+  assert.equal(await verify(nullableSibling, "repository_dispatch", true, true), "snapshot-pending");
+  assert.equal(await verify(nullableSibling, "repository_dispatch", true, false), false,
+    "a missing sibling conclusion cannot be accepted without bounded convergence");
+  assert.equal(await verify(nullableSibling, "pull_request", true, true), false,
+    "typed snapshot convergence does not broaden native PR proof");
+  for (const change of [
+    {run_id: 98}, {run_attempt: 3}, {head_sha: "e".repeat(40)},
+    {check_run_url: "https://example.com/check"}, {id: candidate.id},
+    {conclusion: "failure"}, {conclusion: "timed_out"}, {conclusion: "cancelled"}, {conclusion: "unknown"}, {conclusion: ""},
+  ]) {
+    assert.equal(await verify(data => {
+      nullableSibling(data);
+      Object.assign(data.jobs.at(-1), change);
+    }, "repository_dispatch", true, true), false, `missing sibling metadata cannot hide contradictory proof: ${JSON.stringify(change)}`);
+  }
+  assert.equal(await verify(data => {
+    nullableSibling(data);
+    data.jobs.push({id: 998, status: "completed", conclusion: "failure"});
+  }, "repository_dispatch", true, true), false, "a pending sibling snapshot cannot hide a different terminal sibling failure");
   assert.equal(await verify(data => {
     data.jobs.push({id: 999, status: "in_progress", conclusion: null});
     data.currentPullRequest.head.sha = "e".repeat(40);
@@ -4734,6 +4980,7 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["completed"], false, {headRepository: "fork/FireMUD"});
   await pendingRefreshCaller(["completed"], false, {directProof: true});
   await pendingRefreshCaller(["completed"], false, {directProof: true, labelRemoved: true});
+  await pendingRefreshCaller(["completed"], false, {directProof: true, withdrawDuringFinal: true});
   await pendingRefreshCaller(["completed", "completed"], false, {
     recoverDrift: true, labelRemoved: true,
     finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)},
@@ -4804,6 +5051,7 @@ function markerAccepted(overrides = {}) {
   for (const event of ["pull_request", "repository_dispatch"]) {
     await selectedProducerFinalFence(event);
     await selectedProducerFinalFence(event, true);
+    await selectedProducerFinalFence(event, false, false, false, "label");
   }
   await selectedProducerFinalFence("repository_dispatch", false, true);
   await selectedProducerFinalFence("repository_dispatch", false, false, true);
@@ -5099,17 +5347,18 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   const startClock = Date.parse(source.created_at);
   const sameSecond = ["same-second", "ambiguous-same-second"].includes(kind);
   let clock = startClock + (sameSecond ? 200 : 0), tupleReads = 0, sourceReads = 0, metadataReads = 0, wakeReads = 0, ciInventoryReads = 0, refreshInventoryReads = 0;
-  let observedCancelledJobs = [];
+  let cancelledAttemptReads = 0;
   const github = {rest: {
     actions: {
-      listJobsForWorkflowRunAttempt: async ({run_id, attempt_number, per_page, page}) => {
-        assert.equal(run_id, 91);
+      listJobsForWorkflowRunAttempt: async request => {
+        const {run_id, attempt_number, per_page, page} = request;
         assert.equal(attempt_number, 1);
         assert.equal(per_page, 100);
         assert.equal(page, 1);
-        const jobs = structuredClone(observedCancelledJobs);
-        if (kind === "cancel-inventory-disagrees") jobs[1].conclusion = "failure";
-        return {data: {jobs, total_count: jobs.length + (kind === "cancel-inventory-short" ? 1 : 0)}};
+        const recheck = run_id === 91 && cancelledCase && ++cancelledAttemptReads % 2 === 0;
+        const jobs = structuredClone(await fixtureCIJobs(request));
+        if (recheck && kind === "cancel-inventory-disagrees") jobs[1].conclusion = "failure";
+        return {data: {jobs, total_count: jobs.length + (recheck && kind === "cancel-inventory-short" ? 1 : 0)}};
       },
       getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
         ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
@@ -5233,8 +5482,8 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         if (kind !== "invisible") shared.visible = true;
       },
     },
-  }, paginate: async (_route, request) => {
-    assert.equal(_route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+  }};
+  async function fixtureCIJobs(request) {
     assert.equal(request.attempt_number, 1);
     if (metadataWake && request.run_id === 92) {
       const expression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
@@ -5312,8 +5561,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         {...gate, name: "PR Metadata Edit (Validation Gate)", conclusion: "skipped", steps: []},
         {...upstream, conclusion: "failure"},
       ];
-      observedCancelledJobs = kind === "cancel-gate-only" ? [gate] : [gate, upstream];
-      return observedCancelledJobs;
+      return kind === "cancel-gate-only" ? [gate] : [gate, upstream];
     }
     const metadata = kind === "metadata" || ["metadata-newer", "old-meta-rerun", "late-ci-old-metadata"].includes(kind) && request.run_id === 91;
     return [{id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
@@ -5321,7 +5569,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       steps: ["unclassified-newer", "late-ci-unknown"].includes(kind) && request.run_id === 91 ? [] : [
         {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: metadata ? "success" : "skipped"},
         {name: "Enforce validation success", status: "completed", conclusion: metadata ? "skipped" : "failure"}]}];
-  }};
+  }
   await execute(github, {repo: {owner: "example", repo: "firemud"}, eventName: "workflow_run",
     payload: {workflow_run: event, repository: {full_name: repository, default_branch: "develop"}}},
     {info: () => {}, warning: message => { (shared.warnings ??= []).push(message); },

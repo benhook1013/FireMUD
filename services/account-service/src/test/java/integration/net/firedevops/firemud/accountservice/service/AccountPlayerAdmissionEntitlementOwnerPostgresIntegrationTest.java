@@ -383,11 +383,13 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         firstHold = occupying;
       }
     }
-    String readHeld =
-        "SELECT held_units FROM account_tenant_capacity_usage"
+    String readUsage =
+        "SELECT held_units, used_units, usage_revision FROM account_tenant_capacity_usage"
             + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
-    assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
-        .isEqualTo(quota);
+    var usageBeforeDenial = f.dsl.fetchSingle(readUsage, f.tenantId).intoMap();
+    assertThat(usageBeforeDenial)
+        .containsEntry("held_units", quota)
+        .containsEntry("used_units", 0L);
     UUID requestId = request.identity().requestId();
     var decision = new java.util.concurrent.atomic.AtomicReference<UUID>();
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
@@ -399,6 +401,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               assertThat(error.durableDenialId()).isNotNull();
               decision.set(error.durableDenialId());
             });
+    assertThat(f.dsl.fetchSingle(readUsage, f.tenantId).intoMap()).isEqualTo(usageBeforeDenial);
     String readDenial =
         "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions"
             + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
@@ -430,7 +433,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     7,
                     "sha256:" + "e".repeat(64),
                     "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            Clock.systemUTC());
+            f.clock);
     assertThat(
             recovery
                 .reconcile(
@@ -438,8 +441,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
                 .state())
         .isEqualTo(TenantCapacityAdmission.State.RELEASED);
-    assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
-        .isEqualTo(quota - 1);
+    var usageBeforeReplay = f.dsl.fetchSingle(readUsage, f.tenantId).intoMap();
+    assertThat(usageBeforeReplay)
+        .containsEntry("held_units", quota - 1)
+        .containsEntry("used_units", 0L);
     // The exact durable refusal must win over both returned quota headroom and expired evidence.
     Instant evaluationExpiresAt = request.evidence().expiresAt();
     assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
@@ -467,6 +472,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               assertThat(error.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
               assertThat(error.durableDenialId()).isEqualTo(decision.get());
             });
+    assertThat(f.dsl.fetchSingle(readUsage, f.tenantId).intoMap()).isEqualTo(usageBeforeReplay);
     assertThat(f.dsl.fetchSingle(readDenial, identity).intoMap())
         .usingRecursiveComparison()
         .isEqualTo(retained);

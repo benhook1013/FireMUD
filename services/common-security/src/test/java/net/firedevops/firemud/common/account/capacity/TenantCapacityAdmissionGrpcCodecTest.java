@@ -190,6 +190,39 @@ class TenantCapacityAdmissionGrpcCodecTest {
   }
 
   @Test
+  void nonExpandingRequestCannotCarryBillingRefusal() {
+    var original = CapacityAdmissionTestFixture.playerRequest(false);
+    var request =
+        new Request(
+                original.identity(),
+                original.admissionAttemptId(),
+                1,
+                original.targetNamespace(),
+                original.context(),
+                TenantCapacityAdmission.Operation.NON_EXPANDING_RECOVERY,
+                original.requestedShape(),
+                original.requestedShape(),
+                original.evidence(),
+                0L,
+                null)
+            .withDigest();
+    request.requireStructurallyValid();
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED))
+        .isInstanceOf(IllegalArgumentException.class);
+    var billing =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(original, Failure.TENANT_BILLING_BLOCKED);
+    var mismatchedOperation =
+        billing.toBuilder()
+            .setRefusal(
+                0, billing.getRefusal(0).toBuilder().setMutationDigest(0, request.mutationDigest()))
+            .build();
+    assertThatThrownBy(
+            () -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, mismatchedOperation))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void matchedRearmCannotCarryEitherOriginalRefusal() {
     for (var code : List.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED)) {
       var original =

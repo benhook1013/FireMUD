@@ -299,8 +299,9 @@ public final class TenantCapacityAdmissionGrpcCodec {
 
   private static void requireRefusalAuthority(Request request, Refusal refusal) {
     if (request.capacityRearmFence() != 1) throw invalid();
-    if (refusal.code() == Failure.TENANT_BILLING_BLOCKED && request.evidence().permitsCreation())
-      throw invalid();
+    if (refusal.code() == Failure.TENANT_BILLING_BLOCKED
+        && (request.evidence().permitsCreation()
+            || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();
     if (refusal.code() == Failure.CAPACITY_QUOTA_EXCEEDED
         && (!request.evidence().permitsCreation()
             || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();

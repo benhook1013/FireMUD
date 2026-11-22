@@ -8,9 +8,13 @@ import io.grpc.ClientCall;
 import io.grpc.ConnectivityState;
 import io.grpc.Context;
 import io.grpc.Deadline;
+import io.grpc.EquivalentAddressGroup;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
+import io.grpc.NameResolver;
+import io.grpc.NameResolverProvider;
+import io.grpc.NameResolverRegistry;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.ServerStreamTracer;
@@ -22,11 +26,16 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -158,6 +167,70 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
       assertThat(calls).hasValue(1);
     } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void resolverRetryPolicyRetriesStandardChannelButNotCapacityCommit() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest request,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                calls.incrementAndGet();
+                // No response headers/message: the service-config policy can retry this failure.
+                observer.onError(Status.UNAVAILABLE.asRuntimeException());
+              }
+            });
+    var resolver = new RetryPolicyNameResolverProvider(server.getPort());
+    var registry = NameResolverRegistry.getDefaultRegistry();
+    registry.register(resolver);
+    try {
+      String target = resolver.getDefaultScheme() + ":///account";
+      var tls = pki.clientProperties(directory, pki.identity("client"));
+      var factory = new GrpcChannelFactory();
+      var request = CapacityAdmissionTestFixture.playerRequest();
+      var standard = factory.buildChannel(target, 6565, tls, true);
+      try {
+        assertThatThrownBy(() ->
+                AccountServiceGrpc.newBlockingStub(standard)
+                    .withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .commitTenantCapacityAdmission(
+                        TenantCapacityAdmissionGrpcCodec.toRequest(request)))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+        assertThat(calls)
+            .hasValue(2); // Positive control: the resolver policy really enables replay.
+      } finally {
+        standard.shutdownNow();
+        assertThat(standard.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      }
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setAccountService(target);
+      try (var client =
+          new AccountTenantCapacityClient(
+              endpoints,
+              tls,
+              factory,
+              "prod",
+              Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC))) {
+        client.init();
+        assertThatThrownBy(() -> client.commit(request, deadline()))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+        assertThat(calls).hasValue(3); // Exactly one additional transport attempt, not two.
+      }
+    } finally {
+      registry.deregister(resolver);
       stop(server);
     }
   }
@@ -485,12 +558,16 @@ class AccountTenantCapacityClientMtlsTest {
       try (var client = client(server, tls, factory);
           var executor = Executors.newSingleThreadExecutor()) {
         client.init();
+        assertThat(factory.singleAttemptBuilds).hasValue(1);
+        assertThat(factory.standardBuilds).hasValue(0);
         var request = CapacityAdmissionTestFixture.playerRequest();
         client.commit(request, deadline());
         respond.set(false);
         try {
           Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
           assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+          assertThat(factory.singleAttemptBuilds).hasValue(2);
+          assertThat(factory.standardBuilds).hasValue(0);
           long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
           var timedOut =
               executor.submit(() ->
@@ -507,6 +584,7 @@ class AccountTenantCapacityClientMtlsTest {
         } finally {
           factory.releaseReload.countDown();
         }
+        assertThat(factory.reloadBuilt.await(5, TimeUnit.SECONDS)).isTrue();
       }
     } finally {
       try {
@@ -794,13 +872,34 @@ class AccountTenantCapacityClientMtlsTest {
 
   private static final class BlockingReloadChannelFactory extends GrpcChannelFactory {
     private final AtomicBoolean initialBuild = new AtomicBoolean(true);
+    private final AtomicInteger standardBuilds = new AtomicInteger();
+    private final AtomicInteger singleAttemptBuilds = new AtomicInteger();
     private final CountDownLatch reloadStarted = new CountDownLatch(1);
     private final CountDownLatch releaseReload = new CountDownLatch(1);
+    private final CountDownLatch reloadBuilt = new CountDownLatch(1);
 
     @Override
     public ManagedChannel buildChannel(
         String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
         throws SSLException {
+      standardBuilds.incrementAndGet();
+      awaitReload();
+      return super.buildChannel(target, defaultPort, properties, keepAlive);
+    }
+
+    @Override
+    public ManagedChannel buildChannelWithoutRetries(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      int builds = singleAttemptBuilds.incrementAndGet();
+      awaitReload();
+      ManagedChannel channel =
+          super.buildChannelWithoutRetries(target, defaultPort, properties, keepAlive);
+      if (builds > 1) reloadBuilt.countDown();
+      return channel;
+    }
+
+    private void awaitReload() throws SSLException {
       if (!initialBuild.getAndSet(false)) {
         reloadStarted.countDown();
         try {
@@ -810,7 +909,6 @@ class AccountTenantCapacityClientMtlsTest {
           throw new SSLException("Test reload wait interrupted", interrupted);
         }
       }
-      return super.buildChannel(target, defaultPort, properties, keepAlive);
     }
   }
 
@@ -826,8 +924,94 @@ class AccountTenantCapacityClientMtlsTest {
           super.buildChannel(target, defaultPort, properties, keepAlive), this);
     }
 
+    @Override
+    public ManagedChannel buildChannelWithoutRetries(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      return new CallOptionsCapturingManagedChannel(
+          super.buildChannelWithoutRetries(target, defaultPort, properties, keepAlive), this);
+    }
+
     private void resetCapturedDeadline() {
       capturedDeadline.set(null);
+    }
+  }
+
+  private static final class RetryPolicyNameResolverProvider extends NameResolverProvider {
+    private final int port;
+
+    private RetryPolicyNameResolverProvider(int port) {
+      this.port = port;
+    }
+
+    @Override
+    protected boolean isAvailable() {
+      return true;
+    }
+
+    @Override
+    protected int priority() {
+      return 0; // The test-only scheme must not replace the registry's default resolver.
+    }
+
+    @Override
+    public String getDefaultScheme() {
+      return "capacity-retry-test";
+    }
+
+    @Override
+    public Collection<Class<? extends SocketAddress>> getProducedSocketAddressTypes() {
+      return List.of(InetSocketAddress.class);
+    }
+
+    @Override
+    public NameResolver newNameResolver(URI targetUri, NameResolver.Args args) {
+      if (!getDefaultScheme().equals(targetUri.getScheme())) return null;
+      var serviceConfig =
+          args.getServiceConfigParser()
+              .parseServiceConfig(
+                  Map.of(
+                      "methodConfig",
+                      List.of(
+                          Map.of(
+                              "name",
+                              List.of(
+                                  Map.of(
+                                      "service",
+                                      AccountServiceGrpc.SERVICE_NAME,
+                                      "method",
+                                      "CommitTenantCapacityAdmission")),
+                              "retryPolicy",
+                              Map.of(
+                                  "maxAttempts",
+                                  2.0,
+                                  "initialBackoff",
+                                  "0.01s",
+                                  "maxBackoff",
+                                  "0.01s",
+                                  "backoffMultiplier",
+                                  1.0,
+                                  "retryableStatusCodes",
+                                  List.of("UNAVAILABLE"))))));
+      return new NameResolver() {
+        @Override
+        public String getServiceAuthority() {
+          return "localhost";
+        }
+
+        @Override
+        public void start(Listener2 listener) {
+          listener.onResult(
+              ResolutionResult.newBuilder()
+                  .setAddresses(
+                      List.of(new EquivalentAddressGroup(new InetSocketAddress("127.0.0.1", port))))
+                  .setServiceConfig(serviceConfig)
+                  .build());
+        }
+
+        @Override
+        public void shutdown() {}
+      };
     }
   }
 
