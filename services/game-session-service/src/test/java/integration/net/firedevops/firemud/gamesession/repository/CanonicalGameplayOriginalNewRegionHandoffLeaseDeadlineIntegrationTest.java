@@ -166,11 +166,21 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
                     + " WHERE singleton_id=1 FOR UPDATE")
             .close();
       }
-      try {
-        var observation = receiver.observeForRegionOwnerTransfer(transferId, 0, deadline());
-        assertThat(observation.regionOwnerTransferContext().controlState()).isEqualTo("FROZEN");
-      } finally {
-        blocker.rollback();
+      var worker = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+      try (AutoCloseable shutdown =
+          () -> {
+            worker.shutdownNow();
+            assertThat(worker.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS))
+                .as("bounded SQL observation caller termination")
+                .isTrue();
+          }) {
+        var pending =
+            worker.submit(() -> receiver.observeForRegionOwnerTransfer(transferId, 0, deadline()));
+        try (AutoCloseable cancel = () -> pending.cancel(true);
+            AutoCloseable rollback = blocker::rollback) {
+          var observation = pending.get(5, java.util.concurrent.TimeUnit.SECONDS);
+          assertThat(observation.regionOwnerTransferContext().controlState()).isEqualTo("FROZEN");
+        }
       }
     }
   }
@@ -1015,6 +1025,11 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
         assertThat(CLOCK.millis()).isLessThan(frozenDeadline);
         var fencedPhysical = physicalImage();
+        var successorLeaseKey = ascii(successor.grant.key());
+        var successorLeaseToken = admin.get(successorLeaseKey);
+        assertThat(successorLeaseToken).isNotEmpty();
+        long successorLeaseExpiry = admin.pexpiretime(successorLeaseKey);
+        assertThat(successorLeaseExpiry).isGreaterThan(CLOCK.millis());
         release.countDown();
         assertThat(redisReply.get(2, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(-1L);
         assertThat(dispatchedAt.get()).isPositive().isLessThan(frozenDeadline);
@@ -1024,6 +1039,8 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
             .hasCauseInstanceOf(IllegalStateException.class);
         assertThat(calls.get()).isOne();
         assertThat(physicalImage()).isEqualTo(fencedPhysical);
+        assertThat(admin.get(successorLeaseKey)).containsExactly(successorLeaseToken);
+        assertThat(admin.pexpiretime(successorLeaseKey)).isEqualTo(successorLeaseExpiry);
         assertThat(admin.get(ascii(installation.sessionKey())))
             .containsExactly(source.candidate().canonicalBytes());
         assertThat(

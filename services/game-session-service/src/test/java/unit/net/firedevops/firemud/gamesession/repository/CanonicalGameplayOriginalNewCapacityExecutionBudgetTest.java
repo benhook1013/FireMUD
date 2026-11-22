@@ -684,19 +684,32 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     UUID transitionId = UUID.randomUUID();
     when(candidate.bindingDecisionId()).thenReturn(transitionId);
     long started = System.nanoTime();
-    try {
-      assertThatThrownBy(() ->
+    var caller = Executors.newVirtualThreadPerTaskExecutor();
+    var pending = new AtomicReference<java.util.concurrent.Future<?>>();
+    try (AutoCloseable cleanup =
+        () -> {
+          release.countDown();
+          var submitted = pending.get();
+          if (submitted != null) submitted.cancel(true);
+          caller.shutdownNow();
+          assertThat(caller.awaitTermination(5, TimeUnit.SECONDS))
+              .as("bounded acquisition caller termination")
+              .isTrue();
+          verify(provider, timeout(2000)).release(connection);
+          verifyNoInteractions(connection);
+        }) {
+      var read =
+          caller.submit(() ->
               inventory.withinTransferRead(
                   CLOCK,
                   CLOCK.millis() + 1000,
-                  scoped -> scoped.readRegionTransferCommittedSource(transitionId, candidate)))
-          .isInstanceOf(IllegalStateException.class);
+                  scoped -> scoped.readRegionTransferCommittedSource(transitionId, candidate)));
+      pending.set(read);
+      assertThatThrownBy(() -> read.get(3, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2500);
-      verifyNoInteractions(connection);
-    } finally {
-      release.countDown();
-      verify(provider, timeout(2000)).release(connection);
       verifyNoInteractions(connection);
     }
   }
@@ -754,17 +767,30 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             "d".repeat(64),
             "sha256:" + "e".repeat(64));
 
-    try {
-      assertThatThrownBy(() ->
+    var caller = Executors.newVirtualThreadPerTaskExecutor();
+    var pending = new AtomicReference<java.util.concurrent.Future<?>>();
+    try (AutoCloseable cleanup =
+        () -> {
+          release.countDown();
+          var submitted = pending.get();
+          if (submitted != null) submitted.cancel(true);
+          caller.shutdownNow();
+          assertThat(caller.awaitTermination(5, TimeUnit.SECONDS))
+              .as("bounded acquisition caller termination")
+              .isTrue();
+          verify(provider, timeout(2000)).release(connection);
+          verifyNoInteractions(connection);
+        }) {
+      var read =
+          caller.submit(() ->
               transfer.withStatusRepository(
                   CLOCK.millis() + 1000,
-                  statusRepository -> statusRepository.findTimelinePreparation(regionSource)))
-          .isInstanceOf(IllegalStateException.class);
+                  statusRepository -> statusRepository.findTimelinePreparation(regionSource)));
+      pending.set(read);
+      assertThatThrownBy(() -> read.get(3, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
-      verifyNoInteractions(connection);
-    } finally {
-      release.countDown();
-      verify(provider, timeout(2000)).release(connection);
       verifyNoInteractions(connection);
     }
   }

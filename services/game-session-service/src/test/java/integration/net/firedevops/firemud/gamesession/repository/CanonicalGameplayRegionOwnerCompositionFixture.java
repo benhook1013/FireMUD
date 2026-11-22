@@ -1299,6 +1299,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 runtimeIdentity,
                 Duration.ofSeconds(30),
                 Clock.systemUTC());
+        var beforeFenceSequence = regionFenceSequence(dsl);
         var beforeTakeover =
             snapshotRegionOwnerSqlState(
                 dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
@@ -1307,6 +1308,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           throw new AssertionError("Compatibility takeover unexpectedly succeeded");
         } catch (IllegalStateException expected) {
           if (redis.admin().get(redisKey) != null
+              || !beforeFenceSequence.equals(regionFenceSequence(dsl))
               || !beforeTakeover.equals(
                   snapshotRegionOwnerSqlState(
                       dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))) {
@@ -1526,6 +1528,12 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     };
   }
 
+  private static Long regionFenceSequence(DSLContext dsl) {
+    return Objects.requireNonNull(
+        dsl.fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+            .get(0, Long.class));
+  }
+
   private static CompatibilityTakeoverProof refuseCompatibilityTakeoverAfterAcknowledgement(
       DSLContext dsl,
       RegionRedis redis,
@@ -1584,6 +1592,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 acknowledged.transitionId()));
     var beforePhysical =
         snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
+    var beforeFenceSequence = regionFenceSequence(dsl);
     String refusalMessage = null;
     try {
       replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
@@ -1596,6 +1605,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             .orElseThrow();
     if (refusalMessage == null
         || redis.admin().get(leaseKey) != null
+        || !beforeFenceSequence.equals(regionFenceSequence(dsl))
         || !beforeRegion.equals(
             snapshotRegionOwnerSqlState(
                 dsl,

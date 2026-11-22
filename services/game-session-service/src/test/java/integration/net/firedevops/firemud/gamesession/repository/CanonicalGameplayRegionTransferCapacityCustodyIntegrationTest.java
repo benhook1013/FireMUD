@@ -85,7 +85,15 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               proof.sql.execute(
                   "UPDATE game_session_region_owner_transfer_item SET fence_apply_issued=false WHERE transfer_id=?",
                   id))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage()).contains("Apply issuance cannot be reset");
+              });
+      assertThat(proof.itemImage(id)).isEqualTo(retained);
+      assertThat(proof.itemImage(id)).contains("\"fence_apply_issued\": true");
     }
   }
 
@@ -1106,15 +1114,26 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       try (var statement = lock.createStatement()) {
         statement.execute("LOCK TABLE game_session_region_owner_transfer IN ACCESS EXCLUSIVE MODE");
       }
-      try {
+      var worker = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+      try (AutoCloseable shutdown =
+          () -> {
+            worker.shutdownNow();
+            assertThat(worker.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS))
+                .as("bounded SQL observation caller termination")
+                .isTrue();
+          }) {
         long start = System.nanoTime();
-        assertThatThrownBy(() ->
+        var pending =
+            worker.submit(() ->
                 proof.receiver.observeForRegionOwnerTransfer(
-                    id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
-            .isInstanceOf(ObservationUnavailableException.class);
-        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
-      } finally {
-        lock.rollback();
+                    id, captured.getFirst().ordinal(), proof.clock.millis() + 500L));
+        try (AutoCloseable cancel = () -> pending.cancel(true);
+            AutoCloseable rollback = lock::rollback) {
+          assertThatThrownBy(() -> pending.get(3, java.util.concurrent.TimeUnit.SECONDS))
+              .isInstanceOf(java.util.concurrent.ExecutionException.class)
+              .hasCauseInstanceOf(ObservationUnavailableException.class);
+          assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
+        }
       }
       assertThat(
               proof

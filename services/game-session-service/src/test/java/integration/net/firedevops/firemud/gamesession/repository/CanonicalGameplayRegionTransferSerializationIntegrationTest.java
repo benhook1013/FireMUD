@@ -788,22 +788,44 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       gate.arm();
       Future<?> replay = executor.submit(proof::replayBridge);
       gate.awaitLock();
+      var continuationLocks = new java.util.concurrent.CopyOnWriteArrayList<String>();
+      var observer =
+          new ExecuteListener() {
+            @Override
+            public void executeStart(ExecuteContext context) {
+              String query = context.sql();
+              if (query != null && query.endsWith("FOR UPDATE")) {
+                if (query.contains("game_session_canonical_binding_inventory_clock")) {
+                  continuationLocks.add("inventory");
+                } else if (query.contains("game_session_region_runtime_status")) {
+                  continuationLocks.add("region");
+                }
+              }
+            }
+          };
+      var continuationRepository =
+          proof.transfers(
+              DSL.using(
+                  proof.sql.configuration().derive(new DefaultExecuteListenerProvider(observer))));
       Future<?> continuation =
           executor.submit(() ->
-              proof.transfers.within(
+              continuationRepository.within(
                   transferDeadline(),
                   ignored -> {
-                    proof.transfers.requireFrozenOriginal(original, proof.scope, proof.prior);
+                    continuationRepository.requireFrozenOriginal(
+                        original, proof.scope, proof.prior);
                     return null;
                   }));
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(continuation.isDone()).isFalse();
+        assertThat(continuationLocks).containsExactly("inventory");
       } finally {
         gate.release();
       }
       replay.get(10, TimeUnit.SECONDS);
       continuation.get(10, TimeUnit.SECONDS);
+      assertThat(continuationLocks).containsExactly("inventory", "region");
       assertThat(proof.transferImage(id)).isEqualTo(before);
       assertThat(proof.executionState(proof.execution)).isEqualTo("INSTALL_DISPATCHED");
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
@@ -811,7 +833,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   }
 
   @Test
-  void competingTransferCreatorsAndLostBeginReplyKeepOneOriginalIntent() throws Exception {
+  void competingTransferCreatorsKeepOneOriginalIntent() throws Exception {
     try (var proof = new TransferSqlProof();
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       proof.seedUndeliveredDispatch(proof.execution);
@@ -825,14 +847,39 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       start.countDown();
       UUID retained = first.get(10, TimeUnit.SECONDS);
       assertThat(second.get(10, TimeUnit.SECONDS)).isEqualTo(retained);
-      String original = proof.transferImage(retained);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void lostCreateReplyKeepsOneOriginalIntent() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
+                  .get(0, Long.class))
+          .isZero();
       assertThatThrownBy(
               () -> {
-                other.within(transferDeadline(), ignored -> other.begin(proof.scope, proof.prior));
-                throw new IllegalStateException(
-                    "Controlled lost begin reply after committed readback");
+                proof.transfers.within(
+                    transferDeadline(), ignored -> proof.transfers.begin(proof.scope, proof.prior));
+                throw new IllegalStateException("Controlled lost reply after transfer creation");
               })
-          .hasMessage("Controlled lost begin reply after committed readback");
+          .hasMessage("Controlled lost reply after transfer creation");
+      var retained =
+          proof
+              .sql
+              .fetchSingle("SELECT transfer_id FROM game_session_region_owner_transfer")
+              .get(0, UUID.class);
+      assertThat(retained).isNotNull();
+      String original = proof.transferImage(retained);
       var recreated = proof.transfers(proof.sql);
       UUID replayed =
           recreated.within(

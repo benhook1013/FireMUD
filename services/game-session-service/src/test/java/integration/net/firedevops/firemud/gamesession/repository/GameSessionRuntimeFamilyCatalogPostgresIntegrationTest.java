@@ -205,7 +205,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.10",
               "catalog-installation:1065.0.11",
               "catalog-installation:1065.0.12",
-              "catalog-installation:1065.0.13")
+              "catalog-installation:1065.0.13",
+              "catalog-installation:1065.0.14")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -228,7 +229,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.10:")
                   || identity.contains(":1065.0.11:")
                   || identity.contains(":1065.0.12:")
-                  || identity.contains(":1065.0.13:"));
+                  || identity.contains(":1065.0.13:")
+                  || identity.contains(":1065.0.14:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -920,7 +922,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.10",
             "1065.0.11",
             "1065.0.12",
-            "1065.0.13")) {
+            "1065.0.13",
+            "1065.0.14")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -970,7 +973,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.10",
             "1065.0.11",
             "1065.0.12",
-            "1065.0.13")) {
+            "1065.0.13",
+            "1065.0.14")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
