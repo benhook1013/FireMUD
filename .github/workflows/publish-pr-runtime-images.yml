@@ -73,7 +73,7 @@ jobs:
                 return code <= 32 || code === 127 || forbidden.has(character);
               })) return false;
               return ref.split("/").every(part => part.length > 0 && !part.startsWith(".") &&
-                !part.endsWith(".") && !part.endsWith(".lock"));
+                !part.endsWith(".lock"));
             };
             const matchesPath = (path, expected) => {
               if (path === expected) return true;
@@ -374,7 +374,8 @@ jobs:
             const newerRefresh = async (
               createdSince = event.created_at,
               deadline = prePostDeadline,
-              strictlyAfter = null
+              strictlyAfter = null,
+              previousIds = null
             ) => {
               const phase = deadline === prePostDeadline ? "Pre-dispatch" : "Refresh visibility";
               const runs = await inventory(
@@ -395,15 +396,23 @@ jobs:
                   throw new Error("Exact refresh has an invalid creation timestamp");
                 }
               }
-              // Completed refresh also owns this recovery; never retry a refresh from its completion callback.
-              // Run timestamps can have second precision, so equality is not post-dispatch visibility proof.
-              return strictlyAfter === null ? exact.length > 0 : exact.some(run =>
-                Date.parse(run.created_at) > Date.parse(strictlyAfter)
-              );
+              const ids = new Set(runs.map(run => run.id));
+              if (strictlyAfter === null) return {found: exact.length > 0, ids};
+              if (!(previousIds instanceof Set)) throw new Error("Final pre-dispatch refresh inventory IDs are missing");
+              const dispatchTime = Date.parse(strictlyAfter);
+              if (!Number.isFinite(dispatchTime)) throw new Error("Invalid refresh dispatch timestamp");
+              // Run timestamps may have only second precision. Compare from the
+              // POST's timestamp second and require one exact run absent from the
+              // final complete pre-POST inventory.
+              const secondFloor = Math.floor(dispatchTime / 1000) * 1000;
+              const unseen = exact.filter(run => !previousIds.has(run.id));
+              const visible = unseen.filter(run => Date.parse(run.created_at) >= secondFloor);
+              if (visible.length > 1) throw new Error("Multiple new exact refreshes are visible; dispatch outcome is ambiguous");
+              return {found: visible.length === 1, ids};
             };
             if (typeof event.created_at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(event.created_at) ||
                 !Number.isFinite(Date.parse(event.created_at))) throw new Error("Invalid original run creation timestamp");
-            if (await newerRefresh()) return;
+            if ((await newerRefresh()).found) return;
             // Re-list the complete exact-tuple CI inventory before the POST: a newer
             // pending/substantive attempt may have appeared since the first selection.
             const selectedCi = ci;
@@ -413,11 +422,13 @@ jobs:
             if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await wakeCurrent() || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
             // Repeat the complete trusted refresh preflight after all current-source fences.
             // This is the final read before POST, so a late replacement owns recovery.
-            if (await newerRefresh()) return;
+            const finalRefreshInventory = await newerRefresh();
+            if (finalRefreshInventory.found) return;
+            const previousRefreshIds = finalRefreshInventory.ids;
             if (Date.now() >= prePostDeadline) {
               throw new Error("Pre-dispatch deadline reached; no refresh POST issued and visibility reserve retained");
             }
-            const dispatchStarted = new Date().toISOString();
+            const dispatchStarted = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
             let responseUnknown = false;
             try {
               await github.rest.repos.createDispatchEvent(prePostOptions({
@@ -442,7 +453,7 @@ jobs:
             const deadline = Date.now() + 120000;
             while (Date.now() < deadline) {
               try {
-                if (await newerRefresh(dispatchStarted, deadline, dispatchStarted)) {
+                if ((await newerRefresh(dispatchStarted, deadline, dispatchStarted, previousRefreshIds)).found) {
                   core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);
                   return;
                 }
@@ -521,7 +532,7 @@ jobs:
                     character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127 ||
                     "~^:?*[\\".includes(character))) return false;
               return ref.split("/").every(part => part && part !== "." && part !== ".." &&
-                !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock"));
+                !part.startsWith(".") && !part.endsWith(".lock"));
             }
             const titlePattern = /^Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40}) mode-required$/;
             const deadline = Date.now() + 120000;
@@ -701,7 +712,6 @@ jobs:
               return all(
                   part and part not in {".", ".."} and
                   not part.startswith(".") and
-                  not part.endswith(".") and
                   not part.endswith(".lock")
                   for part in ref.split("/")
               )

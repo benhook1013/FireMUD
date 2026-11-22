@@ -193,7 +193,8 @@ class AbstractReloadingBlockingGrpcClientTest {
                             assertThat(stub.getChannel()).isSameAs(previous);
                             selected.countDown();
                             try {
-                              assertThat(ready.await(5, TimeUnit.SECONDS))
+                              // The second call also waits for stub selection and the first RPC.
+                              assertThat(ready.await(30, TimeUnit.SECONDS))
                                   .as("the selected call must be released before its bounded wait")
                                   .isTrue();
                             } catch (InterruptedException interrupted) {

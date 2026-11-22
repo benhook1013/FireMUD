@@ -996,6 +996,7 @@ for valid_ref in \
   "refs/heads/develop" \
   "refs/heads/feature]/test" \
   "refs/heads/feature/@/test" \
+  "refs/heads/feature./test" \
   "$head_sha"; do
   set_source_run_path ".github/workflows/runtime-images.yml@$valid_ref"
   run_validation || {
@@ -1011,7 +1012,7 @@ for invalid_path in \
   '.github/workflows/runtime-images.yml@@' \
   '.github/workflows/runtime-images.yml@refs/heads/trailing.' \
   '.github/workflows/runtime-images.yml@refs/heads/feature[/test' \
-  '.github/workflows/runtime-images.yml@refs/heads/feature./test' \
+  '.github/workflows/runtime-images.yml@refs/heads/feature/.hidden' \
   '.github/workflows/runtime-images.yml@.hidden' \
   '.github/workflows/runtime-images.yml@feature/.lock'; do
   set_source_run_path "$invalid_path"

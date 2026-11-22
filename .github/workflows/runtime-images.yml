@@ -764,7 +764,7 @@ jobs:
                 return code <= 32 || code === 127 || forbidden.has(character);
               })) return false;
               return ref.split("/").every(part => part.length > 0 && !part.startsWith(".") &&
-                !part.endsWith(".") && !part.endsWith(".lock"));
+                !part.endsWith(".lock"));
             };
             const workflowPathMatches = (path, expected = expectedWorkflowPath) => {
               if (path === expected) {
@@ -828,11 +828,14 @@ jobs:
                 return [newest];
               }
               if (newest.status === "completed") {
-                // A refresh created after this CI completed already owns this callback's recovery.
-                // A later substantive CI signal may still recover publication from an older producer.
+                // Same-second or incomparable completion evidence is ambiguous and
+                // suppresses a duplicate; only a valid, strictly older producer may recover.
                 const ciCompleted = Date.parse(workflowRun.updated_at || "");
-                if (newest.event === "repository_dispatch" && Number.isFinite(ciCompleted) &&
-                    Date.parse(newest.created_at) > ciCompleted) return [newest];
+                if (newest.event === "repository_dispatch" &&
+                    (!Number.isFinite(ciCompleted) ||
+                     Math.floor(Date.parse(newest.created_at) / 1000) >= Math.floor(ciCompleted / 1000))) {
+                  return [newest];
+                }
                 return [];
               }
               throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
@@ -1102,7 +1105,10 @@ jobs:
                     break;
                   }
                   const previousIds = new Set(inventory?.runs?.map(run => run.id) || []);
-                  const dispatchSince = new Date().toISOString();
+                  // Actions run timestamps may omit sub-second precision. Inventory
+                  // from the start of this second so a handoff created in the POST's
+                  // timestamp second remains observable.
+                  const dispatchSince = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
                   const pending = {tuple, previousIds, dispatchSince, responseUnknown: false};
                   visibilitySince ??= dispatchSince;
                   pendingVisibility.push(pending);
@@ -1231,20 +1237,26 @@ jobs:
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
                   const {tuple, previousIds, dispatchSince, responseUnknown} = pendingVisibility[index];
                   const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-                  // Equal second-granularity timestamps cannot prove the run followed this POST.
-                  const freshExactRuns = observed.runs.filter(run => run.event === "repository_dispatch" &&
-                    run.display_title === exactTitle && !previousIds.has(run.id) &&
-                    validTimestamp(run.created_at) && Date.parse(run.created_at) > Date.parse(dispatchSince));
-                  for (const run of freshExactRuns) {
+                  // The floor includes this POST's second; the complete pre-POST ID
+                  // snapshot distinguishes new candidates from already-visible runs.
+                  const unseenExactRuns = observed.runs.filter(run => run.event === "repository_dispatch" &&
+                    run.display_title === exactTitle && !previousIds.has(run.id));
+                  for (const run of unseenExactRuns) {
                     if (!Number.isSafeInteger(run.id) || run.id <= 0 || run.workflow_id !== runtimeWorkflow.id ||
                         !workflowPathMatches(run.path) ||
                         ![runtimeWorkflow.name, exactTitle].includes(run.name) ||
                         run.repository?.full_name !== expectedRepository ||
                         run.head_repository?.full_name !== expectedRepository ||
                         run.head_branch !== defaultBranch ||
-                        typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha)) {
+                        typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
+                        !validTimestamp(run.created_at)) {
                       throw new Error(`run ${run.id} has the exact PR tuple title but untrusted native workflow identity`);
                     }
+                  }
+                  const dispatchSecond = Math.floor(Date.parse(dispatchSince) / 1000) * 1000;
+                  const freshExactRuns = unseenExactRuns.filter(run => Date.parse(run.created_at) >= dispatchSecond);
+                  if (freshExactRuns.length > 1) {
+                    throw new Error(`multiple new exact runtime handoffs are visible for PR #${tuple.prNumber}`);
                   }
                   if (freshExactRuns.length > 0) {
                     pendingVisibility.splice(index, 1);

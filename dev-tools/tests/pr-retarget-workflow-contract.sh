@@ -898,6 +898,7 @@ async function runDispatcher({
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
+  initialTime = "2026-01-08T00:00:00Z",
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -911,7 +912,7 @@ async function runDispatcher({
   const deadlineSignals = [];
   const apiRequestRecords = [];
   let waitedMillis = 0;
-  let fakeNow = Date.parse("2026-01-08T00:00:00Z");
+  let fakeNow = Date.parse(initialTime);
   let expireOnFirstRequest = expireAfterFirstApiRequest;
   const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
   const allTuples = [...tuples, ...sourceTuples];
@@ -1368,6 +1369,7 @@ async function runDispatcher({
   for (const event of ["pull_request", "repository_dispatch"]) {
     const completedSuccess = await runDispatcher({
       tuples: [tuple],
+      callback: {updated_at: "2026-01-02T00:00:00Z"},
       inventories: { [event]: [producer(tuple, event, "completed", "success")] },
     });
     assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
@@ -1378,6 +1380,7 @@ async function runDispatcher({
     "main",
     "refs/heads/feature]/test",
     "refs/heads/feature/@/test",
+    "refs/heads/feature./test",
   ]) {
     const refSuffixedPath = await runDispatcher({
       tuples: [tuple],
@@ -1388,7 +1391,7 @@ async function runDispatcher({
     assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
       `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
   }
-  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature./test", "refs/heads/feature[/test"]) {
+  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature/.hidden", "refs/heads/feature[/test"]) {
     const invalidRefPath = await runDispatcher({
       tuples: [tuple],
       inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
@@ -1649,14 +1652,14 @@ async function runDispatcher({
       "unknown inventory must be an explicit error, not apparent success");
   }
 
-  for (const [signalAt, expected] of [["2026-01-02T00:00:00Z", 0], ["2026-01-04T00:00:00Z", 1]]) {
+  for (const [signalAt, expected] of [["2026-01-02T00:00:00Z", 0], ["2026-01-03T00:00:00.200Z", 0], ["2026-01-04T00:00:00Z", 1]]) {
     const result = await runDispatcher({
       tuples: [tuple], callback: { updated_at: signalAt },
       inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "completed", "success", {
         created_at: "2026-01-03T00:00:00Z",
       })] },
     });
-    assert.equal(numbers(result).length, expected, "completed refresh suppresses only an earlier signal");
+    assert.equal(numbers(result).length, expected, "completed refresh suppresses an earlier or same-second signal");
   }
   const invisible = await runDispatcher({ tuples: [tuple], hideDispatchVisibility: true });
   assert.deepEqual(numbers(invisible), ["101"], "accepted invisible POST must never be repeated");
@@ -1678,6 +1681,21 @@ async function runDispatcher({
     "broad preflight still checks native producers");
   assert(manyInvisible.inventoryCalls.some(request => request.event === "repository_dispatch" && request.created !== visibilityFloor),
     "broad preflight still checks existing dispatch producers");
+  const sameSecond = await runDispatcher({tuples: [tuple], initialTime: "2026-01-08T00:00:00.200Z",
+    visibilityResponse: (_request, [posted]) => ({total_count: 1,
+      workflow_runs: [{...posted, created_at: "2026-01-08T00:00:00Z"}]}),
+  });
+  assert.deepEqual(numbers(sameSecond), ["101"]);
+  assert.deepEqual(sameSecond.errors, [], "a unique new exact run in the POST's timestamp second is visible");
+  assert.equal(sameSecond.waitedMillis, 0);
+  const ambiguousSameSecond = await runDispatcher({tuples: [tuple], initialTime: "2026-01-08T00:00:00.200Z",
+    visibilityResponse: (_request, [posted]) => ({total_count: 2, workflow_runs: [
+      {...posted, created_at: "2026-01-08T00:00:00Z"},
+      {...posted, id: posted.id + 1, created_at: "2026-01-08T00:00:00Z"},
+    ]}),
+  });
+  assert.deepEqual(numbers(ambiguousSameSecond), ["101"], "ambiguous handoff never repeats the POST");
+  assert(ambiguousSameSecond.errors.some(error => error.includes("multiple new exact runtime handoffs")));
   const transientTuples = [tuple, tupleFor(102, "a", "c")];
   let transientReads = 0;
   const transient = await runDispatcher({tuples: transientTuples, visibilityResponse: (_request, posted) => {
@@ -3086,9 +3104,10 @@ const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
 });
 NODE
 
-node - "$smoke_gate_script" <<'NODE'
+node - "$smoke_gate_script" "$runtime_images_path" <<'NODE'
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
+const runtimeImagesPath = process.argv[3];
 const headSha = "a".repeat(40);
 const baseSha = "b".repeat(40);
 const mergeSha = "c".repeat(40);
@@ -3204,7 +3223,7 @@ const github = {
         if (path !== ".github/workflows/runtime-images.yml" || !availableRuns.some(row => row.event === "repository_dispatch" && row.head_sha === ref)) {
           throw new Error("typed runtime proof must pin its executed workflow definition");
         }
-        const bytes = fs.readFileSync(path);
+        const bytes = fs.readFileSync(runtimeImagesPath);
         return {data: {type: "file", path, size: bytes.length, encoding: "base64", content: bytes.toString("base64")}};
       },
       getCommit: async ({ ref }) => {

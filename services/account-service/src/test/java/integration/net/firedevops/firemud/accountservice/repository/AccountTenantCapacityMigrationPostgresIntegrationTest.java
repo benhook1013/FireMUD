@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.AccountTenantCreatorBootstrapIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -13,15 +14,9 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapDigest;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.Completion;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
-import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
-import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
 import org.jooq.SQLDialect;
@@ -259,7 +254,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           Objects.requireNonNull(
               transaction.execute(status -> {
                 repository.importVerified(existing);
-                return claimBootstrap(
+                return AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
                     operations, new AccountRepository(dsl).save(creator()), existing);
               }));
       assertThat(historical.status()).isEqualTo("IN_PROGRESS");
@@ -287,7 +282,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                 assertThat(operation.status()).isEqualTo("IN_PROGRESS");
                 assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
                 assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
-                return operations.complete(operation.requestId(), completion(operation));
+                return operations.complete(
+                    operation.requestId(),
+                    AccountTenantCreatorBootstrapIntegrationFixture.completion(operation));
               }));
       assertThat(completed.status()).isEqualTo("COMMITTED");
       assertThat(completed.tenantUuid()).isEqualTo(existing.canonicalTenantId());
@@ -645,10 +642,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       transaction.executeWithoutResult(status -> {
         new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(acceptedTenant);
         var claimed =
-            claimBootstrap(operations, new AccountRepository(dsl).save(creator()), acceptedTenant);
+            AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
+                operations, new AccountRepository(dsl).save(creator()), acceptedTenant);
         var current = operations.findForUpdate(claimed.requestId()).orElseThrow();
         assertThat(current.status()).isEqualTo("IN_PROGRESS");
-        operations.complete(current.requestId(), completion(current));
+        operations.complete(
+            current.requestId(),
+            AccountTenantCreatorBootstrapIntegrationFixture.completion(current));
       });
 
       UUID acceptedRequest = UUID.randomUUID();
@@ -791,7 +791,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertTenantCapacityInventoryMatches(dsl, acceptedTenant.canonicalTenantId());
 
       var acceptedOriginsBeforeReplay = originRows(dsl, acceptedTenant.canonicalTenantId());
-      var acceptedReservationsBeforeReplay = reservationRows(dsl, acceptedTenant.canonicalTenantId());
+      var acceptedReservationsBeforeReplay =
+          reservationRows(dsl, acceptedTenant.canonicalTenantId());
       var acceptedUsageBeforeReplay = usageRows(dsl, acceptedTenant.canonicalTenantId());
       assertThat(acceptedOriginsBeforeReplay)
           .anySatisfy(row ->
@@ -802,7 +803,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   .containsEntry("mutation_digest", acceptedAfterMigration.digest())
                   .containsEntry("decision", "ACCEPTED")
                   .containsEntry(
-                      "payload", java.util.HexFormat.of().formatHex(acceptedAfterMigration.payload())));
+                      "payload",
+                      java.util.HexFormat.of().formatHex(acceptedAfterMigration.payload())));
       assertThat(acceptedReservationsBeforeReplay)
           .anySatisfy(row ->
               assertThat(row)
@@ -812,7 +814,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   .containsEntry("mutation_digest", acceptedAfterMigration.digest())
                   .containsEntry("capacity_delta", 1L)
                   .containsEntry(
-                      "payload", java.util.HexFormat.of().formatHex(acceptedAfterMigration.payload())));
+                      "payload",
+                      java.util.HexFormat.of().formatHex(acceptedAfterMigration.payload())));
 
       assertThat(
               dsl.execute(
@@ -1129,8 +1132,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       org.jooq.DSLContext dsl, UUID tenantUuid) {
     var rows =
         dsl.fetch(
-            "SELECT u.owner_service, u.held_units, u.used_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state IN ('RESERVED', 'QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION')), 0) AS reservation_held_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state = 'FINALIZED'), 0) AS reservation_used_units FROM account_tenant_capacity_usage u LEFT JOIN account_tenant_capacity_reservations r ON r.tenant_uuid = u.tenant_uuid AND r.owner_service = u.owner_service WHERE u.tenant_uuid = ? GROUP BY u.owner_service, u.held_units, u.used_units ORDER BY u.owner_service",
-            tenantUuid)
+                "SELECT u.owner_service, u.held_units, u.used_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state IN ('RESERVED', 'QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION')), 0) AS reservation_held_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state = 'FINALIZED'), 0) AS reservation_used_units FROM account_tenant_capacity_usage u LEFT JOIN account_tenant_capacity_reservations r ON r.tenant_uuid = u.tenant_uuid AND r.owner_service = u.owner_service WHERE u.tenant_uuid = ? GROUP BY u.owner_service, u.held_units, u.used_units ORDER BY u.owner_service",
+                tenantUuid)
             .intoMaps();
     assertThat(rows).hasSize(2);
     for (var row : rows) {
@@ -1166,74 +1169,6 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     account.setPasswordHash("test-only-password-hash");
     account.setRole("player");
     return account;
-  }
-
-  private static StoredOperation claimBootstrap(
-      AccountTenantCreationBootstrapOperationRepository operations,
-      Account creator,
-      FreshTenantCreationEvidence creation) {
-    UUID accountId = creator.getAccountUuid();
-    UUID authorizationId = UUID.randomUUID();
-    String authorizationDigest =
-        AccountTenantCreationBootstrapDigest.sha256(
-            "fixture authorization".getBytes(StandardCharsets.UTF_8));
-    var evidence =
-        new FreshTenantCreatorEvidence(
-            1,
-            creation,
-            accountId,
-            authorizationId,
-            authorizationDigest,
-            FreshTenantCreatorDigest.evidenceDigest(
-                1, creation, accountId, authorizationId, authorizationDigest));
-    byte[] creatorPayload = AccountTenantCreationBootstrapDigest.creatorEvidencePayload(evidence);
-    byte[] sourcePayload = "fixture source snapshot".getBytes(StandardCharsets.UTF_8);
-    byte[] requestPayload =
-        AccountTenantCreationBootstrapDigest.requestPayload(creatorPayload, sourcePayload);
-    var claim =
-        operations.claim(
-            evidence,
-            creatorPayload,
-            sourcePayload,
-            AccountTenantCreationBootstrapDigest.sha256(sourcePayload),
-            requestPayload,
-            AccountTenantCreationBootstrapDigest.sha256(requestPayload),
-            1,
-            1);
-    assertThat(claim.claimed()).isTrue();
-    return claim.operation();
-  }
-
-  private static Completion completion(StoredOperation operation) {
-    // Controlled completion receipts exercise the real storage owner's guarded transition.
-    byte[] event = "fixture membership event".getBytes(StandardCharsets.UTF_8);
-    byte[] audit = "fixture bootstrap audit".getBytes(StandardCharsets.UTF_8);
-    byte[] result = "fixture bootstrap result".getBytes(StandardCharsets.UTF_8);
-    return new Completion(
-        1,
-        operation.baselineMembershipVersion() + 1,
-        operation.baselineMembershipAuthorityGeneration(),
-        "ACTIVE",
-        false,
-        "[\"tenantAdmin\"]".getBytes(StandardCharsets.UTF_8),
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
-            + "membership/"
-            + operation.initiatingAccountUuid()
-            + "/"
-            + operation.tenantUuid(),
-        operation.requestId().toString(),
-        1,
-        "fixture-membership-event",
-        AccountTenantCreationBootstrapDigest.sha256(event),
-        false,
-        event,
-        UUID.randomUUID(),
-        "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED",
-        Instant.now().truncatedTo(ChronoUnit.MICROS),
-        AccountTenantCreationBootstrapDigest.sha256(audit),
-        audit,
-        result,
-        AccountTenantCreationBootstrapDigest.sha256(result));
   }
 
   private static FreshTenantCreationEvidence source() {
