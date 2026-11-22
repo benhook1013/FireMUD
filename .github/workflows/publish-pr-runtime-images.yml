@@ -87,6 +87,27 @@ jobs:
             const trusted = run => run?.workflow_id === workflow.id && matchesPath(run.path, workflow.path) &&
               run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
               [workflow.name, run.display_title].includes(run.name) && positive(run.id) && positive(run.run_attempt);
+            // A legacy diagnostic can use a failed runtime run. A complete
+            // native producer job with a skipped marker is affirmative proof
+            // that this exact failed attempt cannot supply that exception.
+            const provesOrdinaryTypedFailure = async run => {
+              const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(prePostOptions({
+                ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100, page: 1,
+              }));
+              if (!Array.isArray(data?.jobs) || data.jobs.length > 100 || data.total_count !== data.jobs.length) return false;
+              const producers = data.jobs.filter(job => job?.name === "PR Full-Stack Smoke (runtime-required=true)");
+              const job = producers[0];
+              if (producers.length !== 1 || !positive(job.id) || job.run_id !== run.id ||
+                  job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                  ![workflow.name, run.display_title].includes(job.workflow_name) ||
+                  job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
+              const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
+              if (markers.length !== 1 || markers[0].status !== "completed" || markers[0].conclusion !== "skipped") return false;
+              const times = [run.run_started_at, job.started_at, markers[0].started_at, markers[0].completed_at,
+                job.completed_at, run.updated_at].map(value =>
+                  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) ? Date.parse(value) : NaN);
+              return times.every((time, index) => Number.isFinite(time) && (index === 0 || time >= times[index - 1]));
+            };
             // Inventory incompleteness is unknown, never permission to dispatch duplicates.
             const inventory = async (workflowId, filter, deadline = prePostDeadline, phase = "Pre-dispatch", validateVisibilityRun = null) => {
               const runs = [], ids = new Map();
@@ -464,12 +485,7 @@ jobs:
               const ids = new Set(runs.map(run => run.id));
               if (strictlyAfter === null) {
                 for (const run of exact) {
-                  // Only these two freshly verified unusable results may release
-                  // the hold. Legacy failures (including PLAY) are not replayed.
-                  if (run.status !== "completed" || !["cancelled", "timed_out"].includes(run.conclusion)) {
-                    if (run.status === "completed" && run.conclusion === "failure") {
-                      core.warning(`Exact typed refresh ${run.id} failed; recovery remains held for explicit investigation, not automatic replay.`);
-                    }
+                  if (run.status !== "completed" || !["cancelled", "timed_out", "failure"].includes(run.conclusion)) {
                     return {found: true, ids};
                   }
                   let current;
@@ -488,6 +504,15 @@ jobs:
                       current.conclusion !== run.conclusion) {
                     core.warning(`Exact typed refresh ${run.id} terminal result is unproven or superseded; recovery remains held without retry.`);
                     return {found: true, ids};
+                  }
+                  if (current.conclusion === "failure") {
+                    let unusable = false;
+                    try { unusable = await provesOrdinaryTypedFailure(current); }
+                    catch { /* An incomplete provider response cannot authorize a retry. */ }
+                    if (!unusable) {
+                      core.warning(`Exact typed refresh ${run.id} failed; recovery remains held for explicit investigation, not automatic replay.`);
+                      return {found: true, ids};
+                    }
                   }
                 }
                 // Retain every inventory ID, including verified unusable runs,
@@ -654,8 +679,28 @@ jobs:
               return ref.split("/").every(part => part && part !== "." && part !== ".." &&
                 !part.startsWith(".") && !part.endsWith(".lock"));
             }
+            function sameSourcePath(left, right, event, pull) {
+              if (left === right) return true;
+              const mergePath = `${workflow.path}@refs/pull/${pull}/merge`;
+              return event === "pull_request" &&
+                (left === workflow.path && right === mergePath || right === workflow.path && left === mergePath);
+            }
             const titlePattern = /^Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40}) mode-required$/;
             const deadline = Date.now() + 120000;
+            const proofOptions = options => {
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) throw new Error("publication producer proof exceeded its bounded deadline");
+              return {...options, request: {signal: AbortSignal.timeout(remaining)}};
+            };
+            const timestamp = value => {
+              const match = typeof value === "string" && /^(?:\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}(?:\.(\d{1,3}))?Z$/.exec(value);
+              const time = match ? Date.parse(value) : NaN;
+              if (!Number.isFinite(time) || new Date(time).toISOString() !==
+                  `${value.slice(0, 19)}.${(match[1] || "").padEnd(3, "0")}Z`) {
+                throw new Error("publication producer proof has a missing or invalid UTC timestamp");
+              }
+              return time;
+            };
             for (;;) {
               const { data: run } = await github.rest.actions.getWorkflowRun({
                 ...context.repo, run_id: sourceId,
@@ -679,25 +724,101 @@ jobs:
                 if (!Number.isSafeInteger(event.id) || event.id !== sourceId ||
                     !Number.isSafeInteger(event.run_attempt) || event.run_attempt <= 0 ||
                     !isTrustedWorkflowPath(event.path)) throw new Error("publication callback path or run identity is not trusted");
-                for (const field of ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
+                for (const field of ["id", "workflow_id", "run_attempt", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
                   if (run[field] !== event[field]) throw new Error(`source API ${field} differs from callback`);
                 }
                 for (const field of ["repository", "head_repository"]) {
                   if (run[field]?.full_name !== event[field]?.full_name) throw new Error(`source API ${field} differs from callback`);
                 }
+                // Native PR callbacks and run lookups may differ only in whether
+                // this exact PR's canonical merge ref is included in the path.
+                if (!sameSourcePath(run.path, event.path, run.event, title[1])) {
+                  throw new Error("source API path differs from callback");
+                }
               }
               if (run.status === "completed") {
                 if (run.conclusion !== "success") throw new Error("publication source run did not succeed");
-                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                  ...context.repo, run_id: sourceId, per_page: 100,
-                });
-                if (jobs.some(job => job.name === "PR Full-Stack Smoke (runtime-required=true)" &&
-                    (job.steps ?? []).some(step =>
-                      step.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
-                      step.status === "completed" && step.conclusion === "success"))) {
+                const {data: attempt} = await github.rest.actions.getWorkflowRunAttempt(proofOptions({
+                  ...context.repo, run_id: sourceId, attempt_number: run.run_attempt,
+                }));
+                // Run-wide creation/start timestamps are not rerun execution authority.
+                // Only the exact native attempt may bound the producer's execution.
+                for (const field of ["id", "workflow_id", "run_attempt", "display_title", "event",
+                    "head_branch", "head_sha", "status", "conclusion"]) {
+                  if (attempt?.[field] !== run[field]) throw new Error(`source attempt ${field} differs from selected run`);
+                }
+                if (!sameSourcePath(run.path, attempt.path, run.event, title[1])) {
+                  throw new Error("source attempt path differs from selected run");
+                }
+                if (![workflow.name, run.display_title].includes(attempt.name) ||
+                    attempt.repository?.full_name !== repository || attempt.head_repository?.full_name !== repository) {
+                  throw new Error("publication source attempt provenance is not trusted");
+                }
+                const created = timestamp(attempt.created_at);
+                const started = timestamp(attempt.run_started_at);
+                const updated = timestamp(attempt.updated_at);
+                // Native attempt and job timestamps can differ in subsecond precision;
+                // permit only their boundary second, never an earlier execution second.
+                const attemptStart = Math.floor(started / 1000) * 1000;
+                const attemptEnd = Math.floor(updated / 1000) * 1000 + 999;
+                if (created >= started + 1000 || created > updated || started > attemptEnd) {
+                  throw new Error("publication source attempt chronology is inconsistent");
+                }
+                const jobs = [], ids = new Set();
+                let total;
+                for (let page = 1; page <= 10; page++) {
+                  const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(proofOptions({
+                    ...context.repo, run_id: sourceId, attempt_number: run.run_attempt, per_page: 100, page,
+                  }));
+                  if (!Number.isSafeInteger(data?.total_count) || data.total_count < 0 || data.total_count > 1000 ||
+                      (total !== undefined && data.total_count !== total) || !Array.isArray(data.jobs) ||
+                      data.jobs.length !== Math.min(100, Math.max(0, data.total_count - (page - 1) * 100))) {
+                    throw new Error("publication source attempt job inventory is incomplete or inconsistent");
+                  }
+                  total ??= data.total_count;
+                  for (const job of data.jobs) {
+                    if (!Number.isSafeInteger(job?.id) || job.id <= 0 || ids.has(job.id) ||
+                        typeof job.name !== "string" || !job.name.trim() || job.run_id !== sourceId ||
+                        job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                        ![workflow.name, run.display_title].includes(job.workflow_name)) {
+                      throw new Error("publication source attempt job inventory has duplicate or unattributable jobs");
+                    }
+                    ids.add(job.id);
+                    jobs.push(job);
+                  }
+                  if (jobs.length === total) break;
+                }
+                if (jobs.length !== total) throw new Error("publication source attempt job inventory exceeds bounded pagination");
+                const producers = jobs.filter(job => ["PR Full-Stack Smoke (runtime-required=true)",
+                  "PR Full-Stack Smoke (runtime-required=false)"].includes(job.name));
+                if (producers.length !== 1 || producers[0].status !== "completed" ||
+                    producers[0].conclusion !== "success" || !Array.isArray(producers[0].steps)) {
+                  throw new Error("publication requires one successful attributable artifact producer job");
+                }
+                const producer = producers[0];
+                const jobStart = timestamp(producer.started_at), jobEnd = timestamp(producer.completed_at);
+                if (jobStart < attemptStart || jobEnd < jobStart || jobEnd > attemptEnd) {
+                  throw new Error("publication artifact producer did not execute within the selected native attempt");
+                }
+                if (producer.name === "PR Full-Stack Smoke (runtime-required=true)" &&
+                    producer.steps.some(step =>
+                      step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
+                      step.status === "completed" && step.conclusion === "success")) {
                   core.notice("CI passed under the canonical PLAY transition exception; no runtime images are eligible for publication.");
                   return;
                 }
+                const uploads = producer.steps.filter(step => step?.name === "Upload preview image artifact");
+                const upload = uploads[0];
+                if (uploads.length !== 1 || upload.status !== "completed" || upload.conclusion !== "success" ||
+                    !Number.isSafeInteger(upload.number) || upload.number <= 0 ||
+                    producer.steps.filter(step => step?.number === upload.number).length !== 1) {
+                  throw new Error("publication requires the producer's actual successful Upload preview image artifact step");
+                }
+                const uploadStart = timestamp(upload.started_at), uploadEnd = timestamp(upload.completed_at);
+                if (uploadStart < jobStart || uploadEnd < uploadStart || uploadEnd > jobEnd) {
+                  throw new Error("publication artifact upload did not execute within the selected producer job");
+                }
+                if (Date.now() >= deadline) throw new Error("publication producer proof exceeded its bounded deadline");
                 core.setOutput("source", JSON.stringify(run));
                 core.setOutput("title", run.display_title);
                 core.setOutput("artifact_name", `pr-runtime-images-pr-merge-${title[4]}`);

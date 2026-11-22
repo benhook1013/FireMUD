@@ -402,6 +402,34 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         assertThat(physical.path("admissionState").asText()).isEqualTo("COMPLETE");
         String gsReceipt = session.gsReceiptImage();
         session.restartAccount();
+        var original = session.capacityRequest;
+        var otherAttempt =
+            new TenantCapacityAdmission.Request(
+                    original.identity(),
+                    UUID.randomUUID(),
+                    original.capacityRearmFence(),
+                    original.targetNamespace(),
+                    original.context(),
+                    original.operation(),
+                    original.priorShape(),
+                    original.requestedShape(),
+                    original.evidence(),
+                    original.capacityDelta(),
+                    null)
+                .withDigest();
+        assertThatThrownBy(() -> session.complete(otherAttempt))
+            .isExactlyInstanceOf(IllegalStateException.class);
+        assertThat(session.gs.finalReadCalls()).isOne();
+        assertThat(session.genesis().confirmationReadbackSha256()).isNull();
+        assertThat(session.gsReceiptImage()).isEqualTo(gsReceipt);
+        var changedOriginal = session.retainControlledEvaluation(true, "0");
+        assertThat(changedOriginal.admissionAttemptId()).isEqualTo(original.admissionAttemptId());
+        assertThat(changedOriginal.mutationDigest()).isNotEqualTo(original.mutationDigest());
+        assertThatThrownBy(() -> session.complete(changedOriginal))
+            .isExactlyInstanceOf(IllegalStateException.class);
+        assertThat(session.gs.finalReadCalls()).isOne();
+        assertThat(session.genesis().confirmationReadbackSha256()).isNull();
+        assertThat(session.gsReceiptImage()).isEqualTo(gsReceipt);
         var recovered = session.complete();
         assertConfirmed(recovered, session.genesis());
         assertThat(session.gs.finalReadCalls()).isEqualTo(2);
@@ -632,6 +660,56 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
       assertThat(session.genesis().confirmedAdmissionAtMillis()).isNull();
       assertProvisionalUnchanged(session, candidate);
+    }
+  }
+
+  @Test
+  void localSettlementRollbackPreservesAccountRefusalAndAllowsExactRetry() throws Exception {
+    try (Session session = session(CLOCK, 1, 2);
+        OriginalNewCredential credential = session.issue()) {
+      session.provisionCapacityRefusalBudget();
+      var request = session.retainControlledEvaluation(true, "0");
+      byte[] candidate = session.gs.physicalSession();
+      var sql = session.gs.dsl();
+      sql.execute(
+          "CREATE FUNCTION controlled_settlement_rollback() RETURNS trigger LANGUAGE plpgsql"
+              + " AS $$ BEGIN RAISE EXCEPTION 'controlled settlement rollback'; END; $$");
+      sql.execute(
+          "CREATE TRIGGER controlled_settlement_rollback BEFORE UPDATE"
+              + " ON game_session_capacity_evidence_charge FOR EACH ROW"
+              + " EXECUTE FUNCTION controlled_settlement_rollback()");
+      UUID denialId;
+      try {
+        var refusal = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+        denialId = assertExactAccountQuotaDenial(session, request, refusal);
+        assertThat(
+                sql.fetchSingle(
+                        "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                        request.admissionAttemptId())
+                    .get(0, UUID.class))
+            .isNull();
+        assertThat(
+                sql.fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                    .get(0, Long.class))
+            .isZero();
+        assertProvisionalUnchanged(session, candidate);
+      } finally {
+        sql.execute(
+            "DROP TRIGGER controlled_settlement_rollback ON game_session_capacity_evidence_charge");
+        sql.execute("DROP FUNCTION controlled_settlement_rollback()");
+      }
+      var beforeRetry = session.capacityDecisionImage();
+      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(replay.durableDenialId()).isEqualTo(denialId);
+      assertThat(session.capacityDecisionImage()).isEqualTo(beforeRetry);
+      assertThat(
+              sql.fetchSingle(
+                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                      request.admissionAttemptId())
+                  .get(0, UUID.class))
+          .isEqualTo(denialId);
+      assertProvisionalUnchanged(session, candidate);
+      assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
     }
   }
 

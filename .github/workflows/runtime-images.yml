@@ -800,6 +800,27 @@ jobs:
               const ref = path.slice(prefix.length);
               return validWorkflowRef(ref);
             };
+            // The older PLAY diagnostic can leave the source run red. Only a
+            // complete native attempt with its marker explicitly skipped can
+            // prove that a failed producer did not supply that exception.
+            const provesOrdinaryTypedFailure = async (run, workflowName) => {
+              const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
+                ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100, page: 1,
+              }));
+              if (!Array.isArray(data?.jobs) || data.jobs.length > 100 || data.total_count !== data.jobs.length) return false;
+              const producers = data.jobs.filter(job => job?.name === "PR Full-Stack Smoke (runtime-required=true)");
+              const job = producers[0];
+              if (producers.length !== 1 || !Number.isSafeInteger(job.id) || job.id <= 0 ||
+                  job.run_id !== run.id || job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                  ![workflowName, run.display_title].includes(job.workflow_name) ||
+                  job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
+              const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
+              if (markers.length !== 1 || markers[0].status !== "completed" || markers[0].conclusion !== "skipped") return false;
+              const times = [run.run_started_at, job.started_at, markers[0].started_at, markers[0].completed_at,
+                job.completed_at, run.updated_at].map(value =>
+                  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) ? Date.parse(value) : NaN);
+              return times.every((time, index) => Number.isFinite(time) && (index === 0 || time >= times[index - 1]));
+            };
             // Bind both admission reads to the same terminal attempt; never cache native proof.
             const disregardedTypedAttempts = new Map();
             const findExactExistingProducer = async (tuple, inventory) => {
@@ -853,7 +874,7 @@ jobs:
                 return [newest];
               }
               if (newest.status === "completed") {
-                if (newest.event === "repository_dispatch" && ["cancelled", "timed_out"].includes(newest.conclusion)) {
+                if (newest.event === "repository_dispatch" && ["cancelled", "timed_out", "failure"].includes(newest.conclusion)) {
                   const repository = `${context.repo.owner}/${context.repo.repo}`;
                   const defaultBranch = context.payload.repository?.default_branch;
                   const attemptBinding = JSON.stringify([
@@ -885,8 +906,9 @@ jobs:
                       latest.conclusion !== newest.conclusion) {
                     throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
                   }
-                  // Neither conclusion can supply ordinary or diagnostic PLAY acceptance.
-                  // Success/failure classification and POST visibility deliberately remain unchanged.
+                  if (newest.conclusion === "failure" && !await provesOrdinaryTypedFailure(latest, workflow.name)) {
+                    return [newest];
+                  }
                   disregardedTypedAttempts.set(newest.id, attemptBinding);
                   return [];
                 }
