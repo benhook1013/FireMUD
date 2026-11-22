@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   reconcile-failed-pr-runtime:
     name: Reconcile Failed Original PR Runtime
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && ((github.event.workflow_run.path == '.github/workflows/runtime-images.yml' && contains(fromJSON('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion)) || (github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.conclusion == 'cancelled')) && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && (((github.event.workflow_run.path == '.github/workflows/runtime-images.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/runtime-images.yml@refs/')) && contains(fromJSON('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion)) || ((github.event.workflow_run.path == '.github/workflows/ci.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/ci.yml@refs/')) && github.event.workflow_run.conclusion == 'cancelled')) && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -113,7 +113,7 @@ jobs:
               if (!trusted(event) || event.event !== "pull_request" || event.status !== "completed" ||
                   !["failure", "cancelled", "timed_out"].includes(event.conclusion) ||
                   event.head_sha !== wakeHead || event.head_branch !== callback.head_branch) return;
-            }
+            } else if (!trusted(event)) return;
             const match = titlePattern.exec(event.display_title || "");
             if (!match) return;
             const [ , number, base, head, merge] = match;
@@ -293,6 +293,9 @@ jobs:
             if (!currentCi || currentCi.id !== selectedCi.id || currentCi.run_attempt !== selectedCi.run_attempt) return;
             const {data: finalCi} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
             if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await wakeCurrent() || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
+            // Repeat the complete trusted refresh preflight after all current-source fences.
+            // This is the final read before POST, so a late replacement owns recovery.
+            if (await newerRefresh()) return;
             const dispatchStarted = new Date(Date.now() - 1000).toISOString();
             let responseUnknown = false;
             try {
@@ -304,7 +307,7 @@ jobs:
               if ([401, 404, 422].includes(error?.status) && error.response?.status === error.status &&
                   !error.response.headers?.["retry-after"] && error.response.headers?.["x-ratelimit-remaining"] !== "0") throw error;
               responseUnknown = true;
-              core.setFailed(`Runtime refresh POST response is unknown; no retry issued: ${error.message || error}`);
+              core.warning(`Runtime refresh POST response is unknown; no retry issued: ${error.message || error}`);
             }
             // Keep the shared lock during observation even when the one POST response was lost.
             const deadline = Date.now() + 120000;
@@ -331,7 +334,7 @@ jobs:
 
   source:
     name: Resolve Exact Runtime Publication Source
-    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/runtime-images.yml' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    if: ${{ (github.event_name == 'workflow_run' && (github.event.workflow_run.path == '.github/workflows/runtime-images.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/runtime-images.yml@refs/')) && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -405,6 +408,7 @@ jobs:
               }
               if (callback) {
                 const event = context.payload.workflow_run;
+                if (!isTrustedWorkflowPath(event.path)) throw new Error("publication callback path is not trusted");
                 for (const field of ["id", "workflow_id", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
                   if (run[field] !== event[field]) throw new Error(`source API ${field} differs from callback`);
                 }

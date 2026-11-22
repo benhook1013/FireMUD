@@ -897,6 +897,7 @@ async function runDispatcher({
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
+  fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null,
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -1015,6 +1016,9 @@ async function runDispatcher({
             if (postFailureStatus) Object.assign(error, {status: postFailureStatus, response: {status: postFailureStatus}});
             throw error;
           }
+          if (request.event_type === "preview-deploy" && request.client_payload.pr_number === fanoutCutoffAfterPreviewPr) {
+            fakeNow += 12 * 60 * 1000;
+          }
         },
       },
       actions: {
@@ -1062,7 +1066,11 @@ async function runDispatcher({
             : refinement
               ? inventory.refinedTotalCount ?? filteredRuns.length
               : inventory.initialPageTotals?.[request.page] ?? inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
-          return { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+          const response = { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+          if (fanoutCutoffAfterInventory && request.event === "repository_dispatch") {
+            fakeNow += 12 * 60 * 1000;
+          }
+          return response;
         },
       },
     },
@@ -1403,7 +1411,10 @@ async function runDispatcher({
   assert.deepEqual(numbers(skippedFirst), ["102"], "non-runtime first PR must not starve second");
   const failedPost = await runDispatcher({ tuples: [tuple, sibling], postFailurePr: "101" });
   assert.deepEqual(numbers(failedPost), ["101", "102"], "ambiguous first POST must not retry or starve second");
-  assert(failedPost.errors.some(message => message.includes("ambiguous POST timeout")));
+  assert(failedPost.warnings.some(message => message.includes("ambiguous POST timeout")),
+    "transport uncertainty is a warning while strict visibility observation continues");
+  assert(!failedPost.errors.some(message => message.includes("ambiguous POST timeout")),
+    "an uncertain POST response alone must not fail a handoff that can still become visible");
   assert.equal(failedPost.waitedMillis, 120000, "observe unknown handoff through the same bounded shared window");
   assert(failedPost.errors.some(message => message.includes("attempted but visibility is unknown for PRs 101")));
   const deniedPost = await runDispatcher({tuples: [tuple, sibling], postFailurePr: "101", postFailureStatus: 422});
@@ -1416,9 +1427,29 @@ async function runDispatcher({
   assert.deepEqual(numbers(observedAmbiguousPost), ["101", "102"], "visible ambiguous handoff must not retransmit");
   assert(previewDispatches(observedAmbiguousPost).some(item => item.client_payload.pr_number === "101"));
   assert(observedAmbiguousPost.infos.some(message => message.includes("became visible after an unknown POST response")));
-  assert(observedAmbiguousPost.errors.some(message => message.includes("ambiguous POST timeout")),
-    "visibility does not conceal the transport failure");
+  assert(observedAmbiguousPost.warnings.some(message => message.includes("ambiguous POST timeout")),
+    "the unknown transport result remains visible as a warning");
+  assert.deepEqual(observedAmbiguousPost.errors, [],
+    "strict native visibility resolves an uncertain handoff without failing the job");
   assert(!observedAmbiguousPost.errors.some(message => message.includes("visibility is unknown")));
+  const cutoffBeforePost = await runDispatcher({tuples: [tuple], fanoutCutoffAfterInventory: true});
+  assert.deepEqual(numbers(cutoffBeforePost), [], "the twelve-minute reservation cutoff prevents a new runtime POST");
+  assert(cutoffBeforePost.errors.some(message => message.includes("fan-out cutoff") &&
+    message.includes("before the runtime POST for PR #101") && message.includes("#101 remain incomplete")),
+  "a necessary target stopped before its POST is explicitly reported incomplete");
+  const cutoffAtBoundary = await runDispatcher({
+    tuples: [{...tuple, labels: [{name: "preview:priority"}]}, sibling],
+    fanoutCutoffAfterPreviewPr: "101",
+  });
+  assert.deepEqual(numbers(cutoffAtBoundary), ["101"], "the cutoff stops subsequent runtime fan-out at the next target boundary");
+  assert.equal(previewDispatches(cutoffAtBoundary).filter(item => item.client_payload.pr_number === "101").length, 1,
+    "preview dispatch remains independent for the target processed before cutoff");
+  assert(cutoffAtBoundary.errors.some(message => message.includes("fan-out cutoff") &&
+    message.includes("at a target boundary") && message.includes("#102 remain incomplete")));
+  assert(cutoffAtBoundary.inventoryCalls.some((request, index) =>
+    request.created === "2026-01-07T23:59:59.000Z..*" && cutoffAtBoundary.observationPostCounts[index] === 1),
+  "runtime handoffs sent before cutoff are still observed");
+  assert(!cutoffAtBoundary.errors.some(message => message.includes("visibility is unknown")));
   const transientFirst = await runDispatcher({
     tuples: [tuple, sibling], apiFailure: (_request, count) => count === 1,
   });
@@ -2040,6 +2071,7 @@ require_contains "$pr_image_publisher_path" 'GitHub displays this run in the def
 require_contains "$pr_image_publisher_path" 'markdown_code(os.environ['
 require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
+
 assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}'

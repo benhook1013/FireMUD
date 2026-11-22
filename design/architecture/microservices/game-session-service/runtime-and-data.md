@@ -14,7 +14,7 @@ The exact current Game Session owner establishes irreversible closure of serving
 
 The target Game Session owner persists the teardown identity and progress in its own PostgreSQL storage, then retains the immutable terminal evidence under that same identity. A replacement worker reads the persisted progress and exact receipt rather than reconstructing either from Redis, an in-memory job or the current binding alone. The receipt binds the original admission, FINAL evidence, binding lineage and exact Account reservation; conflicting identities or stale owner fences must be refused.
 
-Qualification must prove restart before send, Account commit followed by response loss and worker restart, and exact receipt replay without a second decrement. Account—not Game Session—atomically retains the retirement receipt and decrements used capacity. Wrong identity or fence must fail closed, and no failure or retry may reopen serving or resume. These are acceptance requirements, not claims that the target path or its restart proof exists today.
+Qualification must prove a restart after irreversible closure or settlement but before the terminal receipt exists, then verify the replacement completes that same teardown from durable progress with serving and resume still closed. Separately prove restart before send, Account commit followed by response loss and worker restart, and exact receipt replay without a second decrement. Account—not Game Session—atomically retains the retirement receipt and decrements used capacity. Wrong identity or fence must fail closed, and no failure or retry may reopen serving or resume. These are acceptance requirements, not claims that the target path or its restart proof exists today.
 
 ## Implementation Status
 

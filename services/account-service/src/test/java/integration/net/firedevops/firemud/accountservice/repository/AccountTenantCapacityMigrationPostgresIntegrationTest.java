@@ -462,49 +462,119 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         new AccountCapacityRefusalBudgetRepository(dsl)
             .provision(concurrentTenant.canonicalTenantId(), 1);
       });
-      UUID concurrentAttempt = UUID.randomUUID();
+      UUID winningRequest = UUID.randomUUID();
+      UUID winningAdmission = UUID.randomUUID();
+      UUID winningAttempt = UUID.randomUUID();
+      UUID winningDecision = UUID.randomUUID();
+      UUID losingRequest = UUID.randomUUID();
+      UUID losingAdmission = UUID.randomUUID();
+      UUID losingAttempt = UUID.randomUUID();
+      UUID losingDecision = UUID.randomUUID();
+      UUID freshRequest = UUID.randomUUID();
+      UUID freshAdmission = UUID.randomUUID();
+      UUID freshAttempt = UUID.randomUUID();
+      UUID freshDecision = UUID.randomUUID();
+      assertThat(List.of(winningRequest, losingRequest, freshRequest)).doesNotHaveDuplicates();
+      assertThat(List.of(winningAdmission, losingAdmission, freshAdmission))
+          .doesNotHaveDuplicates();
+      assertThat(List.of(winningAttempt, losingAttempt, freshAttempt)).doesNotHaveDuplicates();
+      String concurrentRefusalInsert =
+          "INSERT INTO account_capacity_origin_decisions "
+              + "(tenant_uuid, request_id, admission_id, capacity_rearm_fence, "
+              + "admission_attempt_id, mutation_digest, canonical_payload, decision, "
+              + "decision_id, refusal_code) "
+              + "VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?, 'CAPACITY_QUOTA_EXCEEDED') "
+              + "ON CONFLICT DO NOTHING";
       try (var stale = data.getConnection();
           var winner = data.getConnection()) {
         stale.setTransactionIsolation(java.sql.Connection.TRANSACTION_SERIALIZABLE);
         stale.setAutoCommit(false);
+        winner.setAutoCommit(true);
         var staleDsl = DSL.using(stale, SQLDialect.POSTGRES);
-        // Establish the serializable snapshot before the winning global identity is committed.
-        assertThat(staleDsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
-            .isEqualTo(1);
+        // Both origins are distinct and belong to one tenant with exactly one refusal slot.
+        // Establish the losing transaction's snapshot before the winner commits its last slot.
+        assertThat(
+                staleDsl.fetch(
+                    "SELECT slot FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                    concurrentTenant.canonicalTenantId()))
+            .isEmpty();
         assertThat(
                 DSL.using(winner, SQLDialect.POSTGRES)
                     .execute(
-                        insert,
+                        concurrentRefusalInsert,
                         concurrentTenant.canonicalTenantId(),
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        concurrentAttempt,
+                        winningRequest,
+                        winningAdmission,
+                        winningAttempt,
                         "c".repeat(64),
                         new byte[] {3},
-                        UUID.randomUUID()))
+                        winningDecision))
             .isEqualTo(1);
         assertThatThrownBy(() ->
                 staleDsl.execute(
-                    insert,
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    concurrentAttempt,
+                    concurrentRefusalInsert,
+                    concurrentTenant.canonicalTenantId(),
+                    losingRequest,
+                    losingAdmission,
+                    losingAttempt,
                     "d".repeat(64),
                     new byte[] {4},
-                    UUID.randomUUID()))
+                    losingDecision))
             .isInstanceOfSatisfying(
                 org.jooq.exception.DataAccessException.class,
                 failure -> assertThat(failure.sqlState()).isEqualTo("40001"));
         stale.rollback();
       }
-      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(2);
+
+      var winningOrigin =
+          dsl.fetchSingle(
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions "
+                      + "WHERE tenant_uuid = ?",
+                  concurrentTenant.canonicalTenantId())
+              .intoMap();
+      assertThat(winningOrigin)
+          .containsEntry("request_id", winningRequest)
+          .containsEntry("admission_id", winningAdmission)
+          .containsEntry("admission_attempt_id", winningAttempt)
+          .containsEntry("decision", "NO_ACCEPT")
+          .containsEntry("decision_id", winningDecision)
+          .containsEntry("refusal_code", "CAPACITY_QUOTA_EXCEEDED");
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  concurrentRefusalInsert,
+                  concurrentTenant.canonicalTenantId(),
+                  freshRequest,
+                  freshAdmission,
+                  freshAttempt,
+                  "e".repeat(64),
+                  new byte[] {5},
+                  freshDecision))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure).hasMessageContaining("Capacity refusal budget is exhausted");
+              });
       assertThat(
-              dsl.fetchSingle(
-                      "SELECT decision FROM account_capacity_origin_decisions WHERE admission_attempt_id = ?",
-                      concurrentAttempt)
-                  .get("decision"))
-          .isEqualTo("NO_ACCEPT");
+              dsl.fetch(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions "
+                          + "WHERE tenant_uuid = ?",
+                      concurrentTenant.canonicalTenantId())
+                  .intoMaps())
+          .usingRecursiveComparison()
+          .isEqualTo(List.of(winningOrigin));
+      assertThat(
+              dsl.fetch(
+                      "SELECT tenant_uuid, slot, decision_id "
+                          + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                      concurrentTenant.canonicalTenantId())
+                  .map(row ->
+                      new RefusalSlot(
+                          row.get("tenant_uuid", UUID.class),
+                          row.get("slot", Long.class),
+                          row.get("decision_id", UUID.class))))
+          .containsExactly(
+              new RefusalSlot(concurrentTenant.canonicalTenantId(), 1, winningDecision));
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }

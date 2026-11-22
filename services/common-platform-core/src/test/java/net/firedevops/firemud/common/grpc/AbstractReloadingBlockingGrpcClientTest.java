@@ -193,7 +193,9 @@ class AbstractReloadingBlockingGrpcClientTest {
                             assertThat(stub.getChannel()).isSameAs(previous);
                             selected.countDown();
                             try {
-                              ready.await();
+                              assertThat(ready.await(5, TimeUnit.SECONDS))
+                                  .as("the selected call must be released before its bounded wait")
+                                  .isTrue();
                             } catch (InterruptedException interrupted) {
                               Thread.currentThread().interrupt();
                               throw new AssertionError(interrupted);
