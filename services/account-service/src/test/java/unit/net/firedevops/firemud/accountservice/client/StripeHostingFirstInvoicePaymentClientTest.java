@@ -116,10 +116,12 @@ class StripeHostingFirstInvoicePaymentClientTest {
         """
         {"object":"subscription","id":"sub_exact","customer":"cus_exact",
          "default_payment_method":"pm_exact","livemode":false,"status":"incomplete",
-         "latest_invoice":"in_exact","created":%d,"metadata":{"firemud_operation_id":"%s",
-         "firemud_subscription_id":"%s"}}
+         "latest_invoice":"in_exact","created":CREATED_EPOCH,"metadata":{"firemud_operation_id":"CREATION_REQUEST",
+         "firemud_subscription_id":"SUBSCRIPTION_ID"}}
         """
-            .formatted(NOW.getEpochSecond(), INVOICE.creationRequestId(), INVOICE.subscriptionId());
+            .replace("CREATED_EPOCH", Long.toString(NOW.getEpochSecond()))
+            .replace("CREATION_REQUEST", INVOICE.creationRequestId().toString())
+            .replace("SUBSCRIPTION_ID", INVOICE.subscriptionId().toString());
     var transport = new Transport(subscription, unassigned(invoice("requires_payment_method")));
     var observation = client(transport).capture(dispatch, "sub_exact");
     assertThat(observation.paymentIntentId()).isEqualTo("pi_exact");
