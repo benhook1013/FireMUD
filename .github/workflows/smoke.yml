@@ -615,14 +615,14 @@ jobs:
             const canonicalLegacyRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
             // Include held-admission proof, authenticated cleanup, and their executed inputs.
             const canonicalPlayClassifierSha256 = {
-              "dev-tools/verify-smoke-images.sh": "f4cd887dec6c291ac8b31127561dcb510b322bc695034dc58caab50de8d67e19",
-              "dev-tools/smoke/smoke_common.py": "e7813b6b0d51c4ccf994a2ad4be8e03f4afe02555f20a05e20cfb7bc827c820f",
-              "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b",
+              "dev-tools/verify-smoke-images.sh": "6597800feb9604921a55be989e70247ec4610f81ac8c203f038429c1be7d0bc7",
+              "dev-tools/smoke/smoke_common.py": "b986110c875c2ed49e8239d09946b2c40fe7081fc3daa7cb8d5d6ce201330907",
+              "services/game-session-service/websocket-login-look-smoke.sh": "48c4969a4e29e2ea974d43405741de79f582b6131576f2ca2b5ddbbc818bf0ca",
               "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
               "dev-tools/smoke/held-admission-qualification.sh": "b548a773f1786b72d40a3728052a336cb249257a3f40735f005b060812184ed3",
               "dev-tools/smoke/held_admission_qualification.py": "2d118d7ba6a19dac7d8c717dbbbe25df6f04a3c186a3185135d1bdc5fc75b557",
-              "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
-              "dev-tools/certs/ensure-dev-certs.sh": "f2a3278145e3f8a74a2e4beba34fee8ba65f5b78f99c5494f2ca9a63cee4ddc5",
+              "dev-tools/smoke/run-owned-compose.sh": "fc127524510c02cc0fd5a1a588868be48e5a42783529e14b2b823eaf85dce5e5",
+              "dev-tools/certs/ensure-dev-certs.sh": "b94f8b1a18d53c818528d1fe31caa5d4270ad324dad6408aeaf896cdbf5f2e2b",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
               "docker/docker-compose.yml": "0e8ea0fc42a6388a267d6f80baaf1259f38a73c460aa3db77a09be0fa9436a19",
               "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
