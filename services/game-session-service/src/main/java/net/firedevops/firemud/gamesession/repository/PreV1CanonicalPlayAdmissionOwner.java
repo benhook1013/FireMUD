@@ -255,8 +255,7 @@ public final class PreV1CanonicalPlayAdmissionOwner {
                 jwt,
                 installation,
                 SESSION_DURATION.toMillis(),
-                Math.min(
-                    clock.millis() + 5_000L, decision.leaseExpiresAtEpochMillis().longValueExact()),
+                decision.leaseExpiresAtEpochMillis().longValueExact(),
                 capacityRequest);
         requireCurrent(scope, original, login, transport, current);
         return new Admitted(
