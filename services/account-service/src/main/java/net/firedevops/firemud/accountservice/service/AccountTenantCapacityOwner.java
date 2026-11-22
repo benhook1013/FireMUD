@@ -162,6 +162,8 @@ public final class AccountTenantCapacityOwner {
           || row.get("owner_readback", byte[].class) == null) throw conflict();
       current(next);
       requireSupportedShape(next);
+      // Match the fresh reservation/refusal path before arbitrating the attempt UUID.
+      capacity.usage(next);
       originDecisions.accept(next);
       requireClaim(row, recoveryOwner, claimFence, clock.instant());
       requireCurrentLifetime(next.evidence(), clock.instant());

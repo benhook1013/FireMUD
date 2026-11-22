@@ -3,9 +3,13 @@ package net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.ConnectivityState;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -255,14 +259,17 @@ class AccountTenantCapacityClientMtlsTest {
       long explicitMillis, long incomingMillis, long expectedMaximumMillis) throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicLong observedNanos = new AtomicLong();
+    var channelFactory = new CallOptionsCapturingChannelFactory();
     // Warm the channel, then reset the sample before the measured RPC.
     Server server = server("account", calls, false, observedNanos, new AtomicBoolean(true));
     var scheduler = Executors.newSingleThreadScheduledExecutor();
-    try (var client = client(server)) {
+    try (var client =
+        client(server, pki.clientProperties(directory, pki.identity("client")), channelFactory)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, deadline());
       observedNanos.set(0);
+      channelFactory.resetCapturedDeadline();
       try (var context =
           Context.current().withDeadlineAfter(incomingMillis, TimeUnit.MILLISECONDS, scheduler)) {
         var result =
@@ -275,6 +282,11 @@ class AccountTenantCapacityClientMtlsTest {
       // Delivery can consume any portion of the budget; the controlled ticker asserts selection.
       assertThat(observedNanos.get())
           .isPositive()
+          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
+      // This is sampled at newCall, before the RPC is handed to the network. The broad one-second
+      // tolerance permits local call setup, while a fixed one-second client deadline cannot pass.
+      assertThat(channelFactory.capturedDeadlineNanos.get())
+          .isGreaterThan(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis - 1_000))
           .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
     } finally {
       scheduler.shutdownNow();
@@ -703,6 +715,94 @@ class AccountTenantCapacityClientMtlsTest {
         }
       }
       return super.buildChannel(target, defaultPort, properties, keepAlive);
+    }
+  }
+
+  private static final class CallOptionsCapturingChannelFactory extends GrpcChannelFactory {
+    private final AtomicLong capturedDeadlineNanos = new AtomicLong(-1);
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      return new CallOptionsCapturingManagedChannel(
+          super.buildChannel(target, defaultPort, properties, keepAlive), capturedDeadlineNanos);
+    }
+
+    private void resetCapturedDeadline() {
+      capturedDeadlineNanos.set(-1);
+    }
+  }
+
+  private static final class CallOptionsCapturingManagedChannel extends ManagedChannel {
+    private final ManagedChannel delegate;
+    private final AtomicLong capturedDeadlineNanos;
+
+    private CallOptionsCapturingManagedChannel(
+        ManagedChannel delegate, AtomicLong capturedDeadlineNanos) {
+      this.delegate = delegate;
+      this.capturedDeadlineNanos = capturedDeadlineNanos;
+    }
+
+    @Override
+    public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> newCall(
+        MethodDescriptor<RequestT, ResponseT> methodDescriptor, CallOptions callOptions) {
+      Deadline deadline = callOptions.getDeadline();
+      capturedDeadlineNanos.set(
+          deadline == null ? 0 : deadline.timeRemaining(TimeUnit.NANOSECONDS));
+      return delegate.newCall(methodDescriptor, callOptions);
+    }
+
+    @Override
+    public String authority() {
+      return delegate.authority();
+    }
+
+    @Override
+    public ManagedChannel shutdown() {
+      delegate.shutdown();
+      return this;
+    }
+
+    @Override
+    public boolean isShutdown() {
+      return delegate.isShutdown();
+    }
+
+    @Override
+    public boolean isTerminated() {
+      return delegate.isTerminated();
+    }
+
+    @Override
+    public ManagedChannel shutdownNow() {
+      delegate.shutdownNow();
+      return this;
+    }
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+      return delegate.awaitTermination(timeout, unit);
+    }
+
+    @Override
+    public ConnectivityState getState(boolean requestConnection) {
+      return delegate.getState(requestConnection);
+    }
+
+    @Override
+    public void notifyWhenStateChanged(ConnectivityState source, Runnable callback) {
+      delegate.notifyWhenStateChanged(source, callback);
+    }
+
+    @Override
+    public void resetConnectBackoff() {
+      delegate.resetConnectBackoff();
+    }
+
+    @Override
+    public void enterIdle() {
+      delegate.enterIdle();
     }
   }
 }

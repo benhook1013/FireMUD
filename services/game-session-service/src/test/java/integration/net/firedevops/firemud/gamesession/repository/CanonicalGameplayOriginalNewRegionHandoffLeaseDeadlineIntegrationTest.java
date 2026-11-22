@@ -503,7 +503,9 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, transferRepository, capacityOwner(), receiver);
-    admin.pexpire(ascii(original.grant.key()), 0);
+    var regionLeaseKey = ascii(original.grant.key());
+    assertThat(admin.pexpire(regionLeaseKey, 0)).isTrue();
+    assertThat(admin.get(regionLeaseKey)).isNull();
     String beforeSql = sqlImage();
     Map<String, String> beforeRedis = physicalImage();
     sources.withholdWorldRead = stalledRead;
@@ -529,6 +531,7 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         .isLessThan(3500);
     assertThat(sqlImage()).isEqualTo(beforeSql);
     assertThat(physicalImage()).isEqualTo(beforeRedis);
+    assertThat(admin.get(regionLeaseKey)).isNull();
     assertThat(
             fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
         .isZero();

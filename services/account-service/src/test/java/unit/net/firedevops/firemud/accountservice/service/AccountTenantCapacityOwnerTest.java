@@ -293,6 +293,11 @@ class AccountTenantCapacityOwnerTest {
         .thenReturn(AccountTenantCapacityRepository.at(claimExpiry));
     when(row.get("execution_status", String.class)).thenReturn("NOT_EXECUTED_AFTER_AUTHORIZATION");
     when(row.get("owner_readback", byte[].class)).thenReturn(new byte[] {1});
+    String usageLock =
+        "SELECT * FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = ? FOR UPDATE";
+    org.mockito.Mockito.doReturn(mock(Record.class))
+        .when(f.dsl)
+        .fetchOne(startsWith(usageLock), any(Object[].class));
     retainOriginThenAdvanceClock(f, next, "ACCEPTED", claimExpiry);
     var rearm =
         AccountTenantCapacityOwner.class.getDeclaredMethod(
@@ -301,7 +306,10 @@ class AccountTenantCapacityOwnerTest {
     assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, claimOwner, 7L))
         .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
         .hasRootCauseMessage("IDEMPOTENCY_CONFLICT");
-    verify(f.dsl)
+    var lockOrder = org.mockito.Mockito.inOrder(f.dsl);
+    lockOrder.verify(f.dsl).fetchOne(startsWith(usageLock), any(Object[].class));
+    lockOrder
+        .verify(f.dsl)
         .execute(startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
     verify(f.dsl, never())
         .execute(

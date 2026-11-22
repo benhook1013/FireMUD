@@ -9,6 +9,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import integration.net.firedevops.firemud.accountservice.AccountTenantCreatorBootstrapIntegrationFixture;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -55,10 +56,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapDigest;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.Completion;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -70,7 +68,6 @@ import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmission
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
@@ -83,8 +80,6 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegist
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.EvidenceBundleReference;
 import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.ContextClaims;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
-import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
-import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -820,8 +815,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         tenants.importVerified(tenantSource);
         if (initializeCapacity) {
           var bootstrap = new AccountTenantCreationBootstrapOperationRepository(dsl);
-          var claim = claimBootstrap(bootstrap, account, tenantSource);
-          bootstrap.complete(claim.requestId(), completion(claim));
+          var claim =
+              AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
+                  bootstrap, account, tenantSource);
+          bootstrap.complete(
+              claim.requestId(), AccountTenantCreatorBootstrapIntegrationFixture.completion(claim));
           new AccountCapacityRefusalBudgetRepository(dsl).provision(tenantId, 1);
         }
         sources.initializeIssuerIfAbsent(ISSUER);
@@ -985,74 +983,6 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private void setInstant(Instant instant) {
       current.set(instant);
     }
-  }
-
-  private static StoredOperation claimBootstrap(
-      AccountTenantCreationBootstrapOperationRepository operations,
-      Account creator,
-      FreshTenantCreationEvidence creation) {
-    UUID accountId = creator.getAccountUuid();
-    UUID authorizationId = UUID.randomUUID();
-    String authorizationDigest =
-        AccountTenantCreationBootstrapDigest.sha256(
-            "fixture authorization".getBytes(StandardCharsets.UTF_8));
-    var evidence =
-        new FreshTenantCreatorEvidence(
-            1,
-            creation,
-            accountId,
-            authorizationId,
-            authorizationDigest,
-            FreshTenantCreatorDigest.evidenceDigest(
-                1, creation, accountId, authorizationId, authorizationDigest));
-    byte[] creatorPayload = AccountTenantCreationBootstrapDigest.creatorEvidencePayload(evidence);
-    byte[] sourcePayload = "fixture source snapshot".getBytes(StandardCharsets.UTF_8);
-    byte[] requestPayload =
-        AccountTenantCreationBootstrapDigest.requestPayload(creatorPayload, sourcePayload);
-    var claim =
-        operations.claim(
-            evidence,
-            creatorPayload,
-            sourcePayload,
-            AccountTenantCreationBootstrapDigest.sha256(sourcePayload),
-            requestPayload,
-            AccountTenantCreationBootstrapDigest.sha256(requestPayload),
-            1,
-            1);
-    assertThat(claim.claimed()).isTrue();
-    return claim.operation();
-  }
-
-  private static Completion completion(StoredOperation operation) {
-    // Controlled completion receipts exercise the real storage owner's guarded transition.
-    byte[] event = "fixture membership event".getBytes(StandardCharsets.UTF_8);
-    byte[] audit = "fixture bootstrap audit".getBytes(StandardCharsets.UTF_8);
-    byte[] result = "fixture bootstrap result".getBytes(StandardCharsets.UTF_8);
-    return new Completion(
-        1,
-        operation.baselineMembershipVersion() + 1,
-        operation.baselineMembershipAuthorityGeneration(),
-        "ACTIVE",
-        false,
-        "[\"tenantAdmin\"]".getBytes(StandardCharsets.UTF_8),
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
-            + "membership/"
-            + operation.initiatingAccountUuid()
-            + "/"
-            + operation.tenantUuid(),
-        operation.requestId().toString(),
-        1,
-        "fixture-membership-event",
-        AccountTenantCreationBootstrapDigest.sha256(event),
-        false,
-        event,
-        UUID.randomUUID(),
-        "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED",
-        Instant.now().truncatedTo(ChronoUnit.MICROS),
-        AccountTenantCreationBootstrapDigest.sha256(audit),
-        audit,
-        result,
-        AccountTenantCreationBootstrapDigest.sha256(result));
   }
 
   private static FreshTenantCreationEvidence tenantSource(UUID tenantId) {

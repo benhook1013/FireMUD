@@ -500,7 +500,6 @@ import hashlib
 import json
 import re
 import sys
-import tarfile
 import yaml
 
 root = Path(sys.argv[1])
@@ -617,13 +616,11 @@ retained_refs = (
     "3f19ad85ad2fa867b978ec009b078eb950ae1b97",
     "2c5bfc6129723cff130081a66a25986cf18555bc",
 )
-with tarfile.open(root / "dev-tools/tests/fixtures/trusted-runtime-workflow-definitions.tar.xz", "r:xz") as archive:
-    retained_definitions = []
-    for ref in retained_refs:
-        entry = archive.getmember(f"{ref}.yml")
-        if not entry.isfile():
-            raise SystemExit(f"Historical runtime workflow bytes are absent for {ref}")
-        retained_definitions.append(base64.b64encode(archive.extractfile(entry).read()).decode("ascii"))
+fixture = root / "dev-tools/tests/fixtures/trusted-runtime-workflow-definitions"
+retained_definitions = [
+    base64.b64encode((fixture / f"{ref}.yml").read_bytes()).decode("ascii")
+    for ref in retained_refs
+]
 Path(sys.argv[2] + ".retained-producers.json").write_text(json.dumps(retained_definitions))
 Path(sys.argv[2]).write_text(script)
 PY
@@ -639,11 +636,12 @@ const canonicalCancellationInventory = JSON.parse(require("node:fs").readFileSyn
 assert.equal(cancellationInventory.length, 13);
 assert.deepEqual([...cancellationInventory].sort(), canonicalCancellationInventory.sort(),
   "bounded cancellation inventory must match all canonical runtime workflow job names");
-const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
-  payload: { pull_request: { number: 42, head: { sha: head, ref: "feature", repo: {full_name: "example/firemud"}},
-    base: { ref: "develop", sha: base }, created_at: "2026-09-01T00:00:00Z" } } };
+  const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
+    payload: { repository: {default_branch: "develop"},
+      pull_request: { number: 42, head: { sha: head, ref: "feature", repo: {full_name: "example/firemud"}},
+      base: { ref: "develop", sha: base }, created_at: "2026-09-01T00:00:00Z" } } };
 const execute = new Function("github", "context", "core", "Date", "setTimeout", `return (async () => {\n${script}\n})()`);
-async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
+async function scenario(outcome, completedAtMinutes, selectionCase = "single", typedSmokeConclusion = "success") {
   let now = 1000;
   const start = now;
   const failures = [];
@@ -651,20 +649,97 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   const listRuns = async () => {}, listJobs = async () => {};
   const cancelledSource = runId => ({id: runId, workflow_id: 7, run_attempt: 1, event: "pull_request",
     status: "completed", conclusion: "cancelled", path: ".github/workflows/runtime-images.yml",
+    name: "Build Runtime Images", repository: {full_name: "example/firemud"},
+    head_repository: {full_name: "example/firemud"}, head_sha: head, head_branch: "feature",
+    display_title: title, created_at: "2026-09-01T00:00:00Z",
+    pull_requests: [{number: 42, base: {ref: "develop", sha: base}, head: {sha: head}}]});
+  const currentPullRun = (runId, runAttempt, status, conclusion) => ({
+    ...cancelledSource(runId), run_attempt: runAttempt, status, conclusion,
+  });
+  const originalRerunComplete = () => selectionCase === "recoverable-original-rerun" &&
+    now - start >= completedAtMinutes * 60 * 1000;
+  const refreshSource = (runAttempt, status = "completed", conclusion = "success") => ({
+    id: 44, workflow_id: 7, run_attempt: runAttempt, event: "repository_dispatch",
+    status, conclusion, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images",
     repository: {full_name: "example/firemud"}, head_repository: {full_name: "example/firemud"},
-    head_sha: head, display_title: title});
+    head_sha: "d".repeat(40), head_branch: "develop", display_title: title,
+    created_at: "2026-09-01T00:00:01Z", run_started_at: "2026-09-01T00:00:02Z",
+    updated_at: status === "completed" ? "2026-09-01T00:30:02Z" : "2026-09-01T00:05:00Z",
+    pull_requests: [],
+  });
+  const smokeJob = (runId, runAttempt, smokeConclusion) => {
+    const jobId = runId === 44 ? 144 : runId * 100 + 1;
+    return {id: jobId, run_id: runId, run_attempt: runAttempt,
+      head_sha: runId === 44 ? "d".repeat(40) : head,
+      workflow_name: "Build Runtime Images", name: "PR Full-Stack Smoke (runtime-required=true)",
+      status: "completed", conclusion: smokeConclusion === "success" ? "success" : "failure",
+      created_at: "2026-09-01T00:00:01Z", started_at: "2026-09-01T00:00:02Z",
+      completed_at: "2026-09-01T00:30:02Z",
+      url: `https://api.github.com/repos/example/firemud/actions/jobs/${jobId}`,
+      html_url: `https://github.com/example/firemud/actions/runs/${runId}/job/${jobId}`,
+      check_run_url: `https://api.github.com/repos/example/firemud/check-runs/${jobId}`,
+      steps: [
+        {name: "Set up job", number: 1, status: "completed", conclusion: "success",
+          started_at: "2026-09-01T00:00:02Z", completed_at: "2026-09-01T00:00:03Z"},
+        {name: "Run credential-free full-stack smoke", number: 2, status: "completed",
+          conclusion: smokeConclusion, started_at: "2026-09-01T00:05:00Z", completed_at: "2026-09-01T00:25:00Z"},
+        {name: "Stop smoke stack", number: 3, status: "completed", conclusion: "success",
+          started_at: "2026-09-01T00:25:00Z", completed_at: "2026-09-01T00:29:00Z"},
+        {name: "Known canonical transition PLAY failure with successful authenticated cleanup", number: 4,
+          status: "completed", conclusion: "skipped", started_at: null, completed_at: null},
+        {name: "Export fixed-tag preview image artifact", number: 5, status: "completed",
+          conclusion: smokeConclusion === "success" ? "success" : "skipped",
+          started_at: smokeConclusion === "success" ? "2026-09-01T00:29:00Z" : null,
+          completed_at: smokeConclusion === "success" ? "2026-09-01T00:29:30Z" : null},
+        {name: "Upload preview image artifact", number: 6, status: "completed",
+          conclusion: smokeConclusion === "success" ? "success" : "skipped",
+          started_at: smokeConclusion === "success" ? "2026-09-01T00:29:30Z" : null,
+          completed_at: smokeConclusion === "success" ? "2026-09-01T00:29:45Z" : null},
+        {name: "Summarize secure PR runtime artifact", number: 7, status: "completed",
+          conclusion: smokeConclusion === "success" ? "success" : "skipped",
+          started_at: smokeConclusion === "success" ? "2026-09-01T00:29:45Z" : null,
+          completed_at: smokeConclusion === "success" ? "2026-09-01T00:29:55Z" : null},
+        {name: "Require successful runtime smoke and authenticated cleanup", number: 8,
+          status: "completed", conclusion: smokeConclusion === "success" ? "success" : "failure",
+          started_at: "2026-09-01T00:30:00Z", completed_at: "2026-09-01T00:30:01Z"},
+      ]};
+  };
+  const isPreExecutionCancelledRun = runId => {
+    if (selectionCase === "duplicate") return runId === 42;
+    if (["cancelled-higher-id", "cancelled-older-success", "cancelled-executed", "cancelled-partial-inventory",
+      "cancelled-empty-inventory", "cancelled-unknown-outcome", "cancelled-changed-attempt"].includes(selectionCase)) return runId === 43;
+    if (selectionCase === "recoverable-original-rerun") return runId === 42 && !originalRerunComplete();
+    if (selectionCase.startsWith("recoverable-")) return runId === 42;
+    return runId === 42 && outcome === "cancelled";
+  };
   const cancellationJobs = runId => {
     if (selectionCase === "cancelled-empty-inventory") return [];
     const names = selectionCase === "cancelled-partial-inventory" ? cancellationInventory.slice(1) : cancellationInventory;
-    return names.map((name, index) => ({id: runId * 100 + index + 1, run_id: runId,
-      name,
-      status: "completed", conclusion: selectionCase === "cancelled-unknown-outcome" && index === 0
+    return names.map((name, index) => {
+      const id = runId * 100 + index + 1;
+      return {id, run_id: runId, run_attempt: 1, head_sha: head, workflow_name: "Build Runtime Images",
+        name, status: "completed", conclusion: selectionCase === "cancelled-unknown-outcome" && index === 0
         ? "failure" : index % 2 === 0 ? "cancelled" : "skipped",
-      steps: selectionCase === "cancelled-executed" && index === 0 ? [{name: "executed"}] : []}));
+        created_at: "2026-09-01T00:00:00Z", started_at: null, completed_at: "2026-09-01T00:00:10Z",
+        html_url: `https://github.com/example/firemud/actions/runs/${runId}/job/${id}`,
+        check_run_url: `https://api.github.com/repos/example/firemud/check-runs/${id}`,
+        steps: selectionCase === "cancelled-executed" && index === 0
+          ? [{name: "Set up job", number: 1, status: "completed", conclusion: "success",
+            started_at: "2026-09-01T00:00:02Z", completed_at: "2026-09-01T00:00:03Z"}]
+          : []};
+    });
   };
   const github = { rest: {
     pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: base }, merge_commit_sha: merge } }) },
-    repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
+    repos: {
+      getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }),
+      getContent: async ({path, ref}) => {
+        assert.equal(path, ".github/workflows/runtime-images.yml");
+        assert.ok([merge, "d".repeat(40)].includes(ref), ref);
+        const bytes = require("node:fs").readFileSync(process.argv[2] + ".producer");
+        return {data: {type: "file", path, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}};
+      },
+    },
     git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
@@ -672,27 +747,41 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
         if (run_id === 44) {
           typedCurrentChecks++;
           const rerunning = selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks === 1;
-          return {data: {id: run_id, run_attempt: rerunning || selectionCase === "recoverable-replacement-rerun" ? 2 : 1,
-            status: rerunning ? "in_progress" : "completed", conclusion: rerunning ? null : "success"}};
+          const attempt = rerunning || selectionCase === "recoverable-replacement-rerun" ? 2 : 1;
+          return {data: refreshSource(attempt, rerunning ? "in_progress" : "completed",
+            rerunning ? null : typedSmokeConclusion)};
         }
-        return {data: {id: run_id, run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
-          status: "completed", conclusion: "cancelled"}};
+        if (run_id === 42 && originalRerunComplete()) {
+          return {data: currentPullRun(42, 2, "completed", "success")};
+        }
+        return {data: {...cancelledSource(run_id),
+          run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1}};
       } },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
-    assert.equal(input.attempt_number, 1);
-    return {data: cancelledSource(input.run_id)};
+      if (input.run_id === 44) {
+        const attempt = selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks > 0 ? 2 : 1;
+        assert.equal(input.attempt_number, attempt);
+        return {data: refreshSource(attempt, "completed", typedSmokeConclusion)};
+      }
+      if (input.run_id === 42 && originalRerunComplete()) {
+        assert.equal(input.attempt_number, 2);
+        return {data: currentPullRun(42, 2, "completed", "success")};
+      }
+      assert.equal(input.attempt_number, 1);
+      return {data: cancelledSource(input.run_id)};
   }, paginate: async (method, input) => {
     if (method === listJobs) {
-      return [{ id: input.run_id + 100, run_id: input.run_id, name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
-        steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
+      if (input.run_id === 44) return [smokeJob(44,
+        selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks > 0 ? 2 : 1, typedSmokeConclusion)];
+      if (isPreExecutionCancelledRun(input.run_id)) return cancellationJobs(input.run_id);
+      const runConclusion = selectionCase === "newer-failure-over-success" && input.run_id === 43 ? "failure" : outcome;
+      return [smokeJob(input.run_id, originalRerunComplete() && input.run_id === 42 ? 2 : 1, runConclusion)];
     }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     if (input.run_id === 44) {
       assert.equal(input.attempt_number, selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks > 0 ? 2 : 1);
-      return [{id: 144, run_id: 44, run_attempt: input.attempt_number, head_sha: "d".repeat(40),
-        name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
-        steps: [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+      return [smokeJob(44, input.attempt_number, typedSmokeConclusion)];
     }
     return cancellationJobs(input.run_id);
   } };
@@ -704,10 +793,8 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
       const replacementRerun = selectionCase === "recoverable-replacement-rerun";
       const ready = originalRerun || replacementRerun || selectionCase === "recoverable-delayed" && now - start >= 6 * 60 * 1000;
       const waiting = originalRerun && now === start;
-      yield {data: ready ? [{id: 44, workflow_id: 7, run_attempt: replacementRerun && typedCurrentChecks > 0 ? 2 : 1, event: "repository_dispatch",
-        head_sha: "d".repeat(40), head_branch: "develop", display_title: title,
-        status: waiting ? "queued" : "completed", conclusion: waiting ? null : originalRerun ? "failure" : "success",
-        created_at: "2026-09-01T00:00:01Z"}] : []};
+      yield {data: ready ? [refreshSource(replacementRerun && typedCurrentChecks > 0 ? 2 : 1,
+        waiting ? "queued" : "completed", waiting ? null : originalRerun ? "failure" : typedSmokeConclusion)] : []};
       return;
     }
     assert.equal(input.head_sha, head);
@@ -817,6 +904,10 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   const replacementRerun = await scenario("cancelled", 0, "recoverable-replacement-rerun");
   assert.deepEqual(replacementRerun.failures, [], "a stale ordinary typed attempt must poll again and use the current one");
   assert.ok(replacementRerun.minutes > 0, "the first passing jobs snapshot belonged to an attempt that was no longer current");
+  const failedCurrentTypedSmoke = await scenario("cancelled", 0, "recoverable-replacement-rerun", "failure");
+  assert.equal(failedCurrentTypedSmoke.failures.length, 1,
+    "a current typed refresh with a failed full-stack smoke step must not be accepted as ordinary proof");
+  assert.match(failedCurrentTypedSmoke.failures[0], /did not complete successfully|did not expose a terminal PR Full-Stack Smoke job and smoke step/);
   const lateCancellation = await scenario("cancelled", 80, "recoverable-missing");
   assert.equal(lateCancellation.minutes, 90, "late cancellation cannot extend global deadline");
   assert.match(lateCancellation.failures[0], /Timed out waiting for the exact/);
@@ -866,6 +957,7 @@ const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request") {
   let now = 1000, snapshots = 0, reads = 0;
+  let qualifiedAttemptReads = 0, observedBaseMove = false, waitedMillis = 0;
   const failures = [], refs = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
     repository: {default_branch: "develop"},
@@ -873,20 +965,45 @@ async function scenario(kind, event = "pull_request") {
       base: {ref: "develop", sha: base}, created_at: "2026-09-01T00:00:00Z"},
   }};
   const source = {id: 42, workflow_id: 7, run_attempt: 1, repository: {full_name: repository},
-    created_at: "2026-09-01T00:00:00Z",
+    created_at: "2026-09-01T00:00:00Z", run_started_at: "2026-09-01T00:00:01Z",
+    updated_at: "2026-09-01T00:30:01Z",
     head_repository: {full_name: repository}, path: ".github/workflows/runtime-images.yml",
-    event, head_sha: event === "pull_request" ? head : defaultSha, head_branch: "develop", display_title: title,
-    status: "completed", conclusion: "success", pull_requests: []};
+    name: "Build Runtime Images", event, head_sha: event === "pull_request" ? head : defaultSha,
+    head_branch: event === "pull_request" ? "feature" : "develop", display_title: title,
+    status: "completed", conclusion: "success",
+    pull_requests: event === "pull_request" ? [{number: 42, base: {ref: "develop", sha: base}, head: {sha: head}}] : []};
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
+    workflow_name: "Build Runtime Images", created_at: "2026-09-01T00:00:00Z",
+    started_at: "2026-09-01T00:00:01Z", completed_at: "2026-09-01T00:30:01Z",
+    url: `https://api.github.com/repos/${repository}/actions/jobs/100`,
+    html_url: `https://github.com/${repository}/actions/runs/42/job/100`,
     check_run_url: `https://api.github.com/repos/${repository}/check-runs/100`,
     name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success",
-    steps: [{name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed", conclusion: "skipped"}]};
+    steps: [
+      {name: "Known canonical transition PLAY failure with successful authenticated cleanup", number: 1,
+        status: "completed", conclusion: "skipped", started_at: null, completed_at: null},
+      {name: "Run credential-free full-stack smoke", number: 2, status: "completed", conclusion: "success",
+        started_at: "2026-09-01T00:05:00Z", completed_at: "2026-09-01T00:25:00Z"},
+      {name: "Stop smoke stack", number: 3, status: "completed", conclusion: "success",
+        started_at: "2026-09-01T00:25:00Z", completed_at: "2026-09-01T00:29:00Z"},
+      {name: "Export fixed-tag preview image artifact", number: 4, status: "completed", conclusion: "success",
+        started_at: "2026-09-01T00:29:00Z", completed_at: "2026-09-01T00:29:30Z"},
+      {name: "Upload preview image artifact", number: 5, status: "completed", conclusion: "success",
+        started_at: "2026-09-01T00:29:30Z", completed_at: "2026-09-01T00:29:45Z"},
+      {name: "Summarize secure PR runtime artifact", number: 6, status: "completed", conclusion: "success",
+        started_at: "2026-09-01T00:29:45Z", completed_at: "2026-09-01T00:29:55Z"},
+      {name: "Require successful runtime smoke and authenticated cleanup", number: 7, status: "completed",
+        conclusion: "success", started_at: "2026-09-01T00:30:00Z", completed_at: "2026-09-01T00:30:01Z"},
+    ]};
   if (kind === "marker-missing") job.steps = [];
   if (kind === "marker-success") job.steps[0].conclusion = "success";
   if (kind.startsWith("legacy")) job.name = "PR Full-Stack Smoke";
+  if (kind === "legacy-missing") job.steps = [];
   if (kind === "not-required") job.name = "PR Full-Stack Smoke (runtime-required=false)";
   if (kind === "step-skipped") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"}];
   if (kind === "legacy-positive") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}];
+  if (kind === "failed-smoke-step") job.steps[1].conclusion = "failure";
+  if (kind === "failed-run") source.conclusion = "failure";
   const sourceMutations = {
     "wrong-repository": {repository: {full_name: "other/repo"}},
     "wrong-workflow": {workflow_id: 8}, "wrong-path": {path: ".github/workflows/fake.yml"},
@@ -899,7 +1016,9 @@ async function scenario(kind, event = "pull_request") {
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: base}, merge_commit_sha: merge}};
+      const moved = kind === "drift-during-final-attempt" && qualifiedAttemptReads >= 2;
+      observedBaseMove ||= moved;
+      return {data: {state: "open", head: {sha: head}, base: {ref: moved || kind === "stale-final" && reads > 3 ? "other" : "develop", sha: base}, merge_commit_sha: merge}};
     }},
     git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     repos: {
@@ -915,7 +1034,10 @@ async function scenario(kind, event = "pull_request") {
     actions: {
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => ({data: {...source, run_attempt: kind === "newer-attempt" ? 2 : 1}}),
+      getWorkflowRun: async () => {
+        if (refs.length) qualifiedAttemptReads++;
+        return {data: {...source, run_attempt: kind === "newer-attempt" ? 2 : 1}};
+      },
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
@@ -925,12 +1047,21 @@ async function scenario(kind, event = "pull_request") {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    snapshots++;
+    if (kind === "lagging-cleanup" && snapshots <= 2) {
+      return [{...job, steps: job.steps.filter(step => step.name !== "Stop smoke stack")}];
+    }
+    if (kind === "lagging-terminal-guard" && snapshots <= 2) {
+      return [{...job, steps: job.steps.map(step => step.name === "Require successful runtime smoke and authenticated cleanup"
+        ? {...step, status: "in_progress", conclusion: null} : step)}];
+    }
     const mutations = {
       "wrong-job": {id: 101}, "wrong-job-run": {run_id: 43}, "wrong-job-attempt": {run_attempt: 2},
-      "wrong-job-head": {head_sha: defaultSha}, "wrong-check-url": {check_run_url: "https://example.com/check"},
+      "wrong-job-head": {head_sha: "e".repeat(40)}, "wrong-check-url": {check_run_url: "https://example.com/check"},
       "failed-job": {conclusion: "failure"}, "pending-job": {status: "in_progress", conclusion: null},
     };
-    return kind === "duplicate-attempt-jobs" ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
+    return ["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
+      ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
@@ -941,25 +1072,34 @@ async function scenario(kind, event = "pull_request") {
   };
   const clock = {now: () => now, parse: Date.parse};
   await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
-    clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots};
+    clock, (callback, duration) => {now += duration; waitedMillis += duration; queueMicrotask(callback);}, require);
+  return {failures, refs, snapshots, observedBaseMove, waitedMillis};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
     const success = await scenario("success", event);
     assert.deepEqual(success.failures, []);
-    assert.deepEqual(success.refs, [event === "pull_request" ? merge : defaultSha], "immutable definition must come from actual source event revision");
+    assert.deepEqual(success.refs, event === "pull_request" ? [] : [defaultSha],
+      "typed refresh definition must come from its current source revision; native PR proof remains step-based");
   }
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   for (const kind of ["marker-missing", "marker-success", "legacy-missing", "not-required", "step-skipped", "wrong-repository", "wrong-workflow",
-    "wrong-path", "wrong-event", "wrong-head", "wrong-head-repository", "wrong-title", "wrong-source-attempt",
-    "changed-definition", "unavailable-definition", "wrong-job", "wrong-job-run", "wrong-job-attempt", "wrong-job-head",
-    "wrong-check-url", "failed-job", "pending-job", "duplicate-jobs", "duplicate-attempt-jobs", "newer-attempt", "bad-parents"]) {
-    assert.equal((await scenario(kind)).failures.length, 1, `${kind} must not supply successful proof`);
+     "wrong-path", "wrong-event", "wrong-head", "wrong-head-repository", "wrong-title", "wrong-source-attempt", "failed-smoke-step", "failed-run",
+     "changed-definition", "unavailable-definition", "wrong-job", "wrong-job-run", "wrong-job-attempt", "wrong-job-head",
+     "wrong-check-url", "failed-job", "pending-job", "duplicate-jobs", "duplicate-attempt-jobs", "newer-attempt", "bad-parents"]) {
+    assert.equal((await scenario(kind, "repository_dispatch")).failures.length, 1,
+      `${kind} must not supply successful current typed refresh proof`);
   }
   assert.equal((await scenario("wrong-dispatch-branch", "repository_dispatch")).failures.length, 1);
   const stale = await scenario("stale-final");
   assert.deepEqual(stale.failures, [], "obsolete gate exits without publishing proof for changed base ref");
+  for (const kind of ["lagging-cleanup", "lagging-terminal-guard"]) {
+    const result = await scenario(kind, "repository_dispatch");
+    assert.deepEqual(result.failures, [], `${kind} must wait for exact terminal step evidence to converge`);
+    assert(result.snapshots >= 4 && result.waitedMillis > 0, `${kind} retries only after a bounded pause`);
+  }
+  const moved = await scenario("drift-during-final-attempt", "repository_dispatch");
+  assert(moved.observedBaseMove, "typed acceptance must re-read the live base after the final attempt lookup");
   console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
@@ -3569,10 +3709,16 @@ for (const [declaration] of icons) {
   assert.equal(statusIcon("skipped"), "⏭️");
 }
 const bytes = fs.readFileSync(process.argv[2] + ".producer");
-const start = script.indexOf("function isSuccessfulRuntimeWorkflowDefinition(");
+const start = script.indexOf("function isRuntimeSourceWorkflowPath(");
 const end = script.indexOf("// Commit objects", start);
 const fn = script.slice(start, end);
 const workflowPath = ".github/workflows/runtime-images.yml";
+const isRuntimeSourceWorkflowPath = new Function("workflowPath", `${script.slice(start,
+  script.indexOf("function isSuccessfulRuntimeWorkflowDefinition(", start))}; return isRuntimeSourceWorkflowPath;`)(workflowPath);
+const evidencePendingStart = script.indexOf("function hasPendingCanonicalSmokeTerminalEvidence(");
+const evidencePendingEnd = script.indexOf("// Canonical-transition diagnostic acceptance", evidencePendingStart);
+const hasPendingCanonicalSmokeTerminalEvidence = new Function(
+  `${script.slice(evidencePendingStart, evidencePendingEnd)}; return hasPendingCanonicalSmokeTerminalEvidence;`)();
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
@@ -3661,16 +3807,25 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   return accepted;
 }
 // Final attempt authority remains separate from PR identity and label authority.
+class TerminalGitHubRequestError extends Error {}
+const retryHelpersStart = script.indexOf("function isRetryableGitHubStatus(");
+const retryHelpersEnd = script.indexOf("async function withTransientGitHubRetry(", retryHelpersStart);
+const transientCodeList = script.match(/const transientTransportCodes = new Set\(\[([\s\S]*?)\]\);/);
+assert.ok(retryHelpersStart >= 0 && retryHelpersEnd > retryHelpersStart && transientCodeList);
+const transientTransportCodes = [...transientCodeList[1].matchAll(/"([^"]+)"/g)].map(match => match[1]);
+const isTransientGitHubFailure = new Function("TerminalGitHubRequestError", "retryableStatuses", "transientTransportCodes",
+  `${script.slice(retryHelpersStart, retryHelpersEnd)}; return isTransientGitHubFailure;`)(
+    TerminalGitHubRequestError, new Set([408, 425, 429]), new Set(transientTransportCodes));
 async function finalAttemptCheck(latest, error = null) {
   const start = script.indexOf("async function isCurrentCanonicalAttempt(");
   const end = script.indexOf("async function verifyFailedPullCanonicalRefresh(", start);
   const check = new Function("github", "withTransientGitHubRetry", "owner", "repo",
-    "TerminalGitHubRequestError", "retryableStatuses", "core",
+    "TerminalGitHubRequestError", "retryableStatuses", "isTransientGitHubFailure", "core",
     `${script.slice(start, end)}; return isCurrentCanonicalAttempt;`)(
       {rest: {actions: {getWorkflowRun: async ({run_id}) => {
         assert.equal(run_id, 99); if (error) throw error; return {data: latest};
       }}}}, (_label, call) => call(), "benhook1013", "FireMUD", TerminalGitHubRequestError,
-      new Set([408, 425, 429, 500, 502, 503, 504]), {warning: () => {}});
+      new Set([408, 425, 429]), isTransientGitHubFailure, {warning: () => {}});
   return check({id: 99, run_attempt: 2, conclusion: "success"});
 }
 assert.ok(script.includes("const refreshDiscoveryTimeoutMs = prerequisiteAndQueueAllowanceMinutes * 60 * 1000;"));
@@ -3681,15 +3836,43 @@ const refreshEnd = script.indexOf("// Commit objects", refreshStart);
 const refreshFunction = script.slice(refreshStart, refreshEnd);
 async function recoveredFailure(options = {}, selectedRun = null, selectedIdentity = identity, raw = false) {
   const original = selectedRun ?? {id: 98, event: "pull_request", status: "completed", conclusion: "failure", ...options.original};
-  const replacement = options.absent ? null : {id: original.id + 1, run_attempt: 2, event: "repository_dispatch",
+  const replacement = options.absent ? null : {...source, head_sha: workflowSha, id: original.id + 1, run_attempt: 2, event: "repository_dispatch",
     status: "completed", conclusion: "success", ...options.replacement};
   const selectedTitle = `Build Runtime Images secure-pr-artifact pr-3390 base-${selectedIdentity.baseSha} ` +
     `head-${selectedIdentity.headSha} merge-${selectedIdentity.mergeSha} mode-required`;
   const selectedCandidate = {...candidate, run_id: replacement?.id, run_attempt: replacement?.run_attempt,
     head_sha: workflowSha, conclusion: replacement?.conclusion, ...options.candidate};
   let verified = 0, queries = 0;
+  async function verifyReplacement(selected, job, proofIdentity, knownPlay, allowIncompleteSteps, allowOrdinary) {
+    if (knownPlay) verified++;
+    assert.deepEqual(proofIdentity, selectedIdentity);
+    assert.equal(selected, replacement);
+    assert.deepEqual(job, options.noProducer ? undefined : selectedCandidate);
+    return verify(data => {
+      data.identity = structuredClone(selectedIdentity);
+      Object.assign(data.run, structuredClone(replacement));
+      for (const native of [data.source, data.latest]) Object.assign(native, structuredClone(replacement), {
+        display_title: selectedTitle, head_sha: workflowSha,
+      });
+      Object.assign(data.candidate, structuredClone(selectedCandidate));
+      Object.assign(data.jobs[0], structuredClone(selectedCandidate));
+      if (options.noProducer) data.jobs = [];
+      data.currentPullRequest.head.sha = selectedIdentity.headSha;
+      data.currentPullRequest.base.ref = selectedIdentity.baseRef;
+      data.currentPullRequest.merge_commit_sha = selectedIdentity.mergeSha;
+      data.currentBase = {ref: `refs/heads/${selectedIdentity.baseRef}`, object: {sha: selectedIdentity.baseSha}};
+      if (options.legacyProof) {
+        data.legacyDefinition = true;
+        for (const job of [data.candidate, data.jobs[0]]) {
+          for (const step of job.steps) if (failures.includes(step.name)) step.conclusion = "failure";
+        }
+      }
+      if (options.mutateProof) options.mutateProof(data);
+    }, "repository_dispatch", knownPlay, allowIncompleteSteps, allowOrdinary);
+  }
   const execute = new Function("repositoryName", "prNumber", "positiveInteger", "findMatchingRuntimeImagesRun",
-    "withTransientGitHubRetry", "github", "owner", "repo", "canonicalSmokeJobName", "verifyKnownPlayFailure", "context",
+    "withTransientGitHubRetry", "github", "owner", "repo", "canonicalSmokeJobName", "verifyKnownPlayFailure",
+    "verifyCanonicalSmokeProducer", "context",
     `${refreshFunction}; return verifyFailedPullCanonicalRefresh;`);
   const recover = execute(options.repository || repositoryName, "3390", value => Number.isSafeInteger(value) && value > 0,
     async (event, title, selected) => {
@@ -3706,32 +3889,12 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
     }, rest: {actions: {getWorkflowRun: async ({run_id}) => {
       assert.equal(run_id, replacement.id);
       return {data: {...replacement, ...options.latest}};
-    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, proofIdentity, allowIncompleteSteps, allowOrdinary) => {
-      verified++;
-      assert.deepEqual(proofIdentity, selectedIdentity);
-      assert.equal(selected, replacement); assert.deepEqual(job, options.noProducer ? undefined : selectedCandidate);
-      return verify(data => {
-        data.identity = structuredClone(selectedIdentity);
-        Object.assign(data.run, replacement);
-        for (const native of [data.source, data.latest]) Object.assign(native, replacement, {
-          display_title: selectedTitle, head_sha: workflowSha,
-        });
-        Object.assign(data.candidate, structuredClone(selectedCandidate));
-        Object.assign(data.jobs[0], structuredClone(selectedCandidate));
-        if (options.noProducer) data.jobs = [];
-        data.currentPullRequest.head.sha = selectedIdentity.headSha;
-        data.currentPullRequest.base.ref = selectedIdentity.baseRef;
-        data.currentPullRequest.merge_commit_sha = selectedIdentity.mergeSha;
-        data.currentBase = {ref: `refs/heads/${selectedIdentity.baseRef}`, object: {sha: selectedIdentity.baseSha}};
-        if (options.legacyProof) {
-          data.legacyDefinition = true;
-          for (const job of [data.candidate, data.jobs[0]]) {
-            for (const step of job.steps) if (failures.includes(step.name)) step.conclusion = "failure";
-          }
-        }
-        if (options.mutateProof) options.mutateProof(data);
-      }, "repository_dispatch", true, allowIncompleteSteps, allowOrdinary);
-    }, {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
+    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName,
+    (selected, job, proofIdentity, allowIncompleteSteps, allowOrdinary) =>
+      verifyReplacement(selected, job, proofIdentity, true, allowIncompleteSteps, allowOrdinary),
+    (selected, job, proofIdentity, requireTerminalSmokeProof) =>
+      verifyReplacement(selected, job, proofIdentity, false, requireTerminalSmokeProof),
+    {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
   const proof = await recover(original, selectedIdentity);
   return {accepted: raw ? proof : proof?.status === "verified" ? true
     : proof?.status === "snapshot-pending" ? "snapshot-pending" : proof, verified, queries};
@@ -3740,7 +3903,6 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
 const failedStart = script.indexOf('// A continued probe');
 const failedEnd = script.indexOf('if (fullSmokeJob?.conclusion !== "success")', failedStart);
 const failedBranch = script.slice(failedStart, failedEnd);
-class TerminalGitHubRequestError extends Error {}
 async function failedProof(error, event = "pull_request") {
   const warnings = [], failures = [], outputs = [];
   const core = {warning: value => warnings.push(value), setFailed: value => failures.push(value),
@@ -3821,15 +3983,16 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   core.summary = {addHeading() {return this;}, addRaw() {return this;},
     async write() {writes++;}};
   const original = {...source, id: 98, event: "pull_request", status: "completed", conclusion: options.originalConclusion || "failure"};
-  const execute = new Function("repositoryName", "github", "owner", "repo",
+  const execute = new Function("repositoryName", "workflowPath", "isRuntimeSourceWorkflowPath", "github", "owner", "repo",
     "canonicalSmokeJobName", "withTransientGitHubRetry", "verifyKnownPlayFailure",
+    "verifyCanonicalSmokeProducer", "isTransientGitHubFailure", "hasPendingCanonicalSmokeTerminalEvidence",
     "verifyFailedPullCanonicalRefresh", "isCurrentPullRequestObsolete", "TerminalGitHubRequestError",
     "core", "resolveCurrentIdentity", "identityKey", "setTimeout", "sleepMs",
     "Date", "started", "timeoutMs", "pullRequestCheckInterval", "findMatchingRuntimeImagesRun",
     "prNumber", "identityDiagnostic", "cancelledReplacementTimeoutMs", "context",
-    "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "positiveInteger", "isCurrentCanonicalAttempt",
+    "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "snapshotSleepMs", "positiveInteger", "isCurrentCanonicalAttempt",
     `return (async () => { let pollIteration = 0; ${actualPollingLoop} })();`);
-  await execute(repositoryName, {rest: {actions: {listJobsForWorkflowRun: "jobs"}}, paginate: async () => {
+  await execute(repositoryName, workflowPath, isRuntimeSourceWorkflowPath, {rest: {actions: {listJobsForWorkflowRun: "jobs"}}, paginate: async () => {
     if (options.originalError) throw options.originalError;
     const job = structuredClone(candidate);
     if (options.ordinaryAfterDrift) job.steps.find(s => s.name.startsWith("Known canonical")).conclusion = "skipped";
@@ -3850,7 +4013,12 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       }, "repository_dispatch");
     }
     return Boolean(options.directProof || (options.recoverDrift && run.event === "repository_dispatch"));
-  },
+  }, async (selected, _job, proofIdentity, required) => {
+    assert.equal(selected.event, "repository_dispatch");
+    assert.equal(required, true);
+    return Boolean(options.ordinaryAfterDrift && proofIdentity.baseSha === options.finalIdentity.baseSha &&
+      proofIdentity.mergeSha === options.finalIdentity.mergeSha);
+  }, isTransientGitHubFailure, hasPendingCanonicalSmokeTerminalEvidence,
     async (selectedRun, selectedIdentity) => {
       if (options.directSnapshots && selectedRun.event === "repository_dispatch") return false;
       assert.equal(selectedRun.id, original.id);
@@ -3858,6 +4026,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       assert.equal(selectedIdentity.baseSha, identity.baseSha);
       assert.equal(selectedIdentity.mergeSha, identity.mergeSha);
       const status = statuses[Math.min(polls++, statuses.length - 1)];
+      if (options.transientNested && polls === 1) throw Object.assign(new Error("temporary nested proof lookup"), {status: 502});
       if (options.rejectedObject) return {status: "rejected", run: {id: 99, run_attempt: 2}};
       if (options.proofDrift) {
         const result = await recoveredFailure({mutateProof(data) {
@@ -3901,7 +4070,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       return original;
     }, "3390", "test identity", 60,
     {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}},
-    120, 60, value => Number.isSafeInteger(value) && value > 0, async selected => {
+    120, 60, 30, value => Number.isSafeInteger(value) && value > 0, async selected => {
       finalChecks++;
       if (!options.directProof && !options.recoverDrift) {
         assert.equal(selected.id, 99);
@@ -3975,18 +4144,23 @@ async function movedCancellation(ordinaryProof, listedOldReplacement = false) {
   const refresh = {...source, event: "repository_dispatch", status: "completed", conclusion: "success"};
   const failures = [], outputs = [];
   const core = {info() {}, warning() {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
-  const execute = new Function("repositoryName", "workflowPath", "canonicalSmokeJobName", "withTransientGitHubRetry",
-    "verifyKnownPlayFailure", "isCurrentPullRequestObsolete", "core", "resolveCurrentIdentity", "identityKey",
+  const execute = new Function("repositoryName", "workflowPath", "isRuntimeSourceWorkflowPath", "canonicalSmokeJobName", "withTransientGitHubRetry",
+    "verifyKnownPlayFailure", "verifyCanonicalSmokeProducer", "isTransientGitHubFailure",
+    "isCurrentPullRequestObsolete", "core", "resolveCurrentIdentity", "identityKey",
     "setTimeout", "sleepMs", "Date", "started", "timeoutMs", "pullRequestCheckInterval", "findMatchingRuntimeImagesRun",
     "prNumber", "identityDiagnostic", "cancelledReplacementTimeoutMs", "context",
     "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "positiveInteger", "isCurrentCanonicalAttempt",
     `return (async () => { let pollIteration = 0; ${actualPollingLoop} })();`);
-  await execute(repositoryName, workflowPath, canonicalSmokeJobName, (_label, call) => call(),
+  await execute(repositoryName, workflowPath, isRuntimeSourceWorkflowPath, canonicalSmokeJobName, (_label, call) => call(),
     async (run, candidate, selected, incomplete, ordinary) => {
-      proofReads++; assert.equal(run, refresh); assert.equal(candidate, null);
+      assert.equal(run, refresh); assert.equal(candidate, null);
       assert.deepEqual(selected, moved); assert.equal(incomplete, true); assert.equal(ordinary, true);
-      return ordinaryProof ? "ordinary" : false;
-    }, async () => false, core, async (_label, live) => live ? moved : eventIdentity,
+      return false;
+    }, async (run, candidate, selected, required) => {
+      proofReads++; assert.equal(run, refresh); assert.equal(candidate, null);
+      assert.deepEqual(selected, moved); assert.equal(required, true);
+      return ordinaryProof;
+    }, isTransientGitHubFailure, async () => false, core, async (_label, live) => live ? moved : eventIdentity,
     selected => JSON.stringify(selected), resolve => {now += 10; resolve();}, 10,
     {now: () => now}, 0, 100, 1, async (event, _title, selected) => {
       if (event === "pull_request") return old;
@@ -4069,12 +4243,13 @@ function markerAccepted(overrides = {}) {
   const currentAttempt = {id: 99, run_attempt: 2, status: "completed", conclusion: "success"};
   assert.equal(await finalAttemptCheck(currentAttempt), true);
   assert.equal(await finalAttemptCheck(null, Object.assign(new Error("temporary"), {status: 502})), false);
-  assert.equal(await finalAttemptCheck(null, new Error("network")), false);
+  assert.equal(await finalAttemptCheck(null, Object.assign(new Error("network"), {code: "ECONNRESET"})), false);
   const denied = new TerminalGitHubRequestError("denied");
   await assert.rejects(finalAttemptCheck(null, denied), error => error === denied);
   const missing = Object.assign(new Error("missing"), {status: 404});
   await assert.rejects(finalAttemptCheck(null, missing), error => error === missing);
   await pendingRefreshCaller(["completed", "completed"], false, {transientFinal: true});
+  await pendingRefreshCaller(["completed", "completed"], false, {transientNested: true});
   await movedCancellation(true);
   await movedCancellation(false);
   await movedCancellation(true, true);
@@ -4184,6 +4359,12 @@ function markerAccepted(overrides = {}) {
     data.definitions[workflowPath].content = Buffer.from("wrong immutable producer").toString("base64");
     data.definitions[workflowPath].size = Buffer.byteLength("wrong immutable producer");
   }})).accepted, false, "an untrusted typed run must fail before waiting for omitted jobs");
+  for (const suffix of ["@develop", "@refs/heads/develop", "@feature+metadata", "@feature@metadata", "@refs/heads/feature./test", "@feature/ā"]) {
+    assert.equal(await verify(data => { data.source.path = workflowPath + suffix; }, "repository_dispatch", false), true);
+  }
+  for (const path of [workflowPath + "@refs/heads/a..b", workflowPath + "@refs/heads/trailing.", workflowPath + "@@", workflowPath + "@refs/tags/develop", ".github/workflows/other.yml@develop"]) {
+    assert.equal(await verify(data => { data.source.path = path; }, "repository_dispatch", false), false);
+  }
   const marker = "Known canonical transition PLAY failure with successful authenticated cleanup";
   const ordinary = candidate.steps.map(step => step.name === marker
     ? {...step, conclusion: "skipped"} : {...step});
@@ -4484,12 +4665,14 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   const wake = kind.startsWith("wake-");
   if (wake) kind = kind.slice("wake-".length);
   const cancelledCase = kind.startsWith("cancel-");
+  if (kind === "qualified-runtime") source.path = qualified(runtimePath);
   const olderCi = cancelledCase && kind !== "cancel-older-failed" ? {...ci, conclusion: "success"} : ci;
-  const newerCancelled = {...ci, id: 91, conclusion: "cancelled"};
-  const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40)};
+  const newerCancelled = {...ci, id: 91, conclusion: "cancelled",
+    path: kind === "cancel-qualified" ? qualified(validationPath) : validationPath};
+  const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40),
+    created_at: shared.refreshCreatedAt ?? source.created_at};
   const event = structuredClone(wake ? newerCancelled : source);
   event.name = event.display_title;
-  if (["qualified-runtime", "cancel-qualified"].includes(kind)) event.path = qualified(event.path);
   if (kind === "malformed-callback-path") event.path += "@refs/heads/a..b";
   if (kind === "cancel-wake-wrong-id") event.workflow_id = source.workflow_id;
   if (kind === "cancel-wake-stale-head") event.head_sha = base;
@@ -4499,12 +4682,14 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   if (kind === "nested-callback") event.event = "workflow_run";
   if (kind === "fork") event.head_repository.full_name = "fork/repo";
   if (kind === "success") event.conclusion = "success";
-  let clock = 0, tupleReads = 0, sourceReads = 0, metadataReads = 0, ciInventoryReads = 0, refreshInventoryReads = 0;
+  const startClock = Date.parse(source.created_at);
+  const sameSecond = ["same-second", "ambiguous-same-second"].includes(kind);
+  let clock = startClock + (sameSecond ? 200 : 0), tupleReads = 0, sourceReads = 0, metadataReads = 0, ciInventoryReads = 0, refreshInventoryReads = 0;
   const github = {rest: {
     actions: {
       getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
         ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
-        : {id: 7, path: source.path, name: source.name}}),
+        : {id: 7, path: runtimePath, name: source.name}}),
       getWorkflowRun: async ({run_id}) => {
         if (run_id === 91) metadataReads++;
         if (cancelledCase && run_id === 90) return {data: olderCi};
@@ -4512,11 +4697,13 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           ...(kind === "cancel-rerun" && metadataReads > 1 ? {run_attempt: 2} : {}),
           ...(kind === "cancel-native-failure" ? {conclusion: "failure"} : {})}};
         if (run_id === 90 || run_id === 91) return {data: {...ci, id: run_id,
+          ...((run_id === 91 && ["pending-newer", "late-ci-pending"].includes(kind) || run_id === 90 && kind === "ci-pending")
+            ? {status: "in_progress", conclusion: null} : {}),
           ...(kind === "ci-rerun" || ["new-meta-rerun", "old-meta-rerun"].includes(kind) && run_id === 91 && metadataReads > 1 ? {run_attempt: 2} : {})}};
         sourceReads++;
         return {data: {...source, ...((kind === "stale-attempt" || kind === "late-rerun" && sourceReads > 1) ? {run_attempt: 2} : {})}};
       },
-      listWorkflowRuns: async ({workflow_id, page, event: runEvent}) => {
+      listWorkflowRuns: async ({workflow_id, page, event: runEvent, created}) => {
         if (workflow_id === "ci.yml") ciInventoryReads++;
         let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
           : shared.visible ? [refresh] : [];
@@ -4547,13 +4734,21 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           }
           if (kind === "post-read-forbidden") throw Object.assign(new Error("visibility forbidden"), {status: 403});
           if (kind === "post-read-incomplete") return {data: {total_count: 1, workflow_runs: []}};
-          if (kind === "ambiguous-visible" && clock >= 5000) {
+          if (kind === "ambiguous-same-second") runs = [refresh, {...refresh, id: refresh.id + 1}];
+          if (kind === "ambiguous-visible" && clock - startClock >= 5000) {
             shared.visible = true;
             runs = [refresh];
           }
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && kind === "second-page") {
           runs = Array.from({length: 100}, (_, i) => ({...refresh, id: 1000 + i, display_title: "unrelated"})).concat(refresh);
+        }
+        if (created !== undefined) {
+          const range = /^(.+)\.\.\*$/.exec(created);
+          assert.ok(range, `expected an open-ended created range, got ${created}`);
+          const floor = Date.parse(range[1]);
+          assert(Number.isFinite(floor));
+          runs = runs.filter(run => Date.parse(run.created_at) >= floor);
         }
         return {data: {total_count: kind === "incomplete" ? 1001 : kind === "at-cap" ? 1000 : runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100)}};
       },
@@ -4566,10 +4761,14 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     git: {getRef: async ({ref}) => ({data: {ref: `refs/${kind === "wrong-ref" ? "heads/main" : ref}`, object: {sha: kind === "ref-moved" || kind === "late-drift" && tupleReads > 1 ? head : base}}})},
     repos: {
       getCommit: async () => ({data: {sha: merge, parents: kind === "parents-reversed" ? [{sha: head}, {sha: base}] : [{sha: base}, {sha: head}]}}),
-      createDispatchEvent: async (request) => {
-        assert.deepEqual(request, {owner: "example", repo: "firemud", event_type: "pr-runtime-base-refresh",
+      createDispatchEvent: async ({request, ...payload}) => {
+        assert.equal(request.retries, 0);
+        assert.ok(request.signal instanceof AbortSignal && !request.signal.aborted);
+        assert.deepEqual(payload, {owner: "example", repo: "firemud", event_type: "pr-runtime-base-refresh",
           client_payload: {pr_number: "42", base_ref: "develop", base_sha: base, head_sha: head, merge_sha: merge}});
         shared.posts++;
+        const createdTime = sameSecond ? Math.floor(clock / 1000) * 1000 : clock + 1000;
+        shared.refreshCreatedAt = refresh.created_at = new Date(createdTime).toISOString();
         if (["ambiguous-post", "ambiguous-visible"].includes(kind)) throw new Error("unknown POST outcome");
         if (kind === "rejected-post") throw Object.assign(new Error("validation rejected"), {status: 422, response: {status: 422}});
         if (kind !== "invisible") shared.visible = true;
@@ -4641,13 +4840,22 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     payload: {workflow_run: event, repository: {full_name: repository, default_branch: "develop"}}},
     {info: () => {}, warning: message => { (shared.warnings ??= []).push(message); },
       setFailed: message => { shared.failure = message; }},
-    class extends Date { static now() { return clock; } }, callback => {clock += 5000; callback();});
+    class extends Date {
+      constructor(...args) { super(...(args.length ? args : [clock])); }
+      static now() { return clock; }
+    }, (callback, delay) => {clock += delay; callback();});
   if (kind === "merge-unknown") assert.equal(tupleReads, 6, "unresolved mergeability retries are bounded");
   if (kind === "merge-pending") assert.equal(tupleReads, 3, "one convergence retry plus final current tuple fence");
   return shared.posts;
 }
 (async () => {
   assert.equal(await run("valid"), 1);
+  const sameSecondHandoff = {visible: false, posts: 0};
+  assert.equal(await run("same-second", sameSecondHandoff), 1);
+  assert.equal(sameSecondHandoff.observations, 1, "a unique new exact run is visible in the POST's own timestamp second");
+  const ambiguousSameSecond = {visible: false, posts: 0};
+  await assert.rejects(run("ambiguous-same-second", ambiguousSameSecond), /dispatch outcome is ambiguous/);
+  assert.equal(ambiguousSameSecond.posts, 1, "ambiguous visibility must never repeat the POST");
   assert.equal(await run("cancel-before-enforcement"), 1);
   assert.equal(await run("qualified-runtime"), 1);
   assert.equal(await run("wake-cancel-qualified"), 1);
@@ -4705,7 +4913,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   assert.equal(readTransient.observations, 2);
   assert.equal(readTransient.warnings.length, 1);
   for (const [scenario, reason, observations] of [
-    ["post-read-timeout", /accepted but visibility is unknown/, 25],
+    ["post-read-timeout", /accepted but visibility is unknown/, 24],
     ["post-read-forbidden", /visibility forbidden/, 1],
     ["post-read-incomplete", /inventory is incomplete/, 1],
   ]) {
@@ -4721,7 +4929,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   const ambiguousInvisible = {visible: false, posts: 0};
   await assert.rejects(run("ambiguous-post", ambiguousInvisible), /attempted but visibility is unknown/);
   assert.equal(ambiguousInvisible.posts, 1);
-  assert.equal(ambiguousInvisible.observations, 25, "ambiguous invisible POST holds lock for the existing bounded observation");
+  assert.equal(ambiguousInvisible.observations, 24, "ambiguous invisible POST holds lock for the existing bounded observation");
   const ambiguousVisible = {visible: false, posts: 0};
   assert.equal(await run("ambiguous-visible", ambiguousVisible), 1);
   assert.equal(ambiguousVisible.observations, 2, "observe an exact late handoff after losing the POST response");

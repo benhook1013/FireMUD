@@ -1401,10 +1401,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               && secondStatus.lastCommittedTickId() == -1L;
       if (!unchangedTimeline
           || !preparationGrantMatchesCurrent
-          || (secondBinding.freshGrant()
-              ? status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
-                  || secondStatus.executorFence().compareTo(status.executorFence()) <= 0
-              : !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation()))
+          || !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
+          || !status.executorFence().equals(secondStatus.executorFence())
           || redis.admin().pttl(redisKey) <= 0L
           || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
         throw new IllegalStateException(
