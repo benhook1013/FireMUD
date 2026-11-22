@@ -942,14 +942,33 @@ jobs:
               (response) => response.data
             );
             const refreshTargets = [];
-            for (const listedPullRequest of pullRequests) {
+            for (let pullRequestIndex = 0; pullRequestIndex < pullRequests.length; pullRequestIndex += 1) {
+              const listedPullRequest = pullRequests[pullRequestIndex];
               if (listedPullRequest.state !== "open" ||
                 listedPullRequest.base?.ref !== refreshBranch ||
                 listedPullRequest.head?.repo?.full_name !== context.payload.repository.full_name ||
                 listedPullRequest.base?.repo?.full_name !== context.payload.repository.full_name) {
                 continue;
               }
-              const resolved = await resolveExactMerge(listedPullRequest.number);
+              let resolved;
+              try {
+                resolved = await resolveExactMerge(listedPullRequest.number);
+              } catch (error) {
+                if (Date.now() >= fanoutDeadline) {
+                  const incompleteTargets = pullRequests.slice(pullRequestIndex)
+                    .map(({number}) => `#${number}`).join(", ");
+                  core.setFailed(
+                    `Runtime fan-out cutoff reached during initial PR target merge resolution; ` +
+                    `PR targets ${incompleteTargets} remain incomplete: ${error.message || error}`
+                  );
+                  break;
+                }
+                core.setFailed(
+                  `Cannot verify runtime target tuple for PR #${listedPullRequest.number}; ` +
+                  `no dispatch issued: ${error.message || error}`
+                );
+                continue;
+              }
               if (resolved) {
                 refreshTargets.push(resolved);
               }
@@ -1025,6 +1044,7 @@ jobs:
                 let existingProducers = [];
                 let fallbackReason = null;
                 let inventory;
+                const reusingInventory = runtimeInventoryPromise !== undefined;
                 if (runtimeInventoryError) {
                   fallbackReason = runtimeInventoryError;
                 } else {
@@ -1039,6 +1059,13 @@ jobs:
                 if (!fallbackReason) {
                   try {
                     existingProducers = findExactExistingProducer(tuple, inventory);
+                    // A cache hit can prove that an exact producer exists. Refresh
+                    // a miss after earlier targets so it cannot hide a new producer.
+                    if (reusingInventory && inventory.complete && existingProducers.length === 0) {
+                      runtimeInventoryPromise = loadExistingRuntimeRuns();
+                      inventory = await runtimeInventoryPromise;
+                      existingProducers = findExactExistingProducer(tuple, inventory);
+                    }
                     if (!inventory.complete) {
                       // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
                       existingProducers = [];
@@ -1104,7 +1131,7 @@ jobs:
                     reportFanoutCutoff(targetIndex, `before the runtime POST for PR #${tuple.prNumber}`);
                     break;
                   }
-                  const previousIds = new Set(inventory?.runs?.map(run => run.id) || []);
+                  const previousIds = new Set(inventory.runs.map(run => run.id));
                   // Actions run timestamps may omit sub-second precision. Inventory
                   // from the start of this second so a handoff created in the POST's
                   // timestamp second remains observable.
@@ -1202,20 +1229,40 @@ jobs:
             const expectedRepository = `${context.repo.owner}/${context.repo.repo}`;
             const defaultBranch = context.payload.repository?.default_branch;
             let runtimeWorkflow = null;
+            const isTransientVisibilityError = error => {
+              const status = error?.status ?? error?.response?.status;
+              const code = error?.code ?? error?.cause?.code;
+              return [408, 425, 429, 500, 502, 503, 504].includes(status) ||
+                (status == null && (["ABORT_ERR", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
+                  "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code) ||
+                  ["AbortError", "TimeoutError"].includes(error?.name)));
+            };
             if (pendingVisibility.length > 0) {
               try {
                 if (context.payload.repository?.full_name !== expectedRepository ||
                     typeof defaultBranch !== "string" || !defaultBranch) {
                   throw new Error("Repository identity or default branch is unavailable");
                 }
-                const {data: workflow} = await github.rest.actions.getWorkflow(withRequestDeadline({
-                  ...context.repo, workflow_id: "runtime-images.yml",
-                }, visibilityDeadline, "Runtime visibility observation"));
-                if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
-                    workflow.path !== expectedWorkflowPath || workflow.name !== "Build Runtime Images") {
-                  throw new Error("Current runtime workflow identity is not trusted");
+                while (!runtimeWorkflow && Date.now() < visibilityDeadline) {
+                  try {
+                    const {data: workflow} = await github.rest.actions.getWorkflow(withRequestDeadline({
+                      ...context.repo, workflow_id: "runtime-images.yml",
+                    }, visibilityDeadline, "Runtime visibility observation"));
+                    if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
+                        workflow.path !== expectedWorkflowPath || workflow.name !== "Build Runtime Images") {
+                      throw new Error("Current runtime workflow identity is not trusted");
+                    }
+                    runtimeWorkflow = workflow;
+                  } catch (error) {
+                    if (!isTransientVisibilityError(error)) throw error;
+                    core.warning("Producer workflow identity lookup is temporarily unavailable; retrying within the existing visibility deadline without retrying any POST.");
+                    const remaining = visibilityDeadline - Date.now();
+                    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(5000, remaining)));
+                  }
                 }
-                runtimeWorkflow = workflow;
+                if (!runtimeWorkflow) {
+                  throw new Error("Producer workflow identity remained unavailable until the visibility deadline");
+                }
               } catch (error) {
                 core.setFailed(`Runtime refresh visibility is unconfirmed because the producer workflow identity could not be trusted; no retry issued: ${error.message || error}`);
               }
@@ -1264,13 +1311,7 @@ jobs:
                   }
                 }
               } catch (error) {
-                const status = error?.status ?? error?.response?.status;
-                const code = error?.code ?? error?.cause?.code;
-                const transient = [408, 425, 429, 500, 502, 503, 504].includes(status) ||
-                  (status == null && (["ABORT_ERR", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
-                    "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code) ||
-                    ["AbortError", "TimeoutError"].includes(error?.name)));
-                if (!transient) {
+                if (!isTransientVisibilityError(error)) {
                   core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
                   break;
                 }

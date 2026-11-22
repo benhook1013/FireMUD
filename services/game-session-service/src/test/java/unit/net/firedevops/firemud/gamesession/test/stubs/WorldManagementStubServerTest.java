@@ -2,10 +2,12 @@ package net.firedevops.firemud.gamesession.test.stubs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -52,7 +54,7 @@ class WorldManagementStubServerTest {
             LookTestFixtures.DESTINATION_ROOM_NAME, destination.getSnapshot().getRoomName());
         assertEquals("SOUTH", destination.getSnapshot().getExits(0).getDirection());
       } finally {
-        channel.shutdownNow();
+        assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS));
       }
     }
   }
@@ -84,7 +86,7 @@ class WorldManagementStubServerTest {
         assertEquals("42", response.getSnapshot().getGameInstanceId());
         assertEquals(LookTestFixtures.ROOM_INSTANCE_ID, response.getSnapshot().getRoomInstanceId());
       } finally {
-        channel.shutdownNow();
+        assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS));
       }
     }
   }
@@ -109,7 +111,7 @@ class WorldManagementStubServerTest {
                             RoomInstanceRef.newBuilder().setRoomInstanceId("unknown-room").build())
                         .build()));
       } finally {
-        channel.shutdownNow();
+        assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS));
       }
     }
   }

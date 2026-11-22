@@ -89,8 +89,7 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
   @AfterEach
   void stopTransportAndClearAuthContext() throws Exception {
     if (noCertificateChannel != null) {
-      noCertificateChannel.shutdownNow();
-      assertThat(noCertificateChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(noCertificateChannel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       noCertificateChannel = null;
     }
     if (server != null) {
