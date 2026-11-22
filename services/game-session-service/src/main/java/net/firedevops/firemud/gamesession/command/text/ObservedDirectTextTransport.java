@@ -5,9 +5,9 @@ import java.util.UUID;
 import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 
 /**
- * Preserves the proxy connection identifier observed at transport intake for direct-text
- * correlation only. This metadata is not authenticated ingress, caller identity, or LOGIN/JOIN
- * authority, and it must never be reconstructed from a numeric transport session ID.
+ * Preserves original direct-text connection correlation. The ID is received from TCP Proxy or
+ * minted once at the authenticated run-owned WebSocket listener. Correlation alone supplies no
+ * LOGIN/JOIN authority and must never be reconstructed from a numeric transport session ID.
  */
 public record ObservedDirectTextTransport(String transportSessionId, UUID proxyConnectionId) {
   private static final String TRUSTED_TCP_PROXY_MODE = "trusted_tcp_proxy";
