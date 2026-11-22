@@ -354,12 +354,15 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
             .call(() -> owner.issue(loginJwt, originalLease));
+    int paidReadsBeforeCommittedRetry = paidObservationReads();
     OriginalNewCredential lostReplyRetry =
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
             .call(() -> owner.issue(loginJwt, originalLease));
     try (first;
         lostReplyRetry) {
+      // Current source, issuance fence, and a single source for opening the committed result.
+      assertPaidObservationReadsSince(paidReadsBeforeCommittedRetry, 3);
       Genesis committed = readGenesis(dsl, serializable, originalLease);
       byte[] firstHandle = first.opaqueRebindHandle();
       byte[] retryHandle = lostReplyRetry.opaqueRebindHandle();
@@ -549,7 +552,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
 
       // ACTIVE Redis state cannot substitute for a new authenticated Game Session final read.
       finalReadMode.set(FinalReadMode.CHANGED);
+      int paidReadsBeforeChangedFinal = paidObservationReads();
       assertFinalConfirmationUnavailable(owner, peer, loginJwt, originalLease);
+      // Refusal happens after the same single frozen-credential open, before another paid read.
+      assertPaidObservationReadsSince(paidReadsBeforeChangedFinal, 3);
       Genesis afterChangedRead = assertUnconfirmed(dsl, serializable, originalLease);
       assertSameActiveRegistryReadback(
           activeAfterLostConfirmation,
@@ -565,7 +571,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       // Recovery makes a fresh read of the same controlled final result and confirms the same
       // frozen lineage, token, anchors, continuity deadline, and physical registry expiry.
       finalReadMode.set(FinalReadMode.EXACT);
+      int paidReadsBeforeExactFinal = paidObservationReads();
       var confirmed = confirm(owner, peer, loginJwt, originalLease);
+      // Early source, genesis, a single frozen-credential open, and final confirmation.
+      assertPaidObservationReadsSince(paidReadsBeforeExactFinal, 4);
       assertThat(confirmed.lineageId()).isEqualTo(first.lineageId());
       assertThat(confirmed.originalLeaseId())
           .isEqualTo(UUID.fromString((String) originalLease.carrier().get("leaseId")));
@@ -640,7 +649,37 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
         assertThat(finalReadCalls.get()).isEqualTo(4);
       }
       assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+      if (paidFixture != null) {
+        var transport = paidFixture.hosting().transport();
+        int before = transport.reads();
+        var observationsAtRefresh = new AtomicInteger();
+        String issuanceBefore = issuancePhysicalImage(dsl);
+        // Only change the paid source at the committed credential open, after the earlier
+        // current-source and issuance-fence reads succeeded.
+        transport.duringRead(() ->
+            transport.duringRead(() ->
+                transport.duringRead(() -> {
+                  observationsAtRefresh.set(transport.reads() - before);
+                  paidFixture.refresh();
+                })));
+        assertThatThrownBy(() ->
+                Context.current()
+                    .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                    .call(() -> owner.issue(loginJwt, originalLease)))
+            .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
+        assertThat(observationsAtRefresh.get()).isEqualTo(3);
+        assertThat(issuancePhysicalImage(dsl)).isEqualTo(issuanceBefore);
+        assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+      }
     }
+  }
+
+  private int paidObservationReads() {
+    return paidFixture == null ? 0 : paidFixture.hosting().transport().reads();
+  }
+
+  private void assertPaidObservationReadsSince(int prior, int expectedPaid) {
+    assertThat(paidObservationReads() - prior).isEqualTo(paidFixture == null ? 0 : expectedPaid);
   }
 
   private AccountGameplayAdmissionLeaseEvidence commitActualOriginalNewLease(

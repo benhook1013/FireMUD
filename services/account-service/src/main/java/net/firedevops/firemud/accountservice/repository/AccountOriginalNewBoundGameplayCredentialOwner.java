@@ -709,39 +709,9 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       AccountGameplayAdmissionLeaseEvidence lease,
       AccountGameplayAdmissionOriginalAckReceipt receipt,
       Genesis expectedGenesis) {
-    SourceRead source = readCurrentOriginalSource(caller, lease);
-    requireExactReceipt(receipt, source.operation(), lease);
-    AccountGameplayAdmissionCurrentSources.Observed currentObservation =
-        prepareCurrentOriginalSource(caller, lease);
-    Genesis committed =
-        inWritableSerializableTransaction(dsl -> {
-          SourceRead current = readCurrentOriginalSource(dsl, caller, lease, currentObservation);
-          requireSameOriginalOperation(source.operation(), current.operation());
-          var issuance = new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
-          Genesis exact = issuance.readByLease(leaseId(lease));
-          requireSameGenesisIdentity(expectedGenesis, exact);
-          if (exact.status()
-              != AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED) {
-            throw unavailable();
-          }
-          var tokenIdentity =
-              new TokenIdentity(
-                  exact.accountId(),
-                  exact.lineageId(),
-                  exact.requestId(),
-                  exact.tokenHash(),
-                  exact.tokenJti(),
-                  exact.notBeforeEpochSecond(),
-                  exact.tokenGeneration(),
-                  exact.issuanceFence(),
-                  SourceKind.ORIGINAL_NEW);
-          new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveReadback(tokenIdentity);
-          return exact;
-        });
-
-    requireCommittedRegistryProjection(committed);
-
-    return openFrozenCredentialResult(lease, receipt, source, committed);
+    CredentialOpen opened = readCredentialForOpen(caller, lease, receipt, expectedGenesis);
+    requireCommittedRegistryProjection(opened.genesis());
+    return openFrozenCredentialResult(lease, receipt, opened.source(), opened.genesis());
   }
 
   /**
@@ -755,27 +725,33 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       AccountGameplayAdmissionLeaseEvidence lease,
       AccountGameplayAdmissionOriginalAckReceipt receipt,
       Genesis expectedGenesis) {
-    SourceRead source = readCurrentOriginalSource(caller, lease);
-    requireExactReceipt(receipt, source.operation(), lease);
+    CredentialOpen opened = readCredentialForOpen(caller, lease, receipt, expectedGenesis);
+    return openFrozenCredentialResult(lease, receipt, opened.source(), opened.genesis());
+  }
+
+  private CredentialOpen readCredentialForOpen(
+      VerifiedCaller caller,
+      AccountGameplayAdmissionLeaseEvidence lease,
+      AccountGameplayAdmissionOriginalAckReceipt receipt,
+      Genesis expectedGenesis) {
     AccountGameplayAdmissionCurrentSources.Observed currentObservation =
         prepareCurrentOriginalSource(caller, lease);
-    Genesis committed =
-        inWritableSerializableTransaction(dsl -> {
-          SourceRead current = readCurrentOriginalSource(dsl, caller, lease, currentObservation);
-          requireSameOriginalOperation(source.operation(), current.operation());
-          var issuance = new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
-          Genesis exact = issuance.readByLease(leaseId(lease));
-          requireSameGenesisIdentity(expectedGenesis, exact);
-          if (exact.status()
-              != AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED) {
-            throw unavailable();
-          }
-          new AccountGameplayTokenIdentityFenceRepository(dsl)
-              .requireActiveReadback(originalNewIdentity(exact));
-          return exact;
-        });
-
-    return openFrozenCredentialResult(lease, receipt, source, committed);
+    return inWritableSerializableTransaction(dsl -> {
+      SourceRead current = readCurrentOriginalSource(dsl, caller, lease, currentObservation);
+      // The owner already proved the immutable ACK's independent durability. Bind that exact
+      // proof and the token identity fence to the same fresh source used to verify the credential.
+      requireExactReceipt(receipt, current.operation(), lease);
+      requireSameOriginalOperation(receipt.operation(), current.operation());
+      var issuance = new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
+      Genesis exact = issuance.readByLease(leaseId(lease));
+      requireSameGenesisIdentity(expectedGenesis, exact);
+      if (exact.status() != AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED) {
+        throw unavailable();
+      }
+      new AccountGameplayTokenIdentityFenceRepository(dsl)
+          .requireActiveReadback(originalNewIdentity(exact));
+      return new CredentialOpen(current, exact);
+    });
   }
 
   private OriginalNewCredential openFrozenCredentialResult(
@@ -1217,6 +1193,8 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       Objects.requireNonNull(accountAuthority);
     }
   }
+
+  private record CredentialOpen(SourceRead source, Genesis genesis) {}
 
   private record OpenedProtectedResult(byte[] compactJwtBytes, byte[] handleBytes) {}
 
