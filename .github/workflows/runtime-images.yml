@@ -731,29 +731,29 @@ jobs:
               return {...refined, absenceProven: false};
             };
 
+            const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
+            const workflowPathMatches = (path) => {
+              if (path === expectedWorkflowPath) {
+                return true;
+              }
+              const prefix = `${expectedWorkflowPath}@`;
+              if (typeof path !== "string" || !path.startsWith(prefix)) {
+                return false;
+              }
+              const ref = path.slice(prefix.length);
+              if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
+                /[\u0000-\u0020\u007f]/.test(ref) ||
+                ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
+                ref.includes("..") || ref.includes("@{")) {
+                return false;
+              }
+              return ref.split("/").every((part) =>
+                part.length > 0 && part !== "." && part !== ".." &&
+                !part.startsWith(".") &&
+                !part.endsWith(".lock")
+              );
+            };
             const findExactExistingProducer = (tuple, inventory) => {
-              const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
-              const workflowPathMatches = (path) => {
-                if (path === expectedWorkflowPath) {
-                  return true;
-                }
-                const prefix = `${expectedWorkflowPath}@`;
-                if (typeof path !== "string" || !path.startsWith(prefix)) {
-                  return false;
-                }
-                const ref = path.slice(prefix.length);
-                if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
-                  /[\u0000-\u0020\u007f]/.test(ref) ||
-                  ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
-                  ref.includes("..") || ref.includes("@{")) {
-                  return false;
-                }
-                return ref.split("/").every((part) =>
-                  part.length > 0 && part !== "." && part !== ".." &&
-                  !part.startsWith(".") &&
-                  !part.endsWith(".lock")
-                );
-              };
               const expectedTitle =
                 `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
                 `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
@@ -1115,16 +1115,49 @@ jobs:
             // One shared bounded observation window, not 120 seconds multiplied by the fan-out size.
             // The dispatcher lock remains held; no POST is retried even when visibility is uncertain.
             const visibilityDeadline = Date.now() + 120000;
-            while (pendingVisibility.length > 0) {
+            const expectedRepository = `${context.repo.owner}/${context.repo.repo}`;
+            const defaultBranch = context.payload.repository?.default_branch;
+            let runtimeWorkflow = null;
+            if (pendingVisibility.length > 0) {
+              try {
+                if (context.payload.repository?.full_name !== expectedRepository ||
+                    typeof defaultBranch !== "string" || !defaultBranch) {
+                  throw new Error("Repository identity or default branch is unavailable");
+                }
+                const {data: workflow} = await github.rest.actions.getWorkflow({
+                  ...context.repo, workflow_id: "runtime-images.yml",
+                });
+                if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
+                    workflow.path !== expectedWorkflowPath || workflow.name !== "Build Runtime Images") {
+                  throw new Error("Current runtime workflow identity is not trusted");
+                }
+                runtimeWorkflow = workflow;
+              } catch (error) {
+                core.setFailed(`Runtime refresh visibility is unconfirmed because the producer workflow identity could not be trusted; no retry issued: ${error.message || error}`);
+              }
+            }
+            while (pendingVisibility.length > 0 && runtimeWorkflow) {
               try {
                 const observed = await readInventory(visibilitySince, ["repository_dispatch"]);
                 if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
                   const {tuple, previousIds, dispatchSince, responseUnknown} = pendingVisibility[index];
                   const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-                  if (observed.runs.some(run => run.event === "repository_dispatch" &&
-                      run.display_title === exactTitle && !previousIds.has(run.id) &&
-                      validTimestamp(run.created_at) && Date.parse(run.created_at) >= Date.parse(dispatchSince))) {
+                  const freshExactRuns = observed.runs.filter(run => run.event === "repository_dispatch" &&
+                    run.display_title === exactTitle && !previousIds.has(run.id) &&
+                    validTimestamp(run.created_at) && Date.parse(run.created_at) >= Date.parse(dispatchSince));
+                  for (const run of freshExactRuns) {
+                    if (!Number.isSafeInteger(run.id) || run.id <= 0 || run.workflow_id !== runtimeWorkflow.id ||
+                        !workflowPathMatches(run.path) ||
+                        ![runtimeWorkflow.name, exactTitle].includes(run.name) ||
+                        run.repository?.full_name !== expectedRepository ||
+                        run.head_repository?.full_name !== expectedRepository ||
+                        run.head_branch !== defaultBranch ||
+                        typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha)) {
+                      throw new Error(`run ${run.id} has the exact PR tuple title but untrusted native workflow identity`);
+                    }
+                  }
+                  if (freshExactRuns.length > 0) {
                     pendingVisibility.splice(index, 1);
                     if (responseUnknown) core.info(`Runtime refresh for PR #${tuple.prNumber} became visible after an unknown POST response.`);
                   }

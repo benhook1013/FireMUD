@@ -865,6 +865,7 @@ const titleFor = (tuple) =>
   `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
 const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
   id: Number(tuple.prNumber) * 100 + (event === "pull_request" ? 1 : 2),
+  workflow_id: 701,
   name: "Build Runtime Images",
   path: ".github/workflows/runtime-images.yml",
   event,
@@ -872,6 +873,7 @@ const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
   repository: { full_name: repository },
   head_repository: { full_name: repository },
   head_sha: event === "pull_request" ? tuple.headSha : baseSha,
+  head_branch: event === "pull_request" ? "feature/ci" : "develop",
   pull_requests: event === "pull_request"
     ? [{ number: Number(tuple.prNumber), head: { sha: tuple.headSha } }]
     : [],
@@ -1016,9 +1018,9 @@ async function runDispatcher({
         },
       },
       actions: {
-        getWorkflow: async () => ({ data: {
-          id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {}),
-        } }),
+        getWorkflow: async ({workflow_id}) => ({ data: workflow_id === "runtime-images.yml"
+          ? {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}
+          : {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})} }),
         getWorkflowRun: async () => {
           ciRunReads += 1;
           return { data: { ...ciRun, ...(ciEvidence.run ?? {}), ...(ciRunReads > 1 ? ciEvidence.latest ?? {} : {}) } };
@@ -1571,6 +1573,16 @@ async function runDispatcher({
   })});
   assert.deepEqual(multiPageObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page), [1, 2]);
   assert.equal(multiPageObservation.errors.length, 0, "an exact newly visible dispatch on the second page is accepted");
+  for (const invalidIdentity of [
+    {head_branch: "feature/ci"}, {workflow_id: 703}, {path: ".github/workflows/ci.yml"},
+    {repository: {full_name: "other/repo"}}, {head_repository: {full_name: "fork/repo"}},
+  ]) {
+    const conflicting = await runDispatcher({tuples: [tuple], visibilityResponse: (_request, [posted]) => ({
+      total_count: 1, workflow_runs: [{...posted, ...invalidIdentity}],
+    })});
+    assert.deepEqual(numbers(conflicting), ["101"], "a conflicting native identity never retries the POST");
+    assert(conflicting.errors.some(error => error.includes("untrusted native workflow identity")));
+  }
   const shiftedObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
     total_count: page === 1 ? 101 : 102,
     workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
@@ -2993,6 +3005,8 @@ function dispatchRun(id, base, head, merge) {
   return {
     ...runtimeRun(id, runtimeTitle(base, head, merge)),
     event: "repository_dispatch",
+    run_attempt: 1,
+    head_sha: base,
   };
 }
 
@@ -3051,13 +3065,20 @@ const github = {
         };
       },
     },
-    actions: { listWorkflowRuns, listJobsForWorkflowRun },
+    actions: { listWorkflowRuns, listJobsForWorkflowRun,
+      getWorkflowRun: async ({run_id}) => ({data: availableRuns.find(run => run.id === run_id)}),
+    },
   },
   paginate: async (method, input) => {
-    if (method === listJobsForWorkflowRun) {
+    if (method === listJobsForWorkflowRun ||
+        method === "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") {
       jobQueries.push(input);
+      const run = availableRuns.find(row => row.id === input.run_id);
       return [{
         name: "PR Full-Stack Smoke",
+        run_id: input.run_id,
+        run_attempt: input.attempt_number,
+        head_sha: run?.head_sha,
         status: "completed",
         conclusion: "success",
         steps: [{

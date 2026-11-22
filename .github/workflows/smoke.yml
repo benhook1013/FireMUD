@@ -611,7 +611,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "e37356b17221b496cdaa8e2a5a588f511d645b8806f11177e646420869b8feba";
+            const canonicalRuntimeWorkflowSha256 = "27c615ce72a367a234759b3940e1345ef1eb43f67775ae4865d39e1902e1be65";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -917,7 +917,11 @@ jobs:
               // Typed refresh workflow authority is its native default-branch revision;
               // the executed classifier source still belongs to the verified PR merge.
               const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
-              for (const path of [workflowPath, ...Object.keys(canonicalPlayClassifierSha256)]) {
+              // Only the exception relies on the historical PLAY classifier.
+              // An unpublished marker stays pending until its disposition is known.
+              const definitionPaths = ordinary || unknownDisposition
+                ? [workflowPath] : [workflowPath, ...Object.keys(canonicalPlayClassifierSha256)];
+              for (const path of definitionPaths) {
                 const { data: definition } = await withTransientGitHubRetry(
                   `immutable PLAY classifier definition lookup: ${path}`,
                   () => github.rest.repos.getContent({
@@ -1288,6 +1292,7 @@ jobs:
                 expectedDisplayTitle,
                 currentIdentity
               );
+              let sameTupleCancellationDeadline = null;
               if (
                 currentIdentity.sourceEvent === "pull_request" &&
                 cancelledRunId !== null &&
@@ -1366,13 +1371,15 @@ jobs:
                   continue smokeGatePolling;
                 }
                 const liveEventComparison = {...liveIdentity, sourceEvent: currentIdentity.sourceEvent};
-                requireCurrentIdentity = true;
                 if (identityKey(liveEventComparison) !== identityKey(currentIdentity)) {
                   cancelledRecoveryMoved = true;
+                  requireCurrentIdentity = true;
                   currentIdentity = liveIdentity;
                   continue smokeGatePolling;
                 }
-                currentIdentity = liveIdentity;
+                // Continue polling the original event until this replacement
+                // supplies proof or the comparison actually moves.
+                sameTupleCancellationDeadline = cancelledRunObservedAt + cancellationDiscoveryMs;
                 core.info(
                   `Exact pull_request runtime-images run ${matching.id} was cancelled; checking exact repository_dispatch replacement ${replacement.id}.`
                 );
@@ -1411,6 +1418,10 @@ jobs:
                           incompleteRefreshObservedAt = Date.now();
                         }
                         if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                          if (sameTupleCancellationDeadline !== null && Date.now() < sameTupleCancellationDeadline) {
+                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                            continue smokeGatePolling;
+                          }
                           core.setFailed("Terminal canonical refresh did not expose complete smoke-job proof within the snapshot convergence allowance.");
                           return;
                         }
@@ -1562,15 +1573,28 @@ jobs:
                       return;
                     }
                   }
+                  if (sameTupleCancellationDeadline !== null && Date.now() < sameTupleCancellationDeadline) {
+                    core.info("Cancelled-run replacement did not supply proof; checking again for the original attempt.");
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
                   core.setFailed(
                     `Runtime images run ${matching.id} did not complete successfully: run=${matching.conclusion}`
                   );
                   return;
                 }
 
-                const latestIdentity = await resolveCurrentIdentity(
-                  "Stopping stale completed smoke gate for", requireCurrentIdentity
-                );
+                async function fenceCompletedRuntimeIdentity(label) {
+                  const resolved = await resolveCurrentIdentity(
+                    label, requireCurrentIdentity || matching.event === "repository_dispatch");
+                  if (!resolved || resolved.obsolete || sameTupleCancellationDeadline === null) return resolved;
+                  const eventComparison = {...resolved, sourceEvent: currentIdentity.sourceEvent};
+                  if (identityKey(eventComparison) === identityKey(currentIdentity)) return eventComparison;
+                  cancelledRecoveryMoved = true;
+                  requireCurrentIdentity = true;
+                  return resolved;
+                }
+                const latestIdentity = await fenceCompletedRuntimeIdentity("Stopping stale completed smoke gate for");
                 if (latestIdentity?.obsolete) {
                   return;
                 }
@@ -1622,7 +1646,11 @@ jobs:
                 let fullSmokeJob = null;
                 let fullSmokeStep = null;
                 let canonicalProducerVerified = false;
-                let ordinaryMarkerProof = false;
+                const typedRuntimeProof = matching.event === "repository_dispatch";
+                if (typedRuntimeProof && !positiveInteger(matching.run_attempt)) {
+                  core.setFailed("Typed runtime smoke producer lacks an exact attempt.");
+                  return;
+                }
                 async function failNonTerminalSnapshot(reason) {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
                     return;
@@ -1648,11 +1676,14 @@ jobs:
                   const jobs = await withTransientGitHubRetry(
                     "runtime-images job lookup",
                     () => github.paginate(
-                      github.rest.actions.listJobsForWorkflowRun,
+                      typedRuntimeProof
+                        ? "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs"
+                        : github.rest.actions.listJobsForWorkflowRun,
                       {
                         owner,
                         repo,
                         run_id: matching.id,
+                        ...(typedRuntimeProof ? {attempt_number: matching.run_attempt} : {}),
                         per_page: 100,
                       }
                     )
@@ -1668,6 +1699,13 @@ jobs:
                     return;
                   }
                   fullSmokeJob = producerJobs[0] ?? null;
+                  if (typedRuntimeProof && fullSmokeJob &&
+                      (fullSmokeJob.run_id !== matching.id ||
+                        fullSmokeJob.run_attempt !== matching.run_attempt ||
+                        fullSmokeJob.head_sha !== matching.head_sha)) {
+                    await failNonTerminalSnapshot("with a producer from a different runtime attempt");
+                    return;
+                  }
                   fullSmokeStep = fullSmokeJob?.steps?.find(
                     (step) => step.name === "Run credential-free full-stack smoke"
                   ) ?? null;
@@ -1726,7 +1764,6 @@ jobs:
                     markerProof = await verifyKnownPlayFailure(
                       matching, fullSmokeJob, currentIdentity, true, true);
                     if (markerProof === "ordinary") {
-                      ordinaryMarkerProof = true;
                       canonicalProducerVerified = true;
                     }
                     if (markerProof === "snapshot-pending") {
@@ -1821,9 +1858,7 @@ jobs:
                   );
                   return;
                 }
-                const finalIdentity = await resolveCurrentIdentity(
-                  "Stopping stale smoke gate before accepting full-stack proof", requireCurrentIdentity
-                );
+                const finalIdentity = await fenceCompletedRuntimeIdentity("Stopping stale smoke gate before accepting full-stack proof");
                 if (finalIdentity?.obsolete) {
                   return;
                 }
@@ -1834,7 +1869,7 @@ jobs:
                   );
                   continue smokeGatePolling;
                 }
-                if (ordinaryMarkerProof && !await isCurrentCanonicalAttempt(matching)) {
+                if (typedRuntimeProof && !await isCurrentCanonicalAttempt(matching)) {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
