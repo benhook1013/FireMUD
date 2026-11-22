@@ -346,6 +346,17 @@ public final class PreV1CanonicalPlayAdmissionOwner {
   }
 
   private void requireCurrentAdmission(Admitted admitted) {
+    try {
+      verifyCurrentLookAdmission(admitted);
+    } catch (RuntimeException failure) {
+      LOG.warn(
+          "Run-owned LOOK admission recheck unavailable type={}",
+          failure.getClass().getSimpleName());
+      throw new LookAdmissionUnavailableException();
+    }
+  }
+
+  private void verifyCurrentLookAdmission(Admitted admitted) {
     fixture.loadFixedVerifiedEvidence().requireVerifiedFixture();
     var result = admitted.finalAdmission;
     var readOwner =
@@ -372,6 +383,12 @@ public final class PreV1CanonicalPlayAdmissionOwner {
             admitted.lifecycle.canonicalGameInstanceId(),
             result.transitionId()))) {
       throw unavailable();
+    }
+  }
+
+  public static final class LookAdmissionUnavailableException extends IllegalStateException {
+    private LookAdmissionUnavailableException() {
+      super("Run-owned LOOK admission unavailable");
     }
   }
 

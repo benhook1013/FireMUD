@@ -233,6 +233,17 @@ class AuthenticatedDirectTextCommandReceiverTest {
     verifyNoInteractions(fixture.lobby, fixture.selections);
   }
 
+  @Test
+  void lookBeforePlayRequiresAdmissionOnTheSameConnection() {
+    var fixture = fixture();
+    var command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_REQUIRED");
+    verifyNoInteractions(fixture.lobby, fixture.selections);
+  }
+
   @ParameterizedTest
   @MethodSource("malformedCommands")
   void malformedCommandsReturnUsageBeforeOwnerOrLoginDispatch(TextCommand command) {

@@ -117,7 +117,7 @@ public final class AuthenticatedDirectTextCommandReceiver {
         default -> failure("FEATURE_UNAVAILABLE", "Command unavailable");
       };
     } catch (AuthenticatedDirectTextSessions.LoginRequiredException missingLogin) {
-      return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> before REALMS, JOIN, or PLAY");
+      return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> to authenticate");
     } catch (ExpiredWorldSelectionException expiredSelection) {
       return failure(
           "INVALID_ARGUMENT", "World menu expired. Run WORLDS and choose a listed selector again.");
@@ -193,17 +193,26 @@ public final class AuthenticatedDirectTextCommandReceiver {
   private TextCommandInterpretationResult look(
       AuthenticatedDirectTextSessions.Connection connection, TextCommand command) {
     if (!command.args().isEmpty()) return failure("INVALID_ARGUMENT", "Usage: LOOK");
-    var admitted = connection.admitted;
-    if (admitted == null || !connection.isCurrent()) return admissionUnavailable();
-    try {
-      var result = required(admissions).look(admitted);
-      if (!connection.isCurrent() || connection.admitted != admitted) {
-        return admissionUnavailable();
-      }
-      return new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of(result));
-    } catch (RuntimeException unavailable) {
-      return failure("ROOM_UNAVAILABLE", "The current room is unavailable");
-    }
+    return connection.withLogin(
+        (original, login) -> {
+          var admitted = connection.admitted;
+          if (admitted == null) return failure("PLAY_REQUIRED", "Use PLAY to enter a world");
+          if (!connection.isCurrent()) return admissionUnavailable();
+          var owner = admissions.getIfAvailable();
+          if (owner == null) return admissionUnavailable();
+          try {
+            var result = owner.look(admitted);
+            if (!connection.isCurrent() || connection.admitted != admitted) {
+              return admissionUnavailable();
+            }
+            return new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(result));
+          } catch (PreV1CanonicalPlayAdmissionOwner.LookAdmissionUnavailableException unavailable) {
+            return admissionUnavailable();
+          } catch (RuntimeException unavailable) {
+            return failure("ROOM_UNAVAILABLE", "The current room is unavailable");
+          }
+        });
   }
 
   private static TextCommandInterpretationResult admissionUnavailable() {
