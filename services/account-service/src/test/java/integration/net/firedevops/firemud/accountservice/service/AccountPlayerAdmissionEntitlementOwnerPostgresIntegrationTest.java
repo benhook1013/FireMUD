@@ -545,7 +545,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     7,
                     "sha256:" + "e".repeat(64),
                     "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            f.clock);
+            Clock.systemUTC());
     assertThat(
             recovery
                 .reconcile(

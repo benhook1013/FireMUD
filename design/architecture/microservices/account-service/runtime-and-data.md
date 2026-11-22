@@ -8,7 +8,7 @@ Account owns platform identity, hosted Creator Party/operator and terms currentn
 
 ### Finalized capacity usage retirement
 
-After [Game Session supplies authenticated terminal proof](../game-session-service/runtime-and-data.md#finalized-capacity-usage-retirement) for the exact finalized binding and reservation, Account retains a unique retirement receipt and decrements used units in the same owner transaction. Exact retirement retries replay that receipt. Account preserves the original `FINALIZED` result and its replay evidence.
+After [Game Session supplies authenticated terminal proof](../game-session-service/runtime-and-data.md#finalized-capacity-usage-retirement) for the exact finalized binding and reservation, Account retains a unique retirement receipt and subtracts only the units covered by that exact receipt from used units in the same owner transaction, leaving unrelated used units unchanged. Exact retirement retries replay that receipt without a second decrement. Account preserves the original `FINALIZED` reservation, result and replay evidence.
 
 ## Implementation Status
 

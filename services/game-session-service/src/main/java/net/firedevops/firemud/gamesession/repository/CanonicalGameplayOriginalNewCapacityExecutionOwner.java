@@ -1022,10 +1022,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             + "\",\"bindingGeneration\":\""
             + candidate.transition().bindingGeneration()
             + "\"}";
-    StatefulRedisConnection<byte[], byte[]> connection = connectForRead();
+    var retainedConnection = transferReadConnection;
+    StatefulRedisConnection<byte[], byte[]> connection =
+        retainedConnection == null ? connectForRead() : retainedConnection;
     try {
       var commands = connection.async();
-      principal(commands);
+      if (retainedConnection == null) principal(commands);
       byte[] session =
           bytes(CanonicalGameplaySessionRedisKeys.session(assignment, binding.bindingRef()));
       byte[] character =
@@ -1073,8 +1075,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         if (actual != null) Arrays.fill(actual, (byte) 0);
       }
     } finally {
-      budget.awaitAsyncClose(
-          CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+      if (retainedConnection == null) {
+        budget.awaitAsyncClose(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+      }
     }
   }
 

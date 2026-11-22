@@ -668,22 +668,23 @@ jobs:
               /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
               Number.isFinite(Date.parse(value));
 
-            const readInventory = async (createdSince, events = runtimeRunEvents, deadline = fanoutDeadline, phase = "Runtime fan-out") => {
+            const readInventory = async (createdSince, events = runtimeRunEvents, deadline = fanoutDeadline, phase = "Runtime fan-out", validateVisibilityRun = null) => {
               const inventory = [];
               let complete = true;
               let incompleteReason = null;
               for (const event of events) {
                 let total;
-                const eventRuns = [], ids = new Set();
+                const eventRuns = [], ids = new Map();
                 for (let page = 1; page <= 10; page += 1) {
                   const response = await github.rest.actions.listWorkflowRuns(withRequestDeadline({
                     ...context.repo, workflow_id: "runtime-images.yml", event,
                     created: `${createdSince}..*`, per_page: runtimeRunPageSize, page,
                   }, deadline, phase));
                   const payload = response?.data;
-                  total ??= payload?.total_count;
-                  if (!Number.isInteger(total) || total < 0 || !Array.isArray(payload?.workflow_runs) ||
-                      payload.total_count !== total) throw new Error(`runtime-images ${event} inventory shifted or is malformed`);
+                  if (!Number.isInteger(payload?.total_count) || payload.total_count < 0 || !Array.isArray(payload?.workflow_runs)) {
+                    throw new Error(`runtime-images ${event} inventory is malformed`);
+                  }
+                  total ??= payload.total_count;
                   if (total >= 1000) {
                     complete = false;
                     incompleteReason ??= `runtime-images ${event} exceeds 1000-run bound`;
@@ -692,14 +693,31 @@ jobs:
                     eventRuns.push(...payload.workflow_runs);
                     break;
                   }
-                  if (payload.workflow_runs.length !== Math.min(runtimeRunPageSize, total - eventRuns.length)) {
+                  if (payload.total_count >= 1000 ||
+                      payload.workflow_runs.length !== Math.min(runtimeRunPageSize, Math.max(0, payload.total_count - (page - 1) * runtimeRunPageSize))) {
                     throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
                   }
+                  let shifted = payload.total_count !== total;
+                  const pageIds = new Set();
                   for (const run of payload.workflow_runs) {
-                    if (!Number.isSafeInteger(run.id) || run.id <= 0 || ids.has(run.id)) {
+                    if (!Number.isSafeInteger(run?.id) || run.id <= 0 || pageIds.has(run.id)) {
                       throw new Error(`runtime-images ${event} inventory has duplicate or invalid run IDs`);
                     }
-                    ids.add(run.id); eventRuns.push(run);
+                    pageIds.add(run.id);
+                    if (validateVisibilityRun) validateVisibilityRun(run);
+                    if (ids.has(run.id)) {
+                      if (JSON.stringify(ids.get(run.id)) !== JSON.stringify(run)) {
+                        throw new Error(`runtime-images ${event} inventory has contradictory duplicate run evidence`);
+                      }
+                      shifted = true;
+                    }
+                    ids.set(run.id, run); eventRuns.push(run);
+                  }
+                  if (shifted) {
+                    // Only POST visibility may restart this complete inventory; preflight stays terminal.
+                    const error = new Error(`runtime-images ${event} inventory shifted; discard the whole snapshot`);
+                    if (validateVisibilityRun) error.code = "VISIBILITY_PAGINATION_DRIFT";
+                    throw error;
                   }
                   if (eventRuns.length === total) break;
                 }
@@ -1044,7 +1062,6 @@ jobs:
                 let existingProducers = [];
                 let fallbackReason = null;
                 let inventory;
-                const reusingInventory = runtimeInventoryPromise !== undefined;
                 if (runtimeInventoryError) {
                   fallbackReason = runtimeInventoryError;
                 } else {
@@ -1059,13 +1076,6 @@ jobs:
                 if (!fallbackReason) {
                   try {
                     existingProducers = findExactExistingProducer(tuple, inventory);
-                    // A cache hit can prove that an exact producer exists. Refresh
-                    // a miss after earlier targets so it cannot hide a new producer.
-                    if (reusingInventory && inventory.complete && existingProducers.length === 0) {
-                      runtimeInventoryPromise = loadExistingRuntimeRuns();
-                      inventory = await runtimeInventoryPromise;
-                      existingProducers = findExactExistingProducer(tuple, inventory);
-                    }
                     if (!inventory.complete) {
                       // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
                       existingProducers = [];
@@ -1106,7 +1116,11 @@ jobs:
                     core.setFailed(`Cannot verify runtime tuple for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
                     break runtimeRefresh;
                   }
-                  if (!current || current.tuple.mergeSha !== tuple.mergeSha) {
+                  if (!current) {
+                    core.info(`Skipping unverified runtime tuple for PR #${tuple.prNumber}.`);
+                    break runtimeRefresh;
+                  }
+                  if (current.tuple.mergeSha !== tuple.mergeSha) {
                     core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
                     continue;
                   }
@@ -1126,6 +1140,30 @@ jobs:
                   if (currentBase.object?.sha !== tuple.baseSha) {
                     core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
                     continue;
+                  }
+                  // Native PR producers do not share this dispatch lock. Fence
+                  // both duplicate suppression and the visibility baseline after
+                  // the potentially slow live comparison checks.
+                  try {
+                    runtimeInventoryPromise = loadExistingRuntimeRuns();
+                    inventory = await runtimeInventoryPromise;
+                    const latestProducers = findExactExistingProducer(tuple, inventory);
+                    if (!inventory.complete || !latestProducers.length && inventory.absenceProven === false) {
+                      throw new Error(inventory.reason || "the final producer inventory cannot prove absence");
+                    }
+                    if (latestProducers.length) {
+                      core.info(`Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${latestProducers[0].id} appeared during tuple verification.`);
+                      break runtimeRefresh;
+                    }
+                  } catch (error) {
+                    if (Date.now() >= fanoutDeadline) {
+                      reportFanoutCutoff(targetIndex, "during final runtime inventory");
+                      break;
+                    }
+                    core.setFailed(`Cannot verify final runtime producer inventory for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
+                    runtimeInventoryPromise = undefined;
+                    runtimeInventoryError = null;
+                    break runtimeRefresh;
                   }
                   if (Date.now() >= fanoutDeadline) {
                     reportFanoutCutoff(targetIndex, `before the runtime POST for PR #${tuple.prNumber}`);
@@ -1232,7 +1270,8 @@ jobs:
             const isTransientVisibilityError = error => {
               const status = error?.status ?? error?.response?.status;
               const code = error?.code ?? error?.cause?.code;
-              return [408, 425, 429, 500, 502, 503, 504].includes(status) ||
+              return code === "VISIBILITY_PAGINATION_DRIFT" ||
+                [408, 425, 429, 500, 502, 503, 504].includes(status) ||
                 (status == null && (["ABORT_ERR", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
                   "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code) ||
                   ["AbortError", "TimeoutError"].includes(error?.name)));
@@ -1278,7 +1317,20 @@ jobs:
                   visibilitySince,
                   ["repository_dispatch"],
                   visibilityDeadline,
-                  "Runtime visibility observation"
+                  "Runtime visibility observation",
+                  run => {
+                    for (const {tuple} of pendingVisibility) {
+                      const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+                      if (run.display_title !== exactTitle) continue;
+                      if (run.event !== "repository_dispatch" || run.workflow_id !== runtimeWorkflow.id ||
+                          !workflowPathMatches(run.path) || ![runtimeWorkflow.name, exactTitle].includes(run.name) ||
+                          run.repository?.full_name !== expectedRepository || run.head_repository?.full_name !== expectedRepository ||
+                          run.head_branch !== defaultBranch || typeof run.head_sha !== "string" ||
+                          !/^[0-9a-f]{40}$/.test(run.head_sha) || !validTimestamp(run.created_at)) {
+                        throw new Error(`run ${run.id} has the exact PR tuple title but untrusted native workflow identity`);
+                      }
+                    }
+                  }
                 );
                 if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
