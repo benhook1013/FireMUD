@@ -91,15 +91,18 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                         + "WHERE success AND version = '98'")
                 .fetchOne(0, String.class))
         .isEqualTo("98");
-    assertThat(
-            context
-                .dsl()
-                .resultQuery(
-                    "SELECT count(*) FROM flyway_schema_history "
-                        + "WHERE success AND CASE WHEN version ~ '^[0-9]+(\\.[0-9]+)?$' "
-                        + "THEN version::numeric BETWEEN 74 AND 98 ELSE false END")
-                .fetchOne(0, Long.class))
-        .isEqualTo(25L);
+    // Match exact scalar identities without parsing later dotted Flyway versions as numbers.
+    for (int version = 74; version <= 98; version++) {
+      assertThat(
+              context
+                  .dsl()
+                  .resultQuery(
+                      "SELECT count(*) FROM flyway_schema_history WHERE version = ? AND success",
+                      Integer.toString(version))
+                  .fetchOne(0, Long.class))
+          .as("successful forward migration V%s", version)
+          .isEqualTo(1L);
+    }
 
     for (String relation :
         new String[] {
