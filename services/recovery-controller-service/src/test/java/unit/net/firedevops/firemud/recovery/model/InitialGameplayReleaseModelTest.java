@@ -361,6 +361,7 @@ class InitialGameplayReleaseModelTest {
     InitialGameplayReleaseTupleCodec codec =
         new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
     assertThat(codec.digest(reordered)).isEqualTo(codec.digest(original));
+    assertThat(codec.digest(reversed)).isEqualTo(codec.digest(forward));
     assertThatThrownBy(() -> reordered.issuerLayout().capacityVector().put(2, 1))
         .isInstanceOf(UnsupportedOperationException.class);
   }
