@@ -398,12 +398,15 @@ def login_play_look_steps(
 
 def canonical_fixture_play_steps(
     username, password, world, worlds_expect, login_expect, play_expect, look_expect, *,
-    discover_before_login=False,
+    startup_discovery_timeout=None,
 ):
     """Run the canonical fixture lobby, PLAY, and LOOK on one live connection."""
     discovery = ("WORLDS", [worlds_expect], "WORLDS")
-    # LOGIN starts a new custody and clears the pre-login world menu.
-    return ([discovery] if discover_before_login else []) + [
+    # Check startup convergence before LOGIN, which starts new custody and clears that menu.
+    startup_steps = []
+    if startup_discovery_timeout is not None:
+        startup_steps.append((*discovery, startup_discovery_timeout))
+    return startup_steps + [
         (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
         discovery,
         (f"REALMS {world}", ["OK REALMS"], "REALMS"),
@@ -987,11 +990,11 @@ def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None, di
             retryable_upstream_prefixes=DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES,
         )
 
-    def precondition(_line, expected_substrings, _label, _timeout):
+    def precondition(_line, expected_substrings, _label, timeout):
         return wait_for_world_discovery(
             discovery_selector,
             expected_substrings,
-            timeout_seconds,
+            timeout_seconds if timeout is None else timeout,
             send_discovery_worlds,
         )
 

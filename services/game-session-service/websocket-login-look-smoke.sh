@@ -144,7 +144,7 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
 elif fixture_mode:
     steps = canonical_fixture_play_steps(
         login_email, password, world, worlds_expect, login_expect, play_expect, look_expect,
-        discover_before_login=True,
+        startup_discovery_timeout=startup_wait_seconds,
     )
     fixture_root = Path(os.environ["FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"])
     connection_options["sslopt"] = {

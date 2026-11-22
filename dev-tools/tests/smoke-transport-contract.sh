@@ -2043,9 +2043,9 @@ assert telnet_steps[5][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
 
 websocket_steps = smoke_common.canonical_fixture_play_steps(
     "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
-    discover_before_login=True,
+    startup_discovery_timeout=90,
 )
-assert websocket_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS")
+assert websocket_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS", 90)
 assert websocket_steps[1:] == telnet_steps
 
 
