@@ -398,15 +398,13 @@ def login_play_look_steps(
 
 def canonical_fixture_play_steps(
     username, password, world, worlds_expect, login_expect, play_expect, look_expect, *,
-    startup_discovery_timeout=None,
+    startup_discovery_timeout,
 ):
     """Run the canonical fixture lobby, PLAY, and LOOK on one live connection."""
     discovery = ("WORLDS", [worlds_expect], "WORLDS")
     # Check startup convergence before LOGIN, which starts new custody and clears that menu.
-    startup_steps = []
-    if startup_discovery_timeout is not None:
-        startup_steps.append((*discovery, startup_discovery_timeout))
-    return startup_steps + [
+    return [
+        (*discovery, startup_discovery_timeout),
         (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
         discovery,
         (f"REALMS {world}", ["OK REALMS"], "REALMS"),
@@ -734,6 +732,7 @@ def run_telnet_command_plan(
     default_drain_timeout=0.25,
     step_results=None,
     discovery_selector=None,
+    retry_login_unavailable=False,
 ):
     responses = []
 
@@ -747,7 +746,9 @@ def run_telnet_command_plan(
             timeout_seconds if timeout is None else timeout,
             play_drain_timeout if label == "PLAY" else default_drain_timeout,
             step_results,
-            retry_upstream_failure=discovery_selector is None,
+            retry_upstream_failure=(
+                discovery_selector is None or (retry_login_unavailable and label == "LOGIN")
+            ),
         )
 
     def send_discovery_worlds(command, expected, label, remaining):
@@ -764,11 +765,11 @@ def run_telnet_command_plan(
             retryable_upstream_prefixes=DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES,
         )
 
-    def precondition(_line, expected_substrings, _label, _timeout):
+    def precondition(_line, expected_substrings, _label, timeout):
         return wait_for_world_discovery(
             discovery_selector,
             expected_substrings,
-            timeout_seconds,
+            timeout_seconds if timeout is None else timeout,
             send_discovery_worlds,
         )
 
@@ -835,6 +836,7 @@ def run_telnet_smoke_session(
     tls_server_hostname=None,
     tls_ca_file=None,
     discovery_selector=None,
+    retry_login_unavailable=False,
 ):
     return run_transport_session(
         open_session
@@ -856,6 +858,7 @@ def run_telnet_smoke_session(
             default_drain_timeout=default_drain_timeout,
             step_results=step_results,
             discovery_selector=discovery_selector,
+            retry_login_unavailable=retry_login_unavailable,
         ),
         f"Telnet session {host}:{port}",
         retry_window_seconds=retry_window_seconds,

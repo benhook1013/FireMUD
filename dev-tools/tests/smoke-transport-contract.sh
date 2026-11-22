@@ -2031,25 +2031,20 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
-telnet_steps = smoke_common.canonical_fixture_play_steps(
-    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK"
-)
-assert [step[2] for step in telnet_steps] == ["LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY", "LOOK"]
-assert telnet_steps[2][:2] == ("REALMS demo", ["OK REALMS"])
-assert telnet_steps[3][:2] == ("JOIN demo", ["OK JOIN"])
-assert telnet_steps[4][:2] == ("PLAY demo", ["OK PLAY"])
-
-assert telnet_steps[5][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
-
-websocket_steps = smoke_common.canonical_fixture_play_steps(
+fixture_steps = smoke_common.canonical_fixture_play_steps(
     "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
     startup_discovery_timeout=90,
 )
-assert websocket_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS", 90)
-assert websocket_steps[1:] == telnet_steps
-with patch("smoke_common.wait_for_world_discovery") as fixture_discovery:
-    smoke_common.run_websocket_command_plan(None, websocket_steps[:1], 10, discovery_selector="demo")
-assert fixture_discovery.call_args.args[:3] == ("demo", ["OK WORLDS"], 90)
+assert [step[2] for step in fixture_steps] == ["WORLDS", "LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY", "LOOK"]
+assert fixture_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS", 90)
+assert fixture_steps[3][:2] == ("REALMS demo", ["OK REALMS"])
+assert fixture_steps[4][:2] == ("JOIN demo", ["OK JOIN"])
+assert fixture_steps[5][:2] == ("PLAY demo", ["OK PLAY"])
+assert fixture_steps[6][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
+for run_plan in (smoke_common.run_telnet_command_plan, smoke_common.run_websocket_command_plan):
+    with patch("smoke_common.wait_for_world_discovery") as fixture_discovery:
+        run_plan(None, fixture_steps[:1], 10, discovery_selector="demo")
+    assert fixture_discovery.call_args.args[:3] == ("demo", ["OK WORLDS"], 90)
 
 
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
@@ -2106,7 +2101,7 @@ for script in \
   if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
     grep -Fq 'discovery_selector = world' "$script" ||
       { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
-    grep -Fq 'canonical_fixture_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect, look_expect)' "$script" ||
+    grep -Fq 'steps = canonical_fixture_play_steps(' "$script" ||
       { echo "$script baseline must use the authenticated Telnet PLAY and LOOK plan" >&2; exit 1; }
   else
     grep -Fq 'discovery_selector=world' "$script" ||
