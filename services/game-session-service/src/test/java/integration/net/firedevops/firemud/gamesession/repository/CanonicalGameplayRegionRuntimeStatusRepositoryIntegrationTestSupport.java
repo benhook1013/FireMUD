@@ -881,7 +881,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           Instant.parse("2026-10-26T00:00:02Z"));
     } catch (IllegalStateException failure) {
       if (failure.getCause()
-          instanceof CanonicalGameplayRegionRuntimeStatusRepository.ExistingOwnerReplacementRefused) {
+          instanceof
+          CanonicalGameplayRegionRuntimeStatusRepository.ExistingOwnerReplacementRefused) {
         return null;
       }
       throw failure;

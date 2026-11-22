@@ -611,53 +611,79 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
       var uncertain = assertThrows(IllegalStateException.class, () -> session.complete(request));
       assertThat(uncertain).isNotInstanceOf(CapacityRefusedException.class);
-      assertThat(uncertain.getCause()).isInstanceOfSatisfying(
-          StatusRuntimeException.class, status -> {
-            assertThat(status.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-            assertThat(status.getTrailers()).isNotNull();
-            assertThat(status.getTrailers().keys()).isEmpty();
-          });
+      assertThat(uncertain.getCause())
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              status -> {
+                assertThat(status.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+                assertThat(status.getTrailers()).isNotNull();
+                assertThat(status.getTrailers().keys()).isEmpty();
+              });
       assertThat(fault.successfullyDropped.get()).isTrue();
       assertThat(fault.calls.get()).isEqualTo(1);
       UUID committedId = fault.observedDenial.get();
       assertThat(committedId).isNotNull();
       String decision = session.capacityDecisionImage();
-      var accountDenial = session.dsl.fetchSingle(
-          "SELECT * FROM account_capacity_origin_decisions WHERE admission_attempt_id=?",
-          request.admissionAttemptId());
+      var accountDenial =
+          session.dsl.fetchSingle(
+              "SELECT * FROM account_capacity_origin_decisions WHERE admission_attempt_id=?",
+              request.admissionAttemptId());
       assertThat(accountDenial.get("decision_id", UUID.class)).isEqualTo(committedId);
       assertThat(accountDenial.get("decision", String.class)).isEqualTo("NO_ACCEPT");
       assertThat(accountDenial.get("refusal_code", String.class))
           .isEqualTo("CAPACITY_QUOTA_EXCEEDED");
       assertThat(accountDenial.get("canonical_payload", byte[].class))
           .containsExactly(CapacityAdmissionDigest.preimage(request));
-      var active = session.gs.dsl().fetchSingle(
-          "SELECT account_denial_id, tenant_id, admission_id, mutation_digest"
-              + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
-          request.admissionAttemptId());
+      var active =
+          session
+              .gs
+              .dsl()
+              .fetchSingle(
+                  "SELECT account_denial_id, tenant_id, admission_id, mutation_digest"
+                      + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  request.admissionAttemptId());
       assertThat(active.get("tenant_id", UUID.class)).isEqualTo(request.identity().tenantId());
-      assertThat(active.get("admission_id", UUID.class)).isEqualTo(request.identity().admissionId());
+      assertThat(active.get("admission_id", UUID.class))
+          .isEqualTo(request.identity().admissionId());
       assertThat(active.get("account_denial_id", UUID.class)).isNull();
       assertThat(active.get("mutation_digest", String.class)).isEqualTo(request.mutationDigest());
-      assertThat(session.gs.dsl().fetchSingle(
-              "SELECT count(*) FROM game_session_original_new_capacity_execution")
-          .get(0, Long.class)).isZero();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                  .get(0, Long.class))
+          .isZero();
       assertThat(session.capacityImage()).isEqualTo(capacityBefore);
       assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
       assertProvisionalUnchanged(session, candidate);
 
-      var exactRetry = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
-      assertThat(assertExactAccountQuotaDenial(session, request, exactRetry)).isEqualTo(committedId);
+      var exactRetry =
+          assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(assertExactAccountQuotaDenial(session, request, exactRetry))
+          .isEqualTo(committedId);
       assertThat(fault.calls.get()).isEqualTo(2);
       assertThat(session.capacityDecisionImage()).isEqualTo(decision);
-      assertThat(session.gs.dsl().fetchSingle(
-          "SELECT account_denial_id FROM game_session_capacity_evidence_charge"
-              + " WHERE admission_attempt_id=?", request.admissionAttemptId()).get(0, UUID.class))
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      request.admissionAttemptId())
+                  .get(0, UUID.class))
           .isEqualTo(committedId);
-      assertThat(session.gs.dsl().fetchSingle(
-              "SELECT count(*) FROM game_session_capacity_evidence_charge"
-                  + " WHERE tenant_id=? AND account_denial_id IS NULL",
-              request.identity().tenantId()).get(0, Long.class)).isZero();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge"
+                          + " WHERE tenant_id=? AND account_denial_id IS NULL",
+                      request.identity().tenantId())
+                  .get(0, Long.class))
+          .isZero();
 
       session.stopCapacityServer();
       var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
@@ -691,41 +717,46 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         MethodDescriptor<ReqT, RespT> method, CallOptions options, Channel next) {
       var delegate = next.newCall(method, options);
       if (!net.firedevops.firemud.account.v1.AccountServiceGrpc
-          .getCommitTenantCapacityAdmissionMethod().getFullMethodName()
-          .equals(method.getFullMethodName()) || calls.incrementAndGet() != 1) {
+              .getCommitTenantCapacityAdmissionMethod()
+              .getFullMethodName()
+              .equals(method.getFullMethodName())
+          || calls.incrementAndGet() != 1) {
         return delegate;
       }
       return new SimpleForwardingClientCall<ReqT, RespT>(delegate) {
         @Override
         public void start(Listener<RespT> listener, Metadata headers) {
-          super.start(new SimpleForwardingClientCallListener<RespT>(listener) {
-            private UUID withheld;
+          super.start(
+              new SimpleForwardingClientCallListener<RespT>(listener) {
+                private UUID withheld;
 
-            @Override
-            public void onMessage(RespT message) {
-              if (message instanceof CommitTenantCapacityAdmissionResponse response) {
-                var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(exact, response);
-                if (refusal.isPresent()
-                    && refusal.orElseThrow().code() == Failure.CAPACITY_QUOTA_EXCEEDED
-                    && refusal.orElseThrow().durableDenialId() != null) {
-                  withheld = refusal.orElseThrow().durableDenialId();
-                  return;
+                @Override
+                public void onMessage(RespT message) {
+                  if (message instanceof CommitTenantCapacityAdmissionResponse response) {
+                    var refusal =
+                        TenantCapacityAdmissionGrpcCodec.readRefusalDetails(exact, response);
+                    if (refusal.isPresent()
+                        && refusal.orElseThrow().code() == Failure.CAPACITY_QUOTA_EXCEEDED
+                        && refusal.orElseThrow().durableDenialId() != null) {
+                      withheld = refusal.orElseThrow().durableDenialId();
+                      return;
+                    }
+                  }
+                  super.onMessage(message);
                 }
-              }
-              super.onMessage(message);
-            }
 
-            @Override
-            public void onClose(Status status, Metadata trailers) {
-              if (status.isOk() && withheld != null) {
-                observedDenial.set(withheld);
-                successfullyDropped.set(true);
-                super.onClose(Status.UNAVAILABLE, new Metadata());
-                return;
-              }
-              super.onClose(status, trailers);
-            }
-          }, headers);
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                  if (status.isOk() && withheld != null) {
+                    observedDenial.set(withheld);
+                    successfullyDropped.set(true);
+                    super.onClose(Status.UNAVAILABLE, new Metadata());
+                    return;
+                  }
+                  super.onClose(status, trailers);
+                }
+              },
+              headers);
         }
       };
     }
@@ -734,26 +765,48 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       return new GrpcChannelFactory() {
         @Override
         public ManagedChannel buildChannel(
-            String target, int defaultPort, CommonGrpcClientProperties properties,
-            boolean keepAlive, ResolvedGrpcTlsMaterial tlsMaterial) throws javax.net.ssl.SSLException {
+            String target,
+            int defaultPort,
+            CommonGrpcClientProperties properties,
+            boolean keepAlive,
+            ResolvedGrpcTlsMaterial tlsMaterial)
+            throws javax.net.ssl.SSLException {
           var channel = super.buildChannel(target, defaultPort, properties, keepAlive, tlsMaterial);
           var intercepted = ClientInterceptors.intercept(channel, DropFirstQuotaResponse.this);
           return new ManagedChannel() {
             @Override
-            public ManagedChannel shutdown() { channel.shutdown(); return this; }
+            public ManagedChannel shutdown() {
+              channel.shutdown();
+              return this;
+            }
+
             @Override
-            public ManagedChannel shutdownNow() { channel.shutdownNow(); return this; }
+            public ManagedChannel shutdownNow() {
+              channel.shutdownNow();
+              return this;
+            }
+
             @Override
-            public boolean isShutdown() { return channel.isShutdown(); }
+            public boolean isShutdown() {
+              return channel.isShutdown();
+            }
+
             @Override
-            public boolean isTerminated() { return channel.isTerminated(); }
+            public boolean isTerminated() {
+              return channel.isTerminated();
+            }
+
             @Override
             public boolean awaitTermination(long timeout, TimeUnit unit)
                 throws InterruptedException {
               return channel.awaitTermination(timeout, unit);
             }
+
             @Override
-            public String authority() { return intercepted.authority(); }
+            public String authority() {
+              return intercepted.authority();
+            }
+
             @Override
             public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
                 MethodDescriptor<ReqT, RespT> method, CallOptions options) {
