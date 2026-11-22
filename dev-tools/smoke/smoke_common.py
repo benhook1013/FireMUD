@@ -387,6 +387,20 @@ def authenticated_telnet_login_steps(username, password, world, login_expect):
     ]
 
 
+def canonical_fixture_play_steps(
+    username, password, world, worlds_expect, login_expect, play_expect, look_expect
+):
+    """Run the canonical fixture lobby, PLAY, and LOOK on one live connection."""
+    return [
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        ("WORLDS", [worlds_expect], "WORLDS"),
+        (f"REALMS {world}", ["OK REALMS"], "REALMS"),
+        (f"JOIN {world}", ["OK JOIN"], "JOIN"),
+        (f"PLAY {world}", [play_expect], "PLAY", 30),
+        ("LOOK", [look_expect, "Candle-lit Antechamber"], "LOOK", 30),
+    ]
+
+
 def redact_login_credential(response, command):
     if not isinstance(response, str) or not isinstance(command, str):
         return response

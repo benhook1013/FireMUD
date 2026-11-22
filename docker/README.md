@@ -100,6 +100,8 @@ Do not request mutating parity through these entrypoints; the wrappers reject `S
 
 Fresh-bootstrap and image smoke intentionally use guarded `down -v` teardown for their claimed Compose project, deleting that project's `postgres-data`, `redis-coord-data`, and `minio-data` volumes. Restart-state preserves named volumes during restart; its default final proof cleanup disposes them, while explicit `--keep-running` retains them. `devDown` preserves named volumes. This disposes a test deployment; it is not authority to reset Coordination Redis. Follow the owning [Redis reset and recovery](../design/architecture/system-architecture-redis-reset-and-recovery.md) contract for reset questions.
 
+When the run-owned canonical WebSocket proof is enabled, its client uses a dedicated mTLS certificate from the claimed Compose fixture and connects to the loopback-only Game Session listener. It uses the same canonical admission owners as Telnet with its own fresh fixture data. Between the two probes, the wrapper verifies the claimed project is empty, removes its generated authored-world receipt, and recreates the project under the original capability. The public Gateway and first-party browser bootstrap are outside this proof.
+
 Gradle-managed local prebuilt-image stack:
 
 ```bash
