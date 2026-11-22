@@ -61,14 +61,16 @@ public final class AccountCapacityRefusalBudgetRepository {
             tenantId);
     if (row == null) throw unavailable();
     if (!Integer.valueOf(maximumRefusals).equals(row.get(0, Integer.class))) throw conflict();
-    var count =
+    var lastSlot =
         dsl.fetchOne(
-            "SELECT count(*) FROM (SELECT 1 FROM account_capacity_origin_decisions WHERE tenant_uuid=? AND decision='NO_ACCEPT' LIMIT ?) retained",
-            tenantId,
-            (long) maximumRefusals + 1);
-    Long retained = count == null ? null : count.get(0, Long.class);
-    if (retained == null || retained < 0 || retained > maximumRefusals) throw unavailable();
-    long remaining = maximumRefusals - retained;
+            "SELECT slot FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ? ORDER BY slot DESC LIMIT 1",
+            tenantId);
+    // V1040.6 backfills immutable contiguous slots and fresh refusals append lastSlot + 1.
+    // The indexed highest slot is therefore the retained refusal count without scanning origins.
+    Long highestSlot = lastSlot == null ? Long.valueOf(0L) : lastSlot.get("slot", Long.class);
+    if (highestSlot == null || highestSlot < 0 || highestSlot > maximumRefusals)
+      throw unavailable();
+    long remaining = maximumRefusals - highestSlot;
     if (remaining < requiredHeadroom) throw unavailable();
     return remaining;
   }

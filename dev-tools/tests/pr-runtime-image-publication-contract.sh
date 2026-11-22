@@ -409,12 +409,18 @@ const gate = {
   ],
 };
 
-async function runReconcile({ambiguousPost = true, expireFirstRequest = false} = {}) {
+async function runReconcile({
+  ambiguousPost = true, expireFirstRequest = false, initialDiscoveryUnavailable = false,
+  ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
+} = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
+  let failInitialDiscovery = initialDiscoveryUnavailable;
   let visibleRun = null;
   let postAttempts = 0;
   const requests = [];
+  const inventoryRequests = [];
+  const nativeJobRunIds = [];
   const signals = [];
   const dispatchRequests = [];
   const warnings = [];
@@ -476,7 +482,7 @@ async function runReconcile({ambiguousPost = true, expireFirstRequest = false} =
         },
         getWorkflowRun: async options => {
           record("actions.getWorkflowRun", options, {owner, repo, run_id: options.run_id});
-          return {data: options.run_id === source.id ? source : ciRun};
+          return {data: options.run_id === source.id ? source : ciNativeRuns[options.run_id] ?? ciRun};
         },
         listWorkflowRuns: async options => {
           const {workflow_id: workflowId, event, head_sha: requestedHead, created, per_page, page} = options;
@@ -484,9 +490,17 @@ async function runReconcile({ambiguousPost = true, expireFirstRequest = false} =
           if (requestedHead !== undefined) normal.head_sha = requestedHead;
           if (created !== undefined) normal.created = created;
           record("actions.listWorkflowRuns", options, normal);
+          inventoryRequests.push(options);
+          if (failInitialDiscovery && workflowId === "runtime-images.yml" &&
+              event === "pull_request" && created === undefined) {
+            failInitialDiscovery = false;
+            throw Object.assign(new Error("fixture initial runtime discovery unavailable"), {status: 503});
+          }
           let runs = [];
-          if (workflowId === "ci.yml") runs = [ciRun];
-          if (workflowId === "runtime-images.yml" && event === "repository_dispatch" && visibleRun) runs = [visibleRun];
+          if (workflowId === "ci.yml") runs = ciRuns;
+          if (workflowId === "runtime-images.yml" && event === "repository_dispatch" && visibleRun) {
+            runs = postVisibilityRuns ?? [visibleRun];
+          }
           return {data: {total_count: runs.length, workflow_runs: runs}};
         },
       },
@@ -528,8 +542,11 @@ async function runReconcile({ambiguousPost = true, expireFirstRequest = false} =
     },
     paginate: async (route, options) => {
       assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-      record("paginate.jobs", options, {owner, repo, run_id: ciRun.id, attempt_number: 1, per_page: 100});
-      return [gate];
+      record("paginate.jobs", options, {
+        owner, repo, run_id: options.run_id, attempt_number: options.attempt_number, per_page: 100,
+      });
+      nativeJobRunIds.push(options.run_id);
+      return ciJobsByRun[options.run_id] ?? [gate];
     },
   };
   let failure = null;
@@ -539,7 +556,8 @@ async function runReconcile({ambiguousPost = true, expireFirstRequest = false} =
   } catch (error) {
     failure = error;
   }
-  return {failure, now, requests, signals, dispatchRequests, postAttempts, warnings, infos};
+  return {failure, now, requests, signals, inventoryRequests, nativeJobRunIds,
+    dispatchRequests, postAttempts, warnings, infos};
 }
 
 (async () => {
@@ -553,8 +571,74 @@ async function runReconcile({ambiguousPost = true, expireFirstRequest = false} =
   assert(uncertainPost.infos.some(message => message.includes("exact refresh is visible")));
   assert(uncertainPost.requests.some(({name}) => name === "actions.listWorkflowRuns"),
     "the one-shot handoff must be followed by source-derived visibility observation");
+  const postVisibilityFloor = "2026-01-08T00:00:00.000Z..*";
+  const assertExactPostVisibilityFilter = result => {
+    const observationReads = result.inventoryRequests.filter(request => request.created === postVisibilityFloor);
+    assert(observationReads.length > 0, "post-POST observation must query from the dispatch timestamp second");
+    for (const request of observationReads) {
+      const {request: requestOptions, ...normalOptions} = request;
+      assert.deepEqual(normalOptions, {
+        owner, repo, workflow_id: "runtime-images.yml", event: "repository_dispatch",
+        created: postVisibilityFloor, per_page: 100, page: 1,
+      }, "visibility must be a complete bounded native producer query on the exact post-POST time filter");
+      assert.deepEqual(Object.keys(requestOptions).sort(), ["signal"],
+        "post-POST visibility query carries only its source-derived deadline signal");
+    }
+    assert.equal(result.postAttempts, 1, "post-POST visibility must never retransmit a dispatch");
+  };
+  assertExactPostVisibilityFilter(uncertainPost);
   assert(uncertainPost.requests.every(({signal}) => signal.timeoutMs > 0),
     "every mocked GitHub request receives a positive wall-clock AbortSignal budget");
+  const sameSecondVisible = await runReconcile({
+    postVisibilityRuns: [{
+      id: 9001, workflow_id: 777, run_attempt: 1,
+      path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images",
+      display_title: sourceTitle, event: "repository_dispatch", status: "queued", conclusion: null,
+      repository: {full_name: repository}, head_repository: {full_name: repository},
+      head_branch: "develop", head_sha: base, created_at: "2026-01-08T00:00:00Z",
+    }],
+  });
+  assert.equal(sameSecondVisible.failure, null,
+    "a unique exact native producer created in the POST's timestamp second is visible");
+  assert.equal(sameSecondVisible.postAttempts, 1);
+  assertExactPostVisibilityFilter(sameSecondVisible);
+  const stalePostVisibility = await runReconcile({
+    postVisibilityRuns: [{
+      id: 9001, workflow_id: 777, run_attempt: 1,
+      path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images",
+      display_title: sourceTitle, event: "repository_dispatch", status: "queued", conclusion: null,
+      repository: {full_name: repository}, head_repository: {full_name: repository},
+      head_branch: "develop", head_sha: base, created_at: "2026-01-07T23:59:59Z",
+    }],
+  });
+  assert.match(stalePostVisibility.failure?.message ?? "", /visibility is unknown/,
+    "an otherwise exact native run created before the dispatch second cannot confirm the POST");
+  assert.equal(stalePostVisibility.postAttempts, 1);
+  assert.equal(stalePostVisibility.inventoryRequests.filter(request =>
+    request.created === postVisibilityFloor
+  ).length, 24, "out-of-filter stale evidence remains unaccepted throughout the bounded observation window");
+  assertExactPostVisibilityFilter(stalePostVisibility);
+  const unavailableInitialDiscovery = await runReconcile({initialDiscoveryUnavailable: true});
+  assert.match(unavailableInitialDiscovery.failure?.message ?? "", /initial runtime discovery unavailable/);
+  assert.equal(unavailableInitialDiscovery.postAttempts, 0,
+    "unavailable initial source inventory is not treated as absence or permission to dispatch");
+  assert.equal(unavailableInitialDiscovery.inventoryRequests[0].event, "pull_request");
+  assert.equal(unavailableInitialDiscovery.inventoryRequests[0].workflow_id, "runtime-images.yml");
+  const newestCancelledCi = {
+    ...ciRun, id: 7002, status: "completed", conclusion: "cancelled",
+  };
+  const olderSuccessfulCi = {...ciRun, id: 7001, status: "completed", conclusion: "success"};
+  const cancelledNewestMissingEvidence = await runReconcile({
+    ciRuns: [newestCancelledCi, olderSuccessfulCi],
+    ciNativeRuns: {[newestCancelledCi.id]: newestCancelledCi, [olderSuccessfulCi.id]: olderSuccessfulCi},
+    ciJobsByRun: {[newestCancelledCi.id]: [], [olderSuccessfulCi.id]: [gate]},
+  });
+  assert.equal(cancelledNewestMissingEvidence.failure, null);
+  assert.equal(cancelledNewestMissingEvidence.postAttempts, 0,
+    "a cancelled newest CI candidate with missing native jobs cannot reveal older success or authorize refresh");
+  assert.deepEqual(cancelledNewestMissingEvidence.nativeJobRunIds,
+    [newestCancelledCi.id, newestCancelledCi.id, newestCancelledCi.id],
+    "classification retries only the newest cancelled attempt and never falls back to older CI evidence");
   const expiredRequest = await runReconcile({expireFirstRequest: true});
   assert.equal(expiredRequest.failure?.name, "TimeoutError", "request abortion at the wall-clock deadline remains visible");
   assert.equal(expiredRequest.requests.length, 1, "deadline abortion prevents subsequent GitHub API requests");

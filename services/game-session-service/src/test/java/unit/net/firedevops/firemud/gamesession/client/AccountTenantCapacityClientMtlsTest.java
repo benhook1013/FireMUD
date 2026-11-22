@@ -9,9 +9,11 @@ import io.grpc.ConnectivityState;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.ServerStreamTracer;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -61,6 +63,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(90)
 class AccountTenantCapacityClientMtlsTest {
   private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
+  private static final UUID ACCOUNT_RESERVATION_ID =
+      UUID.fromString("a0577a29-9be2-42a0-9770-4c2a90581358");
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
 
@@ -102,14 +106,57 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void exactAccountPeerReceivesCompleteRequestAndExactRetryKeepsReservation() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("account", calls, false);
+    AtomicInteger messages = new AtomicInteger();
+    Server server =
+        server(
+            "account",
+            calls,
+            false,
+            new AtomicLong(),
+            new AtomicBoolean(true),
+            null,
+            null,
+            messages);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       var first = client.commit(request, deadline());
-      assertThat(client.commit(request, deadline())).isEqualTo(first);
+      var replay = client.commit(request, deadline());
+      assertThat(first.reservationId()).isEqualTo(ACCOUNT_RESERVATION_ID);
+      assertThat(replay).isEqualTo(first);
       assertThat(first.identity()).isEqualTo(request.identity());
       assertThat(calls).hasValue(2);
+      assertThat(messages).hasValue(2);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void unavailableAfterAccountReceivedRequestDoesNotRetryCommit() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest request,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                calls.incrementAndGet();
+                observer.onError(
+                    Status.UNAVAILABLE.withDescription("Response lost").asRuntimeException());
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+      assertThat(calls).hasValue(1);
     } finally {
       stop(server);
     }
@@ -213,7 +260,10 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void wrongAccountPeerIsRejectedBeforeRequestBodyRelease() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("wrong", calls, false);
+    AtomicInteger messages = new AtomicInteger();
+    Server server =
+        server(
+            "wrong", calls, false, new AtomicLong(), new AtomicBoolean(true), null, null, messages);
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(
@@ -225,6 +275,7 @@ class AccountTenantCapacityClientMtlsTest {
                 assertThat(failure.getStatus().getDescription())
                     .isEqualTo("Request requires the exact authenticated server workload identity");
               });
+      assertThat(messages).hasValue(0);
       assertThat(calls).hasValue(0);
     } finally {
       stop(server);
@@ -270,6 +321,7 @@ class AccountTenantCapacityClientMtlsTest {
       client.commit(request, deadline());
       observedNanos.set(0);
       channelFactory.resetCapturedDeadline();
+      var earliest = Deadline.after(expectedMaximumMillis, TimeUnit.MILLISECONDS);
       try (var context =
           Context.current().withDeadlineAfter(incomingMillis, TimeUnit.MILLISECONDS, scheduler)) {
         var result =
@@ -283,11 +335,11 @@ class AccountTenantCapacityClientMtlsTest {
       assertThat(observedNanos.get())
           .isPositive()
           .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
-      // This is sampled at newCall, before the RPC is handed to the network. The broad one-second
-      // tolerance permits local call setup, while a fixed one-second client deadline cannot pass.
-      assertThat(channelFactory.capturedDeadlineNanos.get())
-          .isGreaterThan(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis - 1_000))
-          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
+      var latest = Deadline.after(expectedMaximumMillis, TimeUnit.MILLISECONDS);
+      var captured = channelFactory.capturedDeadline.get();
+      assertThat(captured).isNotNull();
+      assertThat(captured.isBefore(earliest)).isFalse();
+      assertThat(latest.isBefore(captured)).isFalse();
     } finally {
       scheduler.shutdownNow();
       stop(server);
@@ -503,8 +555,10 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void expiredExplicitBudgetSendsNoAccountRequest() throws Exception {
     AtomicInteger calls = new AtomicInteger();
+    var channelFactory = new CallOptionsCapturingChannelFactory();
     Server server = server("account", calls, false);
-    try (var client = client(server)) {
+    try (var client =
+        client(server, pki.clientProperties(directory, pki.identity("client")), channelFactory)) {
       client.init();
       assertThatThrownBy(() ->
               client.commit(
@@ -514,6 +568,7 @@ class AccountTenantCapacityClientMtlsTest {
           .satisfies(failure ->
               assertThat(Status.fromThrowable(failure).getCode())
                   .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(channelFactory.callsCreated).hasValue(0);
       assertThat(calls).hasValue(0);
     } finally {
       stop(server);
@@ -598,7 +653,28 @@ class AccountTenantCapacityClientMtlsTest {
       AtomicReference<Throwable> serverFailure,
       CountDownLatch measuredSecondInvocationEntered)
       throws Exception {
-    UUID reservationId = UUID.randomUUID();
+    return server(
+        identity,
+        calls,
+        wrongFence,
+        observedNanos,
+        respond,
+        serverFailure,
+        measuredSecondInvocationEntered,
+        null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      AtomicReference<Throwable> serverFailure,
+      CountDownLatch measuredSecondInvocationEntered,
+      AtomicInteger messages)
+      throws Exception {
+    UUID reservationId = ACCOUNT_RESERVATION_ID;
     var service =
         new AccountServiceGrpc.AccountServiceImplBase() {
           @Override
@@ -663,22 +739,42 @@ class AccountTenantCapacityClientMtlsTest {
             observer.onCompleted();
           }
         };
-    return startServer(identity, service);
+    return startServer(identity, service, messages);
   }
 
   private static Server startServer(
       String identity, AccountServiceGrpc.AccountServiceImplBase service) throws Exception {
+    return startServer(identity, service, null);
+  }
+
+  private static Server startServer(
+      String identity, AccountServiceGrpc.AccountServiceImplBase service, AtomicInteger messages)
+      throws Exception {
     var peer = pki.identity(identity);
-    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(
-            GrpcSslContexts.configure(
-                    SslContextBuilder.forServer(peer.privateKey(), peer.certificate()))
-                .trustManager(pki.caCertificate())
-                .clientAuth(ClientAuth.REQUIRE)
-                .build())
-        .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
-        .build()
-        .start();
+    var builder =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(peer.privateKey(), peer.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()));
+    if (messages != null) {
+      builder.addStreamTracerFactory(
+          new ServerStreamTracer.Factory() {
+            @Override
+            public ServerStreamTracer newServerStreamTracer(String method, Metadata headers) {
+              return new ServerStreamTracer() {
+                @Override
+                public void inboundMessage(int sequence) {
+                  messages.incrementAndGet();
+                }
+              };
+            }
+          });
+    }
+    return builder.build().start();
   }
 
   private static void assertServerSide(
@@ -719,37 +815,37 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   private static final class CallOptionsCapturingChannelFactory extends GrpcChannelFactory {
-    private final AtomicLong capturedDeadlineNanos = new AtomicLong(-1);
+    private final AtomicReference<Deadline> capturedDeadline = new AtomicReference<>();
+    private final AtomicInteger callsCreated = new AtomicInteger();
 
     @Override
     public ManagedChannel buildChannel(
         String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
         throws SSLException {
       return new CallOptionsCapturingManagedChannel(
-          super.buildChannel(target, defaultPort, properties, keepAlive), capturedDeadlineNanos);
+          super.buildChannel(target, defaultPort, properties, keepAlive), this);
     }
 
     private void resetCapturedDeadline() {
-      capturedDeadlineNanos.set(-1);
+      capturedDeadline.set(null);
     }
   }
 
   private static final class CallOptionsCapturingManagedChannel extends ManagedChannel {
     private final ManagedChannel delegate;
-    private final AtomicLong capturedDeadlineNanos;
+    private final CallOptionsCapturingChannelFactory capture;
 
     private CallOptionsCapturingManagedChannel(
-        ManagedChannel delegate, AtomicLong capturedDeadlineNanos) {
+        ManagedChannel delegate, CallOptionsCapturingChannelFactory capture) {
       this.delegate = delegate;
-      this.capturedDeadlineNanos = capturedDeadlineNanos;
+      this.capture = capture;
     }
 
     @Override
     public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> newCall(
         MethodDescriptor<RequestT, ResponseT> methodDescriptor, CallOptions callOptions) {
-      Deadline deadline = callOptions.getDeadline();
-      capturedDeadlineNanos.set(
-          deadline == null ? 0 : deadline.timeRemaining(TimeUnit.NANOSECONDS));
+      capture.callsCreated.incrementAndGet();
+      capture.capturedDeadline.set(callOptions.getDeadline());
       return delegate.newCall(methodDescriptor, callOptions);
     }
 
@@ -760,7 +856,7 @@ class AccountTenantCapacityClientMtlsTest {
 
     @Override
     public ManagedChannel shutdown() {
-      delegate.shutdown();
+      assertThat(delegate.shutdown()).isNotNull();
       return this;
     }
 
@@ -776,7 +872,7 @@ class AccountTenantCapacityClientMtlsTest {
 
     @Override
     public ManagedChannel shutdownNow() {
-      delegate.shutdownNow();
+      assertThat(delegate.shutdownNow()).isNotNull();
       return this;
     }
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
@@ -32,7 +33,7 @@ class EntityManagementStubServerTest {
         assertThat(response.getMessage()).isEqualTo("pong");
         assertThat(response.hasError()).isFalse();
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -59,7 +60,7 @@ class EntityManagementStubServerTest {
           assertThat(response.getCharactersList()).containsExactly(sharedCharacter(fixture.name()));
         }
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -88,7 +89,7 @@ class EntityManagementStubServerTest {
         assertThat(resetResponse.hasError()).isFalse();
         assertThat(resetResponse.getCharactersList()).containsExactly(sharedCharacter("Emberline"));
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -143,7 +144,7 @@ class EntityManagementStubServerTest {
                     .getCharactersList())
             .isEmpty();
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -171,7 +172,7 @@ class EntityManagementStubServerTest {
                     .getCharactersList())
             .isEmpty();
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -202,7 +203,7 @@ class EntityManagementStubServerTest {
                     .getCharactersList())
             .isEmpty();
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
