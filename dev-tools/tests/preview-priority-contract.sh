@@ -526,11 +526,14 @@ cat > "$TEMP_DIR/bin/gh" <<'EOF'
 set -euo pipefail
 resource=""
 has_jq=false
+has_include=false
 for arg in "$@"; do
   if [[ "$arg" == repos/* ]]; then
     resource="$arg"
   elif [[ "$arg" == "--jq" ]]; then
     has_jq=true
+  elif [[ "$arg" == "--include" ]]; then
+    has_include=true
   fi
 done
 
@@ -684,17 +687,19 @@ if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
     404) dispatch_reason='Not Found' ;;
     *) dispatch_reason='Test Status' ;;
   esac
-  printf 'HTTP/2.0 %s %s\n' "$dispatch_status" "$dispatch_reason"
-  if [[ -n "${FAKE_DISPATCH_RETRY_AFTER:-}" ]]; then
-    printf 'Retry-After: %s\n' "$FAKE_DISPATCH_RETRY_AFTER"
+  if [[ "$has_include" == true ]]; then
+    printf 'HTTP/2.0 %s %s\n' "$dispatch_status" "$dispatch_reason"
+    if [[ -n "${FAKE_DISPATCH_RETRY_AFTER:-}" ]]; then
+      printf 'Retry-After: %s\n' "$FAKE_DISPATCH_RETRY_AFTER"
+    fi
+    if [[ -n "${FAKE_DISPATCH_RATE_REMAINING:-}" ]]; then
+      printf 'X-RateLimit-Remaining: %s\n' "$FAKE_DISPATCH_RATE_REMAINING"
+    fi
+    if [[ -n "${FAKE_DISPATCH_RATE_RESET:-}" ]]; then
+      printf 'X-RateLimit-Reset: %s\n' "$FAKE_DISPATCH_RATE_RESET"
+    fi
+    printf '\n'
   fi
-  if [[ -n "${FAKE_DISPATCH_RATE_REMAINING:-}" ]]; then
-    printf 'X-RateLimit-Remaining: %s\n' "$FAKE_DISPATCH_RATE_REMAINING"
-  fi
-  if [[ -n "${FAKE_DISPATCH_RATE_RESET:-}" ]]; then
-    printf 'X-RateLimit-Reset: %s\n' "$FAKE_DISPATCH_RATE_RESET"
-  fi
-  printf '\n'
   if [[ "$dispatch_status" != 204 ]]; then
     jq -cn --arg message "${FAKE_DISPATCH_ERROR_MESSAGE:-Forbidden}" '{message:$message}'
   fi

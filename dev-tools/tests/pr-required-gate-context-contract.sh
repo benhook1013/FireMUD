@@ -75,6 +75,31 @@ def literal_format(pattern, *args):
     return "".join((*parts, tail))
 
 
+def selector_equal(left, right):
+    # GitHub Actions compares like kinds directly and coerces unlike kinds
+    # to numbers. This model supports only the interpreter's scalar kinds.
+    if type(left) is type(right):
+        if isinstance(left, str):
+            return left.casefold() == right.casefold()
+        return left == right
+
+    def to_number(value):
+        if value is None:
+            return 0
+        if type(value) in (bool, int):
+            return int(value)
+        if type(value) is str:
+            if not value:
+                return 0
+            number = value.strip(" \t\r\n")
+            if re.fullmatch(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", number):
+                return float(number)
+            return float("nan")
+        raise ValueError("Unsupported concurrency comparison operand")
+
+    return to_number(left) == to_number(right)
+
+
 def interpret_selector(node):
     if isinstance(node, ast.Constant) and type(node.value) in (str, int, bool, type(None)):
         return node.value
@@ -88,11 +113,9 @@ def interpret_selector(node):
         return value
     if (isinstance(node, ast.Compare) and len(node.ops) == 1
             and isinstance(node.ops[0], (ast.Eq, ast.NotEq))):
-        values = interpret_selector(node.left), interpret_selector(node.comparators[0])
-        # Actions compares strings without regard to case.
-        if all(type(value) is str for value in values):
-            values = tuple(value.casefold() for value in values)
-        return (values[0] == values[1]) == isinstance(node.ops[0], ast.Eq)
+        left = interpret_selector(node.left)
+        right = interpret_selector(node.comparators[0])
+        return selector_equal(left, right) == isinstance(node.ops[0], ast.Eq)
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             and node.func.id == "format" and not node.keywords and node.args
             and isinstance(node.args[0], ast.Constant)):
@@ -100,7 +123,16 @@ def interpret_selector(node):
     raise ValueError("Unsupported concurrency selector")
 
 
-for expression, expected in (("'Develop' == 'develop'", True), ("'Develop' != 'develop'", False)):
+for expression, expected in (
+    ("'Develop' == 'develop'", True),
+    ("'Develop' != 'develop'", False),
+    ("12 == '12'", True),
+    ("12 != ' 1.2e1 '", False),
+    ("False == 0", True),
+    ("None == 0", True),
+    ("1 == 'one'", False),
+    ("1 == '01'", False),
+):
     assert interpret_selector(ast.parse(expression, mode="eval").body) is expected
 
 
@@ -849,6 +881,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       return {data: exactPrimary};
     }
     if (kind === "optional-final-acceptance-transient" && input.run_id === 44) {
+      assert.equal(input.attempt_number, source.run_attempt);
       return {data: {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
         head_branch: "develop", status: "completed", conclusion: "success"}};
     }
@@ -871,6 +904,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
     if (kind === "optional-final-acceptance-transient" && input.run_id === 44) {
+      assert.equal(input.attempt_number, source.run_attempt);
       return [{...job, run_id: 44, head_sha: defaultSha, steps: [...job.steps,
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
