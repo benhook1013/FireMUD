@@ -1106,7 +1106,11 @@ jobs:
                     core.setFailed(`Cannot verify runtime tuple for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
                     break runtimeRefresh;
                   }
-                  if (!current || current.tuple.mergeSha !== tuple.mergeSha) {
+                  if (!current) {
+                    core.info(`Skipping unverified runtime tuple for PR #${tuple.prNumber}.`);
+                    break runtimeRefresh;
+                  }
+                  if (current.tuple.mergeSha !== tuple.mergeSha) {
                     core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
                     continue;
                   }

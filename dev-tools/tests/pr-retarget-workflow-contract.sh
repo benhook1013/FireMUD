@@ -894,7 +894,7 @@ const runsDescending = (event, firstCreatedAt) => Array.from({ length: 100 }, (_
 }));
 async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
-  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
+  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, mergeReadFailures = {}, ciEvidence = {},
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
@@ -904,6 +904,7 @@ async function runDispatcher({
   const dispatches = [];
   const postedRuns = [];
   const pullReads = new Map();
+  const mergeReads = new Map();
   const errors = [];
   const infos = [];
   const warnings = [];
@@ -1034,6 +1035,11 @@ async function runDispatcher({
         getCommit: async (request) => {
           recordApiRequest("repos.getCommit", request);
           const {ref} = request;
+          const reads = (mergeReads.get(ref) ?? 0) + 1;
+          mergeReads.set(ref, reads);
+          if (mergeReadFailures[ref]?.(reads)) {
+            throw Object.assign(new Error("fixture exact merge commit lookup failed"), {status: 502});
+          }
           const tuple = allTuples.find((candidate) => candidate.mergeSha === ref);
           return { data: { sha: ref, parents: (mergeParents[ref] ?? [tuple.baseSha, tuple.headSha])
             .map((parent) => ({ sha: parent })) } };
@@ -1616,7 +1622,9 @@ async function runDispatcher({
     pullOverrides: { "101": reads => reads > 1 ? { state: "closed" } : {} },
   });
   assert.deepEqual(numbers(changedFirst), ["102"], "changed first PR must not starve second");
-  assert(changedFirst.infos.some(message => message.includes("Skipping changed runtime tuple")));
+  assert(changedFirst.infos.some(message => message.includes("Skipping unverified runtime tuple for PR #101")));
+  assert(!previewDispatches(changedFirst).some(item => item.client_payload.pr_number === "101"),
+    "independent preview proof must still exclude a now-closed PR");
   const vanishedBase = await runDispatcher({
     tuples: [tuple, sibling], branchErrors: {"heads/develop": count => count === 2 ? 404 : null},
   });
@@ -1655,18 +1663,23 @@ async function runDispatcher({
   assert(refinedBound.inventoryCalls.some(request => request.created === "2026-01-02T00:00:00Z..*"));
 
   const unrelatedInflight = producer(sibling, "pull_request", "in_progress", null, {created_at: "2026-01-02T00:00:00Z"});
+  const completedRefresh = producer(tuple, "repository_dispatch", "completed", "success", {
+    created_at: "2026-01-01T12:00:00Z",
+  });
   const refinedCompleted = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
     inventories: {
       pull_request: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-01T06:00:00Z..*",
         refined: [unrelatedInflight], refinedTotalCount: 1},
-      repository_dispatch: [producer(tuple, "repository_dispatch", "completed", "success", {
-        created_at: "2026-01-01T12:00:00Z",
-      })],
+      repository_dispatch: [completedRefresh],
     },
   });
   assert.deepEqual(numbers(refinedCompleted), [], "refinement must retain completed refresh between CI completion and sampled inflight floor");
   assert(refinedCompleted.inventoryCalls.some(request => request.created === "2026-01-01T06:00:00Z..*"));
+  assert.deepEqual(refinedCompleted.errors, [], "refinement must reuse proof rather than fail closed");
+  assert(refinedCompleted.infos.some(message => message.includes(
+    `Skipping duplicate PR runtime refresh for #101: exact tuple producer ${completedRefresh.id} remains completed.`
+  )), "refinement must report reuse of the completed producer");
 
   const narrowedAbsence = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"},
@@ -1870,6 +1883,20 @@ async function runDispatcher({
     assert(lookupFailure.observationPostCounts.includes(failedRead === 2 ? 1 : 2),
       "accepted handoffs are observed after target lookup failure");
     assert(!lookupFailure.errors.some(message => message.includes("visibility is unknown")));
+  }
+  for (const previewHeadMoved of [false, true]) {
+    const runtimeMergeUnavailable = await runDispatcher({
+      tuples: [previewTuple],
+      mergeReadFailures: {[previewTuple.mergeSha]: reads => reads >= 2 && reads <= 6},
+      pullOverrides: {"101": reads => previewHeadMoved && reads > 6
+        ? {head: {sha: sha("f"), repo: {full_name: repository}}}
+        : {}},
+    });
+    assert.equal(runtimeDispatches(runtimeMergeUnavailable).length, 0);
+    assert(runtimeMergeUnavailable.warnings.some(message => message.includes("exact merge commit could not be read")));
+    assert.deepEqual(previewDispatches(runtimeMergeUnavailable).map(item => item.client_payload.merge_sha),
+      previewHeadMoved ? [] : [previewTuple.mergeSha],
+      "the independent preview lookup must verify the exact tuple after all runtime merge reads fail");
   }
   const previewInvisible = await runDispatcher({tuples: [previewTuple], hideDispatchVisibility: true});
   assert.equal(previewDispatches(previewInvisible).length, 1, "invisible accepted runtime handoff must preserve preview reconciliation");
