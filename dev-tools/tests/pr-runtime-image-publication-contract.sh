@@ -230,11 +230,13 @@ const refreshDeadline = refreshNow + 12 * 60 * 1000;
 const refreshSignals = [];
 const refreshRequests = [];
 const runtimeSelector = refreshSelector(
-  {rest: {pulls: {listFiles: "listFiles"}}, paginate: async (_endpoint, request) => {
+  {rest: {pulls: {listFiles: async request => {
     refreshRequests.push(request);
     refreshNow += 250;
-    return refreshEntries;
-  }},
+    assert.equal(request.per_page, 100);
+    assert.equal(request.page, 1);
+    return {data: refreshEntries};
+  }}}},
   {repo: {}, payload: {}},
   {warning: () => {}},
   {now: () => refreshNow},
@@ -250,9 +252,9 @@ async function refreshDecision(paths) {
   const nowBeforeRequest = refreshNow;
   const hasRuntimeChange = await runtimeSelector;
   const result = await hasRuntimeChange({number: 42, changed_files: refreshEntries.length});
-  assert.equal(refreshRequests.length, requestIndex + 1, "changed-file selection performs exactly one paginated API request");
+  assert.equal(refreshRequests.length, requestIndex + 1, "changed-file selection performs exactly one direct page request for a short inventory");
   const {request, ...normalOptions} = refreshRequests[requestIndex];
-  assert.deepEqual(normalOptions, {pull_number: 42, per_page: 100}, "changed-file request preserves its exact normal option shape");
+  assert.deepEqual(normalOptions, {pull_number: 42, per_page: 100, page: 1}, "changed-file request preserves its exact normal option shape");
   assert.deepEqual(Object.keys(request).sort(), ["signal"], "changed-file request has only the source-derived AbortSignal option");
   assert.equal(request.signal, refreshSignals.at(-1));
   assert.equal(request.signal.timeoutMs, refreshDeadline - nowBeforeRequest,
@@ -408,10 +410,15 @@ const gate = {
     {name: "Enforce validation success", status: "completed", conclusion: "success"},
   ],
 };
+const typedRefresh = {
+  ...source, id: 8500, event: "repository_dispatch", head_branch: "develop", head_sha: base,
+  status: "completed", conclusion: "cancelled", created_at: "2026-01-08T00:00:00Z",
+};
 
 async function runReconcile({
   ambiguousPost = true, expireFirstRequest = false, initialDiscoveryUnavailable = false,
   ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
+  postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {},
 } = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
@@ -421,6 +428,8 @@ async function runReconcile({
   const requests = [];
   const inventoryRequests = [];
   const nativeJobRunIds = [];
+  const nativeRefreshRunIds = [];
+  const nativeRefreshReadCounts = new Map();
   const signals = [];
   const dispatchRequests = [];
   const warnings = [];
@@ -482,7 +491,30 @@ async function runReconcile({
         },
         getWorkflowRun: async options => {
           record("actions.getWorkflowRun", options, {owner, repo, run_id: options.run_id});
-          return {data: options.run_id === source.id ? source : ciNativeRuns[options.run_id] ?? ciRun};
+          if (options.run_id === source.id) return {data: source};
+          const refresh = preflightRefreshRuns.find(run => run.id === options.run_id);
+          if (refresh || Object.hasOwn(refreshNativeRuns, options.run_id)) {
+            nativeRefreshRunIds.push(options.run_id);
+            const readIndex = nativeRefreshReadCounts.get(options.run_id) ?? 0;
+            nativeRefreshReadCounts.set(options.run_id, readIndex + 1);
+            const responses = Object.hasOwn(refreshNativeRuns, options.run_id)
+              ? refreshNativeRuns[options.run_id] : refresh;
+            const response = Array.isArray(responses) ? responses[Math.min(readIndex, responses.length - 1)] : responses;
+            if (response instanceof Error) throw response;
+            return {data: response};
+          }
+          return {data: ciNativeRuns[options.run_id] ?? ciRun};
+        },
+        listJobsForWorkflowRunAttempt: async options => {
+          const {run_id, attempt_number, page} = options;
+          record("actions.listJobsForWorkflowRunAttempt", options, {
+            owner, repo, run_id, attempt_number, per_page: 100, page,
+          });
+          assert.equal(attempt_number, (ciNativeRuns[run_id] ?? ciRun).run_attempt);
+          assert(Number.isInteger(page) && page > 0);
+          nativeJobRunIds.push(run_id);
+          const jobs = ciJobsByRun[run_id] ?? [gate];
+          return {data: {total_count: jobs.length, jobs: jobs.slice((page - 1) * 100, page * 100)}};
         },
         listWorkflowRuns: async options => {
           const {workflow_id: workflowId, event, head_sha: requestedHead, created, per_page, page} = options;
@@ -498,8 +530,18 @@ async function runReconcile({
           }
           let runs = [];
           if (workflowId === "ci.yml") runs = ciRuns;
-          if (workflowId === "runtime-images.yml" && event === "repository_dispatch" && visibleRun) {
-            runs = postVisibilityRuns ?? [visibleRun];
+          if (workflowId === "runtime-images.yml" && event === "repository_dispatch") {
+            if (visibleRun) {
+              const failure = postVisibilityFailures.shift();
+              if (failure) {
+                throw Object.assign(new Error("fixture visibility failure"), {
+                  status: failure.status, response: {headers: failure.headers},
+                });
+              }
+              runs = postVisibilityRuns ?? [visibleRun];
+            } else {
+              runs = preflightRefreshRuns;
+            }
           }
           return {data: {total_count: runs.length, workflow_runs: runs}};
         },
@@ -540,14 +582,7 @@ async function runReconcile({
         },
       },
     },
-    paginate: async (route, options) => {
-      assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-      record("paginate.jobs", options, {
-        owner, repo, run_id: options.run_id, attempt_number: options.attempt_number, per_page: 100,
-      });
-      nativeJobRunIds.push(options.run_id);
-      return ciJobsByRun[options.run_id] ?? [gate];
-    },
+
   };
   let failure = null;
   try {
@@ -556,7 +591,7 @@ async function runReconcile({
   } catch (error) {
     failure = error;
   }
-  return {failure, now, requests, signals, inventoryRequests, nativeJobRunIds,
+  return {failure, now, requests, signals, inventoryRequests, nativeJobRunIds, nativeRefreshRunIds,
     dispatchRequests, postAttempts, warnings, infos};
 }
 
@@ -589,6 +624,30 @@ async function runReconcile({
   assertExactPostVisibilityFilter(uncertainPost);
   assert(uncertainPost.requests.every(({signal}) => signal.timeoutMs > 0),
     "every mocked GitHub request receives a positive wall-clock AbortSignal budget");
+  const rateLimitedVisibility = await runReconcile({
+    postVisibilityFailures: [{status: 403, headers: {"retry-after": "20"}}],
+  });
+  assert.equal(rateLimitedVisibility.failure, null);
+  assert.equal(rateLimitedVisibility.now - uncertainPost.now, 20000);
+  assertExactPostVisibilityFilter(rateLimitedVisibility);
+  const deniedVisibility = await runReconcile({postVisibilityFailures: [{status: 403}]});
+  assert.match(deniedVisibility.failure?.message, /fixture visibility failure/);
+  assert.equal(deniedVisibility.now, uncertainPost.now);
+  assertExactPostVisibilityFilter(deniedVisibility);
+  const retriedVisibilityDeadline = await runReconcile({
+    postVisibilityFailures: [{status: 429, headers: {"retry-after": "300"}}],
+  });
+  assert.match(retriedVisibilityDeadline.failure?.message, /visibility is unknown/);
+  assert.equal(retriedVisibilityDeadline.now, uncertainPost.now + 120000);
+  assertExactPostVisibilityFilter(retriedVisibilityDeadline);
+  const pagedJobs = await runReconcile({
+    ciJobsByRun: {[ciRun.id]: [...Array.from({length: 100}, (_, i) => ({id: 500 + i, name: "Sibling"})), gate]},
+  });
+  assert.equal(pagedJobs.failure, null);
+  const jobPages = pagedJobs.requests.filter(row => row.name === "actions.listJobsForWorkflowRunAttempt");
+  assert.deepEqual(jobPages.map(row => row.options.page), [1, 2, 1, 2]);
+  assert.equal(new Set(jobPages.map(row => row.signal)).size, jobPages.length);
+  assert.equal(pagedJobs.postAttempts, 1);
   const sameSecondVisible = await runReconcile({
     postVisibilityRuns: [{
       id: 9001, workflow_id: 777, run_attempt: 1,
@@ -618,6 +677,97 @@ async function runReconcile({
     request.created === postVisibilityFloor
   ).length, 24, "out-of-filter stale evidence remains unaccepted throughout the bounded observation window");
   assertExactPostVisibilityFilter(stalePostVisibility);
+  for (const conclusion of ["cancelled", "timed_out"]) {
+    for (const ambiguousPost of [false, true]) {
+      const unusable = {...typedRefresh, conclusion, run_attempt: 2};
+      const recovered = await runReconcile({preflightRefreshRuns: [unusable], ambiguousPost});
+      assert.equal(recovered.failure, null, `verified ${conclusion} typed refresh must not suppress recovery`);
+      assert.deepEqual(recovered.nativeRefreshRunIds, [unusable.id, unusable.id],
+        "both initial and final preflight must freshly verify the same positive native attempt");
+      const nativeReads = recovered.requests.filter(row =>
+        row.name === "actions.getWorkflowRun" && row.options.run_id === unusable.id);
+      assert.equal(new Set(nativeReads.map(row => row.signal)).size, 2,
+        "each terminal-result verification uses a fresh pre-dispatch deadline signal");
+      assert.equal(recovered.dispatchRequests.length, 1);
+      assertExactPostVisibilityFilter(recovered);
+    }
+  }
+  const combinedUnusable = await runReconcile({preflightRefreshRuns: [
+    typedRefresh, {...typedRefresh, id: typedRefresh.id + 1, conclusion: "timed_out"},
+  ]});
+  assert.equal(combinedUnusable.failure, null);
+  assert.deepEqual(combinedUnusable.nativeRefreshRunIds,
+    [typedRefresh.id, typedRefresh.id + 1, typedRefresh.id, typedRefresh.id + 1],
+    "every exact terminal candidate must be freshly verified at both preflight fences");
+  assertExactPostVisibilityFilter(combinedUnusable);
+  for (const change of [
+    {id: typedRefresh.id + 1}, {run_attempt: 0}, {run_attempt: 2}, {workflow_id: 778},
+    {path: ".github/workflows/other.yml"}, {path: `${typedRefresh.path}@refs/heads/develop`},
+    {name: "other"}, {name: sourceTitle}, {display_title: sourceTitle.replace(base, sha("d"))},
+    {event: "pull_request"}, {repository: {full_name: "fork/FireMUD"}},
+    {head_repository: {full_name: "fork/FireMUD"}}, {head_branch: "feature/ci"},
+    {head_sha: sha("d")}, {head_sha: "invalid"}, {status: "in_progress", conclusion: null},
+    {status: undefined}, {conclusion: "timed_out"}, {conclusion: "failure"},
+    {conclusion: "success"}, {conclusion: undefined},
+  ]) {
+    const drifted = await runReconcile({
+      preflightRefreshRuns: [typedRefresh], refreshNativeRuns: {[typedRefresh.id]: {...typedRefresh, ...change}},
+    });
+    assert.equal(drifted.failure, null);
+    assert.equal(drifted.postAttempts, 0, `native terminal-result drift must retain the hold: ${JSON.stringify(change)}`);
+    assert.deepEqual(drifted.nativeRefreshRunIds, [typedRefresh.id], "unproven native evidence is never retried");
+    assert(drifted.warnings.some(message => message.includes("unproven or superseded")));
+  }
+  const finalPreflightDrift = await runReconcile({
+    preflightRefreshRuns: [typedRefresh],
+    refreshNativeRuns: {[typedRefresh.id]: [typedRefresh, {...typedRefresh, run_attempt: 2}]},
+  });
+  assert.equal(finalPreflightDrift.failure, null);
+  assert.equal(finalPreflightDrift.postAttempts, 0, "a superseding attempt at the final native fence retains the hold");
+  assert.deepEqual(finalPreflightDrift.nativeRefreshRunIds, [typedRefresh.id, typedRefresh.id]);
+  for (const unavailable of [undefined, null, ...[403, 404, 503].map(status =>
+    Object.assign(new Error("fixture native terminal evidence unavailable"), {status}))]) {
+    const held = await runReconcile({
+      preflightRefreshRuns: [typedRefresh], refreshNativeRuns: {[typedRefresh.id]: unavailable},
+    });
+    assert.equal(held.failure, null);
+    assert.equal(held.postAttempts, 0, "unavailable native terminal evidence cannot authorize recovery");
+    assert.deepEqual(held.nativeRefreshRunIds, [typedRefresh.id], "unavailable verification is not retried");
+    assert(held.warnings.some(message => message.includes("recovery remains held without retry")));
+  }
+  for (const change of [
+    {status: "queued", conclusion: null}, {status: "in_progress", conclusion: null},
+    {status: "completed", conclusion: "success"}, {status: "completed", conclusion: "skipped"},
+    {status: "completed", conclusion: null},
+  ]) {
+    const held = await runReconcile({preflightRefreshRuns: [{...typedRefresh, ...change}]});
+    assert.equal(held.failure, null);
+    assert.equal(held.postAttempts, 0, "all other exact typed results continue suppressing recovery");
+    assert.deepEqual(held.nativeRefreshRunIds, [], "only cancelled/timed_out results enter native verification");
+  }
+  const legacyFailedPlay = {...typedRefresh, id: typedRefresh.id + 1, conclusion: "failure"};
+  const legacyFailureHold = await runReconcile({preflightRefreshRuns: [typedRefresh, legacyFailedPlay]});
+  assert.equal(legacyFailureHold.failure, null);
+  assert.equal(legacyFailureHold.postAttempts, 0,
+    "a legacy failed PLAY typed refresh retains its hold even alongside a verified cancelled result");
+  assert.deepEqual(legacyFailureHold.nativeRefreshRunIds, [typedRefresh.id]);
+  assert(legacyFailureHold.warnings.some(message => message.includes(String(legacyFailedPlay.id)) &&
+    message.includes("failed") && message.includes("explicit investigation, not automatic replay")),
+  "legacy failure holds must be reported separately from supported terminal recovery");
+  const preexistingUnusableReceipt = await runReconcile({
+    preflightRefreshRuns: [typedRefresh], postVisibilityRuns: [typedRefresh],
+  });
+  assert.match(preexistingUnusableReceipt.failure?.message ?? "", /visibility is unknown/,
+    "a verified unusable ID in the dispatch second remains in the complete pre-POST snapshot, not a new receipt");
+  assert.deepEqual(preexistingUnusableReceipt.nativeRefreshRunIds, [typedRefresh.id, typedRefresh.id],
+    "post-POST visibility never reclassifies terminal producer outcomes");
+  assertExactPostVisibilityFilter(preexistingUnusableReceipt);
+  for (const conclusion of ["cancelled", "timed_out", "failure"]) {
+    const terminalReceipt = await runReconcile({postVisibilityRuns: [{...typedRefresh, id: 9001, conclusion}]});
+    assert.equal(terminalReceipt.failure, null, `a new exact ${conclusion} run still establishes POST receipt, not success`);
+    assert.deepEqual(terminalReceipt.nativeRefreshRunIds, [], "receipt must not require a usable terminal producer result");
+    assertExactPostVisibilityFilter(terminalReceipt);
+  }
   const unavailableInitialDiscovery = await runReconcile({initialDiscoveryUnavailable: true});
   assert.match(unavailableInitialDiscovery.failure?.message ?? "", /initial runtime discovery unavailable/);
   assert.equal(unavailableInitialDiscovery.postAttempts, 0,
@@ -647,7 +797,8 @@ async function runReconcile({
     "the reconciler starts with its exact two-minute pre-dispatch wall-clock budget");
   assert.equal(expiredRequest.requests[0].signal.aborted, true, "the API mock observed the signal expire");
   assert.equal(expiredRequest.postAttempts, 0, "deadline abortion fails closed before repository dispatch");
-  process.stdout.write("Failed-source reconciliation deadline and one-shot fixtures passed\n");
+  process.stdout.write("Failed-source reconciliation terminal-preflight, deadline and one-shot fixtures passed\n");
+  process.stdout.write("Legacy failed PLAY hold fixture passed; explicit recovery remains separate\n");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 JS
 

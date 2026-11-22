@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "a10e3434165cc6b150e380a75bcf5b4298c8895121017e36238a04f503b3ec2b";
+            const canonicalRuntimeWorkflowSha256 = "537fe7a43662a56c367c2a51d44b7cf17071e29aed0956e4bb19c5144a40e523";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -927,9 +927,10 @@ jobs:
                   step.name === "Run credential-free full-stack smoke"
                 );
                 if (smokeSteps.length > 1) return false;
-                if (smokeSteps.length === 1 && (smokeSteps[0].status !== "completed" ||
-                    smokeSteps[0].conclusion == null)) return pendingExactSnapshot();
-                if (smokeSteps.length === 1 && smokeSteps[0].conclusion !== "success") return false;
+                if (smokeSteps.length === 0) return pendingExactSnapshot();
+                if (smokeSteps[0].conclusion != null && smokeSteps[0].conclusion !== "success") return false;
+                if (smokeSteps[0].status !== "completed" ||
+                    smokeSteps[0].conclusion == null) return pendingExactSnapshot();
                 for (const name of [
                   "Stop smoke stack",
                   "Require successful runtime smoke and authenticated cleanup",
@@ -986,8 +987,9 @@ jobs:
                 step.name === "Run credential-free full-stack smoke"
               );
               if (smokeSteps.length > 1) return false;
-              if (smokeSteps.length === 1 && (smokeSteps[0].status !== "completed" ||
-                  smokeSteps[0].conclusion == null)) return true;
+              if (smokeSteps.length === 0) return true;
+              if (smokeSteps[0].conclusion != null && smokeSteps[0].conclusion !== "success") return false;
+              if (smokeSteps[0].status !== "completed" || smokeSteps[0].conclusion == null) return true;
               return job.steps.some((step) => step.name !== markerName &&
                 (step.status !== "completed" || step.conclusion == null));
             }
@@ -1138,8 +1140,18 @@ jobs:
                     expectedSuccessfulSteps.includes(step.name)))) return false;
               }
               for (const other of jobs) {
-                if (other.id === job?.id) continue;
+                if (other === job) continue;
+                if ((other.id != null && (!positiveInteger(other.id) || other.id === job?.id)) ||
+                    (other.run_id != null && other.run_id !== source.id) ||
+                    (other.run_attempt != null && other.run_attempt !== source.run_attempt) ||
+                    (other.head_sha != null && other.head_sha !== source.head_sha) ||
+                    (other.check_run_url != null && other.id != null &&
+                      other.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${other.id}`)) return false;
                 if (["queued", "in_progress", "waiting", "pending", "requested"].includes(other.status)) incompleteSteps = true;
+                // A successful typed attempt can precede its sibling conclusions;
+                // keep it pending only under the caller's existing snapshot bound.
+                else if (allowIncompleteSteps && source.event === "repository_dispatch" && source.conclusion === "success" &&
+                    other.status === "completed" && other.conclusion == null) incompleteSteps = true;
                 else if (other.status !== "completed" || !["success", "skipped"].includes(other.conclusion)) return false;
               }
               // Only the exception relies on the classifier from the verified PR merge.
@@ -1843,6 +1855,14 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
+                // Final identity/attempt reads consume the same absolute allowance.
+                if (Date.now() >= sameTupleCancellationDeadline) {
+                  core.setFailed(
+                    `Cancelled runtime-images run ${cancelledRunId} has no freshly proven exact replacement ` +
+                    `after ${cancellationDiscoveryMs / 60000} minutes`
+                  );
+                  return;
+                }
                 if (replacementProof === "ordinary") {
                   core.info(`Exact repository_dispatch replacement ${replacement.id}/${replacement.run_attempt} passed full-stack smoke and authenticated cleanup.`);
                   return;
@@ -2057,21 +2077,24 @@ jobs:
                         await new Promise((resolve) => setTimeout(resolve, sleepMs));
                         continue smokeGatePolling;
                       }
-                      if (needsLiveTuple) {
-                        const finalIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception", true);
-                        if (finalIdentity?.obsolete) return;
-                        if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
-                            identityKey(currentIdentity)) {
-                          if (finalIdentity) {
-                            requireCurrentIdentity = true;
-                            currentIdentity = finalIdentity;
-                          }
-                          continue smokeGatePolling;
+                      // Re-read the live label after the awaited attempt lookup without
+                      // replacing a native producer's immutable event comparison.
+                      const finalIdentity = await resolveCurrentIdentity(
+                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
+                      const comparableFinalIdentity = needsLiveTuple && finalIdentity
+                        ? {...finalIdentity, sourceEvent: currentIdentity.sourceEvent}
+                        : finalIdentity;
+                      if (finalIdentity?.obsolete) return;
+                      if (!finalIdentity || identityKey(comparableFinalIdentity) !== identityKey(currentIdentity)) {
+                        if (finalIdentity) {
+                          if (needsLiveTuple) requireCurrentIdentity = true;
+                          currentIdentity = finalIdentity;
                         }
-                        if (!finalIdentity.canonicalPlayEligible) {
-                          core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                          return;
-                        }
+                        continue smokeGatePolling;
+                      }
+                      if (!finalIdentity.canonicalPlayEligible) {
+                        core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                        return;
                       }
                       core.setOutput("known_play_exception", "true");
                       core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
@@ -2115,6 +2138,24 @@ jobs:
                 }
 
                 if (cancelledRecoveryMoved && matching.event === "repository_dispatch") {
+                  if (matching.run_attempt != null && !positiveInteger(matching.run_attempt)) {
+                    core.setFailed("Typed runtime smoke producer lacks an exact attempt.");
+                    return;
+                  }
+                  if (matching.run_attempt == null) {
+                    // Re-list a sparse terminal inventory row before any exact proof lookup.
+                    const snapshotKey = `cancelled-move-list:${matching.id}:${identityKey(currentIdentity)}`;
+                    if (incompleteRefreshKey !== snapshotKey) {
+                      incompleteRefreshKey = snapshotKey;
+                      incompleteRefreshObservedAt = Date.now();
+                    }
+                    if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                      core.setFailed("Moved cancelled-run recovery lacks an exact attempt within the snapshot convergence allowance.");
+                      return;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, snapshotSleepMs));
+                    continue smokeGatePolling;
+                  }
                   let proof;
                   try {
                     const ordinaryProducerVerified = matching.conclusion === "success" &&
@@ -2361,9 +2402,15 @@ jobs:
                   const markers = (fullSmokeJob.steps ?? []).filter((step) =>
                     step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
                   );
+                  if (markers.length > 1 || (markers.length === 1 && markers[0].conclusion != null &&
+                      !["success", "skipped"].includes(markers[0].conclusion))) {
+                    core.setFailed("Runtime smoke proof is missing its unambiguous transition-exception disposition.");
+                    return;
+                  }
                   let markerProof = false;
                   if (matching.event === "repository_dispatch" &&
-                      (markers.length === 0 || (markers.length === 1 && markers[0].status !== "completed"))) {
+                      (markers.length === 0 || (markers.length === 1 &&
+                        (markers[0].status !== "completed" || markers[0].conclusion == null)))) {
                     try {
                       markerProof = await verifyKnownPlayFailure(
                         matching, fullSmokeJob, currentIdentity, true, true);
@@ -2466,21 +2513,23 @@ jobs:
                       await new Promise((resolve) => setTimeout(resolve, sleepMs));
                       continue smokeGatePolling;
                     }
-                    if (needsLiveTuple) {
-                      const finalIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception", true);
-                      if (finalIdentity?.obsolete) return;
-                      if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
-                          identityKey(currentIdentity)) {
-                        if (finalIdentity) {
-                          requireCurrentIdentity = true;
-                          currentIdentity = finalIdentity;
-                        }
-                        continue smokeGatePolling;
+                    // Native event proof also needs a fresh label after the attempt GET.
+                    const finalIdentity = await resolveCurrentIdentity(
+                      "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
+                    const comparableFinalIdentity = needsLiveTuple && finalIdentity
+                      ? {...finalIdentity, sourceEvent: currentIdentity.sourceEvent}
+                      : finalIdentity;
+                    if (finalIdentity?.obsolete) return;
+                    if (!finalIdentity || identityKey(comparableFinalIdentity) !== identityKey(currentIdentity)) {
+                      if (finalIdentity) {
+                        if (needsLiveTuple) requireCurrentIdentity = true;
+                        currentIdentity = finalIdentity;
                       }
-                      if (!finalIdentity.canonicalPlayEligible) {
-                        core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                        return;
-                      }
+                      continue smokeGatePolling;
+                    }
+                    if (!finalIdentity.canonicalPlayEligible) {
+                      core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                      return;
                     }
                     core.setOutput("known_play_exception", "true");
                     core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");

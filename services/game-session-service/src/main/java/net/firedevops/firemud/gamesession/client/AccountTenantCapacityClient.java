@@ -176,6 +176,12 @@ public final class AccountTenantCapacityClient
   }
 
   @Override
+  protected boolean channelRetriesEnabled() {
+    // Even a trailers-only failure is indeterminate until the exact original is reconciled.
+    return false;
+  }
+
+  @Override
   protected AccountServiceGrpc.AccountServiceBlockingStub buildStub(ManagedChannel channel) {
     return AccountServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeer))

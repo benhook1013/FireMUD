@@ -24,6 +24,24 @@ public class GrpcChannelFactory {
       boolean keepAlive,
       ResolvedGrpcTlsMaterial tlsMaterial)
       throws SSLException {
+    return buildChannel(target, defaultPort, properties, keepAlive, tlsMaterial, true);
+  }
+
+  /** Builds a dedicated channel whose mutations require explicit reconciliation before replay. */
+  public ManagedChannel buildChannelWithoutRetries(
+      String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+      throws SSLException {
+    return buildChannel(target, defaultPort, properties, keepAlive, null, false);
+  }
+
+  private ManagedChannel buildChannel(
+      String target,
+      int defaultPort,
+      CommonGrpcClientProperties properties,
+      boolean keepAlive,
+      ResolvedGrpcTlsMaterial tlsMaterial,
+      boolean retriesEnabled)
+      throws SSLException {
     String resolved = target;
     if (resolved == null || resolved.isBlank()) {
       resolved = "localhost:" + defaultPort;
@@ -32,6 +50,7 @@ public class GrpcChannelFactory {
     if (properties.isPlaintext()) {
       ManagedChannelBuilder<?> builder = createPlaintextBuilder(resolved, defaultPort);
       configureKeepAlive(builder, keepAlive);
+      if (!retriesEnabled) builder.disableRetry();
       return builder.build();
     }
 
@@ -61,6 +80,8 @@ public class GrpcChannelFactory {
       builder = builder.sslContext(sslBuilder.build());
     }
     configureKeepAlive(builder, keepAlive);
+    // Resolver-supplied service config must not enable retries or hedging on this channel.
+    if (!retriesEnabled) builder.disableRetry();
     return builder.build();
   }
 
