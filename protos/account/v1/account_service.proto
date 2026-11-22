@@ -166,12 +166,13 @@ message AuthenticateRequest {
   GameplayLoginSourceContext source_context = 6;
 }
 
-// Credential-bearing LOGIN accepts only the authenticated TCP Proxy branch.
-// FIRST_PARTY_WEB remains bootstrap-backed and cannot present credentials here.
+// Credential-bearing LOGIN accepts the authenticated TCP Proxy branch and the
+// private run-owned WebSocket proof transport. FIRST_PARTY_WEB uses bootstrap.
 enum GameplayLoginTransportClass {
   GAMEPLAY_LOGIN_TRANSPORT_CLASS_UNSPECIFIED = 0;
   GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY = 1;
   GAMEPLAY_LOGIN_TRANSPORT_CLASS_FIRST_PARTY_WEB = 2;
+  GAMEPLAY_LOGIN_TRANSPORT_CLASS_RUN_OWNED_FIXTURE_WEBSOCKET = 3;
 }
 
 message GameplayLoginSourceContext {

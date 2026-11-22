@@ -16,28 +16,42 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordin
 public final class InitialGameplayLoginCredentialPresentation implements AutoCloseable {
   private final String normalizedEmail;
   private final String canonicalClientAddress;
+  private final GameplayLoginTransportClass transport;
   private final char[] ownedSecret;
   private final Object custodyMutex = new Object();
   private boolean current = true;
   private boolean requestCreated;
 
   /** A receiving transport can present credentials only with its genuine authenticated ingress. */
-  public static InitialGameplayLoginCredentialPresentation fromAuthenticatedTcp(
+  public static InitialGameplayLoginCredentialPresentation fromAuthenticatedIngress(
       net.firedevops.firemud.gamesession.websocket.AuthenticatedDirectTextIngress ingress,
       String normalizedEmail,
       char[] ownedSecret) {
-    Objects.requireNonNull(ingress, "Authenticated TCP ingress required");
+    Objects.requireNonNull(ingress, "Authenticated gameplay ingress required");
     return new InitialGameplayLoginCredentialPresentation(
-        normalizedEmail, ingress.clientAddress(), ownedSecret);
+        normalizedEmail, ingress.clientAddress(), ownedSecret, ingress.loginTransport());
   }
 
   /** Ownership of {@code ownedSecret} transfers to this presentation. */
   InitialGameplayLoginCredentialPresentation(
       String normalizedEmail, String canonicalClientAddress, char[] ownedSecret) {
+    this(
+        normalizedEmail,
+        canonicalClientAddress,
+        ownedSecret,
+        GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY);
+  }
+
+  private InitialGameplayLoginCredentialPresentation(
+      String normalizedEmail,
+      String canonicalClientAddress,
+      char[] ownedSecret,
+      GameplayLoginTransportClass transport) {
     this.ownedSecret = Objects.requireNonNull(ownedSecret, "Owned credential buffer required");
     try {
       this.normalizedEmail = requireEmail(normalizedEmail);
       this.canonicalClientAddress = requireAddress(canonicalClientAddress);
+      this.transport = Objects.requireNonNull(transport);
       if (ownedSecret.length == 0 || ownedSecret.length > 1024) {
         throw new IllegalArgumentException("Credential presentation is invalid");
       }
@@ -66,9 +80,7 @@ public final class InitialGameplayLoginCredentialPresentation implements AutoClo
                   GameplayLoginSourceContext.newBuilder()
                       .setCallerContextId(coordinates.callerContextId().toString())
                       .setCanonicalClientAddress(canonicalClientAddress)
-                      .setTransportClass(
-                          GameplayLoginTransportClass
-                              .GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY))
+                      .setTransportClass(transport))
               .build();
       CanonicalGameplayLoginResult.requireOriginalRequest(request);
       return request;
