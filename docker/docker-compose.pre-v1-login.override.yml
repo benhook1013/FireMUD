@@ -101,6 +101,8 @@ services:
       start_period: 30s
 
   account-service:
+    # The first protected admission issues a credential and reserves capacity within a 15 s lease.
+    cpus: "1.0"
     # The pre-v1 signer, readiness and gameplay-login owners exceed the 512m default; a CI run
     # lost Account without an error on its first post-promotion LOGIN.
     mem_limit: 1g
@@ -141,6 +143,8 @@ services:
       - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}/world-runtime-installation:/etc/firemud/world-runtime-installation:ro
 
   game-session-service:
+    # Candidate installation and final readback share the same admission lease.
+    cpus: "1.0"
     # Authenticated LOGIN needs a promoted Account signer; start only once it is live.
     depends_on:
       pre-v1-jwt-materializer:
