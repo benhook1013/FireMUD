@@ -47,9 +47,7 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
                 self.assertEqual("read", permissions.get("pull-requests"))
                 self.assertNotIn("write", permissions.values())
 
-        reporting_permissions = self.jobs["license-gate"]["permissions"]
-        self.assertEqual("read", reporting_permissions.get("pull-requests"))
-        self.assertEqual("write", reporting_permissions.get("statuses"))
+        self.assertEqual({}, self.jobs["license-gate"]["permissions"])
 
     def test_both_scans_use_the_actions_supported_violation_gate(self) -> None:
         for job_name in ("ort-gradle", "ort-npm"):
