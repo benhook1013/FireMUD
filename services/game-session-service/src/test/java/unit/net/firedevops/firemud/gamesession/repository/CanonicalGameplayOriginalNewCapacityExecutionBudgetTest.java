@@ -973,23 +973,48 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     int priorOperations = operations.availablePermits();
     int priorBackground = background.availablePermits();
     int priorRetained = retained.get();
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.class);
+    var events =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    events.start();
+    logger.addAppender(events);
+    CompletableFuture<Void> late = new CompletableFuture<>();
     CompletableFuture<Void> cancelled = new CompletableFuture<>();
-    cancelled.cancel(false);
     try {
-      for (var close :
-          List.of(
-              CompletableFuture.<Void>failedFuture(new IllegalStateException("close failed")),
-              cancelled)) {
-        assertThatThrownBy(() ->
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                    CLOCK,
-                    Long.MAX_VALUE,
-                    budget -> {
-                      budget.awaitAsyncClose(close);
-                      return true;
-                    }))
-            .isInstanceOf(IllegalStateException.class);
-      }
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  CLOCK,
+                  Long.MAX_VALUE,
+                  budget -> {
+                    budget.awaitAsyncClose(
+                        CompletableFuture.failedFuture(
+                            new IllegalStateException(
+                                "fixture diagnostic marker must not be emitted")));
+                    return true;
+                  }))
+          .isExactlyInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          CLOCK,
+          Long.MAX_VALUE,
+          budget -> {
+            budget.retainUntilAsyncClose(cancelled);
+            budget.retainUntilAsyncClose(late);
+            return true;
+          });
+      assertThat(events.list).hasSize(1);
+      assertThat(cancelled.cancel(false)).isTrue();
+      assertThat(late.completeExceptionally(new IllegalStateException("second close failure")))
+          .isTrue();
+      assertThat(events.list)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .containsExactly(
+              "Original NEW Redis close failed; operation permit retained (category=exception)",
+              "Original NEW Redis close failed; operation permit retained (category=cancelled)");
+      assertThat(events.list).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
       assertThat(operations.availablePermits()).isEqualTo(priorOperations - 2);
       assertThat(background.availablePermits()).isEqualTo(priorBackground - 2);
       assertThat(
@@ -999,6 +1024,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                   .value())
           .isEqualTo(priorRetained + 2);
     } finally {
+      late.complete(null);
+      cancelled.complete(null);
+      logger.detachAppender(events);
+      events.stop();
       operations.release(priorOperations - operations.availablePermits());
       background.release(priorBackground - background.availablePermits());
       retained.set(priorRetained);

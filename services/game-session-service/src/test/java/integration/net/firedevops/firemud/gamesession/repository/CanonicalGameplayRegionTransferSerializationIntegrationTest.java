@@ -203,6 +203,63 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   }
 
   @Test
+  void settlementWaitsForUncommittedDispatchAndPreservesItsActiveCharge() throws Exception {
+    try (var proof = new TransferSqlProof(1, 1_048_576L, 3);
+        ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      var original = proof.execution;
+      var dispatched = new CountDownLatch(1);
+      var release = new CountDownLatch(1);
+      var blockerPid = new AtomicInteger();
+      Future<?> dispatch =
+          executor.submit(() ->
+              proof.sql.transaction(configuration -> {
+                DSLContext transaction = DSL.using(configuration);
+                transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+                transaction.fetchSingle(
+                    "SELECT 1 FROM game_session_capacity_evidence_budget WHERE tenant_id=? FOR UPDATE",
+                    original.request().identity().tenantId());
+                proof.insertExecution(transaction, original, "INSTALL_DISPATCHED", null);
+                blockerPid.set(
+                    transaction.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                dispatched.countDown();
+                try {
+                  if (!release.await(5, TimeUnit.SECONDS))
+                    throw new AssertionError("Dispatch transaction gate was not released");
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                  throw new AssertionError(interrupted);
+                }
+              }));
+      try {
+        awaitGate(dispatched, dispatch, "Dispatch did not reach its transaction gate");
+        var denial = UUID.randomUUID();
+        Future<?> settlement =
+            executor.submit(() ->
+                assertThatThrownBy(() -> proof.settle(original, denial))
+                    .isInstanceOf(org.jooq.exception.DataAccessException.class)
+                    .hasMessageContaining(
+                        "Execution custody prevents capacity evidence settlement"));
+        assertDatabaseWaitsFor(proof.sql, blockerPid.get());
+        assertThat(settlement.isDone()).isFalse();
+        release.countDown();
+        dispatch.get(10, TimeUnit.SECONDS);
+        settlement.get(10, TimeUnit.SECONDS);
+        assertThat(proof.executionState(original)).isEqualTo("INSTALL_DISPATCHED");
+        assertThat(
+                proof
+                    .sql
+                    .fetchSingle(
+                        "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                        original.request().admissionAttemptId())
+                    .get(0))
+            .isNull();
+      } finally {
+        release.countDown();
+      }
+    }
+  }
+
+  @Test
   void actualFreezeUsesReadCommittedWithRepeatableReadDatasourceAfterAuthorizationWaits()
       throws Exception {
     try (var proof = new TransferSqlProof();
@@ -302,22 +359,22 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
               freezing.within(
                   transferDeadline(), ignored -> freezing.begin(proof.scope, proof.prior)));
       gate.awaitLock();
-      Future<Boolean> refused =
+      Future<?> refused =
           executor.submit(() -> {
-            try {
-              proof
-                  .capacity(proof.sql)
-                  .authorize(
-                      proof.admission,
-                      template,
-                      account,
-                      issuer,
-                      proof.execution,
-                      transferDeadline());
-              return false;
-            } catch (IllegalStateException frozen) {
-              return true;
-            }
+            assertThatThrownBy(() ->
+                    proof
+                        .capacity(proof.sql)
+                        .authorize(
+                            proof.admission,
+                            template,
+                            account,
+                            issuer,
+                            proof.execution,
+                            transferDeadline()))
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage("Original NEW capacity execution is indeterminate")
+                .hasStackTraceContaining(
+                    "CanonicalGameplayOriginalNewCapacityExecutionOwner.requireSelectedOwner");
           });
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
@@ -326,7 +383,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         gate.release();
       }
       UUID id = freeze.get(10, TimeUnit.SECONDS);
-      assertThat(refused.get(10, TimeUnit.SECONDS)).isTrue();
+      refused.get(10, TimeUnit.SECONDS);
       assertThat(proof.executionState(proof.execution)).isNull();
       assertThat(proof.executionState(seeded)).isEqualTo("INSTALL_DISPATCHED");
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
@@ -377,22 +434,22 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
             }
           });
       awaitGate(inserted, freeze, "Raw frozen insert did not reach its transaction gate");
-      Future<Boolean> refused =
+      Future<?> refused =
           executor.submit(() -> {
-            try {
-              proof
-                  .capacity(proof.sql)
-                  .authorize(
-                      proof.admission,
-                      template,
-                      account,
-                      issuer,
-                      proof.execution,
-                      transferDeadline());
-              return false;
-            } catch (IllegalStateException frozen) {
-              return true;
-            }
+            assertThatThrownBy(() ->
+                    proof
+                        .capacity(proof.sql)
+                        .authorize(
+                            proof.admission,
+                            template,
+                            account,
+                            issuer,
+                            proof.execution,
+                            transferDeadline()))
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage("Original NEW capacity execution is indeterminate")
+                .hasStackTraceContaining(
+                    "CanonicalGameplayOriginalNewCapacityExecutionOwner.requireSelectedOwner");
           });
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid.get());
@@ -401,7 +458,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         release.countDown();
       }
       UUID transferId = freeze.get(10, TimeUnit.SECONDS);
-      assertThat(refused.get(10, TimeUnit.SECONDS)).isTrue();
+      refused.get(10, TimeUnit.SECONDS);
       assertThat(proof.executionState(proof.execution)).isNull();
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
       assertThat(

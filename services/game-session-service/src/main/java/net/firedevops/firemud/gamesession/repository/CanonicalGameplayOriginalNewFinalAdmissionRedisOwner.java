@@ -1095,6 +1095,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       requirePrincipal(awaitCommand(commands::aclWhoami));
       String sha = awaitCommand(() -> commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+      long wireDeadlineMillis =
+          switch (action) {
+            case "FINAL", "CLOSE" -> Math.min(absoluteDeadlineMillis, operationDeadlineMillis);
+            default -> absoluteDeadlineMillis;
+          };
       Long result =
           awaitCommand(() ->
               commands.evalsha(
@@ -1115,7 +1120,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
                   ascii(Long.toString(durationMillis)),
                   accountJson,
                   issuerJson,
-                  ascii(Long.toString(absoluteDeadlineMillis)),
+                  ascii(Long.toString(wireDeadlineMillis)),
                   issuerPayload,
                   execution.canonicalBytes(),
                   ascii(action),

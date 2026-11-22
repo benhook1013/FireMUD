@@ -56,6 +56,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
             owner.closeCapacityExecutionOnce(
                 fixture.execution, fixture.candidate, fixture.assignment, Long.MAX_VALUE))
         .isEqualTo(4);
+    assertThat(fixture.evaluationDeadlineMillis.get()).isEqualTo(fixture.deadline - 100 + 5000L);
     verify(fixture.whoami)
         .get(
             org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 5000),
@@ -83,6 +84,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
             owner.closeCapacityExecutionOnce(
                 fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
         .isEqualTo(4);
+    assertThat(fixture.evaluationDeadlineMillis.get()).isEqualTo(fixture.deadline);
     verify(fixture.whoami)
         .get(
             org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 2_000),
@@ -329,6 +331,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     final RedisFuture<Long> evaluation = mock();
     final AtomicLong scriptSubmissions = new AtomicLong();
     final AtomicLong evaluationSubmissions = new AtomicLong();
+    final AtomicLong evaluationDeadlineMillis = new AtomicLong();
     final CanonicalGameplayOriginalNewCandidate candidate = mock();
     final OriginalNewCapacityExecution execution = mock();
     final CanonicalGameplayTenantGameplayTagRepository.Assignment assignment = mock();
@@ -409,6 +412,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
                   }
                   case "evalsha" -> {
                     evaluationSubmissions.incrementAndGet();
+                    var arguments = (byte[][]) invocation.getRawArguments()[3];
+                    evaluationDeadlineMillis.set(
+                        Long.parseLong(new String(arguments[14], StandardCharsets.US_ASCII)));
                     yield evaluation;
                   }
                   default -> org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
