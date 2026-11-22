@@ -388,6 +388,38 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void changedWorldSourceKindDoesNotMatchHistoricalHumanObligation() {
+    Fixture fixture =
+        pendingFixture(
+            "gs_bootstrap_member_world_kind_", PARTITION_CAPACITY, LAYOUT_VERSION, false, true);
+    try {
+      migrateRemaining(fixture.testSchema());
+      var dsl = fixture.testSchema().dsl();
+      assertThat(
+              dsl.execute(
+                  "UPDATE game_session_canonical_binding_region_bridge_obligation"
+                      + " SET world_source_kind = 'RUN_OWNED_FIXTURE' WHERE transition_id = ?",
+                  fixture.preparedBinding().transitionId()))
+          .isEqualTo(1);
+      var owner = new CanonicalGameplayIssuerBootstrapMemberOperationRepository(dsl);
+      assertThatThrownBy(
+              () ->
+                  owner.preparePartitionWork(
+                      fixture.intent().operationId(),
+                      fixture.requestId(),
+                      fixture.partitionId(),
+                      fixture.currentAccountCheckpoint(),
+                      stableIncarnation("stable-a")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Current source row differs from its exact original bootstrap cohort entry");
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_bootstrap_member_operation"))
+          .isEmpty();
+    } finally {
+      dropSchema(fixture.testSchema().schema());
+    }
+  }
+
+  @Test
   void wrongRequestCheckpointAndChangedFrozenSourceRefuseWithoutAllocatingCounters() {
     Fixture fixture =
         pendingFixture(
