@@ -38,6 +38,19 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.jobs = workflow_data()["jobs"]
 
+    def test_candidate_jobs_cannot_write_to_pull_requests(self) -> None:
+        workflow_permissions = workflow_data()["permissions"]
+        for job_name in ("changes", "ort-gradle", "ort-npm"):
+            with self.subTest(job=job_name):
+                permissions = self.jobs[job_name].get("permissions", workflow_permissions)
+                self.assertIsInstance(permissions, dict)
+                self.assertEqual("read", permissions.get("pull-requests"))
+                self.assertNotIn("write", permissions.values())
+
+        reporting_permissions = self.jobs["license-gate"]["permissions"]
+        self.assertEqual("read", reporting_permissions.get("pull-requests"))
+        self.assertEqual("write", reporting_permissions.get("statuses"))
+
     def test_both_scans_use_the_actions_supported_violation_gate(self) -> None:
         for job_name in ("ort-gradle", "ort-npm"):
             with self.subTest(job=job_name):

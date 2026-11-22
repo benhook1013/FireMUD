@@ -203,6 +203,40 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   }
 
   @Test
+  void expiredFreshEvidenceCannotChargeButExactRetainedDenialStillReplays() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      var original = proof.execution;
+      var fresh = proof.newControlledExecution();
+      var denial = UUID.randomUUID();
+      proof.settle(original, denial);
+      var tag = proof.tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
+      var selected =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+              original.selectedOwnerId(), original.selectedOwnerFence());
+      java.util.function.Function<OriginalNewCapacityExecution, UUID> precharge =
+          execution ->
+              proof.sql.transactionResult(configuration ->
+                  CanonicalGameplayCapacityEvidenceBudget.precharge(
+                      DSL.using(configuration),
+                      execution.request(),
+                      execution.candidateDigest(),
+                      selected,
+                      tag,
+                      Clock.fixed(
+                          execution.request().evidence().expiresAt(), java.time.ZoneOffset.UTC)));
+      assertThatThrownBy(() -> precharge.apply(fresh))
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW capacity evidence budget is unavailable");
+      assertThat(
+              proof.sql.fetchOne(
+                  "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  fresh.request().admissionAttemptId()))
+          .isNull();
+      assertThat(precharge.apply(original)).isEqualTo(denial);
+    }
+  }
+
+  @Test
   void settlementWaitsForUncommittedDispatchAndPreservesItsActiveCharge() throws Exception {
     try (var proof = new TransferSqlProof(1, 1_048_576L, 3);
         ExecutorService executor = Executors.newFixedThreadPool(2)) {

@@ -173,6 +173,55 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return selected;
   }
 
+  /** Checks the caller's complete original request against the execution linked by the receipt. */
+  void requireCommittedRequest(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      long deadline) {
+    if (budget == null) {
+      within(
+          deadline,
+          owner -> {
+            owner.requireCommittedRequest(source, request, deadline);
+            return null;
+          });
+      return;
+    }
+    budget.check();
+    OriginalNewCapacityExecution.requireOriginalNewRequest(request);
+    var identity = request.identity();
+    var row =
+        sql()
+            .fetchOne(
+                "SELECT e.canonical_execution, e.execution_digest,"
+                    + " convert_from(e.canonical_execution, 'UTF8')::jsonb ->> 'canonicalAttemptPayload' AS attempt_payload"
+                    + " FROM "
+                    + TABLE
+                    + " e JOIN game_session_canonical_binding_transition t"
+                    + " ON t.transition_id=e.transition_id"
+                    + " AND t.original_new_capacity_execution_digest=e.execution_digest"
+                    + " WHERE t.status='COMMITTED' AND e.tenant_id=? AND e.request_id=?"
+                    + " AND e.admission_id=? AND e.admission_attempt_id=?"
+                    + " AND e.transition_id=? AND t.original_new_candidate_digest=?",
+                identity.tenantId(),
+                identity.requestId(),
+                identity.admissionId(),
+                request.admissionAttemptId(),
+                source.candidate().bindingDecisionId(),
+                source.candidateDigest());
+    if (row == null) throw unavailable();
+    byte[] canonical = row.get("canonical_execution", byte[].class);
+    String requestPayload =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                    request));
+    if (canonical == null
+        || !("sha256:" + OriginalNewCapacityExecution.sha256(canonical))
+            .equals(row.get("execution_digest", String.class))
+        || !requestPayload.equals(row.get("attempt_payload", String.class))) throw unavailable();
+  }
+
   /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
   UUID precharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
@@ -195,7 +244,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           var tx = DSL.using(configuration);
           requireSelectedOwner(tx, candidate, selected);
           return CanonicalGameplayCapacityEvidenceBudget.precharge(
-              tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
+              tx,
+              request,
+              source.candidateDigest(),
+              selected,
+              assignment.tenantGameplayTag(),
+              clock);
         });
   }
 
@@ -424,7 +478,17 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       throw unavailable();
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
     exactPhysicalBinding(physical, execution, "CLOSED");
-    requireCandidateAndIndexes(row, candidate, null, execution);
+    try {
+      requireCandidateAndIndexes(row, candidate, null, execution);
+    } catch (IllegalStateException servingProofUnavailable) {
+      if (result != CAPACITY_EXECUTION_CLOSED_OBSERVED) throw servingProofUnavailable;
+      // Serving retirement may follow another exact close. Only independently retained SQL and
+      // physical terminal proof can recover this replay; missing serving keys are not evidence.
+      Snapshot retained = readExact(request, reservation, false);
+      if (!"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(retained.disposition()))
+        throw servingProofUnavailable;
+      return;
+    }
     byte[] proof =
         execution.terminalEvidence(
             "NOT_EXECUTED_AFTER_AUTHORIZATION",

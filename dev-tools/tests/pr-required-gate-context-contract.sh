@@ -4998,11 +4998,41 @@ function markerAccepted(overrides = {}) {
     data.definitions[workflowPath].content = Buffer.from("wrong immutable producer").toString("base64");
     data.definitions[workflowPath].size = Buffer.byteLength("wrong immutable producer");
   }})).accepted, false, "an untrusted typed run must fail before waiting for omitted jobs");
-  for (const suffix of ["@develop", "@refs/heads/develop", "@feature+metadata", "@feature@metadata", "@refs/heads/feature./test", "@feature/ā"]) {
-    assert.equal(await verify(data => { data.source.path = workflowPath + suffix; }, "repository_dispatch", false), true);
-  }
-  for (const path of [workflowPath + "@refs/heads/a..b", workflowPath + "@refs/heads/trailing.", workflowPath + "@@", workflowPath + "@refs/tags/develop", ".github/workflows/other.yml@develop"]) {
-    assert.equal(await verify(data => { data.source.path = path; }, "repository_dispatch", false), false);
+  for (const knownPlay of [false, true]) {
+    for (const event of ["pull_request", "repository_dispatch"]) {
+      for (const suffix of ["", "@develop", "@refs/heads/develop", "@feature+metadata", "@feature@metadata", "@refs/heads/feature./test", "@feature/ā"]) {
+        assert.equal(await verify(data => { data.source.path = workflowPath + suffix; }, event, knownPlay), true);
+      }
+      assert.equal(await verify(data => {
+        data.source.path = `${workflowPath}@refs/pull/${data.pr}/merge`;
+      }, event, knownPlay), event === "pull_request", "merge-ref spelling requires a native current-PR attempt");
+      for (const suffix of ["@refs/heads/a..b", "@refs/heads/trailing.", "@@", "@refs/tags/develop",
+        "@refs/pull/3391/merge", "@refs/pull/03390/merge", "@refs/pull/3390/head",
+        "@refs/pull/3390/merge/extra", "@refs/pull/3390/merge@develop", "@refs/pull/3390/merge.lock"]) {
+        assert.equal(await verify(data => { data.source.path = workflowPath + suffix; }, event, knownPlay), false,
+          `${event}: invalid runtime source path suffix ${suffix}`);
+      }
+      assert.equal(await verify(data => { data.source.path = ".github/workflows/other.yml@develop"; }, event, knownPlay), false);
+    }
+    assert.equal(await verify(data => {
+      data.pr = "3451";
+      data.source.display_title = data.source.display_title.replace("pr-3390", `pr-${data.pr}`);
+      data.source.path = `${workflowPath}@refs/pull/${data.pr}/merge`;
+    }, "pull_request", knownPlay), true, "merge-ref matching follows the current PR number, not a fixed allowlist");
+    for (const invalidate of [
+      data => {data.source.id++;}, data => {data.source.run_attempt++;},
+      data => {data.source.repository.full_name = "attacker/FireMUD";},
+      data => {data.source.display_title += " unrelated";},
+      data => {data.source.head_sha = "e".repeat(40);},
+      data => {data.latest.run_attempt++;},
+      data => {data.jobs[0].conclusion = "failure";},
+      data => {data.definitions[workflowPath].size++;},
+    ]) {
+      assert.equal(await verify(data => {
+        data.source.path = `${workflowPath}@refs/pull/${data.pr}/merge`;
+        invalidate(data);
+      }, "pull_request", knownPlay), false, "merge-ref spelling cannot bypass existing exact producer proof");
+    }
   }
   const marker = "Known canonical transition PLAY failure with successful authenticated cleanup";
   const ordinary = candidate.steps.map(step => step.name === marker
@@ -5765,7 +5795,19 @@ async function dispatch(kind) {
           workflow_runs: rows}};
       },
     },
-    pulls: {list: "pulls", listFiles: "files", get: async () => ({data: pr})},
+    pulls: {
+      list: async ({state, base: baseBranch, per_page, page, request}) => {
+        assert.deepEqual([state, baseBranch, per_page, page], ["open", "develop", 100, 1]);
+        assert.ok(request.signal instanceof AbortSignal);
+        return {data: [pr]};
+      },
+      listFiles: async ({pull_number, per_page, page, request}) => {
+        assert.deepEqual([pull_number, per_page, page], [42, 100, 1]);
+        assert.ok(request.signal instanceof AbortSignal);
+        return {data: [{filename: "services/example/build.gradle.kts"}]};
+      },
+      get: async () => ({data: pr}),
+    },
     git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     repos: {
       getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
@@ -5775,9 +5817,6 @@ async function dispatch(kind) {
         posts++;
       },
     },
-  }, paginate: async method => {
-    assert.ok(["pulls", "files"].includes(method), method);
-    return method === "pulls" ? [pr] : [{filename: "services/example/build.gradle.kts"}];
   }};
   await execute(github, {repo: {owner: "example", repo: "firemud"}, payload: {
     repository: {full_name: repository, default_branch: "develop"},

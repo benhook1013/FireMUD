@@ -424,7 +424,10 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                               attempt.request(),
                               attempt.candidateDigest(),
                               selected,
-                              assignment.tenantGameplayTag()));
+                              assignment.tenantGameplayTag(),
+                              Clock.fixed(
+                                  attempt.request().evidence().evaluatedAt(),
+                                  java.time.ZoneOffset.UTC)));
                       return true;
                     } catch (IllegalStateException refused) {
                       assertThat(refused)
