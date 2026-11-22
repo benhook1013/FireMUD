@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
@@ -32,7 +33,7 @@ class GameDesignStubServerTest {
         assertThat(response.getBundle().getCommandDefinitionsList()).isEmpty();
         assertThat(server.publishedReleaseBundleRequests()).isEqualTo(1);
       } finally {
-        channel.shutdownNow();
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }

@@ -898,6 +898,7 @@ async function runDispatcher({
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
+  pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
   initialTime = "2026-01-08T00:00:00Z",
 }) {
   const dispatches = [];
@@ -911,6 +912,9 @@ async function runDispatcher({
   const timerPostCounts = [];
   const deadlineSignals = [];
   const apiRequestRecords = [];
+  const lateProducers = [];
+  let lateProducerAdded = false;
+  let runtimeWorkflowLookupCount = 0;
   let waitedMillis = 0;
   let fakeNow = Date.parse(initialTime);
   let expireOnFirstRequest = expireAfterFirstApiRequest;
@@ -1007,6 +1011,12 @@ async function runDispatcher({
           const number = String(pull_number);
           const reads = (pullReads.get(number) ?? 0) + 1;
           pullReads.set(number, reads);
+          const pullGetFailure = typeof pullGetFailures[number] === "function"
+            ? pullGetFailures[number](reads)
+            : pullGetFailures[number];
+          if (pullGetFailure) {
+            throw Object.assign(new Error("fixture initial pull request lookup failed"), {status: pullGetFailure});
+          }
           const override = pullOverrides[number];
           return { data: {
             ...pullRequestFor(tupleByNumber.get(number)),
@@ -1061,9 +1071,13 @@ async function runDispatcher({
         getWorkflow: async (request) => {
           recordApiRequest("actions.getWorkflow", request);
           const {workflow_id} = request;
-          return { data: workflow_id === "runtime-images.yml"
-            ? {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}
-            : {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})} };
+          if (workflow_id === "runtime-images.yml") {
+            runtimeWorkflowLookupCount += 1;
+            const failure = runtimeWorkflowLookupFailures[runtimeWorkflowLookupCount - 1];
+            if (failure) throw Object.assign(new Error("fixture producer workflow lookup failed"), {status: failure});
+            return {data: {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}};
+          }
+          return {data: {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})}};
         },
         getWorkflowRun: async (request) => {
           recordApiRequest("actions.getWorkflowRun", request);
@@ -1091,7 +1105,9 @@ async function runDispatcher({
           const suppliedRuns = Array.isArray(inventory)
             ? inventory
             : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
-          const runs = [...suppliedRuns, ...(request.event === "repository_dispatch" ? postedRuns : [])];
+          const runs = [...suppliedRuns,
+            ...(request.event === "repository_dispatch" ? lateProducers : []),
+            ...(request.event === "repository_dispatch" ? postedRuns : [])];
           const createdMatch = /^(.+)\.\.\*$/.exec(request.created ?? "");
           const createdFloor = createdMatch ? Date.parse(createdMatch[1]) : Number.NaN;
           const filteredRuns = Number.isFinite(createdFloor)
@@ -1109,6 +1125,13 @@ async function runDispatcher({
               ? inventory.refinedTotalCount ?? filteredRuns.length
               : inventory.initialPageTotals?.[request.page] ?? inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
           const response = { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+          const broadRuntimeInventoryCalls = inventoryCalls.filter(call =>
+            call.created !== "2026-01-08T00:00:00.000Z..*"
+          ).length;
+          if (lateProducer && !lateProducerAdded && broadRuntimeInventoryCalls === 2) {
+            lateProducerAdded = true;
+            lateProducers.push(lateProducer);
+          }
           if (fanoutCutoffAfterInventory && request.event === "repository_dispatch") {
             fakeNow += 12 * 60 * 1000;
           }
@@ -1171,7 +1194,8 @@ async function runDispatcher({
     global.setTimeout = originalSetTimeout;
   }
   return { dispatches, errors, infos, warnings, inventoryCalls, observationPostCounts, timerPostCounts, waitedMillis,
-    ciJobRequests, pullListRequests, refRequests, deadlineSignals, apiRequestRecords, fatalError };
+    ciJobRequests, pullListRequests, pullReads, refRequests, deadlineSignals, apiRequestRecords,
+    runtimeWorkflowLookupCount, fatalError };
 }
 
 (async () => {
@@ -1494,6 +1518,34 @@ async function runDispatcher({
   });
   assert.deepEqual(numbers(existingFirst), ["102"], "existing first PR must not starve second");
   assert.equal(existingFirst.errors.length, 0, existingFirst.errors.join("\n"));
+  const initialTargetReadFailure = await runDispatcher({
+    tuples: [tuple, sibling], pullGetFailures: {"101": 502},
+  });
+  assert.deepEqual(numbers(initialTargetReadFailure), ["102"],
+    "a failed first pulls.get while resolving listed PR #101 must not prevent PR #102 from progressing");
+  assert.equal(initialTargetReadFailure.pullReads.get("101"), 1,
+    "the isolated failure is the initial native PR lookup for listed PR #101");
+  assert(initialTargetReadFailure.pullReads.get("102") > 0,
+    "later exact target discovery continues after the initial PR #101 read fails");
+  assert(initialTargetReadFailure.errors.some(message =>
+    message.includes("Cannot verify runtime target tuple for PR #101") && message.includes("no dispatch issued")),
+  "the unavailable PR #101 tuple remains an explicit failed target rather than silent success");
+  const lateSiblingProducer = producer(sibling, "repository_dispatch", "in_progress", null, {
+    id: 90202, created_at: "2026-01-03T00:00:00Z",
+  });
+  const refreshedAfterReuse = await runDispatcher({
+    tuples: [tuple, sibling],
+    inventories: {pull_request: [producer(tuple, "pull_request", "in_progress")]},
+    lateProducer: lateSiblingProducer,
+  });
+  assert.deepEqual(numbers(refreshedAfterReuse), [],
+    "a full fresh producer inventory before the second candidate POST must find a producer hidden from the reused cache");
+  assert.equal(refreshedAfterReuse.inventoryCalls.filter(request =>
+    request.created !== "2026-01-08T00:00:00.000Z..*"
+  ).length, 4, "a cached initial snapshot is refreshed across both event kinds before a later candidate POST");
+  assert.equal(previewDispatches(refreshedAfterReuse).length, 2,
+    "the last-minute producer discovery must not suppress independent preview reconciliation");
+  assert.equal(refreshedAfterReuse.errors.length, 0, refreshedAfterReuse.errors.join("\n"));
   const skippedFirst = await runDispatcher({
     tuples: [tuple, sibling], filesByPr: { "101": [{ filename: "README.md" }] },
   });
@@ -1706,6 +1758,33 @@ async function runDispatcher({
   assert.equal(transientReads, 2);
   assert.equal(transient.waitedMillis, 5000);
   assert.deepEqual(transient.errors, []);
+  const transientProducerIdentity = await runDispatcher({
+    tuples: [tuple], runtimeWorkflowLookupFailures: [503],
+  });
+  assert.deepEqual(numbers(transientProducerIdentity), ["101"],
+    "a transient post-dispatch producer identity lookup retries observation, never the handoff");
+  assert.equal(transientProducerIdentity.runtimeWorkflowLookupCount, 2);
+  assert.equal(transientProducerIdentity.waitedMillis, 5000);
+  assert.equal(transientProducerIdentity.errors.length, 0, transientProducerIdentity.errors.join("\n"));
+  assertRequestContracts(transientProducerIdentity);
+  const deniedProducerIdentity = await runDispatcher({
+    tuples: [tuple], runtimeWorkflowLookupFailures: [403],
+  });
+  assert.deepEqual(numbers(deniedProducerIdentity), ["101"],
+    "a non-transient producer identity lookup failure cannot retransmit the one-shot handoff");
+  assert.equal(deniedProducerIdentity.runtimeWorkflowLookupCount, 1,
+    "only transient producer identity lookup failures are retried");
+  assert.equal(deniedProducerIdentity.waitedMillis, 0);
+  assert(deniedProducerIdentity.errors.some(message => message.includes("producer workflow identity could not be trusted")));
+  const expiredProducerIdentity = await runDispatcher({
+    tuples: [tuple], runtimeWorkflowLookupFailures: Array(30).fill(503),
+  });
+  assert.deepEqual(numbers(expiredProducerIdentity), ["101"]);
+  assert.equal(expiredProducerIdentity.runtimeWorkflowLookupCount, 24,
+    "transient producer identity lookup retries stop at the existing two-minute observation deadline");
+  assert.equal(expiredProducerIdentity.waitedMillis, 120000);
+  assert(expiredProducerIdentity.errors.some(message => message.includes("visibility deadline")));
+  assertRequestContracts(expiredProducerIdentity);
   for (const [failure, reason] of [
     [() => { throw Object.assign(new Error("visibility forbidden"), {status: 403}); }, "visibility forbidden"],
     [() => ({total_count: 1, workflow_runs: []}), "recent run inventory is incomplete"],

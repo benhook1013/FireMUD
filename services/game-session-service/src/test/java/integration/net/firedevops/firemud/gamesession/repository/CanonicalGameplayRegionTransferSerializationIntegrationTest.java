@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -15,8 +17,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
+import org.jooq.ExecuteListener;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -90,9 +95,29 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
           url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema);
       repeatableReadSource.setUsername(postgresContainer().getUsername());
       repeatableReadSource.setPassword(postgresContainer().getPassword());
+      AtomicInteger installIsolation = new AtomicInteger(-1);
+      var installObserver =
+          new ExecuteListener() {
+            @Override
+            public void executeStart(ExecuteContext context) {
+              if (!"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))".equals(context.sql())) {
+                return;
+              }
+              try {
+                installIsolation.set(context.statement().getConnection().getTransactionIsolation());
+              } catch (SQLException failure) {
+                throw new AssertionError(
+                    "Could not read the install transaction isolation", failure);
+              }
+            }
+          };
+      DSLContext repeatableReadDsl = DSL.using(repeatableReadSource, SQLDialect.POSTGRES);
       var repeatableReadRepository =
           new CanonicalGameplayRegionRuntimeStatusRepository(
-              DSL.using(repeatableReadSource, SQLDialect.POSTGRES));
+              DSL.using(
+                  repeatableReadDsl
+                      .configuration()
+                      .derive(new DefaultExecuteListenerProvider(installObserver))));
       assertThat(repeatableReadRepository.find(proof.scope)).contains(proof.prior);
       Future<?> install =
           executor.submit(() ->
@@ -107,6 +132,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
 
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid);
+        assertThat(installIsolation.get()).isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
         proof.seedUndeliveredDispatch(dispatched);
       } finally {
         blocker.commit();

@@ -2,8 +2,10 @@ package unit.net.firedevops.firemud.accountservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -166,6 +168,28 @@ class AccountTenantCapacityOwnerTest {
     f.existing = false;
     Record genericRefusal = mock(Record.class);
     UUID decisionId = UUID.randomUUID();
+    String originLookupSql =
+        "SELECT * FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND capacity_rearm_fence = ?";
+    String originInsertSql =
+        "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING";
+    Object[] originKey = {
+      f.request.identity().tenantId(),
+      f.request.identity().requestId(),
+      f.request.identity().admissionId(),
+      f.request.capacityRearmFence()
+    };
+    doAnswer(
+            invocation -> {
+              Object[] arguments = (Object[]) invocation.getRawArguments()[1];
+              assertThat(arguments).hasSize(4);
+              assertThat(arguments[0]).isEqualTo(f.request.identity().tenantId());
+              assertThat(arguments[1]).isEqualTo(f.request.identity().requestId());
+              assertThat(arguments[2]).isEqualTo(f.request.identity().admissionId());
+              assertThat(arguments[3]).isEqualTo(f.request.capacityRearmFence());
+              return f.pendingOriginDecision != null ? f.pendingOriginDecision : f.originDecision;
+            })
+        .when(f.dsl)
+        .fetchOne(eq(originLookupSql), any(Object[].class));
     when(genericRefusal.get("tenant_uuid", UUID.class)).thenReturn(f.request.identity().tenantId());
     when(genericRefusal.get("request_id", UUID.class)).thenReturn(f.request.identity().requestId());
     when(genericRefusal.get("admission_id", UUID.class))
@@ -185,16 +209,29 @@ class AccountTenantCapacityOwnerTest {
     org.mockito.Mockito.doReturn(usage)
         .when(f.dsl)
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
-    when(f.dsl.execute(
-            startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
-        .thenAnswer(invocation -> {
-          Object[] arguments = (Object[]) invocation.getRawArguments()[1];
-          assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
-          assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
-          when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
-          f.pendingOriginDecision = genericRefusal;
-          return 1;
-        });
+    doAnswer(
+            invocation -> {
+              Object[] arguments = (Object[]) invocation.getRawArguments()[1];
+              assertThat(arguments).hasSize(10);
+              assertThat(arguments[0]).isEqualTo(f.request.identity().tenantId());
+              assertThat(arguments[1]).isEqualTo(f.request.identity().requestId());
+              assertThat(arguments[2]).isEqualTo(f.request.identity().admissionId());
+              assertThat(arguments[3]).isEqualTo(f.request.capacityRearmFence());
+              assertThat(arguments[4]).isEqualTo(f.request.admissionAttemptId());
+              assertThat(arguments[5]).isEqualTo(f.request.mutationDigest());
+              assertThat(
+                      java.util.Arrays.equals(
+                          (byte[]) arguments[6], CapacityAdmissionDigest.preimage(f.request)))
+                  .isTrue();
+              assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
+              assertThat(arguments[8]).isInstanceOf(UUID.class);
+              assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+              when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
+              f.pendingOriginDecision = genericRefusal;
+              return 1;
+            })
+        .when(f.dsl)
+        .execute(eq(originInsertSql), any(Object[].class));
     f.retained = true;
     qualifySources(f);
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
@@ -209,6 +246,8 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.originDecision).isSameAs(genericRefusal);
     assertThat(f.pendingOriginDecision).isNull();
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
+    verify(f.dsl, times(1)).execute(eq(originInsertSql), any(Object[].class));
+    verify(f.dsl, times(3)).fetchOne(eq(originLookupSql), aryEq(originKey));
     when(usage.get("held_units", Long.class)).thenReturn(0L);
     org.mockito.Mockito.clearInvocations(f.dsl, f.accounts, f.memberships, f.issuances, f.scopes);
 
@@ -223,6 +262,7 @@ class AccountTenantCapacityOwnerTest {
               });
     }
     verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, times(2)).fetchOne(eq(originLookupSql), aryEq(originKey));
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
     verify(f.dsl, never())
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
