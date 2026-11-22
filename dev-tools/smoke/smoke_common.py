@@ -387,20 +387,6 @@ def login_play_look_steps(
     ]
 
 
-def authenticated_telnet_play_steps(
-    username, password, world, worlds_expect, login_expect, play_expect, look_expect
-):
-    """Run the canonical Telnet lobby, PLAY, and LOOK on one live connection."""
-    return [
-        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
-        ("WORLDS", [worlds_expect], "WORLDS"),
-        (f"REALMS {world}", ["OK REALMS"], "REALMS"),
-        (f"JOIN {world}", ["OK JOIN"], "JOIN"),
-        (f"PLAY {world}", [play_expect], "PLAY"),
-        ("LOOK", [look_expect, "Candle-lit Antechamber"], "LOOK"),
-    ]
-
-
 def canonical_fixture_play_steps(
     username, password, world, worlds_expect, login_expect, play_expect, look_expect
 ):

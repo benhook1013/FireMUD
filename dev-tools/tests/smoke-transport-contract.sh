@@ -2016,7 +2016,7 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
-telnet_steps = smoke_common.authenticated_telnet_play_steps(
+telnet_steps = smoke_common.canonical_fixture_play_steps(
     "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK"
 )
 assert [step[2] for step in telnet_steps] == ["LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY", "LOOK"]
@@ -2081,7 +2081,7 @@ for script in \
   if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
     grep -Fq 'discovery_selector = world' "$script" ||
       { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
-    grep -Fq 'authenticated_telnet_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect, look_expect)' "$script" ||
+    grep -Fq 'canonical_fixture_play_steps(login_email, password, world, worlds_expect, login_expect, play_expect, look_expect)' "$script" ||
       { echo "$script baseline must use the authenticated Telnet PLAY and LOOK plan" >&2; exit 1; }
   else
     grep -Fq 'discovery_selector=world' "$script" ||
@@ -2552,6 +2552,12 @@ assert_command_rejects \
   env SMOKE_MUTATION_EXTENSION=true \
   SMOKE_MUTATION_BOUNDARY=run-owned-compose \
   SMOKE_GAME_SESSION_WS_URL=ws://localhost:8085/ws \
+  bash "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
+assert_command_rejects \
+  "run-owned loopback listener" \
+  env FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true \
+  FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256=fixture-test \
+  SMOKE_GAME_SESSION_WS_URL=wss://example.test/ws/game/run-owned-fixture \
   bash "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 assert_command_rejects \
   "canonical Telnet endpoint" \
