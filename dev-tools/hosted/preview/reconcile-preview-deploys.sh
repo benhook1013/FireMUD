@@ -4,6 +4,8 @@ preview_workflow_name="PR Preview Environment"
 eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
 max_active="${PREVIEW_MAX_ACTIVE:-2}"
 preview_handoff_window_seconds=600
+# shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib
+source ./dev-tools/hosted/preview/preview-proof-retry-record.shlib
 
 parse_namespace_tuple() {
   jq -er '
@@ -45,58 +47,11 @@ parse_namespace_tuple() {
           annotation($annotations; "firemud.dev/proof-preview-merge-sha"),
           annotation($annotations; "firemud.dev/proof-preview-image-tag"),
           annotation($annotations; "firemud.dev/proof-preview-namespace-uid"),
-          annotation($annotations; "firemud.dev/proof-retry-count"),
-          annotation($annotations; "firemud.dev/proof-retry-base-sha"),
-          annotation($annotations; "firemud.dev/proof-retry-head-sha"),
-          annotation($annotations; "firemud.dev/proof-retry-merge-sha"),
-          annotation($annotations; "firemud.dev/proof-retry-image-tag"),
           metadata_field(.metadata; "uid"),
           metadata_field(.metadata; "resourceVersion")
-        ]
-      | if (
-          (($annotations | has("firemud.dev/proof-retry-count") | not)
-            and ($annotations | has("firemud.dev/proof-retry-reservation-id") | not)
-            and .[13] == "" and .[14] == "" and .[15] == "" and .[16] == "" and .[17] == "")
-          or (
-            (.[13] | test("^[1-3]$"))
-            and (.[14] | test("^[0-9a-f]{40}$"))
-            and (.[15] | test("^[0-9a-f]{40}$"))
-            and (.[16] | test("^[0-9a-f]{40}$"))
-            and (.[17] | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
-          )
-        ) then . else error("namespace proof-retry evidence is malformed") end
-      | if (($annotations | has("firemud.dev/proof-retry-reservation-id") | not)
-          or ($annotations["firemud.dev/proof-retry-reservation-id"]
-            | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")))
-        then . else error("namespace proof-retry reservation ID is malformed") end
-      | join("|")
+        ] | join("|")
     end
   ' <<<"$1"
-}
-
-validated_proof_retry_reservation_version() {
-  local snapshot="$1" namespace="$2" uid="$3" deployed_tuple="$4"
-  local retry_tuple="$5" count="$6" reservation_id="$7" previous_version="$8"
-  parse_namespace_tuple "$snapshot" >/dev/null || return 1
-  jq -ers --arg namespace "$namespace" --arg uid "$uid" --arg deployed "$deployed_tuple" \
-    --arg retry "$retry_tuple" --arg count "$count" --arg id "$reservation_id" \
-    --arg previous_version "$previous_version" '
-    select(length == 1) | .[0]
-    | .metadata as $metadata | ($metadata.annotations // {}) as $annotations
-    | select($uid != "" and $id != "" and $metadata.name == $namespace and $metadata.uid == $uid
-        and ($metadata.resourceVersion | type == "string" and length > 0 and . != $previous_version)
-        and $annotations["firemud.dev/proof-retry-reservation-id"] == $id
-        and $annotations["firemud.dev/proof-retry-count"] == $count
-        and ([$annotations["firemud.dev/last-preview-base-sha"] // "",
-              $annotations["firemud.dev/last-preview-head-sha"] // "",
-              $annotations["firemud.dev/last-preview-merge-sha"] // "",
-              $annotations["firemud.dev/last-preview-image-tag"] // ""] | join("|")) == $deployed
-        and ([$annotations["firemud.dev/proof-retry-base-sha"],
-              $annotations["firemud.dev/proof-retry-head-sha"],
-              $annotations["firemud.dev/proof-retry-merge-sha"],
-              $annotations["firemud.dev/proof-retry-image-tag"]] | join("|")) == $retry)
-    | $metadata.resourceVersion
-  ' <<<"$snapshot"
 }
 
 readonly repair_success=0
@@ -152,7 +107,7 @@ repair_requested_tuple() {
   IFS='|' read -r fresh_last_base_sha fresh_last_head_sha fresh_last_merge_sha fresh_last_image_tag \
     fresh_requested_base_sha fresh_requested_head_sha fresh_requested_merge_sha fresh_requested_image_tag \
     fresh_proof_base_sha fresh_proof_head_sha fresh_proof_merge_sha fresh_proof_image_tag \
-    fresh_proof_namespace_uid _ _ _ _ _ \
+    fresh_proof_namespace_uid \
     fresh_namespace_uid \
     fresh_namespace_resource_version <<<"${fresh_namespace_tuple}"
   if [[ "${fresh_namespace_uid}" != "${expected_namespace_uid}" ]]; then
@@ -218,73 +173,24 @@ repair_requested_tuple() {
 }
 
 prepare_preview_dispatch() {
-  local namespace="$1"
-  local pr_number="$2"
-  local base_sha="$3"
-  local head_sha="$4"
-  local merge_sha="$5"
-  local image_tag="$6"
-  local require_deployed_tuple="$7"
-  local priority="$8"
-  local expected_namespace_uid="$9"
-  local fresh_namespace_json
-  local fresh_namespace_tuple
-  local current_base_sha
-  local current_head_sha
-  local current_merge_sha
-  local current_image_tag
-  local requested_base_sha
-  local requested_head_sha
-  local requested_merge_sha
-  local requested_image_tag
-  local proof_base_sha
-  local proof_head_sha
-  local proof_merge_sha
-  local proof_image_tag
-  local proof_namespace_uid
-  local retry_count
-  local retry_base_sha
-  local retry_head_sha
-  local retry_merge_sha
-  local retry_image_tag
-  local namespace_uid
-  local namespace_resource_version
-  local next_retry_count
-  local previous_reservation_id
-  local reservation_id
-  local reservation_resource_version
-  local reservation_namespace_json
-  local annotation_failed=false
-  local recheck_namespace_name
-  local recheck_namespace_uid
-  local recheck_namespace_resource_version
-  local exact_retry_tuple=false
+  local namespace="$1" pr_number="$2" base_sha="$3" head_sha="$4" merge_sha="$5" image_tag="$6"
+  local require_deployed_tuple="$7" priority="$8" expected_namespace_uid="$9"
+  local snapshot="" tuple="" namespace_uid="" namespace_resource_version=""
+  local deployed_base deployed_head deployed_merge deployed_image deployed_exact=false
+  local proof_base proof_head proof_merge proof_image proof_uid
+  local holder prior legacy reservation next_count=1 nonce fresh_snapshot
+  proof_retry_record=""
+  proof_retry_prior_record=""
+  proof_retry_holder_uid=""
 
-  proof_retry_reservation_count=""
-  proof_retry_reservation_id=""
-  proof_retry_previous_reservation_id=""
-  proof_retry_previous_count=""
-  proof_retry_previous_base_sha=""
-  proof_retry_previous_head_sha=""
-  proof_retry_previous_merge_sha=""
-  proof_retry_previous_image_tag=""
-  proof_retry_reservation_namespace_uid=""
-  proof_retry_reservation_resource_version=""
-  proof_retry_reservation_deployed_tuple=""
-  proof_retry_reservation_base_sha=""
-  proof_retry_reservation_head_sha=""
-  proof_retry_reservation_merge_sha=""
-  proof_retry_reservation_image_tag=""
-
-  if ! fresh_namespace_json="$(
-    kubectl get namespace "${namespace}" --ignore-not-found -o json
-  )"; then
-    echo "Unable to recheck namespace ${namespace} before preview dispatch." >&2
+  if ! snapshot="$(kubectl get namespace "$namespace" --ignore-not-found -o json)"; then
+    echo "Unable to recheck namespace $namespace before preview dispatch." >&2
+    dispatch_outcome_failed=true
     return 1
   fi
-  if [[ -z "${fresh_namespace_json}" ]]; then
+  if [[ -z "$snapshot" ]]; then
     if [[ "$require_deployed_tuple" == true ]]; then
-      echo "Skipping PR #${pr_number}: namespace ${namespace} disappeared before proof retry dispatch." >&2
+      echo "Skipping PR #${pr_number}: namespace $namespace disappeared before proof retry dispatch." >&2
       return 1
     fi
     if [[ "$priority" != true && "$available_slots" -le 0 ]]; then
@@ -298,205 +204,123 @@ prepare_preview_dispatch() {
         return 1
       fi
     fi
-    return 0
-  fi
-  if ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
-    echo "Skipping PR #${pr_number}: malformed namespace proof-retry evidence; refusing dispatch." >&2
-    return 1
-  fi
-  IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
-    requested_base_sha requested_head_sha requested_merge_sha requested_image_tag \
-    proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
-    retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag \
-    namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
-  if [[ "$require_deployed_tuple" == true &&
-    ( -z "$expected_namespace_uid" || "$namespace_uid" != "$expected_namespace_uid" ) ]]; then
-    echo "Skipping PR #${pr_number}: namespace ${namespace} was recreated before proof retry dispatch; refusing to charge its retry budget." >&2
-    return 1
-  fi
-  if [[ "${retry_base_sha}" == "${base_sha}" &&
-    "${retry_head_sha}" == "${head_sha}" &&
-    "${retry_merge_sha}" == "${merge_sha}" &&
-    "${retry_image_tag}" == "${image_tag}" ]]; then
-    exact_retry_tuple=true
-  fi
-  if [[ "${current_base_sha}" != "${base_sha}" ||
-    "${current_head_sha}" != "${head_sha}" ||
-    "${current_merge_sha}" != "${merge_sha}" ||
-    "${current_image_tag}" != "${image_tag}" ]]; then
-    if [[ "$require_deployed_tuple" == true ]]; then
+  else
+    if ! tuple="$(parse_namespace_tuple "$snapshot")"; then
+      echo "Skipping PR #${pr_number}: malformed namespace evidence; refusing dispatch." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    IFS='|' read -r deployed_base deployed_head deployed_merge deployed_image _ _ _ _ \
+      proof_base proof_head proof_merge proof_image proof_uid namespace_uid namespace_resource_version <<<"$tuple"
+    if [[ "$require_deployed_tuple" == true &&
+      ( -z "$expected_namespace_uid" || "$namespace_uid" != "$expected_namespace_uid" ) ]]; then
+      echo "Skipping PR #${pr_number}: namespace $namespace was recreated before proof retry dispatch; refusing to charge its retry budget." >&2
+      return 1
+    fi
+    if [[ "$deployed_base|$deployed_head|$deployed_merge|$deployed_image" == "$base_sha|$head_sha|$merge_sha|$image_tag" ]]; then
+      deployed_exact=true
+    elif [[ "$require_deployed_tuple" == true ]]; then
       echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
       return 1
     fi
-    # A failed namespace recreation can retain the exact retry record before
-    # the new workload has written its deployed tuple.
-    if [[ "$exact_retry_tuple" == false ]]; then
-      return 0
+    if [[ "$proof_base|$proof_head|$proof_merge|$proof_image" == "$base_sha|$head_sha|$merge_sha|$image_tag" &&
+      -n "$namespace_uid" && "$proof_uid" == "$namespace_uid" ]]; then
+      echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
+      return 2
     fi
   fi
-  if [[ "${proof_base_sha}" == "${base_sha}" &&
-    "${proof_head_sha}" == "${head_sha}" &&
-    "${proof_merge_sha}" == "${merge_sha}" &&
-    "${proof_image_tag}" == "${image_tag}" &&
-    -n "${namespace_uid}" &&
-    "${proof_namespace_uid}" == "${namespace_uid}" ]]; then
-    echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
-    return 2
-  fi
-  if [[ "$exact_retry_tuple" == true ]]; then
-    next_retry_count=$((10#${retry_count} + 1))
-  else
-    next_retry_count=1
-  fi
-  if (( next_retry_count > 3 )); then
-    echo "Skipping PR #${pr_number}: proof retry budget exhausted for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}." >&2
-    return 3
-  fi
-  if [[ -z "$namespace_uid" || -z "$namespace_resource_version" ]]; then
-    echo "Skipping PR #${pr_number}: Namespace retry custody is unavailable." >&2
+
+  if ! holder="$(read_preview_retry_holder)" ||
+    ! prior="$(preview_retry_entry "$holder" "$namespace")"; then
+    echo "Unable to verify the proof-retry holder for PR #${pr_number}; refusing dispatch." >&2
+    dispatch_outcome_failed=true
     return 1
   fi
-  previous_reservation_id="$(jq -r '.metadata.annotations["firemud.dev/proof-retry-reservation-id"] // ""' <<<"${fresh_namespace_json}")"
-  # uuid4 uses the OS cryptographic random source. The ID is custody for this
-  # invocation only, not a durable retry ledger across Namespace deletion.
-  if ! reservation_id="$(python3 -c 'import uuid; print(uuid.uuid4())')" ||
-    [[ ! "$reservation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+  if [[ "$prior" == null && -n "$snapshot" ]]; then
+    if ! legacy="$(legacy_preview_retry_entry "$snapshot" "$namespace")"; then
+      echo "Skipping PR #${pr_number}: malformed legacy proof-retry evidence; refusing dispatch." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    if [[ "$legacy" != null ]]; then
+      if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$legacy")"; then
+        echo "Unable to retain the legacy proof-retry record for PR #${pr_number}; refusing dispatch." >&2
+        dispatch_outcome_failed=true
+        return 1
+      fi
+      prior="$legacy"
+    fi
+  fi
+  if jq -e --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" --arg image "$image_tag" '
+    . != null and .base == $base and .head == $head and .merge == $merge and .image == $image
+  ' <<<"$prior" >/dev/null; then
+    next_count="$(( $(jq -r '.count' <<<"$prior") + 1 ))"
+  elif [[ "$deployed_exact" == false ]]; then
+    return 0
+  fi
+  if (( next_count > 3 )); then
+    echo "Skipping PR #${pr_number}: proof retry budget exhausted for $base_sha/$head_sha/$merge_sha/$image_tag." >&2
+    return 3
+  fi
+  if [[ -n "$snapshot" && ( -z "$namespace_uid" || -z "$namespace_resource_version" ) ]]; then
+    echo "Skipping PR #${pr_number}: Namespace retry custody is unavailable." >&2
+    dispatch_outcome_failed=true
+    return 1
+  fi
+  if ! nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')" ||
+    [[ ! "$nonce" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]; then
     echo "Unable to generate proof-retry reservation ID for PR #${pr_number}; refusing dispatch." >&2
     dispatch_outcome_failed=true
     return 1
   fi
-  if ! reservation_namespace_json="$(kubectl annotate namespace "${namespace}" \
-    "firemud.dev/proof-retry-reservation-id=${reservation_id}" \
-    "firemud.dev/proof-retry-count=${next_retry_count}" \
-    "firemud.dev/proof-retry-base-sha=${base_sha}" \
-    "firemud.dev/proof-retry-head-sha=${head_sha}" \
-    "firemud.dev/proof-retry-merge-sha=${merge_sha}" \
-    "firemud.dev/proof-retry-image-tag=${image_tag}" \
-    --overwrite \
-    --resource-version "${namespace_resource_version}" -o json)"; then
-    annotation_failed=true
-    # A failed kubectl response proves neither a CAS conflict nor that the
-    # reservation was not committed. Bound classification to one API reread;
-    # never retry the write or compensate a reservation we cannot attribute.
-    if ! reservation_namespace_json="$(kubectl get namespace "${namespace}" \
-      --ignore-not-found -o json --request-timeout=10s)"; then
-      echo "Unable to recheck Namespace ${namespace} after proof-retry annotation failure; refusing dispatch with reservation outcome unknown." >&2
-      dispatch_outcome_failed=true
-      return 1
-    fi
-    if [[ -z "${reservation_namespace_json}" ]]; then
-      echo "Skipping PR #${pr_number}: Namespace ${namespace} disappeared after proof-retry annotation failure; retry on a later cycle." >&2
-      return 1
-    fi
-  fi
-  # The successful CAS response and a lost-response reread need the same full
-  # positive evidence; tuple/count alone must never attribute another writer.
-  if ! reservation_resource_version="$(validated_proof_retry_reservation_version \
-    "$reservation_namespace_json" "$namespace" "$namespace_uid" \
-    "${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}" \
-    "${base_sha}|${head_sha}|${merge_sha}|${image_tag}" "$next_retry_count" \
-    "$reservation_id" "$namespace_resource_version")"; then
-    if [[ "$annotation_failed" == false ]]; then
-      echo "Unable to prove proof-retry reservation custody for PR #${pr_number} from the annotation response; leaving its budget charged without dispatch." >&2
-      dispatch_outcome_failed=true
-      return 1
-    fi
-    if ! fresh_namespace_tuple="$(parse_namespace_tuple "${reservation_namespace_json}")" ||
-      ! recheck_namespace_name="$(jq -er '.metadata.name | select(type == "string" and length > 0 and (test("[|\\r\\n]") | not))' \
-        <<<"${reservation_namespace_json}")"; then
-      echo "Unable to verify Namespace ${namespace} after proof-retry annotation failure; refusing dispatch with reservation outcome unknown." >&2
-      dispatch_outcome_failed=true
-      return 1
-    fi
-    IFS='|' read -r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \
-      recheck_namespace_uid recheck_namespace_resource_version <<<"${fresh_namespace_tuple}"
-    if [[ "${recheck_namespace_name}" != "${namespace}" ||
-      ( -n "${recheck_namespace_uid}" && "${recheck_namespace_uid}" != "${namespace_uid}" ) ]]; then
-      echo "Skipping PR #${pr_number}: Namespace identity changed after proof-retry annotation failure; retry on a later cycle." >&2
-      return 1
-    fi
-    if [[ -z "${recheck_namespace_uid}" || -z "${recheck_namespace_resource_version}" ||
-      "${recheck_namespace_resource_version}" == "${namespace_resource_version}" ]]; then
-      echo "Unable to prove a Namespace change after proof-retry annotation failure for PR #${pr_number}; refusing dispatch." >&2
-      dispatch_outcome_failed=true
-      return 1
-    fi
-    echo "Skipping PR #${pr_number}: competing Namespace resource version observed after proof-retry annotation failure; retry on a later cycle." >&2
+  reservation="$(jq -cn --arg repo "$GITHUB_REPOSITORY" --arg namespace "$namespace" \
+    --arg uid "$namespace_uid" --arg nonce "$nonce" --argjson count "$next_count" \
+    --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" --arg image "$image_tag" '
+      {repository:$repo,namespace:$namespace,namespaceUid:$uid,nonce:$nonce,count:$count,
+       base:$base,head:$head,merge:$merge,image:$image}
+    ')" || return 1
+  if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$reservation")"; then
+    echo "Unable to prove proof-retry reservation custody for PR #${pr_number}; refusing dispatch." >&2
+    dispatch_outcome_failed=true
     return 1
   fi
-  proof_retry_reservation_count="${next_retry_count}"
-  proof_retry_reservation_id="${reservation_id}"
-  proof_retry_previous_reservation_id="${previous_reservation_id}"
-  proof_retry_previous_count="${retry_count}"
-  proof_retry_previous_base_sha="${retry_base_sha}"
-  proof_retry_previous_head_sha="${retry_head_sha}"
-  proof_retry_previous_merge_sha="${retry_merge_sha}"
-  proof_retry_previous_image_tag="${retry_image_tag}"
-  proof_retry_reservation_namespace_uid="${namespace_uid}"
-  proof_retry_reservation_deployed_tuple="${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}"
-  proof_retry_reservation_resource_version="${reservation_resource_version}"
-  proof_retry_reservation_base_sha="${base_sha}"
-  proof_retry_reservation_head_sha="${head_sha}"
-  proof_retry_reservation_merge_sha="${merge_sha}"
-  proof_retry_reservation_image_tag="${image_tag}"
-  echo "Recorded proof retry ${next_retry_count}/3 for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag})."
+  proof_retry_record="$reservation"
+  proof_retry_prior_record="$prior"
+  proof_retry_holder_uid="$(jq -r '.metadata.uid' <<<"$holder")"
+  if ! fresh_snapshot="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)"; then
+    echo "Unable to verify the Namespace fence for PR #${pr_number}; refusing dispatch." >&2
+    dispatch_outcome_failed=true
+    compensate_rejected_proof_retry "$namespace" "$pr_number" "before dispatch" || true
+    return 1
+  fi
+  if [[ -z "$snapshot" && -n "$fresh_snapshot" ]] ||
+    { [[ -n "$snapshot" ]] && ! jq -e --arg namespace "$namespace" --arg uid "$namespace_uid" \
+        --arg rv "$namespace_resource_version" '
+      .metadata.name == $namespace and .metadata.uid == $uid and .metadata.resourceVersion == $rv
+    ' <<<"$fresh_snapshot" >/dev/null; }; then
+    echo "Skipping PR #${pr_number}: Namespace fence changed before proof retry dispatch." >&2
+    if ! compensate_rejected_proof_retry "$namespace" "$pr_number" "before dispatch"; then
+      dispatch_outcome_failed=true
+    fi
+    return 1
+  fi
+  echo "Recorded proof retry $next_count/3 for PR #${pr_number} ($base_sha/$head_sha/$merge_sha/$image_tag)."
   return 0
 }
 
 compensate_rejected_proof_retry() {
-  local namespace="$1"
-  local pr_number="$2"
-  local fresh_namespace_json
-  local namespace_resource_version
-  local -a annotations=()
-
-  if [[ -z "${proof_retry_reservation_count}" ]]; then
-    return 0
-  fi
-  if ! fresh_namespace_json="$(kubectl get namespace "${namespace}" --ignore-not-found -o json)"; then
-    echo "Unable to verify proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+  local namespace="$1" pr_number="$2" reason="${3:-after GitHub confirmed dispatch rejection}"
+  local holder current
+  [[ -n "$proof_retry_record" ]] || return 0
+  if ! holder="$(read_preview_retry_holder)" ||
+    ! current="$(preview_retry_entry "$holder" "$namespace")" ||
+    ! jq -e --arg uid "$proof_retry_holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null ||
+    ! jq -en --argjson current "$current" --argjson reserved "$proof_retry_record" '$current == $reserved' >/dev/null ||
+    ! write_preview_retry_entry "$holder" "$namespace" "$proof_retry_prior_record" >/dev/null; then
+    echo "Unable to release proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
     return 1
   fi
-  # An unrelated RV advance is safe only while the exact reservation ID and
-  # every custody field still match; the compensating CAS uses this fresh RV.
-  if [[ -z "${proof_retry_reservation_resource_version}" ]] ||
-    ! namespace_resource_version="$(validated_proof_retry_reservation_version \
-      "$fresh_namespace_json" "$namespace" "$proof_retry_reservation_namespace_uid" \
-      "$proof_retry_reservation_deployed_tuple" \
-      "${proof_retry_reservation_base_sha}|${proof_retry_reservation_head_sha}|${proof_retry_reservation_merge_sha}|${proof_retry_reservation_image_tag}" \
-      "$proof_retry_reservation_count" "$proof_retry_reservation_id" "")"; then
-    echo "Proof-retry reservation for PR #${pr_number} changed before confirmed-rejection compensation; leaving its budget charged." >&2
-    return 1
-  fi
-
-  if [[ -n "${proof_retry_previous_reservation_id}" ]]; then
-    annotations+=("firemud.dev/proof-retry-reservation-id=${proof_retry_previous_reservation_id}")
-  else
-    annotations+=(firemud.dev/proof-retry-reservation-id-)
-  fi
-  if [[ -n "${proof_retry_previous_count}" ]]; then
-    annotations+=(
-      "firemud.dev/proof-retry-count=${proof_retry_previous_count}"
-      "firemud.dev/proof-retry-base-sha=${proof_retry_previous_base_sha}"
-      "firemud.dev/proof-retry-head-sha=${proof_retry_previous_head_sha}"
-      "firemud.dev/proof-retry-merge-sha=${proof_retry_previous_merge_sha}"
-      "firemud.dev/proof-retry-image-tag=${proof_retry_previous_image_tag}"
-    )
-  else
-    annotations+=(
-      firemud.dev/proof-retry-count-
-      firemud.dev/proof-retry-base-sha-
-      firemud.dev/proof-retry-head-sha-
-      firemud.dev/proof-retry-merge-sha-
-      firemud.dev/proof-retry-image-tag-
-    )
-  fi
-  if ! kubectl annotate namespace "${namespace}" "${annotations[@]}" \
-    --overwrite --resource-version "${namespace_resource_version}" >/dev/null; then
-    echo "Unable to release rejected proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
-    return 1
-  fi
-  echo "Released proof-retry reservation for PR #${pr_number} after GitHub confirmed dispatch rejection."
+  echo "Released proof-retry reservation for PR #${pr_number} $reason."
 }
 
 active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
@@ -1049,7 +873,6 @@ dispatch_candidates() {
     IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
       requested_base_sha requested_head_sha requested_merge_sha requested_image_tag \
       proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
-      _ _ _ _ _ \
       namespace_uid _ <<<"${namespace_tuple}"
   elif [[ "$priority" != "true" && "$available_slots" -le 0 ]]; then
     if ! refresh_available_slots; then
@@ -1320,21 +1143,7 @@ dispatch_candidates() {
     require_deployed_tuple=true
   fi
   # A consumer may finish deployment and proof during the active-run lookup.
-  local proof_retry_reservation_count=""
-  local proof_retry_reservation_id=""
-  local proof_retry_previous_reservation_id=""
-  local proof_retry_previous_count=""
-  local proof_retry_previous_base_sha=""
-  local proof_retry_previous_head_sha=""
-  local proof_retry_previous_merge_sha=""
-  local proof_retry_previous_image_tag=""
-  local proof_retry_reservation_namespace_uid=""
-  local proof_retry_reservation_resource_version=""
-  local proof_retry_reservation_deployed_tuple=""
-  local proof_retry_reservation_base_sha=""
-  local proof_retry_reservation_head_sha=""
-  local proof_retry_reservation_merge_sha=""
-  local proof_retry_reservation_image_tag=""
+  local proof_retry_record="" proof_retry_prior_record="" proof_retry_holder_uid=""
   prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
     "$require_deployed_tuple" "$priority" "$namespace_uid" || continue
 

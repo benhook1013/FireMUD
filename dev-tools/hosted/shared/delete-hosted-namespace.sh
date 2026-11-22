@@ -84,11 +84,32 @@ if [[ -n "$expected_namespace_uid" && "$namespace_uid" != "$expected_namespace_u
   exit 1
 fi
 delete_uid="${expected_namespace_uid:-$namespace_uid}"
+delete_resource_version=""
+
+if [[ -n "$expected_pr_number" ]]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib
+  source "$script_dir/../preview/preview-proof-retry-record.shlib"
+  if ! legacy_retry="$(legacy_preview_retry_entry "$namespace_json" "$namespace")"; then
+    echo "unable to read legacy proof-retry evidence for $namespace; refusing deletion" >&2
+    exit 1
+  fi
+  if [[ "$legacy_retry" != null ]]; then
+    if ! delete_resource_version="$(jq -er '.metadata.resourceVersion | select(type == "string" and length > 0)' <<<"$namespace_json")" ||
+      ! preserve_legacy_preview_retry_entry "$legacy_retry" "$namespace"; then
+      echo "unable to retain the proof-retry budget for $namespace; refusing deletion" >&2
+      exit 1
+    fi
+  fi
+fi
 
 delete_options="$(
   jq -cn \
     --arg uid "$delete_uid" \
-    '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}'
+    --arg resource_version "$delete_resource_version" '
+      {apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}
+      | if $resource_version != "" then .preconditions.resourceVersion = $resource_version else . end
+    '
 )"
 delete_status=0
 printf '%s\n' "$delete_options" |

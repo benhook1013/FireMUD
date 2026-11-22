@@ -77,6 +77,11 @@ CREDENTIALS = (
             ("get", "namespaces", None, "yes"),
             ("delete", "namespaces", None, "yes"),
             ("get", "secrets", "proof", "no"),
+            ("get", "configmaps/firemud-preview-proof-retries", "control", "yes"),
+            ("patch", "configmaps/firemud-preview-proof-retries", "control", "yes"),
+            ("create", "configmaps", "control", "no"),
+            ("list", "configmaps", "control", "no"),
+            ("patch", "configmaps/firemud-unrelated", "control", "no"),
         ),
     ),
     Credential(

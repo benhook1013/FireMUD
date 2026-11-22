@@ -1,0 +1,139 @@
+# shellcheck shell=bash
+# The installed holder survives a clean preview Namespace recreation.
+readonly preview_retry_holder_namespace=firemud-system
+readonly preview_retry_holder_name=firemud-preview-proof-retries
+
+validate_preview_retry_holder() {
+  jq -ces --arg namespace "$preview_retry_holder_namespace" --arg name "$preview_retry_holder_name" '
+    select(length == 1) | .[0]
+    | select(.apiVersion == "v1" and .kind == "ConfigMap"
+        and .metadata.namespace == $namespace and .metadata.name == $name
+        and (.metadata.uid | type == "string" and length > 0)
+        and (.metadata.resourceVersion | type == "string" and length > 0)
+        and .metadata.deletionTimestamp == null and ((.metadata.ownerReferences // []) == [])
+        and (.data | type == "object" and .schemaVersion == "1"
+          and all(keys[]; . == "schemaVersion" or test("^pr-[1-9][0-9]{0,50}$"))))
+  ' <<<"$1"
+}
+
+read_preview_retry_holder() {
+  local snapshot
+  snapshot="$(kubectl -n "$preview_retry_holder_namespace" get configmap "$preview_retry_holder_name" \
+    -o json --request-timeout=10s)" || return 1
+  validate_preview_retry_holder "$snapshot"
+}
+
+preview_retry_entry() {
+  local snapshot="$1" namespace="$2"
+  jq -c --arg namespace "$namespace" --arg repo "$GITHUB_REPOSITORY" '
+    if (.data | has($namespace) | not) then null
+    else .data[$namespace] | fromjson
+      | if (
+          keys == ["base","count","head","image","merge","namespace","namespaceUid","nonce","repository"]
+          and .repository == $repo and .namespace == $namespace
+          and (.count | type == "number" and . == floor and . >= 1 and . <= 3)
+          and all(.base,.head,.merge; type == "string" and test("^[a-f0-9]{40}$"))
+          and (.image | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
+          and (.namespaceUid | type == "string" and test("^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$"))
+          and (.nonce | type == "string" and test("^([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?$"))
+        ) then . else error("invalid preview proof-retry record") end
+    end
+  ' <<<"$snapshot"
+}
+
+write_preview_retry_entry() {
+  local snapshot="$1" namespace="$2" replacement="$3"
+  local patch response entry uid version
+  [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]] || return 1
+  uid="$(jq -er '.metadata.uid' <<<"$snapshot")" || return 1
+  version="$(jq -er '.metadata.resourceVersion' <<<"$snapshot")" || return 1
+  patch="$(jq -c --arg key "/data/$namespace" --argjson replacement "$replacement" '
+    [
+      {op:"test",path:"/metadata/uid",value:.metadata.uid},
+      {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+      (if $replacement == null then {op:"remove",path:$key}
+       else {op:"add",path:$key,value:($replacement | tojson)} end)
+    ]
+  ' <<<"$snapshot")" || return 1
+  if response="$(kubectl -n "$preview_retry_holder_namespace" patch configmap "$preview_retry_holder_name" \
+      --type=json --patch "$patch" -o json --request-timeout=10s)"; then
+    response="$(validate_preview_retry_holder "$response")" || return 1
+  else
+    # A response can be lost after the server commits. Prove the exact row
+    # and holder identity with one bounded reread before authorizing a send.
+    response="$(read_preview_retry_holder)" || return 1
+  fi
+  jq -e --arg uid "$uid" --arg version "$version" '
+    .metadata.uid == $uid and .metadata.resourceVersion != $version
+  ' <<<"$response" >/dev/null || return 1
+  entry="$(preview_retry_entry "$response" "$namespace")" || return 1
+  jq -en --argjson actual "$entry" --argjson expected "$replacement" '$actual == $expected' >/dev/null || return 1
+  printf '%s\n' "$response"
+}
+
+legacy_preview_retry_entry() {
+  local snapshot="$1" namespace="$2"
+  jq -c --arg repo "${GITHUB_REPOSITORY:-}" --arg namespace "$namespace" '
+    (.metadata.annotations // {}) as $annotations
+    | (["count","base-sha","head-sha","merge-sha","image-tag","reservation-id"]
+      | map("firemud.dev/proof-retry-" + .)) as $keys
+    | if any($keys[]; . as $key | $annotations | has($key)) then
+        .metadata.uid as $uid
+        | if (
+            ($repo | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+            and .metadata.name == $namespace
+            and .metadata.labels["firemud.dev/preview"] == "true"
+            and .metadata.labels["firemud.dev/pr-number"] == ($namespace | ltrimstr("pr-"))
+            and ($uid | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
+            and ($annotations[$keys[0]] | type == "string" and test("^[1-3]$"))
+            and all($keys[1:4][]; $annotations[.] | type == "string" and test("^[a-f0-9]{40}$"))
+            and ($annotations[$keys[4]] | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
+            and (if $annotations | has($keys[5]) then
+                $annotations[$keys[5]] | type == "string"
+                  and test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$")
+              else true end)
+          ) then {repository:$repo,namespace:$namespace,namespaceUid:$uid,
+                  count:($annotations[$keys[0]] | tonumber),base:$annotations[$keys[1]],
+                  head:$annotations[$keys[2]],merge:$annotations[$keys[3]],image:$annotations[$keys[4]],
+                  nonce:($annotations[$keys[5]] // "")}
+          else error("malformed legacy preview proof-retry annotations") end
+      else null end
+  ' <<<"$snapshot"
+}
+
+preserve_legacy_preview_retry_entry() {
+  local legacy="$1" namespace="$2" stored holder
+  holder="$(read_preview_retry_holder)" || return 1
+  stored="$(preview_retry_entry "$holder" "$namespace")" || return 1
+  # Once present, the durable holder owns the counter; old Namespace
+  # annotations are a one-time import source only.
+  [[ "$stored" == null ]] || return 0
+  write_preview_retry_entry "$holder" "$namespace" "$legacy" >/dev/null
+}
+
+retire_merged_preview_retry_entries() {
+  local holder holder_uid entries namespace pr_number pr runtime row
+  holder="$(read_preview_retry_holder)" || return 1
+  holder_uid="$(jq -er '.metadata.uid' <<<"$holder")" || return 1
+  entries="$(jq -r '.data | keys[] | select(. != "schemaVersion")' <<<"$holder")" || return 1
+  while IFS= read -r namespace; do
+    [[ -n "$namespace" ]] || continue
+    pr_number="${namespace#pr-}"
+    # A closed, unmerged pull request can reopen with the same tuple. Only
+    # positive, same-repository merge evidence permits automatic retirement.
+    pr="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/pulls/$pr_number")" || continue
+    jq -es --arg number "$pr_number" --arg repo "$GITHUB_REPOSITORY" '
+      select(length == 1) | .[0]
+      | (.number | tostring) == $number and .state == "closed" and .merged == true
+      and .head.repo.full_name == $repo and .base.repo.full_name == $repo
+    ' <<<"$pr" >/dev/null || continue
+    runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
+    [[ -z "$runtime" ]] || continue
+    holder="$(read_preview_retry_holder)" || return 1
+    jq -e --arg uid "$holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null || return 1
+    row="$(preview_retry_entry "$holder" "$namespace")" || return 1
+    [[ "$row" != null ]] || continue
+    write_preview_retry_entry "$holder" "$namespace" null >/dev/null || return 1
+    echo "Retired the proof-retry record for merged PR #$pr_number."
+  done <<<"$entries"
+}

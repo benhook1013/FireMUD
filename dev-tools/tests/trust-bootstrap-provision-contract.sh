@@ -62,7 +62,7 @@ expected = {
 assert set(module._CREDENTIALS_BY_NAME) == set(expected)
 for name, credential in module._CREDENTIALS_BY_NAME.items():
     assert (credential.environment, credential.github_secret) == expected[name]
-    expected_probe_count = 3 if name == "firemud-preview-namespace-manager" else 2
+    expected_probe_count = 8 if name == "firemud-preview-namespace-manager" else 2
     assert len(credential.rbac_probes) == expected_probe_count
     assert {probe[3] for probe in credential.rbac_probes} == {"yes", "no"}
 manager = module._CREDENTIALS_BY_NAME["firemud-preview-namespace-manager"]
@@ -70,6 +70,11 @@ assert manager.rbac_probes == (
     ("get", "namespaces", None, "yes"),
     ("delete", "namespaces", None, "yes"),
     ("get", "secrets", "proof", "no"),
+    ("get", "configmaps/firemud-preview-proof-retries", "control", "yes"),
+    ("patch", "configmaps/firemud-preview-proof-retries", "control", "yes"),
+    ("create", "configmaps", "control", "no"),
+    ("list", "configmaps", "control", "no"),
+    ("patch", "configmaps/firemud-unrelated", "control", "no"),
 )
 
 assert module.REPOSITORY == "benhook1013/FireMUD"
@@ -392,7 +397,7 @@ manager_identity_json = json.dumps({
 }).encode("utf-8")
 with (
     patch.object(module, "run_command", return_value=manager_identity_json),
-    patch.object(module, "run_auth_can_i", side_effect=["yes", "yes", "no"]) as probes,
+    patch.object(module, "run_auth_can_i", side_effect=[probe[3] for probe in manager.rbac_probes]) as probes,
 ):
     module.verify_generated_kubeconfig(
         module.build_kubeconfig(
@@ -410,6 +415,11 @@ with (
         ["get", "namespaces"],
         ["delete", "namespaces"],
         ["get", "secrets", "-n", "pr-42"],
+        ["get", "configmaps/firemud-preview-proof-retries", "-n", "firemud-system"],
+        ["patch", "configmaps/firemud-preview-proof-retries", "-n", "firemud-system"],
+        ["create", "configmaps", "-n", "firemud-system"],
+        ["list", "configmaps", "-n", "firemud-system"],
+        ["patch", "configmaps/firemud-unrelated", "-n", "firemud-system"],
     ]
 
 write_offset = source.index("file.write(kubeconfig)")

@@ -95,13 +95,13 @@ jobs:
             hosted-controller)
               if [[ "$HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE" == true ]]; then
                 bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
-                  --apply --retire-terminal-identities
+                  --apply --retire-terminal-identities --retire-proof-retries
               else
-                bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+                bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply --retire-proof-retries
               fi
               ;;
             standalone)
-              bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+              bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply --retire-proof-retries
               ;;
             *)
               echo "unsupported certificate identity mode: ${HOSTED_IDENTITY_MODE}" >&2

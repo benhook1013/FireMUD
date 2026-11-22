@@ -38,6 +38,7 @@ fi
 
 apply=false
 retire_terminal_identities=false
+retire_proof_retries=false
 for arg in "$@"; do
   case "$arg" in
     --apply)
@@ -46,12 +47,20 @@ for arg in "$@"; do
     --retire-terminal-identities)
       retire_terminal_identities=true
       ;;
+    --retire-proof-retries)
+      retire_proof_retries=true
+      ;;
     *)
-      echo "usage: $0 [--apply] [--retire-terminal-identities]" >&2
+      echo "usage: $0 [--apply] [--retire-terminal-identities] [--retire-proof-retries]" >&2
       exit 1
       ;;
   esac
 done
+
+if [[ "$retire_proof_retries" == true && "$apply" != true ]]; then
+  echo "--retire-proof-retries requires --apply" >&2
+  exit 2
+fi
 
 if [[ "$retire_terminal_identities" == true ]]; then
   if [[ "$apply" != true ]]; then
@@ -424,4 +433,13 @@ fi
 if (( runtime_deletion_failures > 0 || retirement_failures > 0 )); then
   echo "${runtime_deletion_failures} hosted runtime deletion(s) and ${retirement_failures} hosted identity retirement(s) failed; stale cleanup is incomplete." >&2
   exit 1
+fi
+
+if [[ "$retire_proof_retries" == true ]]; then
+  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib
+  source "$script_dir/preview-proof-retry-record.shlib"
+  if ! retire_merged_preview_retry_entries; then
+    echo "Unable to retire verified merged preview proof-retry records." >&2
+    exit 1
+  fi
 fi
