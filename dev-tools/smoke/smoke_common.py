@@ -42,6 +42,9 @@ PLAINTEXT_TELNET_HOST_ERROR = "tls_enabled=False requires a localhost-equivalent
 WORLD_DISCOVERY_ROW = re.compile(
     r"^\s*\S(?:.*?\S)?\s+\(([^()\r\n]+)\)\s*$"
 )
+CANONICAL_WORLD_DISCOVERY_ROW = re.compile(
+    r"^\s*([a-z0-9]+(?:-[a-z0-9]+)*)/([a-z0-9]+(?:-[a-z0-9]+)*)\s*$"
+)
 WORLD_DISCOVERY_POLL_INTERVAL_SECONDS = 0.5
 RETRYABLE_UPSTREAM_FAILURE_PREFIXES = ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
 DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES = (
@@ -220,17 +223,23 @@ def worlds_response_contains_selector(response, selector):
     if not isinstance(selector, str) or not selector.strip():
         raise ValueError("World discovery selector must be a non-empty string")
     normalized_selector = selector.strip().casefold()
-    slugs = []
+    matches = 0
     for line in response.splitlines():
         match = WORLD_DISCOVERY_ROW.fullmatch(line)
         if match is not None:
-            slugs.append(match.group(1).strip().casefold())
+            matches += match.group(1).strip().casefold() == normalized_selector
+            continue
+        canonical = CANONICAL_WORLD_DISCOVERY_ROW.fullmatch(line)
+        if canonical is not None:
+            tenant, world = canonical.groups()
+            # The canonical menu accepts the exact tenant/world or a unique tenant alias.
+            matches += normalized_selector == f"{tenant}/{world}" or (
+                not normalized_selector.isdecimal() and normalized_selector == tenant
+            )
 
-    matches = [slug for slug in slugs if slug == normalized_selector]
-
-    if len(matches) > 1:
+    if matches > 1:
         raise ProbeOperationalFailure(f"Configured smoke world selector {selector!r} appears ambiguously in WORLDS")
-    return len(matches) == 1
+    return matches == 1
 
 
 def wait_for_world_discovery(selector, expected_substrings, timeout_seconds, execute_worlds):

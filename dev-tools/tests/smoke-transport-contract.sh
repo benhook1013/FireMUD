@@ -1211,6 +1211,21 @@ assert smoke_common.worlds_response_contains_selector(
 assert not smoke_common.worlds_response_contains_selector(
     "OK WORLDS\nWelcome to the demo world\n", "demo"
 )
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/demo\n", "demo"
+)
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/other-world\n", "DEMO/other-world"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/other-world\n", "other-world"
+)
+try:
+    smoke_common.worlds_response_contains_selector("OK WORLDS\ndemo/world\ndemo/other\n", "demo")
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ambiguously" in str(exc)
+else:
+    raise AssertionError("A canonical tenant alias must match exactly one world")
 
 
 for transient_error in (
