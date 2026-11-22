@@ -11,7 +11,7 @@ run-name: License Gate ${{ github.event_name == 'pull_request' && format('pr-{0}
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
