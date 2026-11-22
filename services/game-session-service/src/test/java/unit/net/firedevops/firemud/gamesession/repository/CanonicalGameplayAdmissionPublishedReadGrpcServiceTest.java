@@ -623,6 +623,7 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
 
   private static CanonicalPlayableTarget route() {
     var route = mock(CanonicalPlayableTarget.class);
+    when(route.admissionDecisionTarget()).thenCallRealMethod();
     when(route.initialAdmissionOriginKind())
         .thenReturn(CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER);
     when(route.ownerProofOutcome())
