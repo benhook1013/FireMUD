@@ -306,6 +306,11 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
       }
       assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
       String originalReceipts = proof.originalImage();
+      if (cohortSize > CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE) {
+        // Give each one-shot dispatch its own budget before measuring paged verification.
+        // The small-cohort case still dispatches through advance within one deadline.
+        for (var item : captured) proof.fence(item);
+      }
 
       var observationLatency = Duration.ofMillis(5);
       var attestor =
@@ -342,8 +347,8 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
       int pages =
           (cohortSize + CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE - 1)
               / CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE;
-      // Bounded calls can stop while fencing or verifying a page. Retry the same transfer
-      // and prove the predecessor and exact terminal receipts stay intact until it qualifies.
+      // Bounded verification calls may stop between pages. Keep the predecessor and original
+      // receipts intact until the retained fences qualify.
       UUID verified = null;
       for (int attempt = 0; attempt < 4 * pages && verified == null; attempt++) {
         try {
@@ -356,10 +361,7 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
           if (cohortSize == 3
               || !List.of(
                       "Normal region handoff requires complete current transfer evidence",
-                      "Normal region owner transfer is held",
-                      // A 5 s budget that ends inside the Redis fence surfaces untyped; FENCE is
-                      // idempotent, so the same transfer resumes on the next attempt.
-                      "Original NEW final admission Redis readback is unavailable")
+                      "Normal region owner transfer is held")
                   .contains(held.getMessage())) throw held;
         }
         assertThat(proof.currentOwner()).isEqualTo(proof.prior);
