@@ -66,7 +66,6 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -879,14 +878,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     GrpcChannelFactory channels() {
       return new GrpcChannelFactory() {
         @Override
-        public ManagedChannel buildChannel(
+        public ManagedChannel buildChannelWithoutRetries(
             String target,
             int defaultPort,
             CommonGrpcClientProperties properties,
-            boolean keepAlive,
-            ResolvedGrpcTlsMaterial tlsMaterial)
+            boolean keepAlive)
             throws javax.net.ssl.SSLException {
-          var channel = super.buildChannel(target, defaultPort, properties, keepAlive, tlsMaterial);
+          var channel =
+              super.buildChannelWithoutRetries(target, defaultPort, properties, keepAlive);
           var intercepted = ClientInterceptors.intercept(channel, DropFirstQuotaResponse.this);
           return new ManagedChannel() {
             @Override
