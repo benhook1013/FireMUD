@@ -74,7 +74,7 @@ public final class AccountTenantCapacityClient
     // during sampling can only shorten the bound; it must never extend the caller budget.
     Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
     Instant sampledInstant = clock.instant();
-    request.requireStructurallyValid();
+    var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");
@@ -85,7 +85,6 @@ public final class AccountTenantCapacityClient
             Context.current().getDeadline(),
             absoluteDeadlineMillis,
             sampledInstant);
-    var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     CommitTenantCapacityAdmissionResponse response;
     try {
       response =

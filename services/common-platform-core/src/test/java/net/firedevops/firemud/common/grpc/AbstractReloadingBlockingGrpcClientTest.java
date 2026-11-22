@@ -98,6 +98,28 @@ class AbstractReloadingBlockingGrpcClientTest {
   }
 
   @Test
+  void publishedStubIsUnavailableToLeasedCallsUntilExplicitInitialization() throws Exception {
+    var grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    var beforeInit = mock(ManagedChannel.class);
+    var afterInit = mock(ManagedChannel.class);
+    var factory = mock(GrpcChannelFactory.class);
+    when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(beforeInit, afterInit);
+    try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
+      client.reloadChannel();
+      assertThat(client.currentStub()).isNotNull();
+      assertThat(client.currentStub().getChannel()).isSameAs(beforeInit);
+      assertThatThrownBy(client::requirePublishedExplicitStub)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("test client is not initialized and available");
+
+      client.initExplicit();
+      assertThat(client.requirePublishedExplicitStub().getChannel()).isSameAs(afterInit);
+    }
+  }
+
+  @Test
   void replacementStubIsPublishedWhenPreviousChannelStartsShutdown() throws Exception {
     var grpc = new CommonGrpcClientProperties();
     grpc.setPlaintext(true);
@@ -159,9 +181,9 @@ class AbstractReloadingBlockingGrpcClientTest {
         var selected = new CountDownLatch(2);
         var startFirst = new CountDownLatch(1);
         var startSecond = new CountDownLatch(1);
-        try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
-            var executor = Executors.newFixedThreadPool(2)) {
+        try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
           client.initExplicit();
+          var executor = Executors.newFixedThreadPool(2);
           Function<CountDownLatch, Future<PingResponse>> submitCall =
               ready ->
                   executor.submit(() ->
@@ -171,7 +193,9 @@ class AbstractReloadingBlockingGrpcClientTest {
                             assertThat(stub.getChannel()).isSameAs(previous);
                             selected.countDown();
                             try {
-                              assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                              assertThat(ready.await(5, TimeUnit.SECONDS))
+                                  .as("the selected call must be released before its bounded wait")
+                                  .isTrue();
                             } catch (InterruptedException interrupted) {
                               Thread.currentThread().interrupt();
                               throw new AssertionError(interrupted);
@@ -179,9 +203,9 @@ class AbstractReloadingBlockingGrpcClientTest {
                             return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
                                 .ping(PingRequest.getDefaultInstance());
                           }));
-          var first = submitCall.apply(startFirst);
-          var second = submitCall.apply(startSecond);
           try {
+            var first = submitCall.apply(startFirst);
+            var second = submitCall.apply(startSecond);
             assertThat(selected.await(5, TimeUnit.SECONDS)).isTrue();
             if (close) {
               client.close();
@@ -204,6 +228,8 @@ class AbstractReloadingBlockingGrpcClientTest {
           } finally {
             startFirst.countDown();
             startSecond.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
           }
         } finally {
           replacement.shutdownNow();

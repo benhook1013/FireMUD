@@ -17,6 +17,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
@@ -27,6 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
@@ -372,7 +374,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
-  void exactCapacityRefusalCommitsAndReplaysAfterHeadroomReturns() {
+  void exactCapacityRefusalReplaysAfterHeadroomReturnsAndEvaluationExpires() {
     Fixture f = fixture(true, true);
     var request = capacityRequest(f);
     long quota = request.evidence().quota();
@@ -433,7 +435,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     7,
                     "sha256:" + "e".repeat(64),
                     "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            Clock.fixed(f.now, ZoneOffset.UTC));
+            f.clock);
     assertThat(
             recovery
                 .reconcile(
@@ -443,6 +445,26 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .isEqualTo(TenantCapacityAdmission.State.RELEASED);
     assertThat(f.dsl.fetchSingle(readHeld, f.tenantId).get("held_units", Long.class))
         .isEqualTo(quota - 1);
+    // The exact durable refusal must win over both returned quota headroom and expired evidence.
+    Instant evaluationExpiresAt = request.evidence().expiresAt();
+    assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
+    f.clock.setInstant(evaluationExpiresAt.plus(1, ChronoUnit.MICROS));
+    assertThat(f.clock.instant()).isAfter(evaluationExpiresAt);
+    var retainedReservations =
+        f.dsl
+            .fetch(
+                "SELECT *, xmin::text AS row_version FROM account_tenant_capacity_reservations "
+                    + "ORDER BY reservation_id")
+            .intoMaps();
+    var retainedSlots =
+        f.dsl
+            .fetch(
+                "SELECT tenant_uuid, slot, decision_id "
+                    + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                f.tenantId)
+            .intoMaps();
+    assertThat(retainedSlots).hasSize(1);
+    assertThat(retainedSlots.get(0)).containsEntry("decision_id", decision.get());
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
         .isInstanceOfSatisfying(
             CapacityException.class,
@@ -453,6 +475,22 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(f.dsl.fetchSingle(readDenial, identity).intoMap())
         .usingRecursiveComparison()
         .isEqualTo(retained);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT *, xmin::text AS row_version FROM account_tenant_capacity_reservations "
+                        + "ORDER BY reservation_id")
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(retainedReservations);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT tenant_uuid, slot, decision_id "
+                        + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                    f.tenantId)
+                .intoMaps())
+        .isEqualTo(retainedSlots);
     assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
         .isEqualTo(Math.toIntExact(quota + 1));
     assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
@@ -672,6 +710,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
     private final Instant now;
+    private final MutableClock clock;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
     private final AccountTenantMembershipRepository memberships;
@@ -685,6 +724,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private Fixture(DriverManagerDataSource dataSource, boolean join, boolean initializeCapacity) {
       this.dataSource = dataSource;
       now = initializeCapacity ? Instant.now().truncatedTo(ChronoUnit.MICROS) : NOW;
+      clock = new MutableClock(now, ZoneOffset.UTC);
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
@@ -872,14 +912,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
           });
       capacityOwner =
           new AccountTenantCapacityOwner(
-              dsl,
-              accounts,
-              snapshots,
-              issuances,
-              scopes,
-              transactions,
-              Clock.fixed(now, ZoneOffset.UTC),
-              NAMESPACE);
+              dsl, accounts, snapshots, issuances, scopes, transactions, clock, NAMESPACE);
       var targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
       controlledTarget(targets);
       owner =
@@ -896,7 +929,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               tenantEvents,
               targets,
               transactions,
-              Clock.fixed(now, ZoneOffset.UTC),
+              clock,
               NAMESPACE);
     }
 
@@ -918,6 +951,39 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               scope.pointerVersion()),
           scope.connectScopeId(),
           PEER);
+    }
+  }
+
+  private static final class MutableClock extends Clock {
+    private final AtomicReference<Instant> current;
+    private final ZoneId zone;
+
+    private MutableClock(Instant instant, ZoneId zone) {
+      this(new AtomicReference<>(instant), zone);
+    }
+
+    private MutableClock(AtomicReference<Instant> current, ZoneId zone) {
+      this.current = current;
+      this.zone = zone;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId newZone) {
+      return zone.equals(newZone) ? this : new MutableClock(current, newZone);
+    }
+
+    @Override
+    public Instant instant() {
+      return current.get();
+    }
+
+    private void setInstant(Instant instant) {
+      current.set(instant);
     }
   }
 
