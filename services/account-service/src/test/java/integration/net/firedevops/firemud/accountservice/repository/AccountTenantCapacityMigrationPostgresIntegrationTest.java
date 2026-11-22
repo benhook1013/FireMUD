@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.AccountTenantCreatorBootstrapIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -13,15 +14,9 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapDigest;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.Completion;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
-import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
-import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
 import org.jooq.SQLDialect;
@@ -259,7 +254,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           Objects.requireNonNull(
               transaction.execute(status -> {
                 repository.importVerified(existing);
-                return claimBootstrap(
+                return AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
                     operations, new AccountRepository(dsl).save(creator()), existing);
               }));
       assertThat(historical.status()).isEqualTo("IN_PROGRESS");
@@ -287,7 +282,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                 assertThat(operation.status()).isEqualTo("IN_PROGRESS");
                 assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
                 assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
-                return operations.complete(operation.requestId(), completion(operation));
+                return operations.complete(
+                    operation.requestId(),
+                    AccountTenantCreatorBootstrapIntegrationFixture.completion(operation));
               }));
       assertThat(completed.status()).isEqualTo("COMMITTED");
       assertThat(completed.tenantUuid()).isEqualTo(existing.canonicalTenantId());
@@ -645,10 +642,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       transaction.executeWithoutResult(status -> {
         new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(acceptedTenant);
         var claimed =
-            claimBootstrap(operations, new AccountRepository(dsl).save(creator()), acceptedTenant);
+            AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
+                operations, new AccountRepository(dsl).save(creator()), acceptedTenant);
         var current = operations.findForUpdate(claimed.requestId()).orElseThrow();
         assertThat(current.status()).isEqualTo("IN_PROGRESS");
-        operations.complete(current.requestId(), completion(current));
+        operations.complete(
+            current.requestId(),
+            AccountTenantCreatorBootstrapIntegrationFixture.completion(current));
       });
 
       UUID acceptedRequest = UUID.randomUUID();
@@ -662,8 +662,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       String snapshotIdentity = "sha256:" + "e".repeat(64);
       String callerWorkload = "controlled-capacity-fixture";
       Instant evaluatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
-      Instant evaluationExpiresAt = evaluatedAt.plusSeconds(30);
-      Instant reservationExpiresAt = evaluatedAt.plusSeconds(60);
+      Instant evaluationExpiresAt = evaluatedAt.plusSeconds(60);
+      Instant reservationExpiresAt = evaluatedAt.plusSeconds(30);
       Instant reconcileDeadline = reservationExpiresAt.plusSeconds(60);
       transaction.executeWithoutResult(status -> {
         dsl.execute(
@@ -771,11 +771,138 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
       assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
 
+      String insertedDecision =
+          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING";
+      assertThat(
+              dsl.fetchOne(
+                  "SELECT 1 FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                  acceptedTenant.canonicalTenantId()))
+          .isNull();
+      var acceptedAfterMigration = freshAcceptedAttempt();
+      transaction.executeWithoutResult(status ->
+          insertAcceptedCapacityAttempt(
+              dsl, acceptedTenant.canonicalTenantId(), acceptedAfterMigration, 1, 2));
+      assertThat(
+              dsl.fetchOne(
+                  "SELECT 1 FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                  acceptedTenant.canonicalTenantId()))
+          .isNull();
+      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+      assertTenantCapacityInventoryMatches(dsl, acceptedTenant.canonicalTenantId());
+
+      var acceptedOriginsBeforeReplay = originRows(dsl, acceptedTenant.canonicalTenantId());
+      var acceptedReservationsBeforeReplay =
+          reservationRows(dsl, acceptedTenant.canonicalTenantId());
+      var acceptedUsageBeforeReplay = usageRows(dsl, acceptedTenant.canonicalTenantId());
+      assertThat(acceptedOriginsBeforeReplay)
+          .anySatisfy(row ->
+              assertThat(row)
+                  .containsEntry("request_id", acceptedAfterMigration.requestId())
+                  .containsEntry("admission_id", acceptedAfterMigration.admissionId())
+                  .containsEntry("admission_attempt_id", acceptedAfterMigration.attemptId())
+                  .containsEntry("mutation_digest", acceptedAfterMigration.digest())
+                  .containsEntry("decision", "ACCEPTED")
+                  .containsEntry(
+                      "payload",
+                      java.util.HexFormat.of().formatHex(acceptedAfterMigration.payload())));
+      assertThat(acceptedReservationsBeforeReplay)
+          .anySatisfy(row ->
+              assertThat(row)
+                  .containsEntry("request_id", acceptedAfterMigration.requestId())
+                  .containsEntry("admission_id", acceptedAfterMigration.admissionId())
+                  .containsEntry("admission_attempt_id", acceptedAfterMigration.attemptId())
+                  .containsEntry("mutation_digest", acceptedAfterMigration.digest())
+                  .containsEntry("capacity_delta", 1L)
+                  .containsEntry(
+                      "payload",
+                      java.util.HexFormat.of().formatHex(acceptedAfterMigration.payload())));
+
+      assertThat(
+              dsl.execute(
+                  insertedDecision,
+                  acceptedTenant.canonicalTenantId(),
+                  acceptedAfterMigration.requestId(),
+                  acceptedAfterMigration.admissionId(),
+                  1L,
+                  acceptedAfterMigration.attemptId(),
+                  acceptedAfterMigration.digest(),
+                  acceptedAfterMigration.payload(),
+                  "ACCEPTED",
+                  UUID.randomUUID(),
+                  null))
+          .isZero();
+      assertThat(originRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedOriginsBeforeReplay);
+      assertThat(reservationRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedReservationsBeforeReplay);
+      assertThat(usageRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedUsageBeforeReplay);
+
+      var rolledBackAccepted = freshAcceptedAttempt();
+      transaction.executeWithoutResult(status -> {
+        insertAcceptedCapacityAttempt(
+            dsl, acceptedTenant.canonicalTenantId(), rolledBackAccepted, 2, 3);
+        status.setRollbackOnly();
+      });
+      assertThat(
+              dsl.fetchOne(
+                  "SELECT 1 FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                  acceptedTenant.canonicalTenantId(),
+                  rolledBackAccepted.requestId(),
+                  rolledBackAccepted.admissionId()))
+          .isNull();
+      assertThat(
+              dsl.fetchOne(
+                  "SELECT 1 FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                  acceptedTenant.canonicalTenantId(),
+                  rolledBackAccepted.requestId(),
+                  rolledBackAccepted.admissionId()))
+          .isNull();
+      assertThat(
+              dsl.fetchOne(
+                  "SELECT 1 FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+                  rolledBackAccepted.evaluationIdentity()))
+          .isNull();
+      assertThat(originRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedOriginsBeforeReplay);
+      assertThat(reservationRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedReservationsBeforeReplay);
+      assertThat(usageRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedUsageBeforeReplay);
+      assertTenantCapacityInventoryMatches(dsl, acceptedTenant.canonicalTenantId());
+
+      UUID refusedWithoutBudgetRequest = UUID.randomUUID();
+      UUID refusedWithoutBudgetAdmission = UUID.randomUUID();
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  insertedDecision,
+                  acceptedTenant.canonicalTenantId(),
+                  refusedWithoutBudgetRequest,
+                  refusedWithoutBudgetAdmission,
+                  1L,
+                  UUID.randomUUID(),
+                  "7".repeat(64),
+                  new byte[] {24, 25},
+                  "NO_ACCEPT",
+                  UUID.randomUUID(),
+                  "CAPACITY_QUOTA_EXCEEDED"))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure).hasMessageContaining("Capacity refusal budget is unavailable");
+              });
+      assertThat(originRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedOriginsBeforeReplay);
+      assertThat(reservationRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedReservationsBeforeReplay);
+      assertThat(usageRows(dsl, acceptedTenant.canonicalTenantId()))
+          .isEqualTo(acceptedUsageBeforeReplay);
+      assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
+
       transaction.executeWithoutResult(status ->
           new AccountCapacityRefusalBudgetRepository(dsl)
               .provision(historicalTenant.canonicalTenantId(), 3));
-      String insertedDecision =
-          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING";
       UUID freshRequest = UUID.randomUUID();
       UUID freshAdmission = UUID.randomUUID();
       UUID freshAttempt = UUID.randomUUID();
@@ -859,7 +986,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                 assertThat(failure.sqlState()).isEqualTo("23514");
                 assertThat(failure).hasMessageContaining("Capacity refusal budget is exhausted");
               });
-      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(4);
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(5);
       assertThat(refusalSlots(dsl)).containsExactlyElementsOf(expectedSlots);
 
       assertThatThrownBy(() ->
@@ -902,6 +1029,136 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                 row.get("decision_id", UUID.class)));
   }
 
+  private static AcceptedCapacityAttempt freshAcceptedAttempt() {
+    UUID requestId = UUID.randomUUID();
+    Instant evaluatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    Instant evaluationExpiresAt = evaluatedAt.plusSeconds(60);
+    Instant reservationExpiresAt = evaluatedAt.plusSeconds(30);
+    return new AcceptedCapacityAttempt(
+        requestId,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID().toString().replace("-", "").repeat(2),
+        ("fresh accepted capacity payload " + requestId).getBytes(StandardCharsets.UTF_8),
+        "sha256:" + UUID.randomUUID().toString().replace("-", "").repeat(2),
+        "sha256:" + UUID.randomUUID().toString().replace("-", "").repeat(2),
+        evaluatedAt,
+        evaluationExpiresAt,
+        reservationExpiresAt,
+        reservationExpiresAt.plusSeconds(60));
+  }
+
+  private static void insertAcceptedCapacityAttempt(
+      org.jooq.DSLContext dsl,
+      UUID tenantUuid,
+      AcceptedCapacityAttempt attempt,
+      long expectedHeldUnits,
+      long newHeldUnits) {
+    assertThat(attempt.reservationExpiresAt()).isBefore(attempt.evaluationExpiresAt());
+    String callerWorkload = "controlled-capacity-fixture";
+    dsl.execute(
+        "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?::timestamptz, ?::timestamptz)",
+        attempt.evaluationIdentity(),
+        attempt.snapshotIdentity(),
+        tenantUuid,
+        callerWorkload,
+        ("fresh accepted evaluation " + attempt.requestId()).getBytes(StandardCharsets.UTF_8),
+        AccountTenantCapacityRepository.at(attempt.evaluatedAt()),
+        AccountTenantCapacityRepository.at(attempt.evaluationExpiresAt()));
+    assertThat(
+            dsl.execute(
+                "UPDATE account_tenant_capacity_usage SET held_units = ?, usage_revision = ? WHERE tenant_uuid = ? AND owner_service = 'game-session-service' AND held_units = ? AND used_units = 0 AND usage_revision = ?",
+                newHeldUnits,
+                newHeldUnits + 1,
+                tenantUuid,
+                expectedHeldUnits,
+                expectedHeldUnits + 1))
+        .isEqualTo(1);
+    assertThat(
+            dsl.execute(
+                "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, 1, ?, ?, ?, 'ACCEPTED', ?, NULL)",
+                tenantUuid,
+                attempt.requestId(),
+                attempt.admissionId(),
+                attempt.attemptId(),
+                attempt.digest(),
+                attempt.payload(),
+                attempt.decisionId()))
+        .isEqualTo(1);
+    assertThat(
+            dsl.execute(
+                "INSERT INTO account_tenant_capacity_reservations (tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state, execution_status) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, ?::timestamptz, ?::timestamptz, 'RESERVED', 'OWNER_EXECUTION_PENDING')",
+                tenantUuid,
+                attempt.requestId(),
+                attempt.admissionId(),
+                attempt.reservationId(),
+                callerWorkload,
+                attempt.attemptId(),
+                attempt.digest(),
+                attempt.payload(),
+                attempt.evaluationIdentity(),
+                AccountTenantCapacityRepository.at(attempt.reservationExpiresAt()),
+                AccountTenantCapacityRepository.at(attempt.reconcileDeadline())))
+        .isEqualTo(1);
+  }
+
+  private static List<java.util.Map<String, Object>> originRows(
+      org.jooq.DSLContext dsl, UUID tenantUuid) {
+    return dsl.fetch(
+            "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions WHERE tenant_uuid = ? ORDER BY decision_id",
+            tenantUuid)
+        .intoMaps();
+  }
+
+  private static List<java.util.Map<String, Object>> reservationRows(
+      org.jooq.DSLContext dsl, UUID tenantUuid) {
+    return dsl.fetch(
+            "SELECT tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, encode(canonical_payload, 'hex') AS payload, evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state, execution_status, recovery_owner, recovery_claim_fence, recovery_claim_expires_at, next_reconcile_at, recovery_policy_version, recovery_attempt_count, recovery_escalated_at, encode(owner_readback, 'hex') AS owner_readback, owner_readback_digest, xmin::text AS row_version FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? ORDER BY request_id, admission_id",
+            tenantUuid)
+        .intoMaps();
+  }
+
+  private static List<java.util.Map<String, Object>> usageRows(
+      org.jooq.DSLContext dsl, UUID tenantUuid) {
+    return dsl.fetch(
+            "SELECT tenant_uuid, owner_service, bootstrap_request_id, creation_evidence_digest, held_units, used_units, usage_revision, xmin::text AS row_version FROM account_tenant_capacity_usage WHERE tenant_uuid = ? ORDER BY owner_service",
+            tenantUuid)
+        .intoMaps();
+  }
+
+  private static void assertTenantCapacityInventoryMatches(
+      org.jooq.DSLContext dsl, UUID tenantUuid) {
+    var rows =
+        dsl.fetch(
+                "SELECT u.owner_service, u.held_units, u.used_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state IN ('RESERVED', 'QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION')), 0) AS reservation_held_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state = 'FINALIZED'), 0) AS reservation_used_units FROM account_tenant_capacity_usage u LEFT JOIN account_tenant_capacity_reservations r ON r.tenant_uuid = u.tenant_uuid AND r.owner_service = u.owner_service WHERE u.tenant_uuid = ? GROUP BY u.owner_service, u.held_units, u.used_units ORDER BY u.owner_service",
+                tenantUuid)
+            .intoMaps();
+    assertThat(rows).hasSize(2);
+    for (var row : rows) {
+      assertThat(((Number) row.get("held_units")).longValue())
+          .isEqualTo(((Number) row.get("reservation_held_units")).longValue());
+      assertThat(((Number) row.get("used_units")).longValue())
+          .isEqualTo(((Number) row.get("reservation_used_units")).longValue());
+    }
+  }
+
+  private record AcceptedCapacityAttempt(
+      UUID requestId,
+      UUID admissionId,
+      UUID attemptId,
+      UUID decisionId,
+      UUID reservationId,
+      String digest,
+      byte[] payload,
+      String evaluationIdentity,
+      String snapshotIdentity,
+      Instant evaluatedAt,
+      Instant evaluationExpiresAt,
+      Instant reservationExpiresAt,
+      Instant reconcileDeadline) {}
+
   private record RefusalSlot(UUID tenantUuid, long slot, UUID decisionId) {}
 
   private static Account creator() {
@@ -912,74 +1169,6 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     account.setPasswordHash("test-only-password-hash");
     account.setRole("player");
     return account;
-  }
-
-  private static StoredOperation claimBootstrap(
-      AccountTenantCreationBootstrapOperationRepository operations,
-      Account creator,
-      FreshTenantCreationEvidence creation) {
-    UUID accountId = creator.getAccountUuid();
-    UUID authorizationId = UUID.randomUUID();
-    String authorizationDigest =
-        AccountTenantCreationBootstrapDigest.sha256(
-            "fixture authorization".getBytes(StandardCharsets.UTF_8));
-    var evidence =
-        new FreshTenantCreatorEvidence(
-            1,
-            creation,
-            accountId,
-            authorizationId,
-            authorizationDigest,
-            FreshTenantCreatorDigest.evidenceDigest(
-                1, creation, accountId, authorizationId, authorizationDigest));
-    byte[] creatorPayload = AccountTenantCreationBootstrapDigest.creatorEvidencePayload(evidence);
-    byte[] sourcePayload = "fixture source snapshot".getBytes(StandardCharsets.UTF_8);
-    byte[] requestPayload =
-        AccountTenantCreationBootstrapDigest.requestPayload(creatorPayload, sourcePayload);
-    var claim =
-        operations.claim(
-            evidence,
-            creatorPayload,
-            sourcePayload,
-            AccountTenantCreationBootstrapDigest.sha256(sourcePayload),
-            requestPayload,
-            AccountTenantCreationBootstrapDigest.sha256(requestPayload),
-            1,
-            1);
-    assertThat(claim.claimed()).isTrue();
-    return claim.operation();
-  }
-
-  private static Completion completion(StoredOperation operation) {
-    // Controlled completion receipts exercise the real storage owner's guarded transition.
-    byte[] event = "fixture membership event".getBytes(StandardCharsets.UTF_8);
-    byte[] audit = "fixture bootstrap audit".getBytes(StandardCharsets.UTF_8);
-    byte[] result = "fixture bootstrap result".getBytes(StandardCharsets.UTF_8);
-    return new Completion(
-        1,
-        operation.baselineMembershipVersion() + 1,
-        operation.baselineMembershipAuthorityGeneration(),
-        "ACTIVE",
-        false,
-        "[\"tenantAdmin\"]".getBytes(StandardCharsets.UTF_8),
-        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
-            + "membership/"
-            + operation.initiatingAccountUuid()
-            + "/"
-            + operation.tenantUuid(),
-        operation.requestId().toString(),
-        1,
-        "fixture-membership-event",
-        AccountTenantCreationBootstrapDigest.sha256(event),
-        false,
-        event,
-        UUID.randomUUID(),
-        "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED",
-        Instant.now().truncatedTo(ChronoUnit.MICROS),
-        AccountTenantCreationBootstrapDigest.sha256(audit),
-        audit,
-        result,
-        AccountTenantCreationBootstrapDigest.sha256(result));
   }
 
   private static FreshTenantCreationEvidence source() {
