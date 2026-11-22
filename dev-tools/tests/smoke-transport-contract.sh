@@ -2047,6 +2047,9 @@ websocket_steps = smoke_common.canonical_fixture_play_steps(
 )
 assert websocket_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS", 90)
 assert websocket_steps[1:] == telnet_steps
+with patch("smoke_common.wait_for_world_discovery") as fixture_discovery:
+    smoke_common.run_websocket_command_plan(None, websocket_steps[:1], 10, discovery_selector="demo")
+assert fixture_discovery.call_args.args[:3] == ("demo", ["OK WORLDS"], 90)
 
 
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
