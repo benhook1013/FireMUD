@@ -34,19 +34,7 @@ jobs:
 
       - name: Revalidate and admit the current tuple
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          PR_NUMBER: ${{ github.event.client_payload.pr_number }}
-          BASE_REF: ${{ github.event.client_payload.base_ref }}
-          BASE_SHA: ${{ github.event.client_payload.base_sha }}
-          HEAD_SHA: ${{ github.event.client_payload.head_sha }}
-          MERGE_SHA: ${{ github.event.client_payload.merge_sha }}
         with:
           script: |
             const admit = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/admit-pr-runtime-refresh.cjs`);
-            await admit({ github, context, core, input: {
-              pr_number: process.env.PR_NUMBER,
-              base_ref: process.env.BASE_REF,
-              base_sha: process.env.BASE_SHA,
-              head_sha: process.env.HEAD_SHA,
-              merge_sha: process.env.MERGE_SHA,
-            } });
+            await admit({github, context, core, input: context.payload.client_payload});

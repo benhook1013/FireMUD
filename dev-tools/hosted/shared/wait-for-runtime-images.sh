@@ -293,9 +293,13 @@ if wait_mode == "pull-request":
             matching_runs.append(run)
 else:
     matching_runs = []
-all_candidates = len(sys.argv) > 10 and sys.argv[10] == "all"
-if len(sys.argv) > 8:
-    event, title = sys.argv[8:10]
+selectors = sys.argv[8:]
+all_candidates = selectors[-1:] == ["all"]
+if all_candidates:
+    selectors.pop()
+polling = selectors == ["poll"]
+if selectors and not polling:
+    event, title = selectors
     matching_runs = [run for run in matching_runs if run.get("event") == event
                      and run.get("display_title") == title
                      and run.get("status") == "completed" and run.get("conclusion") == "success"]
@@ -303,7 +307,16 @@ if not matching_runs:
     print("missing")
     raise SystemExit(0)
 
-ranked = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)
+def poll_priority(run):
+    # A completed success still needs exact publication proof. Active runs
+    # keep the wait open even if a newer sibling publisher has failed.
+    if run.get("status") != "completed":
+        return 1
+    return 2 if run.get("conclusion") == "success" else 0
+
+ranked = sorted(matching_runs,
+                key=lambda run: (poll_priority(run) if polling else 0, run.get("created_at", "")),
+                reverse=True)
 for run in ranked if all_candidates else ranked[:1]:
     print(
         "found\t{}\t{}\t{}\t{}".format(
@@ -330,6 +343,7 @@ use_completed_duplicate_publication() {
   local state older_id older_created source_event inventory upper publisher_lines publisher_id publisher_status publisher_conclusion
   local source_state="$1" lookup_deadline="$2" remaining
   local proof_origin="${3:-alternate}"
+  local observed_inventory="${4:-}"
   local source source_attempt source_title source_latest publisher_event expected_title
   local run attempt jobs latest publisher_path default_branch repository_info
   local -a publisher_events=()
@@ -364,9 +378,13 @@ use_completed_duplicate_publication() {
     else
       expected_title="Publish PR Runtime Images source-run-${older_id}"
     fi
-    remaining=$((lookup_deadline - SECONDS))
-    (( remaining > 0 )) || break
-    inventory="$(fetch_publisher_runs "$publisher_event" "$older_created" "$upper" "$remaining")" || continue
+    if [[ -n "$observed_inventory" ]]; then
+      inventory="$observed_inventory"
+    else
+      remaining=$((lookup_deadline - SECONDS))
+      (( remaining > 0 )) || break
+      inventory="$(fetch_publisher_runs "$publisher_event" "$older_created" "$upper" "$remaining")" || continue
+    fi
     publisher_lines="$(read_publisher_state "$older_id" "$source_event" "$publisher_event" "$expected_title" all <<<"$inventory")" || continue
     [[ "$publisher_lines" != "missing" ]] || continue
     while IFS=$'\t' read -r state publisher_id publisher_status publisher_conclusion _; do
@@ -375,9 +393,10 @@ use_completed_duplicate_publication() {
       (( SECONDS < lookup_deadline )) || break
       run="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || continue
       publisher_path="$(jq -er '.path | select(type == "string")' <<<"$run")" || continue
-      # Either event runs on the default branch; a short path suffix must agree.
+      # Either event runs on the default branch; a qualified path must agree.
       [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml" ||
-         "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@${default_branch}" ]] || continue
+         "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@${default_branch}" ||
+         "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@refs/heads/${default_branch}" ]] || continue
       attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" --arg path "$publisher_path" --arg branch "$default_branch" \
         --arg title "$expected_title" --arg event "$publisher_event" '
           select(.id == $id and .event == $event and .display_title == $title
@@ -502,23 +521,20 @@ wait_for_pr_publisher() {
           "${publisher_inventory_remaining}"
       )"; then
         fetch_failed=true
-        break
+        continue
       fi
       publisher_payload+="${publisher_payload:+,}${event_payload}"
     done
     local state run_id run_status run_conclusion run_url
     publisher_payload="[${publisher_payload}]"
     publisher_state=""
-    if [[ "${fetch_failed}" == "false" ]] &&
-      publisher_state="$(read_publisher_state "${source_run_id}" "${source_state_event}" <<<"${publisher_payload}")"; then
+    if publisher_state="$(read_publisher_state "${source_run_id}" "${source_state_event}" poll <<<"${publisher_payload}")"; then
       IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
-      if [[ "${run_status}" == "completed" ]]; then
-        if use_completed_duplicate_publication "$source_state" "$publisher_deadline" direct; then
+      if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+        if use_completed_duplicate_publication "$source_state" "$publisher_deadline" direct "$publisher_payload"; then
           return 0
         fi
-        if [[ "${run_conclusion}" == "success" ]]; then
-          direct_success_unproven=true
-        fi
+        direct_success_unproven=true
       fi
     fi
     local refreshed_source_payload refreshed_alternates

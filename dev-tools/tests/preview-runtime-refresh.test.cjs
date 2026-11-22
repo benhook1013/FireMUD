@@ -26,18 +26,22 @@ function admissionFixture() {
   const sent = [];
   const warnings = [];
   const runs = [];
-  const state = {base: B, mergeParents: [B, C], keepHidden: false, afterInventory: null, nextId: 301};
+  const state = {base: B, mergeParents: [B, C], keepHidden: false, afterInventory: null,
+    labels: [{name: 'preview:priority'}], nextId: 301, lookups: [], pullObservations: [],
+    baseReads: 0, commitRefs: [], missingExactCommitReads: 0, waits: [], producerReads: []};
   const github = {rest: {
     pulls: {get: async ({pull_number}) => {
       assert.equal(pull_number, 7);
       return {data: {number: 7, state: 'open', head: {sha: C, repo: {full_name: repository}},
-        base: {ref: 'develop', repo: {full_name: repository}}, mergeable: true,
-        mergeable_state: 'clean', merge_commit_sha: A}};
+        base: {ref: input.base_ref, repo: {full_name: repository}}, mergeable: true,
+        mergeable_state: 'clean', merge_commit_sha: A, labels: state.labels, user: {login: 'developer'},
+        ...state.pullObservations.shift()}};
     }},
     git: {
       getRef: async ({ref}) => {
-        assert.equal(ref, 'heads/develop');
-        return {data: {ref: 'refs/heads/develop', object: {sha: state.base}}};
+        assert.equal(ref, `heads/${input.base_ref}`);
+        state.baseReads++;
+        return {data: {ref: `refs/heads/${input.base_ref}`, object: {sha: state.base}}};
       },
     },
     actions: {
@@ -45,17 +49,31 @@ function admissionFixture() {
         assert.equal(workflow_id, 'runtime-images.yml');
         return {data: {id: 42, path: runtimePath}};
       },
-      listWorkflowRuns: async ({workflow_id, status, event, page}) => {
+      getWorkflowRun: async ({run_id}) => {
+        state.producerReads.push(run_id);
+        const run = runs.find(run => run.id === run_id);
+        return {data: state.refreshProducer ? state.refreshProducer(run) : run};
+      },
+      listWorkflowRuns: async ({workflow_id, status, event, page, created}) => {
         assert.equal(workflow_id, 42);
         assert.ok(page <= 3);
+        state.lookups.push({status, event, page, created});
         state.afterInventory?.();
-        const workflow_runs = runs.filter(run => (!status || run.status === status) && (!event || run.event === event));
-        return {data: {workflow_runs, total_count: workflow_runs.length}};
+        const matching = runs.filter(run => (!status || run.status === status) && run.event === event &&
+          (!created || Date.parse(run.created_at) >= Date.parse(created.split('..')[0])));
+        return {data: {workflow_runs: matching.slice((page - 1) * 100, page * 100),
+          total_count: matching.length}};
       },
     },
     repos: {
       getCommit: async ({ref}) => {
+        state.commitRefs.push(ref);
+        if (state.alternateCommit?.sha === ref) return {data: state.alternateCommit};
         assert.equal(ref, A);
+        if (state.missingExactCommitReads > 0) {
+          state.missingExactCommitReads--;
+          throw Object.assign(new Error('merge not yet visible'), {status: 404});
+        }
         return {data: {sha: A, parents: state.mergeParents.map(sha => ({sha}))}};
       },
       createDispatchEvent: async payload => {
@@ -66,7 +84,9 @@ function admissionFixture() {
   }};
   const admission = {github, input, context: {repo: {owner: 'example', repo: 'FireMUD'},
     payload: {repository: {full_name: repository, default_branch: 'develop'}}},
-  core: {warning: value => warnings.push(value), info() {}}, sleep: async () => {
+  core: {warning: value => warnings.push(value), info() {}}, sleep: async milliseconds => {
+    state.waits.push(milliseconds);
+    state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
   return {admission, makeRun, runs, sent, state, warnings};
@@ -93,11 +113,46 @@ test('a newer failed exact producer keeps the tuple eligible despite an older ac
   const f = admissionFixture();
   f.runs.push(f.makeRun({id: 299, event: 'pull_request', head_sha: C,
     pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
-    created_at: new Date(Date.now() - 120000).toISOString()}));
+    created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString()}));
   f.runs.push(f.makeRun({id: 300, status: 'completed', conclusion: 'failure',
     created_at: new Date(Date.now() - 60000).toISOString()}));
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(f.sent.length, 1);
+});
+
+test('a still-active exact producer is not excluded by age or pagination', async () => {
+  const f = admissionFixture();
+  f.runs.push(...Array.from({length: 100}, (_, i) => f.makeRun({
+    id: 400 + i, display_title: 'unrelated work',
+  })));
+  f.runs.push(f.makeRun({created_at: '2024-01-01T00:00:00Z'}));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.deepEqual(f.sent, []);
+  assert.ok(f.state.lookups.some(call => call.status === 'queued' && call.page === 2 && !call.created));
+});
+
+test('serialized admission reapplies preview policy after the inventory read only for preview requests', async () => {
+  for (const previewOnly of [false, true]) {
+    const f = admissionFixture();
+    f.admission.input.base_ref = 'feature/stack';
+    if (previewOnly) f.admission.input.preview_only = true;
+    f.state.afterInventory = () => { f.state.labels = []; };
+    assert.equal(await admitRuntimeRefresh(f.admission), previewOnly ? 'obsolete' : 'dispatched-observed');
+    assert.equal(f.sent.length, previewOnly ? 0 : 1);
+  }
+});
+
+test('preview marker stays within the admission request and the schema stays closed', async () => {
+  const f = admissionFixture();
+  f.admission.input.preview_only = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(Object.hasOwn(f.sent[0].client_payload, 'preview_only'), false);
+  for (const invalid of [{preview_only: 'true'}, {preview_only: false}, {preview_only: true, extra: true}]) {
+    const bad = admissionFixture();
+    Object.assign(bad.admission.input, invalid);
+    await assert.rejects(admitRuntimeRefresh(bad.admission), /Invalid runtime refresh input/);
+    assert.deepEqual(bad.sent, []);
+  }
 });
 
 test('admission refuses a base that moves after the inventory read', async () => {
@@ -111,6 +166,89 @@ test('admission refuses the exact merge SHA when its ordered parents disagree', 
   const f = admissionFixture();
   f.state.mergeParents = [C, B];
   assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.sent, []);
+});
+
+test('admission rereads PR and base through pending mergeability, a stale base parent and missing test merge', async () => {
+  const f = admissionFixture();
+  f.state.pullObservations = [
+    {mergeable: null, merge_commit_sha: null},
+    {mergeable_state: 'unknown'},
+    {merge_commit_sha: E},
+  ];
+  f.state.alternateCommit = {sha: E, parents: [{sha: D}, {sha: C}]};
+  f.state.missingExactCommitReads = 1;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.deepEqual(f.state.commitRefs, [E, A, A, A]);
+  assert.equal(f.state.baseReads, 6);
+  assert.deepEqual(f.state.waits, [2000, 2000, 2000, 2000, 2000]);
+  assert.equal(f.sent[0].client_payload.merge_sha, A);
+});
+
+test('admission bounds waiting for merge computation and aborts immediately on definitive drift', async () => {
+  const pending = {mergeable: null, merge_commit_sha: null};
+  for (const [scenario, configure, expectedWaits, expectedRefs] of [
+    ['persistent calculation', f => { f.state.pullObservations = Array(6).fill(pending); }, 5, 6],
+    ['conflict', f => { f.state.pullObservations = [pending, {mergeable: false, mergeable_state: 'dirty'}]; }, 1, 1],
+    ['changed head', f => { f.state.pullObservations = [pending,
+      {head: {sha: D, repo: {full_name: 'example/FireMUD'}}}]; }, 1, 1],
+    ['moved base', f => {
+      f.state.pullObservations = [pending];
+      f.state.afterWait = () => { f.state.base = D; };
+    }, 1, 2],
+    ['different merge for exact parents', f => {
+      f.state.pullObservations = [{merge_commit_sha: E}];
+      f.state.alternateCommit = {sha: E, parents: [{sha: B}, {sha: C}]};
+    }, 0, 1],
+  ]) {
+    const f = admissionFixture();
+    configure(f);
+    assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete', scenario);
+    assert.deepEqual(f.sent, [], scenario);
+    assert.deepEqual(f.state.lookups, [], scenario);
+    assert.equal(f.state.waits.length, expectedWaits, scenario);
+    assert.equal(f.state.baseReads, expectedRefs, scenario);
+  }
+});
+
+test('admission suppresses only when the selected active producer still proves the exact attempt', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makeRun());
+  f.state.refreshProducer = run => ({...run, status: 'in_progress'});
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.deepEqual(f.state.producerReads, [300]);
+  assert.deepEqual(f.sent, []);
+});
+
+test('a stale or unavailable selected producer leaves an exact refresh eligible', async () => {
+  for (const refreshProducer of [
+    () => { throw Object.assign(new Error('missing run'), {status: 404}); },
+    () => null,
+    run => ({...run, id: run.id + 1}),
+    run => ({...run, run_attempt: run.run_attempt + 1}),
+    run => ({...run, event: 'pull_request'}),
+    run => ({...run, display_title: run.display_title.replace(A, E)}),
+    run => ({...run, status: 'completed', conclusion: 'success'}),
+    run => ({...run, status: 'completed', conclusion: 'failure'}),
+  ]) {
+    const f = admissionFixture();
+    f.runs.push(f.makeRun());
+    f.state.refreshProducer = refreshProducer;
+    assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+    assert.deepEqual(f.state.producerReads, [300]);
+    assert.equal(f.sent.length, 1);
+  }
+});
+
+test('admission rereads the pinned comparison after the producer lookup before fallback', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makeRun());
+  f.state.refreshProducer = run => {
+    f.state.base = D;
+    return {...run, status: 'completed', conclusion: 'failure'};
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.state.producerReads, [300]);
   assert.deepEqual(f.sent, []);
 });
 
@@ -143,6 +281,7 @@ test('both wake inputs are serialized by one exact tuple group on the default br
   assert.deepEqual(job.permissions, {actions: 'read', contents: 'write', 'pull-requests': 'read'});
   assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
     {ref: '${{ github.workflow_sha }}', 'persist-credentials': 'false'});
+  assert.match(job.steps.at(-1).with.script, /input: context.payload.client_payload/);
 });
 
 const tupleStep = (kind, base, merge) => ({
@@ -156,7 +295,7 @@ function fixture() {
       head_sha: C, pull_requests: [{number: 7, head: {sha: C}, base: {sha: D}}]},
     pr: {number: 7, state: 'open', head: {sha: C, repo: {full_name: 'example/FireMUD'}},
       base: {ref: 'develop', repo: {full_name: 'example/FireMUD'}},
-      merge_commit_sha: A, labels: [], user: {login: 'developer'}},
+      merge_commit_sha: A, mergeable: true, mergeable_state: 'clean', labels: [], user: {login: 'developer'}},
     jobs: [{name: 'Preview Plan', run_id: 99, run_attempt: 2, head_sha: C, workflow_name: 'PR Preview Environment', status: 'completed', conclusion: 'success',
       steps: [tupleStep('event', D, E), tupleStep('resolved', D, E)]}],
     recordedMerge: {sha: E, parents: [{sha: D}, {sha: C}]},
@@ -176,19 +315,12 @@ async function execute(f, sent = []) {
         f.runReads = (f.runReads ?? 0) + 1;
         return {data: f.runReads === 1 ? f.run : f.latestRun ?? f.run};
       },
-      getWorkflow: async () => ({data: {id: 42, path: '.github/workflows/runtime-images.yml'}}),
-      listWorkflowRuns: async args => {
-        assert.equal(args.workflow_id, 42);
-        assert.equal(args.per_page, 100);
-        f.lookups = (f.lookups ?? 0) + 1;
-        return {data: {workflow_runs: f.fullInventory ??
-          (f.producers ?? []).filter(run => run.status === args.status)}};
-      },
+      listWorkflowRuns: async () => assert.fail('only admission may inspect runtime producers'),
     },
     pulls: {get: async ({pull_number}) => {
       assert.equal(pull_number, f.pr.number);
       f.pullReads = (f.pullReads ?? 0) + 1;
-      return {data: f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr};
+      return {data: f.pullHistory?.[f.pullReads - 1] ?? (f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr)};
     }},
     git: {getRef: async ({ref}) => {
       assert.equal(ref, 'heads/' + f.pr.base.ref);
@@ -198,20 +330,25 @@ async function execute(f, sent = []) {
     repos: {
       getCommit: async ({ref}) => {
         (f.mergeReads ??= []).push(ref);
-        return {data: [f.recordedMerge, f.merge, f.resolvedMerge][f.mergeReads.length - 1]};
+        return {data: f.mergeReads.length === 1 ? f.recordedMerge :
+          f.pendingMerges?.[ref] ?? (ref === f.resolvedMerge?.sha ? f.resolvedMerge : f.merge)};
       },
       createDispatchEvent: async p => sent.push(p),
     },
   }};
   await new AsyncFunction('github', 'context', 'core', 'require', script)(github,
     {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99, run_attempt: 2}, repository: {default_branch: 'develop'}}}, {info(message) {(f.messages ??= []).push(message);}}, name => {
+      if (name === 'node:timers/promises') {
+        return {setTimeout: async delay => { assert.equal(delay, 2000); f.pauses = (f.pauses ?? 0) + 1; }};
+      }
       assert.equal(name, 'node:child_process');
       return {execFileSync(command, args, options) {
         if (command === 'python3') {
           assert.deepEqual(args, ['./dev-tools/hosted/preview/preview-eligibility.py',
             '--revalidate-deploy', '--expected-repository', 'example/FireMUD',
             '--expected-head-sha', f.run.head_sha]);
-          assert.deepEqual(JSON.parse(options.input), f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr);
+          assert.deepEqual(JSON.parse(options.input),
+            f.pullHistory?.[f.pullReads - 1] ?? (f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr));
           return execFileSync(command, args, {...options, cwd: root});
         }
         assert.equal(command, 'bash');
@@ -225,7 +362,7 @@ test('exact stale-base current tuple produces only the typed refresh', async () 
   const f = fixture();
   assert.deepEqual(await execute(f), [{owner: 'example', repo: 'FireMUD',
     event_type: 'pr-runtime-base-refresh-request', client_payload: {pr_number: '7', base_ref: 'develop',
-      base_sha: B, head_sha: C, merge_sha: A, image_tag: `pr-merge-${A}`}}]);
+      base_sha: B, head_sha: C, merge_sha: A, preview_only: true}}]);
   assert.deepEqual(f.mergeReads, [E, A]);
 });
 test('a completed render failure permits repair when the plan was eligible', async () => {
@@ -362,18 +499,16 @@ test('older base classifiers cannot omit newly introduced validation modules', a
 });
 
 function producer(f, event = 'repository_dispatch') {
-  return {id: 100, workflow_id: 42, path: '.github/workflows/runtime-images.yml',
-    event, head_branch: 'develop', head_sha: event === 'pull_request' ? C : D,
-    repository: {full_name: 'example/FireMUD'}, head_repository: {full_name: 'example/FireMUD'},
-    status: 'in_progress', conclusion: null,
-    display_title: `Build Runtime Images secure-pr-artifact pr-7 base-${B} head-${C} merge-${A} mode-required`,
-    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}]};
+  return f.makeRun({id: 100, event, head_sha: event === 'pull_request' ? C : D,
+    status: 'in_progress', pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}]});
 }
 for (const event of ['repository_dispatch', 'pull_request']) {
   for (const status of ['queued', 'waiting', 'requested', 'pending', 'in_progress']) {
-    test(`active exact ${event} ${status} producer suppresses dispatch`, async () => {
-      const f = fixture(); const run = producer(f, event); run.status = status; f.producers = [run];
-      assert.deepEqual(await execute(f), []);
+    test(`admission suppresses dispatch for an active exact ${event} ${status} producer`, async () => {
+      const f = admissionFixture();
+      f.runs.push({...producer(f, event), status});
+      assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+      assert.deepEqual(f.sent, []);
     });
   }
 }
@@ -391,8 +526,9 @@ for (const [name, mutate] of Object.entries({
   completed: r => {r.status = 'completed'; r.conclusion = 'success';},
   inconsistentConclusion: r => r.conclusion = 'failure',
 })) test(`unrelated/untrusted producer cannot suppress recovery: ${name}`, async () => {
-  const f = fixture(); const r = producer(f); mutate(r); f.producers = [r];
-  assert.equal((await execute(f)).length, 1);
+  const f = admissionFixture(); const r = producer(f); mutate(r); f.runs.push(r);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
 });
 for (const [name, mutate] of Object.entries({
   head: r => r.head_sha = D,
@@ -401,34 +537,37 @@ for (const [name, mutate] of Object.entries({
   associationBase: r => r.pull_requests[0].base.sha = D,
   associationHead: r => r.pull_requests[0].head.sha = D,
 })) test(`PR title alone cannot suppress: ${name}`, async () => {
-  const f = fixture(); const r = producer(f, 'pull_request'); mutate(r); f.producers = [r];
-  assert.equal((await execute(f)).length, 1);
+  const f = admissionFixture(); const r = producer(f, 'pull_request'); mutate(r); f.runs.push(r);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
 });
-test('bounded inventory saturation fails without dispatch or polling', async () => {
-  const f = fixture(); f.fullInventory = Array.from({length: 100}, () => ({}));
-  const sent = [];
-  await assert.rejects(execute(f, sent), /exceeds bounded lookup/);
-  assert.deepEqual(sent, []);
-  assert.equal(f.lookups, 3);
+test('admission retains the refresh fallback when active inventory exceeds its bound', async () => {
+  const f = admissionFixture();
+  f.runs.push(...Array.from({length: 301}, (_, i) => f.makeRun({
+    id: 400 + i, display_title: 'unrelated work', created_at: '2024-01-01T00:00:00Z',
+  })));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
+  assert.ok(f.warnings.some(warning => warning.includes('inventory was incomplete')));
 });
 test('qualified trusted default workflow path suppresses exact dispatch', async () => {
-  const f = fixture(); const r = producer(f);
-  r.path += '@refs/heads/develop'; f.producers = [r];
-  assert.deepEqual(await execute(f), []);
+  const f = admissionFixture(); const r = producer(f);
+  r.path += '@refs/heads/develop'; f.runs.push(r);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
 });
 test('canonical eligibility refuses absent author metadata', async () => {
   const f = fixture(); delete f.pr.user; assert.deepEqual(await execute(f), []);
 });
 
 test('qualified exact PR merge workflow path suppresses native producer', async () => {
-  const f = fixture(); const r = producer(f, 'pull_request');
-  r.path += '@refs/pull/7/merge'; f.producers = [r];
-  assert.deepEqual(await execute(f), []);
+  const f = admissionFixture(); const r = producer(f, 'pull_request');
+  r.path += '@refs/pull/7/merge'; f.runs.push(r);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
 });
 test('qualified other PR workflow path cannot suppress native producer', async () => {
-  const f = fixture(); const r = producer(f, 'pull_request');
-  r.path += '@refs/pull/8/merge'; f.producers = [r];
-  assert.equal((await execute(f)).length, 1);
+  const f = admissionFixture(); const r = producer(f, 'pull_request');
+  r.path += '@refs/pull/8/merge'; f.runs.push(r);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
 });
 
 test('immutable title repairs base despite current mutable association', async () => {
@@ -444,13 +583,44 @@ test('partial rerun without an exact-attempt plan gives safe full-rerun guidance
   assert.ok(f.messages.some(message => message.includes('Re-run all jobs')));
 });
 
-test('priority removed during active lookup refuses dispatch', async () => {
+test('priority removed before the final observer fence refuses dispatch', async () => {
   const f = fixture();
   f.pr.base.ref = 'feature/stack';
   f.pr.labels = [{name: 'preview:priority'}];
   f.latestPr = {...f.pr, labels: []};
   assert.deepEqual(await execute(f), []);
   assert.equal(f.pullReads, 2);
+});
+
+test('observer waits for a pending test merge and rereads a formerly stale merge tuple', async () => {
+  const f = fixture();
+  const stale = 'f'.repeat(40);
+  f.pullHistory = [{...f.pr, mergeable: null, mergeable_state: 'unknown', merge_commit_sha: null},
+    {...f.pr, merge_commit_sha: stale}];
+  f.pendingMerges = {[stale]: {sha: stale, parents: [{sha: D}, {sha: C}]}};
+  assert.equal((await execute(f)).length, 1);
+  assert.deepEqual(f.mergeReads, [E, stale, A]);
+  assert.equal(f.baseReads, 4);
+  assert.equal(f.pauses, 2);
+});
+
+test('observer stops waiting on changed head, ineligibility, or an actual merge conflict', async () => {
+  for (const mutate of [
+    pr => { pr.head.sha = D; },
+    pr => { pr.labels = []; },
+    pr => { pr.mergeable = false; pr.mergeable_state = 'dirty'; },
+  ]) {
+    const f = fixture();
+    f.pr.base.ref = 'feature/stack';
+    f.pr.labels = [{name: 'preview:priority'}];
+    const stopped = structuredClone(f.pr);
+    mutate(stopped);
+    f.pullHistory = [{...f.pr, mergeable: null, mergeable_state: 'unknown', merge_commit_sha: null}, stopped];
+    assert.deepEqual(await execute(f), []);
+    assert.equal(f.pullReads, 2);
+    assert.deepEqual(f.mergeReads, [E]);
+    assert.equal(f.pauses, 1);
+  }
 });
 
 test('event base drift can repair the independently revalidated current merge', async () => {
@@ -465,7 +635,8 @@ test('event base drift can repair the independently revalidated current merge', 
   moved.recordedMerge = structuredClone(moved.merge);
   moved.merge.parents[0].sha = D;
   assert.deepEqual(await execute(moved), []);
-  assert.deepEqual(moved.mergeReads, [A, A]);
+  assert.equal(moved.mergeReads.length, 7);
+  assert.ok(moved.mergeReads.every(sha => sha === A));
 });
 
 test('a resolved historical merge can precede a second base advance', async () => {

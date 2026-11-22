@@ -46,13 +46,15 @@ def version_label(version_key: tuple[int, ...]) -> str:
 def relevant_path(path: str) -> bool:
     return bool(MIGRATION_PATH_RE.match(path)) or (
         path.startswith("services/")
-        and (path.endswith("/build.gradle.kts") or re.search(r"/src/main/resources/application[^/]*\.ya?ml$", path))
+        and (path.endswith("/build.gradle.kts")
+             or re.search(r"/src/main/resources/(?:config/)?application[^/]*\.ya?ml$", path))
     ) or (path.startswith("buildSrc/") and path.endswith((".kt", ".kts")))
 
 
 def current_snapshot(repo_root: Path) -> Snapshot:
     paths = [*repo_root.glob("services/*/build.gradle.kts"),
              *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
+             *repo_root.glob("services/*/src/main/resources/config/application*.y*ml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
@@ -172,10 +174,16 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
             properties[path] = child
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
+    resource_root = f"services/{project}/src/main/resources"
+    # Config in the packaged config/ directory takes precedence over the root.
+    # Within a location Spring Boot gives .yml precedence over .yaml.
+    base_paths = [f"{directory}/application.{extension}"
+                  for directory in (resource_root, f"{resource_root}/config")
+                  for extension in ("yaml", "yml")]
+    profile_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-[^/]+\.ya?ml")
+    profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
     flyway = {}
-    # Spring Boot gives .yml properties precedence over same-location .yaml.
-    for extension in ("yaml", "yml"):
-        config_path = f"services/{project}/src/main/resources/application.{extension}"
+    for config_path in [*base_paths, *profile_paths]:
         try:
             documents = list(yaml.safe_load_all(snapshot.get(config_path, b"")))
         except yaml.YAMLError as error:
@@ -198,8 +206,8 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
                                     locations_path + ".", locations_path + "["))
             }
             if not guard_paths:
-                # Other documents, including profile-activated documents with no
-                # Flyway guard properties, do not affect this static qualification.
+                # Profile configuration with no Flyway guard properties does not
+                # affect this static qualification.
                 continue
             if guard_paths & ambiguous or any(path not in {enabled_path, locations_path} for path in guard_paths):
                 return False
@@ -209,12 +217,11 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
                 "spring.profiles" in properties
                 and not isinstance(properties["spring.profiles"], dict)
             )
-            if (isinstance(activation, dict) and activation) or any(
+            if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
                 path.startswith("spring.config.activate.") for path in properties
             ) or legacy_profile_activation:
-                # The checker cannot prove which profile/cloud-activated property
-                # source wins at runtime, so a conditional override of either guard
-                # property is not accepted.
+                # The active profile/cloud environment is unknown, so the checker
+                # cannot qualify an activation-dependent override of either guard.
                 return False
 
             for path in guard_paths:
@@ -408,6 +415,22 @@ def run_self_test() -> None:
     check("recovery location requiring active profile fails closed",
           {**recovery_history, recovery_config: profile_only_recovery}, recovery_history,
           "historical effective migration no longer applied")
+    recovery_config_root = recovery_config.rsplit("/", 1)[0]
+    for profile_path in (
+        f"{recovery_config_root}/application-production.yml",
+        f"{recovery_config_root}/config/application-production.yaml",
+    ):
+        check("packaged profile disables recovery history",
+              {**recovery_history, profile_path: b"spring.flyway.enabled: false\n"},
+              recovery_history, "historical effective migration no longer applied")
+        check("packaged profile replaces recovery location",
+              {**recovery_history, profile_path: yml_locations_override}, recovery_history,
+              "historical effective migration no longer applied")
+        check("unrelated packaged profile leaves recovery history unchanged",
+              {**recovery_history, profile_path: b"server.port: 9000\n"}, recovery_history, None)
+        check("recovery location in a profile cannot qualify the default history",
+              {recovery + "V1__journal.sql": b"-- journal", profile_path: recovery_settings},
+              recovery_history, "historical effective migration no longer applied")
     for disabled in (
         recovery_settings.replace(b"    locations:", b"    enabled: false\n    locations:"),
         recovery_list_settings.replace(b"enabled: true", b'enabled: "false"'),
@@ -426,7 +449,10 @@ def run_self_test() -> None:
         (root / recovery).mkdir(parents=True)
         (root / recovery / "V1__journal.sql").write_bytes(b"-- journal")
         (root / recovery_config).write_bytes(recovery_settings)
-        if current_snapshot(root) != recovery_history or not all(map(relevant_path, recovery_history)):
+        profile_fixture = {**recovery_history, profile_path: b"server.port: 9000\n"}
+        (root / profile_path).parent.mkdir()
+        (root / profile_path).write_bytes(profile_fixture[profile_path])
+        if current_snapshot(root) != profile_fixture or not all(map(relevant_path, profile_fixture)):
             raise AssertionError("isolated recovery history is not selected for both snapshots")
 
     # Exercise the actual composed convention wiring and exclude test-only dependencies.

@@ -13,6 +13,9 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.core.json.JsonWriteFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.CoercionAction;
+import tools.jackson.databind.cfg.CoercionInputShape;
+import tools.jackson.databind.type.LogicalType;
 
 /** Stable JSON and digest encoding for the operation-owned immutable tuples. */
 @Component
@@ -26,6 +29,9 @@ public final class InitialGameplayReleaseTupleCodec {
             .rebuild()
             .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
             .disable(tools.jackson.databind.DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+            .withCoercionConfig(
+                LogicalType.Integer,
+                config -> config.setCoercion(CoercionInputShape.String, CoercionAction.Fail))
             .build();
     this.digestMapper = this.objectMapper.writer().with(JsonWriteFeature.WRITE_NUMBERS_AS_STRINGS);
   }

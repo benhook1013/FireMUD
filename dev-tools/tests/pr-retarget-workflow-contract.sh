@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Run the retarget contract without Python optimization")'
 
 assert_job_condition() {
   local workflow="$1"
@@ -647,7 +648,7 @@ assert set(smoke["on"]["pull_request"]) == {"types"}
 assert set(runtime["on"]["pull_request"]) == {"types", "paths"}
 assert "branches" not in runtime["on"]["workflow_run"]
 
-# Exercise the actual shell from these two named steps with ordinary outcomes.
+# Exercise the classifier and failure shell steps and bind their output to the tracker.
 import os
 import subprocess
 import tempfile
@@ -655,6 +656,10 @@ import tempfile
 steps = smoke["jobs"]["smoke-gate"]["steps"]
 classifier = next(step for step in steps if step.get("id") == "smoke_gate_context")
 failure = next(step for step in steps if step.get("name") == "Fail when smoke dependencies did not succeed")
+tracker = next(step for step in steps if step.get("id") == "track-runtime-smoke")
+expected_tracker_condition = "${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full == 'true' }}"
+if tracker["if"] != expected_tracker_condition:
+    raise SystemExit("full-stack smoke tracker must run exactly when execution and full smoke are required")
 assert failure["if"] == "${{ steps.smoke_gate_context.outputs.execute != 'true' }}"
 assert failure.get("continue-on-error") in (None, "false"), "dependency failure must fail the Smoke Gate job"
 with tempfile.TemporaryDirectory() as directory:
@@ -2580,6 +2585,39 @@ old_native_typed_publisher = {**native_typed_direct_publisher,
         {**direct_typed_publisher, "id": 205, "conclusion": "failure", "created_at": "2026-07-24T00:08:00Z"},
     ]},
 }}))
+for name, events in {
+    "typed-active-before-failed-callback": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [
+            {**native_typed_direct_publisher, "id": 205, "conclusion": "failure",
+             "created_at": "2026-07-24T00:08:00Z"},
+        ]},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": [
+            {**direct_typed_publisher, "status": "in_progress", "conclusion": None},
+        ]},
+    },
+    "typed-queued-after-native": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": [
+            {**direct_typed_publisher, "id": 205, "status": "queued", "conclusion": None,
+             "created_at": "2026-07-24T00:08:00Z"},
+        ]},
+    },
+    "typed-native-with-unavailable-dispatch": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": []},
+    },
+    "typed-failed-with-unavailable-dispatch": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [
+            {**native_typed_direct_publisher, "conclusion": "failure"},
+        ]},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": []},
+    },
+    "typed-explicit-with-unavailable-callback": {
+        "workflow_run": {"total_count": 1, "workflow_runs": []},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": [direct_typed_publisher]},
+    },
+}.items():
+    (root / f"{name}.json").write_text(json.dumps({"fixture_events": events}))
 for event, publisher_run, fixture_event in [
     ("native", direct_publisher, "workflow_run"),
     ("typed", direct_typed_publisher, "repository_dispatch"),
@@ -2822,9 +2860,14 @@ for direct_variant in native typed typed-native; do
   fi
 done
 
-for publisher_fixture in direct-publisher-only-typed-native typed-failed-after-native; do
+for publisher_fixture in direct-publisher-only-typed-native typed-failed-after-native \
+  typed-queued-after-native typed-native-with-unavailable-dispatch typed-explicit-with-unavailable-callback; do
+  publisher_variant=typed-native
+  if [[ "$publisher_fixture" == typed-explicit-with-unavailable-callback ]]; then
+    publisher_variant=typed
+  fi
   BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
-    CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER=typed-native \
+    CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER="$publisher_variant" \
     CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_DIRECT_JOB=success \
     CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
     CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$publisher_fixture.json" \
@@ -2839,6 +2882,36 @@ for publisher_fixture in direct-publisher-only-typed-native typed-failed-after-n
   require_contains "$contract_fixture_dir/typed-native-direct.output" \
     'Trusted PR image publisher 201 succeeded for pr-merge-'
   require_contains "$contract_fixture_dir/typed-native-direct.output" 'as the direct source'
+done
+
+for publisher_fixture in typed-active-before-failed-callback typed-failed-with-unavailable-dispatch; do
+  wait_status=0
+  BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+    CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$publisher_fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=3 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$publisher_fixture.output" \
+      2>"$contract_fixture_dir/$publisher_fixture.error" || wait_status=$?
+  if [[ "$wait_status" != 1 ]] || grep -Eq 'completed with failure|No trusted PR image publisher appeared' \
+    "$contract_fixture_dir/$publisher_fixture.error"; then
+    cat "$contract_fixture_dir/$publisher_fixture.output" "$contract_fixture_dir/$publisher_fixture.error" >&2
+    exit 1
+  fi
+  if [[ "$publisher_fixture" == typed-active-before-failed-callback ]]; then
+    require_contains "$contract_fixture_dir/$publisher_fixture.output" 'Waiting for trusted PR image publisher 201'
+    if ! grep -Eq 'Timed out waiting for trusted PR image publisher|Publisher coverage unavailable at the wait deadline' \
+      "$contract_fixture_dir/$publisher_fixture.error"; then
+      cat "$contract_fixture_dir/$publisher_fixture.error" >&2
+      exit 1
+    fi
+  else
+    require_contains "$contract_fixture_dir/$publisher_fixture.error" 'Publisher coverage unavailable at the wait deadline'
+  fi
 done
 
 if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
@@ -2953,10 +3026,10 @@ for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
     timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
       >"$contract_fixture_dir/publisher-$variant.output" 2>"$contract_fixture_dir/publisher-$variant.error"; then
-    [[ "$variant" == "qualified" ]] || { echo "Untrusted publisher path bypassed: $variant" >&2; exit 1; }
+    [[ "$variant" == "qualified" || "$variant" == "full-ref" ]] || { echo "Untrusted publisher path bypassed: $variant" >&2; exit 1; }
     require_contains "$contract_fixture_dir/publisher-$variant.output" 'Trusted PR image publisher 202 succeeded'
   else
-    [[ "$variant" != "qualified" ]] || { cat "$contract_fixture_dir/publisher-$variant.error" >&2; exit 1; }
+    [[ "$variant" != "qualified" && "$variant" != "full-ref" ]] || { cat "$contract_fixture_dir/publisher-$variant.error" >&2; exit 1; }
     require_contains "$contract_fixture_dir/publisher-$variant.error" 'Timed out waiting for runtime-images workflow'
   fi
   [[ -f "$lookup_marker" ]] || { echo "Publisher lookup was not reached: $variant" >&2; exit 1; }

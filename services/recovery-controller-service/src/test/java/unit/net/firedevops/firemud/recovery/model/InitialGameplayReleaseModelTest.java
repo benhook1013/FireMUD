@@ -277,8 +277,8 @@ class InitialGameplayReleaseModelTest {
 
   @Test
   void tenantAndUuidCoverageFenceSurviveCodecAndBindTheScopeDigest() {
-    InitialGameplayReleaseTupleCodec codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
     Scope original = scope(UUID.randomUUID());
     Scope otherTenant =
         new Scope(
@@ -295,26 +295,18 @@ class InitialGameplayReleaseModelTest {
     assertThat(codec.readEvidence(codec.toJson(proof)).issuerLayout().coverageFence())
         .isEqualTo(proof.issuerLayout().coverageFence());
 
-    String legacyScopeJson =
-        codec
-            .toJson(original)
-            .replace("\"canonicalTenantId\":\"" + original.canonicalTenantId() + "\",", "");
+    ObjectNode legacyScope = (ObjectNode) mapper.readTree(codec.toJson(original));
+    legacyScope.remove("canonicalTenantId");
+    String legacyScopeJson = mapper.writeValueAsString(legacyScope);
     assertThatThrownBy(() -> codec.readScope(legacyScopeJson)).isInstanceOf(RuntimeException.class);
-    String nilTenantScopeJson =
-        codec
-            .toJson(original)
-            .replace(
-                "\"canonicalTenantId\":\"" + original.canonicalTenantId() + "\"",
-                "\"canonicalTenantId\":\"" + NIL_UUID + "\"");
+    legacyScope.put("canonicalTenantId", NIL_UUID.toString());
+    String nilTenantScopeJson = mapper.writeValueAsString(legacyScope);
     assertThatThrownBy(() -> codec.readScope(nilTenantScopeJson))
         .isInstanceOf(RuntimeException.class);
 
-    String legacyNumericFenceJson =
-        codec
-            .toJson(proof)
-            .replace(
-                "\"coverageFence\":\"" + proof.issuerLayout().coverageFence() + "\"",
-                "\"coverageFence\":34");
+    ObjectNode legacyEvidence = (ObjectNode) mapper.readTree(codec.toJson(proof));
+    ((ObjectNode) legacyEvidence.get("issuerLayout")).put("coverageFence", 34);
+    String legacyNumericFenceJson = mapper.writeValueAsString(legacyEvidence);
     assertThatThrownBy(() -> codec.readEvidence(legacyNumericFenceJson))
         .isInstanceOf(RuntimeException.class);
   }
@@ -502,7 +494,7 @@ class InitialGameplayReleaseModelTest {
   }
 
   @Test
-  void persistedEvidenceRejectsFractionalOperationFence() {
+  void persistedEvidenceRequiresAnIntegerOperationFence() {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
     InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
     var original = evidence(scope(UUID.randomUUID()));
@@ -511,8 +503,12 @@ class InitialGameplayReleaseModelTest {
     ObjectNode altered = (ObjectNode) mapper.readTree(json);
     ((ObjectNode) altered.get("issuerLayout")).put("operationFence", 21.9);
     String fractionalJson = mapper.writeValueAsString(altered);
+    ((ObjectNode) altered.get("issuerLayout")).put("operationFence", "21");
+    String stringJson = mapper.writeValueAsString(altered);
 
     assertThatThrownBy(() -> codec.readEvidence(fractionalJson))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> codec.readEvidence(stringJson))
         .isInstanceOf(IllegalStateException.class);
   }
 

@@ -169,6 +169,7 @@ const mutationsChanged = before => mutationCounts().some((count, index) => count
 const codeqlListWorkflowRuns = async () => undefined;
 const checksListForRef = async () => undefined;
 const commentsList = async () => undefined;
+const association = (ref, number = 42) => ({number, base: {ref}});
 const jobRequests = [];
 const github = {
   request: async (route, input) => {
@@ -292,7 +293,7 @@ const github = {
             status: "completed",
             conclusion: "success",
           },
-        ];
+        ].map(row => ({...row, pull_requests: [association("develop", row.id === 250 ? 99 : 42)]}));
       }
       return [
         {
@@ -304,6 +305,7 @@ const github = {
           run_attempt: 1,
           status: "completed",
           conclusion: "success",
+          pull_requests: [association("develop")],
         },
       ];
     }
@@ -470,6 +472,7 @@ async function assertCompletionOrders() {
             return rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
               id: row.id + runOffset,
               head_sha: proofHead,
+              pull_requests: [association(currentBaseRef)],
               display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`).replace(`head-${headSha}`, `head-${proofHead}`),
               status: completed.has(key) ? "completed" : "in_progress",
               conclusion: completed.has(key) ? "success" : null,
@@ -626,6 +629,110 @@ async function assertProducerSelectionRace() {
     jobRequests.length = 0;
   }
 }
+async function assertExactBaseRef() {
+  const originalPaginate = github.paginate;
+  const originalActions = github.rest.actions;
+  const originalRequest = github.request;
+  currentBaseRef = "main";
+  try {
+    const pendingStart = calls.updated.length;
+    const jobStart = jobRequests.length;
+    await run(github, context, core);
+    if (jobRequests.length !== jobStart ||
+        !calls.updated.slice(pendingStart).some(({body}) =>
+          body.includes("CodeQL gate: `pending`") && body.includes("License gate: `pending`"))) {
+      throw new Error("same-SHA retarget must not read or reuse old-ref jobs");
+    }
+
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method !== codeqlListWorkflowRuns) return rows;
+      return rows.map(row => [200, 300].includes(row.id)
+        ? {...row, conclusion: "success", pull_requests: [association("develop", 99), association("main")]} : row);
+    };
+    github.request = async (route, input) => {
+      const {data} = await originalRequest(route, input);
+      return {data: {...data, jobs: data.jobs.map(job => ({...job, conclusion: "success"}))}};
+    };
+    const passStart = calls.updated.length;
+    await run(github, context, core);
+    if (!calls.updated.slice(passStart).some(({body}) => body.includes("checks passed"))) {
+      throw new Error("valid producers for the new base ref must qualify after a same-SHA retarget");
+    }
+
+    const beforeReadback = mutationCounts();
+    github.rest.actions = {...originalActions, getWorkflowRun: async input => {
+      const {data} = await originalActions.getWorkflowRun(input);
+      return {data: {...data, pull_requests: [association("develop")]}};
+    }};
+    await run(github, context, core);
+    if (mutationsChanged(beforeReadback)) throw new Error("producer ref changes on readback must prevent publication");
+
+    github.rest.actions = {...originalActions, getWorkflowRun: async input => {
+      const result = await originalActions.getWorkflowRun(input);
+      currentBaseRef = "develop";
+      return result;
+    }};
+    const beforeLiveChange = mutationCounts();
+    await run(github, context, core);
+    if (mutationsChanged(beforeLiveChange)) throw new Error("a live ref change at the same base SHA must prevent publication");
+
+    github.rest.actions = originalActions;
+    const exactPaginate = github.paginate;
+    currentBaseRef = "main";
+    for (const pull_requests of [[], [{number: 42}], [association("main"), association("develop")]]) {
+      github.paginate = async (method, input) => {
+        const rows = await exactPaginate(method, input);
+        return method === codeqlListWorkflowRuns
+          ? rows.map(row => row.id === 270 ? {...row, pull_requests} : row) : rows;
+      };
+      const before = mutationCounts();
+      let refused = false;
+      try { await run(github, context, core); } catch (error) {
+        if (!error.message.includes("base ref is unavailable")) throw error;
+        refused = true;
+      }
+      if (!refused || mutationsChanged(before)) {
+        throw new Error("a newer candidate with no exact ref must prevent falling back to an older pass");
+      }
+    }
+  } finally {
+    currentBaseRef = "develop";
+    github.paginate = originalPaginate;
+    github.rest.actions = originalActions;
+    github.request = originalRequest;
+  }
+}
+async function assertSkippedRequiredGates() {
+  const originalRequest = github.request;
+  const originalPaginate = github.paginate;
+  try {
+    for (const [jobName, label] of [["CodeQL Gate", "CodeQL gate"], ["License Gate", "License gate"]]) {
+      github.paginate = async (method, input) => {
+        const rows = await originalPaginate(method, input);
+        return method === codeqlListWorkflowRuns
+          ? rows.map(row => row.id === 200 ? {...row, conclusion: "success"} : row) : rows;
+      };
+      github.request = async (route, input) => {
+        const {data} = await originalRequest(route, input);
+        if (![200, 300].includes(input.run_id)) return {data};
+        return {data: {...data, jobs: data.jobs.map(job => ({...job,
+          conclusion: [jobName, "CodeQL Analysis (java)"].includes(job.name) ? "skipped" : "success",
+        }))}};
+      };
+      const start = calls.updated.length;
+      await run(github, context, core);
+      if (!calls.updated.slice(start).some(({body}) => body.includes(label + ": `unavailable`") &&
+          body.includes("Static analysis evidence is unavailable") &&
+          body.includes("CodeQL analysis (java): `skipped`"))) {
+        throw new Error("a skipped required gate must be unavailable while a skipped detail remains skipped");
+      }
+    }
+  } finally {
+    github.request = originalRequest;
+    github.paginate = originalPaginate;
+  }
+}
 async function assertInterruptedRecovery() {
   const originalPaginate = github.paginate;
   const reset = () => {
@@ -745,6 +852,8 @@ run(github, context, core).then(async () => {
                 deleteStatus = null;
                 await assertCompletionOrders();
                 await assertProducerSelectionRace();
+                await assertExactBaseRef();
+                await assertSkippedRequiredGates();
                 await assertInterruptedRecovery();
                 await assertAssociationSelection();
                 if (!jobRequests.some(input => input.run_id === 270)) throw new Error("metadata race was not classified from candidate jobs");

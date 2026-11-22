@@ -56,10 +56,10 @@ parse_namespace_tuple() {
       | if (
           (.[13] == "" and .[14] == "" and .[15] == "" and .[16] == "" and .[17] == "")
           or (
-            (.[13] | test("^[0-3]$"))
-            and (.[14] | test("^[0-9a-fA-F]{40}$"))
-            and (.[15] | test("^[0-9a-fA-F]{40}$"))
-            and (.[16] | test("^[0-9a-fA-F]{40}$"))
+            (.[13] | test("^[1-3]$"))
+            and (.[14] | test("^[0-9a-f]{40}$"))
+            and (.[15] | test("^[0-9a-f]{40}$"))
+            and (.[16] | test("^[0-9a-f]{40}$"))
             and (.[17] | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
           )
         ) then . else error("namespace proof-retry evidence is malformed") end
@@ -214,6 +214,7 @@ prepare_preview_dispatch() {
   local namespace_resource_version
   local next_retry_count
   local reservation_namespace_json
+  local exact_retry_tuple=false
 
   proof_retry_reservation_count=""
   proof_retry_previous_count=""
@@ -223,6 +224,7 @@ prepare_preview_dispatch() {
   proof_retry_previous_image_tag=""
   proof_retry_reservation_namespace_uid=""
   proof_retry_reservation_resource_version=""
+  proof_retry_reservation_deployed_tuple=""
   proof_retry_reservation_base_sha=""
   proof_retry_reservation_head_sha=""
   proof_retry_reservation_merge_sha=""
@@ -266,6 +268,12 @@ prepare_preview_dispatch() {
     echo "Skipping PR #${pr_number}: namespace ${namespace} was recreated before proof retry dispatch; refusing to charge its retry budget." >&2
     return 1
   fi
+  if [[ "${retry_base_sha}" == "${base_sha}" &&
+    "${retry_head_sha}" == "${head_sha}" &&
+    "${retry_merge_sha}" == "${merge_sha}" &&
+    "${retry_image_tag}" == "${image_tag}" ]]; then
+    exact_retry_tuple=true
+  fi
   if [[ "${current_base_sha}" != "${base_sha}" ||
     "${current_head_sha}" != "${head_sha}" ||
     "${current_merge_sha}" != "${merge_sha}" ||
@@ -274,7 +282,11 @@ prepare_preview_dispatch() {
       echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
       return 1
     fi
-    return 0
+    # A failed namespace recreation can retain the exact retry record before
+    # the new workload has written its deployed tuple.
+    if [[ "$exact_retry_tuple" == false ]]; then
+      return 0
+    fi
   fi
   if [[ "${proof_base_sha}" == "${base_sha}" &&
     "${proof_head_sha}" == "${head_sha}" &&
@@ -285,10 +297,7 @@ prepare_preview_dispatch() {
     echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
     return 2
   fi
-  if [[ "${retry_base_sha}" == "${base_sha}" &&
-    "${retry_head_sha}" == "${head_sha}" &&
-    "${retry_merge_sha}" == "${merge_sha}" &&
-    "${retry_image_tag}" == "${image_tag}" ]]; then
+  if [[ "$exact_retry_tuple" == true ]]; then
     next_retry_count=$((10#${retry_count} + 1))
   else
     next_retry_count=1
@@ -296,6 +305,10 @@ prepare_preview_dispatch() {
   if (( next_retry_count > 3 )); then
     echo "Skipping PR #${pr_number}: proof retry budget exhausted for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}." >&2
     return 3
+  fi
+  if [[ -z "$namespace_uid" || -z "$namespace_resource_version" ]]; then
+    echo "Skipping PR #${pr_number}: Namespace retry custody is unavailable." >&2
+    return 1
   fi
   if ! reservation_namespace_json="$(kubectl annotate namespace "${namespace}" \
     "firemud.dev/proof-retry-count=${next_retry_count}" \
@@ -315,6 +328,7 @@ prepare_preview_dispatch() {
   proof_retry_previous_merge_sha="${retry_merge_sha}"
   proof_retry_previous_image_tag="${retry_image_tag}"
   proof_retry_reservation_namespace_uid="${namespace_uid}"
+  proof_retry_reservation_deployed_tuple="${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}"
   proof_retry_reservation_resource_version="$(jq -er --arg uid "${namespace_uid}" \
     '.metadata | select(.uid == $uid) | .resourceVersion | select(type == "string" and length > 0)' \
     <<<"${reservation_namespace_json}" 2>/dev/null || true)"
@@ -361,11 +375,7 @@ compensate_rejected_proof_retry() {
     namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
   if [[ "${namespace_uid}" != "${proof_retry_reservation_namespace_uid}" ||
     -z "${proof_retry_reservation_resource_version}" ||
-    "${namespace_resource_version}" != "${proof_retry_reservation_resource_version}" ||
-    "${current_base_sha}" != "${proof_retry_reservation_base_sha}" ||
-    "${current_head_sha}" != "${proof_retry_reservation_head_sha}" ||
-    "${current_merge_sha}" != "${proof_retry_reservation_merge_sha}" ||
-    "${current_image_tag}" != "${proof_retry_reservation_image_tag}" ||
+    "${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}" != "${proof_retry_reservation_deployed_tuple}" ||
     "${retry_count}" != "${proof_retry_reservation_count}" ||
     "${retry_base_sha}" != "${proof_retry_reservation_base_sha}" ||
     "${retry_head_sha}" != "${proof_retry_reservation_head_sha}" ||
@@ -580,13 +590,8 @@ automatic_preview_has_tuple() {
   fi
 }
 
-completed_preview_inventory() {
-  local event="$1" filter="$2" pages
-  # The handoff window measures completion (updated_at), not
-  # creation. An older run can finish or be rerun just before the scan.
-  pages="$(timeout 30s gh api --method GET --paginate --slurp \
-    "repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs" \
-    -f "event=${event}" -f status=completed -f per_page=100 -f "$filter")" || return 1
+parse_completed_preview_pages() {
+  local event="$1"
   jq -ce --argjson workflow_id "$preview_workflow_id" --arg event "$event" '
     select(type == "array" and length > 0 and length <= 10)
     | .[0].total_count as $count
@@ -608,7 +613,71 @@ completed_preview_inventory() {
           and (.repository.full_name | type == "string") and (.head_repository.full_name | type == "string")
           and (if $event == "pull_request" then (.pull_requests | type == "array") else true end)))
     | {workflow_runs: $runs}
-  ' <<<"$pages"
+  '
+}
+
+completed_preview_inventory() {
+  local event="$1" filter="$2" pages count
+  local workflow_runs_path="repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs"
+  local deadline=$((SECONDS + 30))
+  local -a filters=(-f "event=${event}" -f status=completed -f "$filter")
+  pages="$(timeout 30s gh api --method GET --paginate --slurp \
+    "$workflow_runs_path" "${filters[@]}" -f per_page=100)" || return 1
+  count="$(jq -er '.[0].total_count | select(type == "number" and . >= 0 and . <= 2147483647 and . == floor)' <<<"$pages")" || return 1
+  if (( count < 1000 )); then
+    parse_completed_preview_pages "$event" <<<"$pages"
+    return
+  fi
+
+  # GitHub caps each filtered listing at 1,000. Split the entire creation
+  # history into disjoint ranges rather than equating creation with completion:
+  # a run created long ago may have started a new attempt recently.
+  local range first last midpoint created after before remaining page
+  local scanned=0 initial_count="$count"
+  local -a ranges=("0:$(date -u +%s)") inventories=()
+  while (("${#ranges[@]}")); do
+    (( ++scanned <= 64 )) || return 1
+    range="${ranges[-1]}"
+    unset 'ranges[-1]'
+    first="${range%:*}"
+    last="${range#*:}"
+    after="$(date -u -d "@$first" +%Y-%m-%dT%H:%M:%SZ)" || return 1
+    before="$(date -u -d "@$last" +%Y-%m-%dT%H:%M:%SZ)" || return 1
+    created="created=$after..$before"
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    page="$(timeout "${remaining}s" gh api --method GET "$workflow_runs_path" "${filters[@]}" -f "$created" -f per_page=1)" || return 1
+    count="$(jq -er '.total_count | select(type == "number" and . >= 0 and . <= 2147483647 and . == floor)' <<<"$page")" || return 1
+    if (( count >= 1000 )); then
+      (( first < last )) || return 1
+      midpoint=$(( (first + last) / 2 ))
+      ranges+=("$first:$midpoint" "$((midpoint + 1)):$last")
+      continue
+    fi
+    if (( count <= 1 )); then
+      pages="[$page]"
+    else
+      remaining=$((deadline - SECONDS))
+      (( remaining > 0 )) || return 1
+      pages="$(timeout "${remaining}s" gh api --method GET --paginate --slurp \
+        "$workflow_runs_path" "${filters[@]}" -f "$created" -f per_page=100)" || return 1
+    fi
+    page="$(parse_completed_preview_pages "$event" <<<"$pages")" || return 1
+    # If the provider ignores the bounds or rows moved between reads, a
+    # potentially incomplete inventory must never become authorization.
+    jq -e --arg first "$after" --arg last "$before" --argjson count "$count" '
+      (.workflow_runs | length) == $count and
+      all(.workflow_runs[]; .created_at | type == "string" and
+        test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and
+        . >= $first and . <= $last)
+    ' <<<"$page" >/dev/null || return 1
+    inventories+=("$page")
+  done
+  printf '%s\n' "${inventories[@]}" | jq -ces --argjson initial "$initial_count" '
+    [.[].workflow_runs[]] as $runs
+    | select(($runs | length) >= $initial and ($runs | length) == ([$runs[].id] | unique | length))
+    | {workflow_runs: $runs}
+  '
 }
 
 recent_successful_source_handoff() {
@@ -623,7 +692,7 @@ recent_successful_source_handoff() {
   if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")" ||
     ! dispatch_source_runs="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")"; then
     echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
-    return 2
+    return 4
   fi
   source_inventory_now="$(date -u +%s)"
   if ! source_candidates="$(printf '%s\n' "$source_runs" "$dispatch_source_runs" | jq -r -s \
@@ -797,7 +866,8 @@ trusted_consumer_has_tuple() {
       and ([$jobs[] | select(.name == "Validate Trusted Preview Target")] | length == 1)
       and any($jobs[]; .name == "Validate Trusted Preview Target" and .run_id == $id
         and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
-        and .head_sha == $head and .status == "completed")
+        and .head_sha == $head and .status == "completed"
+        and (if .conclusion == "success" then (.steps | type == "array" and length > 0) else true end))
   ' <<<"$jobs" >/dev/null || return 2
   jq -e --arg tuple "$tuple" '
     any(.jobs[] | select(.name == "Validate Trusted Preview Target" and .conclusion == "success");
@@ -1133,6 +1203,11 @@ dispatch_candidates() {
       echo "Skipping proof retry for PR #${pr_number}: recent preview handoff lookup unavailable; retry budget unchanged." >&2
       continue
       ;;
+    4)
+      echo "Skipping proof retry for PR #${pr_number}: completed preview-source inventory read failed." >&2
+      dispatch_outcome_failed=true
+      continue
+      ;;
     1)
       ;;
     *)
@@ -1158,6 +1233,7 @@ dispatch_candidates() {
   local proof_retry_previous_image_tag=""
   local proof_retry_reservation_namespace_uid=""
   local proof_retry_reservation_resource_version=""
+  local proof_retry_reservation_deployed_tuple=""
   local proof_retry_reservation_base_sha=""
   local proof_retry_reservation_head_sha=""
   local proof_retry_reservation_merge_sha=""
@@ -1330,6 +1406,6 @@ if [[ -n "$candidate_rows" ]]; then
   dispatch_candidates <<<"$candidate_rows"
 fi
 if [[ "$dispatch_outcome_failed" == true ]]; then
-  echo "One or more preview dispatch outcomes or capacity checks failed; review this job before another repair cycle." >&2
+  echo "One or more preview inventory, capacity, or dispatch checks failed." >&2
   exit 1
 fi

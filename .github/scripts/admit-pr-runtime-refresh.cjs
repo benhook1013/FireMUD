@@ -1,3 +1,6 @@
+const {execFileSync} = require('node:child_process');
+const {resolve} = require('node:path');
+
 module.exports = async function admitPrRuntimeRefresh({
   github,
   context,
@@ -24,8 +27,10 @@ module.exports = async function admitPrRuntimeRefresh({
   const isNotFound = error => error?.status === 404 || error?.response?.status === 404;
   const dataOf = response => response && isRecord(response.data) ? response.data : null;
 
-  if (!isRecord(input) || Reflect.ownKeys(input).length !== requiredFields.length ||
-      requiredFields.some(field => !Object.prototype.hasOwnProperty.call(input, field))) {
+  if (!isRecord(input) ||
+      Reflect.ownKeys(input).some(field => !requiredFields.includes(field) && field !== 'preview_only') ||
+      requiredFields.some(field => !Object.hasOwn(input, field)) ||
+      (Object.hasOwn(input, 'preview_only') && input.preview_only !== true)) {
     fail('Invalid runtime refresh input.');
   }
   if (requiredFields.some(field => typeof input[field] !== 'string')) fail('Invalid runtime refresh input.');
@@ -48,7 +53,7 @@ module.exports = async function admitPrRuntimeRefresh({
   const defaultBranch = repository.default_branch;
   const pullNumber = Number(input.pr_number);
 
-  const currentIdentity = async () => {
+  const observeIdentity = async () => {
     let pullResponse;
     try {
       pullResponse = await github.rest.pulls.get({...contextRepo, pull_number: pullNumber});
@@ -60,9 +65,9 @@ module.exports = async function admitPrRuntimeRefresh({
     if (!pull || pull.number !== pullNumber || pull.state !== 'open' ||
         pull.head?.repo?.full_name !== fullName || pull.base?.repo?.full_name !== fullName ||
         pull.head?.sha !== input.head_sha || pull.base?.ref !== input.base_ref ||
-        pull.mergeable !== true || typeof pull.mergeable_state !== 'string' ||
-        ['dirty', 'conflicting', 'unknown'].includes(pull.mergeable_state) ||
-        pull.merge_commit_sha !== input.merge_sha) return false;
+        (pull.mergeable !== true && pull.mergeable !== null) ||
+        typeof pull.mergeable_state !== 'string' ||
+        ['dirty', 'conflicting'].includes(pull.mergeable_state)) return false;
 
     let refResponse;
     try {
@@ -74,17 +79,49 @@ module.exports = async function admitPrRuntimeRefresh({
     const ref = dataOf(refResponse);
     if (ref?.ref !== `refs/heads/${input.base_ref}` || ref.object?.sha !== input.base_sha) return false;
 
+    const reportedMerge = pull.merge_commit_sha;
+    if (pull.mergeable === null || pull.mergeable_state === 'unknown' || reportedMerge === null) return null;
+    if (typeof reportedMerge !== 'string' || !shaPattern.test(reportedMerge)) return false;
+
     let commitResponse;
     try {
-      commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: input.merge_sha});
+      commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: reportedMerge});
     } catch (error) {
-      if (isNotFound(error)) return false;
+      if (isNotFound(error)) return null;
       throw error;
     }
     const commit = dataOf(commitResponse);
-    return commit?.sha === input.merge_sha && Array.isArray(commit.parents) &&
-      commit.parents.length === 2 && commit.parents[0]?.sha === input.base_sha &&
-      commit.parents[1]?.sha === input.head_sha;
+    if (commit?.sha !== reportedMerge || !Array.isArray(commit.parents) ||
+        commit.parents.length !== 2 || commit.parents[1]?.sha !== input.head_sha) return false;
+    const mergeBase = commit.parents[0]?.sha;
+    if (reportedMerge !== input.merge_sha) {
+      // GitHub can still report an older test merge while the pinned base is live.
+      return typeof mergeBase === 'string' && shaPattern.test(mergeBase) &&
+        mergeBase !== input.base_sha ? null : false;
+    }
+    if (mergeBase !== input.base_sha) return false;
+    if (Object.hasOwn(input, 'preview_only')) {
+      try {
+        execFileSync('python3', [
+          resolve(__dirname, '../../dev-tools/hosted/preview/preview-eligibility.py'), '--revalidate-deploy',
+          '--expected-repository', fullName, '--expected-head-sha', input.head_sha,
+        ], {input: JSON.stringify(pull), encoding: 'utf8'});
+      } catch (error) {
+        if (error.status !== 1) throw error;
+        core.info('Canonical preview eligibility refused the current PR; no dispatch.');
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const currentIdentity = async () => {
+    for (let observation = 0; observation < 6; observation++) {
+      const result = await observeIdentity();
+      if (result !== null) return result;
+      if (observation < 5) await sleep(2000);
+    }
+    return false;
   };
 
   if (!await currentIdentity()) {
@@ -133,28 +170,30 @@ module.exports = async function admitPrRuntimeRefresh({
   let inventoryComplete = true;
   let newestExact = null;
   const observedRunIds = new Set();
-  const createdSince = secondsUtc(Date.now() - 30 * 60 * 1000);
-  try {
-    const exactRuns = [];
-    for (const event of inventoryEvents) {
+  const exactRuns = [];
+  const collectInventory = async (event, status, createdSince) => {
+    let total;
+    let seen = 0;
+    for (let page = 1; page <= 3; page++) {
       const {data: inventory} = await github.rest.actions.listWorkflowRuns({
-        ...contextRepo,
-        workflow_id: runtimeWorkflow.id,
-        event,
-        created: `${createdSince}..*`,
-        per_page: 100,
-        page: 1,
+        ...contextRepo, workflow_id: runtimeWorkflow.id, event, status, per_page: 100, page,
+        ...(createdSince ? {created: `${createdSince}..*`} : {}),
       });
       if (!Number.isSafeInteger(inventory?.total_count) || inventory.total_count < 0 ||
-          inventory.total_count > 100 || !Array.isArray(inventory.workflow_runs) ||
-          inventory.workflow_runs.length !== inventory.total_count) {
+          inventory.total_count > 300 || !Array.isArray(inventory.workflow_runs) ||
+          inventory.workflow_runs.length > 100 || (total !== undefined && inventory.total_count !== total)) {
         throw new Error('Incomplete runtime run inventory.');
       }
+      total = inventory.total_count;
+      seen += inventory.workflow_runs.length;
       for (const run of inventory.workflow_runs) {
-        if (run?.event !== event) throw new Error('Runtime inventory contains an unexpected event.');
+        if (run?.event !== event || run.status !== status) {
+          throw new Error('Runtime inventory contains an unexpected event or status.');
+        }
         if (!exactNativeTuple(run)) continue;
         if (!isPositiveInteger(run.id) || !isPositiveInteger(run.run_attempt) ||
-            !validChronology(run.created_at) || Date.parse(run.created_at) < Date.parse(createdSince)) {
+            !validChronology(run.created_at) ||
+            (createdSince && Date.parse(run.created_at) < Date.parse(createdSince))) {
           throw new Error('Exact runtime run has invalid native chronology.');
         }
         const identity = `${run.event}:${run.id}:${run.run_attempt}`;
@@ -167,9 +206,25 @@ module.exports = async function admitPrRuntimeRefresh({
         }
         exactRuns.push(run);
       }
+      if (seen === total) return;
+      if (seen > total || inventory.workflow_runs.length < 100) break;
+    }
+    throw new Error('Incomplete runtime run inventory.');
+  };
+  const rankRuns = (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at);
+  try {
+    for (const event of inventoryEvents) {
+      for (const status of activeStatuses) await collectInventory(event, status);
     }
 
-    exactRuns.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+    exactRuns.sort(rankRuns);
+    if (exactRuns.length > 0) {
+      // An older active producer still matters. Only completed runs at least
+      // as new as the newest active candidate can change that decision.
+      const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
+      for (const event of inventoryEvents) await collectInventory(event, 'completed', createdSince);
+      exactRuns.sort(rankRuns);
+    }
     if (exactRuns.length > 0) {
       if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
         throw new Error('Newest exact runtime runs have equal chronology.');
@@ -181,11 +236,25 @@ module.exports = async function admitPrRuntimeRefresh({
     core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
   }
 
+  let activeProducerVerified = false;
+  if (inventoryComplete && newestExact && isExactActiveRun(newestExact)) {
+    try {
+      const latest = dataOf(await github.rest.actions.getWorkflowRun({
+        ...contextRepo, run_id: newestExact.id,
+      }));
+      activeProducerVerified = isExactActiveRun(latest) && latest.id === newestExact.id &&
+        latest.run_attempt === newestExact.run_attempt && latest.event === newestExact.event &&
+        latest.head_sha === newestExact.head_sha &&
+        Date.parse(latest.created_at) === Date.parse(newestExact.created_at);
+    } catch {
+      core.warning('The exact active runtime producer could not be reread; preserving the required refresh fallback.');
+    }
+  }
   if (!await currentIdentity()) {
     core.info('Runtime refresh tuple changed during admission; no dispatch.');
     return 'obsolete';
   }
-  if (inventoryComplete && newestExact && isExactActiveRun(newestExact)) {
+  if (activeProducerVerified) {
     core.info('The unique newest exact runtime producer is already active; no dispatch.');
     return 'already-active';
   }

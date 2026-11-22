@@ -1014,7 +1014,7 @@ jobs:
               );
               matchingRuns.sort((left, right) => right.createdAt - left.createdAt || right.run.id - left.run.id);
               let newestPreExecutionCancellation = null;
-              for (const candidate of matchingRuns) {
+              for (const [index, candidate] of matchingRuns.entries()) {
                 const run = candidate.run;
                 if (run.status === "completed" && run.conclusion === "cancelled" &&
                     await isPreExecutionCancelledAttempt(run, expectedDisplayTitle, identity)) {
@@ -1022,9 +1022,12 @@ jobs:
                   continue;
                 }
                 if (run.status !== "completed" && !isRetryPrimary(selection, run)) {
-                  const completed = matchingRuns.filter(({run: older}) =>
-                    older.id !== run.id && older.status === "completed" && older.conclusion === "success");
-                  for (const {run: older} of completed.slice(0, 3)) {
+                  let checkedSuccesses = 0;
+                  for (const {run: older} of matchingRuns.slice(index + 1)) {
+                    if (older.status !== "completed") continue;
+                    if (older.conclusion === "cancelled" &&
+                        await isPreExecutionCancelledAttempt(older, expectedDisplayTitle, identity)) continue;
+                    if (older.conclusion !== "success" || ++checkedSuccesses > 3) break;
                     try {
                       if (await verifyCompletedCanonicalRuntime(older, identity)) {
                         core.info("A verified completed exact runtime producer precedes the pending duplicate.");
@@ -1575,6 +1578,15 @@ jobs:
                       acceptanceAttempt.status !== "completed" || acceptanceAttempt.conclusion !== "success") {
                     core.info("Runtime attempt changed after current-base identity validation; resume exact selection.");
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                  const confirmedIdentity = await resolveCurrentIdentity(
+                    "Stopping stale current-base smoke gate after the final attempt lookup"
+                  );
+                  if (confirmedIdentity?.obsolete) return;
+                  if (!confirmedIdentity || identityKey(confirmedIdentity) !== identityKey(currentIdentity)) {
+                    currentIdentity = confirmedIdentity;
+                    core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
                     continue smokeGatePolling;
                   }
                 }

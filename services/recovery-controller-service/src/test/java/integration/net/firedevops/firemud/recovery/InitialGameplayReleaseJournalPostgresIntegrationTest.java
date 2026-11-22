@@ -15,6 +15,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.recovery.RecoveryControllerServiceApplication;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
@@ -59,6 +60,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.core.env.StandardEnvironment;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -303,6 +307,69 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             + "recovery_control.initial_gameplay_release_outbox, "
             + "recovery_control.initial_gameplay_release_transition, "
             + "recovery_control.initial_gameplay_release_operation");
+  }
+
+  @Test
+  void packagedApplicationMigratesAndPersistsThroughTheInjectedJournal() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    var environment = new StandardEnvironment();
+    // Keep ambient datasource overrides out of the context before Flyway migrates.
+    environment
+        .getPropertySources()
+        .remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+    environment
+        .getPropertySources()
+        .remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
+
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application =
+            new SpringApplicationBuilder(RecoveryControllerServiceApplication.class)
+                .environment(environment)
+                .web(WebApplicationType.NONE)
+                .run(
+                    "--spring.config.location=classpath:/application.yml",
+                    "--FIREMUD_RECOVERY_CONTROL_DB_HOST=" + POSTGRES.getHost(),
+                    "--FIREMUD_RECOVERY_CONTROL_DB_PORT=" + POSTGRES.getMappedPort(5432),
+                    "--FIREMUD_RECOVERY_CONTROL_DB_USER=" + POSTGRES.getUsername(),
+                    "--FIREMUD_RECOVERY_CONTROL_DB_PASSWORD=" + POSTGRES.getPassword(),
+                    "--spring.grpc.server.enabled=false",
+                    "--firemud.auth.jwt-secret=" + UUID.randomUUID() + UUID.randomUUID(),
+                    "--spring.ssl.bundle.pem.firemud-grpc.keystore.certificate=classpath:certs/dev-cert.pem",
+                    "--spring.ssl.bundle.pem.firemud-grpc.keystore.private-key=classpath:certs/dev-key.pem",
+                    "--spring.ssl.bundle.pem.firemud-grpc.truststore.certificate=classpath:certs/dev-ca.pem");
+        Connection packagedConnection =
+            DriverManager.getConnection(
+                packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      DSLContext packagedDsl = DSL.using(packagedConnection, SQLDialect.POSTGRES);
+      assertThat(
+              packagedDsl
+                  .fetch(
+                      "SELECT script FROM recovery_control.flyway_schema_history_recovery_control WHERE version IS NOT NULL AND success")
+                  .getValues(0, String.class))
+          .containsExactlyInAnyOrder(
+              "V1__initial_gameplay_release_journal.sql",
+              "V2__retain_initial_gameplay_release_attempt_closure.sql");
+
+      InitialGameplayReleaseJournal injected =
+          application.getBean(InitialGameplayReleaseJournal.class);
+      Scope requested = scope();
+      UUID lockIdentity = UUID.randomUUID();
+      Operation created = injected.create(requested, lockIdentity);
+
+      assertThat(created.phase()).isEqualTo(Phase.COLLECTING);
+      assertThat(injected.find(requested.operationId())).contains(created);
+      assertThat(
+              packagedDsl
+                  .fetchSingle(
+                      "SELECT maintenance_lock_identity FROM recovery_control.initial_gameplay_release_operation WHERE operation_id=?",
+                      requested.operationId())
+                  .get(0, UUID.class))
+          .isEqualTo(lockIdentity);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
   }
 
   @Test
@@ -937,12 +1004,22 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               EffectReadbackState.PROVEN_NO_EFFECT,
               "same-instant",
               dispatchInstant);
-      Operation recorded = journal.recordEffectReadback(dispatched, closure, base.plusSeconds(5));
+      Operation recorded = journal.recordEffectReadback(dispatched, closure, dispatchInstant);
       String retained = storedOutbox(operationId, effectId);
       assertThat(retained).contains(tupleCodec.digest(closure));
       assertThat(journal.recordEffectReadback(dispatched, closure, base.plusSeconds(6)))
           .isEqualTo(recorded);
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+      UUID replacementAttempt = UUID.randomUUID();
+      assertThat(
+              journal
+                  .claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(7))
+                  .lastAttemptId())
+          .isEqualTo(replacementAttempt);
+      String replacement = storedOutbox(operationId, effectId);
+      assertThat(journal.recordEffectReadback(dispatched, closure, base.plusSeconds(8)))
+          .isEqualTo(recorded);
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(replacement);
     }
   }
 

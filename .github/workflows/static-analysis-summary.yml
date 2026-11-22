@@ -103,6 +103,10 @@ jobs:
             if (!baseSha) {
               throw new Error("The current pull-request base SHA is unavailable.");
             }
+            const baseRef = currentPullRequest.base?.ref;
+            if (typeof baseRef !== "string" || !baseRef.trim()) {
+              throw new Error("The current pull-request base ref is unavailable.");
+            }
             const sourceWorkflowPath = context.payload.workflow_run.path;
             const sourceWorkflowName = ({
               ".github/workflows/codeql.yml": "CodeQL Analysis",
@@ -164,6 +168,14 @@ jobs:
               return numericIdentity(left?.id) - numericIdentity(right?.id);
             };
 
+            const associatedBaseRef = (run) => {
+              if (!Array.isArray(run?.pull_requests)) return null;
+              const associations = run.pull_requests.filter(pr => pr?.number === issueNumber);
+              if (associations.length !== 1) return null;
+              const ref = associations[0].base?.ref;
+              return typeof ref === "string" && ref.trim() ? ref : null;
+            };
+
             // Metadata-only edits skip their gate under a non-required name; the
             // earlier substantive run for the same title remains the result.
             // GitHub leaves a skipped job's name expression unevaluated, so match
@@ -182,6 +194,11 @@ jobs:
                 run?.display_title === expectedTitle && run.event === "pull_request" &&
                 run.head_sha === headSha).sort((a, b) => compareWorkflowRuns(b, a));
               for (const candidate of candidates) {
+                // Retargeting can preserve both SHAs in the title. A newer
+                // candidate without a ref cannot safely yield to older proof.
+                const candidateBaseRef = associatedBaseRef(candidate);
+                if (!candidateBaseRef) throw new Error("Static summary candidate base ref is unavailable.");
+                if (candidateBaseRef !== baseRef) continue;
                 if (!Number.isSafeInteger(candidate.id) || candidate.id <= 0 ||
                     !Number.isSafeInteger(candidate.run_attempt) || candidate.run_attempt <= 0) {
                   throw new Error("Static summary candidate identity is unavailable.");
@@ -210,7 +227,7 @@ jobs:
                   });
                   if (currentRun?.id !== candidate.id || currentRun.run_attempt !== candidate.run_attempt ||
                       currentRun.event !== "pull_request" || currentRun.head_sha !== headSha ||
-                      currentRun.display_title !== expectedTitle) {
+                      currentRun.display_title !== expectedTitle || associatedBaseRef(currentRun) !== baseRef) {
                     throw new Error("Static summary cannot confirm the current workflow attempt.");
                   }
                   return { ...candidate, status: "unavailable", conclusion: null, jobs: [] };
@@ -252,6 +269,8 @@ jobs:
                 return "pending";
               }
               if (checkRun.status !== "completed") return checkRun.status;
+              if (checkRun.conclusion === "skipped" &&
+                  gateChecks.some(([, gateName]) => gateName === checkName)) return "unavailable";
               return checkRun.conclusion ?? "pending";
             };
 
@@ -345,7 +364,7 @@ jobs:
               });
               if (current?.id !== run.id || current.run_attempt !== run.run_attempt ||
                   current.event !== "pull_request" || current.head_sha !== headSha ||
-                  current.display_title !== run.display_title) {
+                  current.display_title !== run.display_title || associatedBaseRef(current) !== baseRef) {
                 core.info("A selected producer attempt changed while static analysis was being summarized.");
                 return;
               }
@@ -369,7 +388,7 @@ jobs:
               const matches = current.state === "open" &&
                 current.head?.repo?.id === sourceRepositoryId && current.head?.ref === sourceBranch &&
                 current.head?.sha === headSha && current.base?.sha === baseSha &&
-                current.base?.ref === currentPullRequest.base?.ref;
+                current.base?.ref === baseRef;
               if (!matches) core.info("The pull-request base or head changed while static analysis was being summarized.");
               return matches;
             };

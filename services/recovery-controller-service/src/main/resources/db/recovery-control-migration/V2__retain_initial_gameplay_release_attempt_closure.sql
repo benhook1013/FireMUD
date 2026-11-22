@@ -1,6 +1,7 @@
 -- Source-only upgrade. Fence and drain all V1 writers before migration and rollout.
 -- V1 could overwrite prior closure evidence; never synthesize missing history.
 -- [jooq ignore start]
+SET LOCAL lock_timeout = '5s';
 LOCK TABLE recovery_control.initial_gameplay_release_outbox IN ACCESS EXCLUSIVE MODE;
 
 DO $$

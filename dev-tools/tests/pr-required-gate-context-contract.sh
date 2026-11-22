@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Run the required-gate contract without Python optimization")'
 
 # Required gates on metadata-only PR edits: a title/body edit (edited with no
 # base change) skips each required gate under a non-required name, so the
@@ -146,15 +147,15 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
         raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
 
 
-def effective_group(group, action, base_ref, workflow_name="Required Gate", *, push_branch=None):
+def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None):
     values = {
         "github.event.changes.base.ref": repr(base_ref),
-        "github.event.pull_request.number": "42",
+        "github.event.pull_request.number": str(pr_number),
         "github.event.action": repr(action),
         "github.event_name": repr("push" if push_branch else "pull_request"),
         "github.workflow": repr(workflow_name),
         "github.run_id": "123",
-        "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else "refs/pull/42/merge"),
+        "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else f"refs/pull/{pr_number}/merge"),
     }
 
     def render(match):
@@ -388,17 +389,21 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
         raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
 
 rendered_substantive_groups = []
+workflow_data = {}
 for workflow, (workflow_name, *_rest) in gates.items():
     data = yaml.load((root / ".github/workflows" / workflow).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    workflow_data[workflow] = data
     group = data["concurrency"]["group"]
     if data.get("name") != workflow_name:
         raise SystemExit(f"{workflow} actual name must match its required-gate contract")
+    pr_group_owners = {}
     for action, base_ref in (("opened", None), ("synchronize", None), ("reopened", None), ("edited", "develop")):
-        rendered_substantive_groups.append((
-            workflow,
-            action,
-            effective_group(group, action, base_ref, workflow_name),
-        ))
+        for pr_number in (42, 43, 44):
+            rendered = effective_group(group, action, base_ref, workflow_name, pr_number=pr_number)
+            prior_pr = pr_group_owners.setdefault(rendered.casefold(), pr_number)
+            if prior_pr != pr_number:
+                raise SystemExit(f"{workflow} PRs {prior_pr} and {pr_number} share concurrency group {rendered!r}")
+            rendered_substantive_groups.append((workflow, action, rendered))
 
 collisions = cross_workflow_group_collisions(rendered_substantive_groups)
 if collisions:
@@ -409,15 +414,21 @@ if collisions:
     )
 for branch in ("main", "develop"):
     push_groups = []
-    for workflow in ("ci.yml", "security.yml"):
-        data = yaml.load((root / ".github/workflows" / workflow).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    for workflow, data in workflow_data.items():
+        if "push" not in data["on"]:
+            continue
+        branches = (data["on"]["push"] or {}).get("branches")
+        if branches is not None and branch not in branches:
+            continue
         push_groups.append((
             workflow,
             "push",
             effective_group(data["concurrency"]["group"], None, None, data["name"], push_branch=branch),
         ))
-    if cross_workflow_group_collisions(push_groups):
-        raise SystemExit(f"Security and Validation share a push concurrency group on {branch}")
+    collisions = cross_workflow_group_collisions(push_groups)
+    if collisions:
+        first, second = collisions[0]
+        raise SystemExit(f"{first[0]} and {second[0]} share a push concurrency group on {branch}: {first[2]!r}")
 assert cross_workflow_group_collisions([
     ("validation.yml", "opened", "required-pr-42"),
     ("smoke.yml", "edited", "REQUIRED-PR-42"),
@@ -775,14 +786,19 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
   const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
   const duplicatePrimary = kind === "optional-final-read-duplicate";
+  const newerFailure = kind === "duplicate-after-newer-failure";
   const disappearingSnapshot = kind === "optional-final-read-incomplete-snapshot";
   const badStatus = kind.endsWith("-forbidden") ? 403 : kind.endsWith("-missing") ? 404 : 503;
   const primaryCanRecover = h0 && !cancelledPrimary && !cancelledWithReplacement && badStatus === 503;
-  const primaryReady = () => primaryCanRecover && primaryInventoryReads > 1;
+  const primaryReady = () => (primaryCanRecover || newerFailure) && primaryInventoryReads > 1;
   let alternativeJobsReads = 0, primaryInventoryReads = 0, lookupFailure;
   let pullRequestLookups = 0, acceptanceLookupArmed = false, acceptanceLookupAttempts = 0;
   const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
-  const tupleAdvanced = () => kind === "trusted-current-base-advances" && currentRunReads >= 2;
+  const baseAdvanceRead = {
+    "trusted-current-base-advances": 2,
+    "trusted-current-base-advances-during-acceptance-attempt": 3,
+  }[kind] ?? Infinity;
+  const tupleAdvanced = () => currentRunReads >= baseAdvanceRead;
   let rerunStartedDuringLatestIdentityRead = false;
   const failures = [], refs = [], info = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: liveFallback ? null : merge, payload: {
@@ -956,10 +972,15 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       yield {data: primaryInventoryReads === 1 ? [pending, completed] : [pending]};
       return;
     }
-    if (h0 && input.event === "pull_request") {
+    if ((h0 || newerFailure) && input.event === "pull_request") {
       primaryInventoryReads += 1;
       const primary = {...exactPrimary, status: cancelledPrimary || cancelledWithReplacement || primaryReady() ? "completed" : "queued",
         conclusion: cancelledPrimary || cancelledWithReplacement ? "cancelled" : primaryReady() ? "success" : null};
+      if (newerFailure) {
+        const failed = {...source, id: 44, created_at: "2026-09-01T00:00:00.500Z", conclusion: "failure"};
+        yield {data: [primary, failed, source]};
+        return;
+      }
       yield {data: duplicatePrimary ? [primary, source] : [primary]};
       return;
     }
@@ -1070,6 +1091,16 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   for (const kind of ["duplicate-missing-step", "duplicate-nonterminal-step"]) {
     assert.deepEqual((await scenario(kind)).failures, [], `${kind} preserves canonical fallback`);
   }
+  const precedingGreen = await scenario("duplicate-preceding-green");
+  assert(precedingGreen.info.some(line => line.includes("verified completed exact runtime producer precedes the pending duplicate")),
+    "a verified green as the latest completed attempt may satisfy a pending duplicate");
+  assert.deepEqual(precedingGreen.failures, []);
+  const newerFailure = await scenario("duplicate-after-newer-failure");
+  assert(newerFailure.info.some(line => line.includes("Found runtime-images run 43 with status=queued")),
+    "the older green must not bypass the newer completed failure");
+  assert(newerFailure.info.some(line => line.includes("Found runtime-images run 43 with status=completed")),
+    "the pending exact producer must finish before the gate accepts proof");
+  assert.deepEqual(newerFailure.failures, []);
   for (const kind of ["duplicate-terminal-skipped", "duplicate-terminal-failure", "rerun-after-proof"]) {
     assert.equal((await scenario(kind)).failures.length, 1, `${kind} cannot supply successful proof`);
   }
@@ -1095,6 +1126,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   assert(advancedFallback.info.some(line => line.includes("identity changed after the final runtime attempt lookup")),
     "late base movement cannot accept the old trusted refresh");
   assert.match(advancedFallback.failures[0], /Timed out waiting for the exact runtime-images/);
+  const advancedDuringAcceptanceAttempt = await scenario(
+    "trusted-current-base-advances-during-acceptance-attempt", "repository_dispatch"
+  );
+  assert.match(advancedDuringAcceptanceAttempt.failures[0], /Timed out waiting for the exact runtime-images/,
+    "a base move during the last attempt lookup cannot accept the old trusted refresh");
   const stale = await scenario("stale-final");
   assert.deepEqual(stale.failures, [], "obsolete gate exits without publishing proof for changed base ref");
   console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");
