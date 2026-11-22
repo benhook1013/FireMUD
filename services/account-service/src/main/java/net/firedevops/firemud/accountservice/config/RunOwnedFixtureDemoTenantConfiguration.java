@@ -63,7 +63,6 @@ public class RunOwnedFixtureDemoTenantConfiguration {
         demos,
         dsl,
         PreV1GateWaivers.from(environment).enabled(),
-        transactions,
         Path.of(capabilityPath),
         Path.of(receiptPath),
         runId,
