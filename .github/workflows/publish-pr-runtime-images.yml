@@ -440,10 +440,14 @@ jobs:
             }
             // Keep the shared lock during observation even when the one POST response was lost.
             const deadline = Date.now() + 120000;
-            for (;;) {
+            while (Date.now() < deadline) {
               try {
-                if (await newerRefresh(dispatchStarted, deadline, dispatchStarted)) break;
+                if (await newerRefresh(dispatchStarted, deadline, dispatchStarted)) {
+                  core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);
+                  return;
+                }
               } catch (error) {
+                if (error?.code === "REQUEST_DEADLINE_EXPIRED") break;
                 const status = error?.status ?? error?.response?.status;
                 const code = error?.code ?? error?.cause?.code;
                 const transient = [408, 425, 429, 500, 502, 503, 504].includes(status) ||
@@ -453,14 +457,14 @@ jobs:
                 if (!transient) throw error;
                 core.warning("Exact refresh visibility read is temporarily unavailable; keep observing without retrying the POST.");
               }
-              if (Date.now() >= deadline) {
-                throw new Error(responseUnknown
-                  ? "Refresh dispatch attempted but visibility is unknown; no retry issued"
-                  : "Refresh dispatch accepted but visibility is unknown; no retry issued");
+              const remainingMs = deadline - Date.now();
+              if (remainingMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, Math.min(5000, remainingMs)));
               }
-              await new Promise(resolve => setTimeout(resolve, Math.min(5000, deadline - Date.now())));
             }
-            core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);
+            throw new Error(responseUnknown
+              ? "Refresh dispatch attempted but visibility is unknown; no retry issued"
+              : "Refresh dispatch accepted but visibility is unknown; no retry issued");
 
   source:
     name: Resolve Exact Runtime Publication Source

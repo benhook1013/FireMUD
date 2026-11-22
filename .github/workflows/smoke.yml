@@ -1817,12 +1817,8 @@ jobs:
                         core.warning(`Canonical smoke producer proof is unavailable: ${error.message}`);
                       }
                       if (canonicalProducerVerified) break;
-                      const markers = (fullSmokeJob.steps ?? []).filter((step) =>
-                        step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
-                      );
-                      const markerPending = markers.length === 0 ||
-                        (markers.length === 1 && markers[0].status !== "completed");
-                      if (!markerPending && fullSmokeStep?.status === "completed") break;
+                      // The exact-attempt marker check below handles incomplete marker snapshots.
+                      if (fullSmokeStep?.status === "completed") break;
                     } else if (fullSmokeStep?.status === "completed") {
                       // The native pull_request path keeps its existing step-proof behavior.
                       break;
