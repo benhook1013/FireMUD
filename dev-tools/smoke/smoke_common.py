@@ -398,13 +398,14 @@ def login_play_look_steps(
 
 def canonical_fixture_play_steps(
     username, password, world, worlds_expect, login_expect, play_expect, look_expect, *,
-    worlds_first=False,
+    discover_before_login=False,
 ):
     """Run the canonical fixture lobby, PLAY, and LOOK on one live connection."""
-    login = (f"LOGIN {username} {password}", [login_expect], "LOGIN")
     discovery = ("WORLDS", [worlds_expect], "WORLDS")
-    steps = [discovery, login] if worlds_first else [login, discovery]
-    return steps + [
+    # LOGIN starts a new custody and clears the pre-login world menu.
+    return ([discovery] if discover_before_login else []) + [
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        discovery,
         (f"REALMS {world}", ["OK REALMS"], "REALMS"),
         (f"JOIN {world}", ["OK JOIN"], "JOIN"),
         (f"PLAY {world}", [play_expect], "PLAY", 30),
