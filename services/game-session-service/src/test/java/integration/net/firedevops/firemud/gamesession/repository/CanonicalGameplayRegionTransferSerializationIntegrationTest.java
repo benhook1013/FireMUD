@@ -103,8 +103,13 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
               if (!"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))".equals(context.sql())) {
                 return;
               }
+              var statement = context.statement();
+              if (statement == null) {
+                throw new AssertionError(
+                    "Install transaction did not prepare the advisory-lock statement");
+              }
               try {
-                installIsolation.set(context.statement().getConnection().getTransactionIsolation());
+                installIsolation.set(statement.getConnection().getTransactionIsolation());
               } catch (SQLException failure) {
                 throw new AssertionError(
                     "Could not read the install transaction isolation", failure);
