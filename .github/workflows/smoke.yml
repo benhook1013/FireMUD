@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "a29d15fa877ccf53e6677c3ccd60e2fbed7e817fd776a0fc8093ca24c2462a7e";
+            const canonicalRuntimeWorkflowSha256 = "da1e6c06adfa8fb26aad72dd5a613f2d55e5339c382f713888623e4f542e0a70";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -1546,10 +1546,16 @@ jobs:
               if (candidate.conclusion !== replacement.conclusion) return false;
               if (candidate.steps != null && !Array.isArray(candidate.steps)) return false;
               if (replacement.conclusion === "success") {
-                // Ordinary success has one canonical proof path. A contradictory
-                // snapshot cannot be retried through the diagnostic exception path.
-                const proof = await verifyCanonicalSmokeProducer(replacement, candidate, identity, true);
-                return proof === true ? "ordinary" : proof;
+                const markers = (candidate.steps ?? []).filter((step) =>
+                  step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
+                );
+                if (markers.length > 1) return false;
+                const exceptionMarked = markers[0]?.status === "completed" && markers[0].conclusion === "success";
+                if (!exceptionMarked) {
+                  // Contradictory ordinary proof cannot use the exception verifier.
+                  const proof = await verifyCanonicalSmokeProducer(replacement, candidate, identity, true);
+                  return proof === true ? "ordinary" : proof;
+                }
               }
               const playProof = await verifyKnownPlayFailure(replacement, candidate, identity, true, true);
               if (playProof === true) return true;
@@ -1766,10 +1772,6 @@ jobs:
                   );
                   return;
                 }
-                if (!await isCurrentCanonicalAttempt(replacement)) {
-                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                  continue smokeGatePolling;
-                }
                 const finalIdentity = await resolveCurrentIdentity("Fencing proven cancelled-run replacement", true);
                 if (finalIdentity?.obsolete) return;
                 if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
@@ -1779,6 +1781,10 @@ jobs:
                     requireCurrentIdentity = true;
                     currentIdentity = finalIdentity;
                   }
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
+                if (!await isCurrentCanonicalAttempt(replacement)) {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
@@ -1926,10 +1932,6 @@ jobs:
                           }
                         }
                         if (refreshProof?.status === "ordinary") {
-                          if (!await isCurrentCanonicalAttempt(refreshProof.run)) {
-                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                            continue smokeGatePolling;
-                          }
                           const freshIdentity = await resolveCurrentIdentity("Fencing exact passing typed smoke recovery", true);
                           if (freshIdentity?.obsolete) return;
                           if (!freshIdentity || identityKey({...freshIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
@@ -1938,6 +1940,10 @@ jobs:
                               requireCurrentIdentity = true;
                               currentIdentity = freshIdentity;
                             }
+                            continue smokeGatePolling;
+                          }
+                          if (!await isCurrentCanonicalAttempt(refreshProof.run)) {
+                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
                             continue smokeGatePolling;
                           }
                           return;
@@ -1960,10 +1966,6 @@ jobs:
                     if (knownPlayVerified) {
                       const selectedProofRun = verifiedRefreshRun ?? matching;
                       const needsLiveTuple = refreshVerified || matching.event === "repository_dispatch";
-                      if (!await isCurrentCanonicalAttempt(selectedProofRun)) {
-                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                        continue smokeGatePolling;
-                      }
                       const freshIdentity = await resolveCurrentIdentity(
                         "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
                       // Original event proof keeps its immutable tuple semantics. Refreshed
@@ -1985,6 +1987,10 @@ jobs:
                       if (!freshIdentity.canonicalPlayEligible) {
                         core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                         return;
+                      }
+                      if (!await isCurrentCanonicalAttempt(selectedProofRun)) {
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
                       }
                       core.setOutput("known_play_exception", "true");
                       core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
@@ -2071,14 +2077,14 @@ jobs:
                     core.setFailed("Moved cancelled-run recovery did not supply authenticated smoke proof.");
                     return;
                   }
-                  if (!await isCurrentCanonicalAttempt(matching)) {
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                    continue smokeGatePolling;
-                  }
                   const freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run recovery", true);
                   if (freshIdentity?.obsolete) return;
                   if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
                     if (freshIdentity) currentIdentity = freshIdentity;
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                  if (!await isCurrentCanonicalAttempt(matching)) {
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue smokeGatePolling;
                   }
@@ -2110,6 +2116,20 @@ jobs:
                     `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}, ` +
                     `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}`
                   );
+                }
+                if (typedRuntimeProof && matching.head_sha == null) {
+                  // Retrying the jobs lookup cannot fill a sparse run-list row.
+                  const snapshotKey = `typed-list-head:${matching.id}:${matching.run_attempt}:${identityKey(currentIdentity)}`;
+                  if (incompleteRefreshKey !== snapshotKey) {
+                    incompleteRefreshKey = snapshotKey;
+                    incompleteRefreshObservedAt = Date.now();
+                  }
+                  if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                    await failNonTerminalSnapshot("without the typed run-list head SHA");
+                    return;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, snapshotSleepMs));
+                  continue smokeGatePolling;
                 }
                 const maxCompletedJobSnapshotRetries = 8;
                 for (
@@ -2340,10 +2360,6 @@ jobs:
                       return;
                     }
                     const needsLiveTuple = matching.event === "repository_dispatch";
-                    if (!await isCurrentCanonicalAttempt(matching)) {
-                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                      continue smokeGatePolling;
-                    }
                     const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
                     const comparableFreshIdentity = needsLiveTuple && freshIdentity
                       ? {...freshIdentity, sourceEvent: currentIdentity.sourceEvent}
@@ -2357,6 +2373,10 @@ jobs:
                     if (!freshIdentity.canonicalPlayEligible) {
                       core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                       return;
+                    }
+                    if (!await isCurrentCanonicalAttempt(matching)) {
+                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                      continue smokeGatePolling;
                     }
                     core.setOutput("known_play_exception", "true");
                     core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
@@ -2402,10 +2422,6 @@ jobs:
                   );
                   return;
                 }
-                if (typedRuntimeProof && !await isCurrentCanonicalAttempt(matching)) {
-                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                  continue smokeGatePolling;
-                }
                 const finalIdentity = await fenceCompletedRuntimeIdentity("Stopping stale smoke gate before accepting full-stack proof");
                 if (finalIdentity?.obsolete) {
                   return;
@@ -2415,6 +2431,10 @@ jobs:
                   core.info(
                     `Runtime images run ${matching.id} was not accepted because the current PR identity changed after its smoke snapshot; waiting for a fresh exact run.`
                   );
+                  continue smokeGatePolling;
+                }
+                if (typedRuntimeProof && !await isCurrentCanonicalAttempt(matching)) {
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
                 return;

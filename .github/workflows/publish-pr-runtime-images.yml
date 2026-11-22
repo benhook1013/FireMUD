@@ -544,7 +544,8 @@ jobs:
               if (run.id !== sourceId || run.workflow_id !== workflow.id ||
                   !isTrustedWorkflowPath(run.path) || !title ||
                   !["Build Runtime Images", run.display_title].includes(run.name) ||
-                  !["pull_request", "repository_dispatch"].includes(run.event) ||
+                  !(callback ? ["pull_request", "repository_dispatch"].includes(run.event)
+                    : run.event === "repository_dispatch") ||
                   run.repository?.full_name !== repository || run.head_repository?.full_name !== repository ||
                   typeof run.head_branch !== "string" || !run.head_branch ||
                   typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
@@ -631,6 +632,7 @@ jobs:
       - name: Validate exact PR source and artifact before registry login
         env:
           CURRENT_REPOSITORY: ${{ github.repository }}
+          PUBLICATION_TRIGGER: ${{ github.event_name }}
           SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
           SOURCE_RUN_URL: ${{ fromJSON(needs.source.outputs.source).html_url }}
           SOURCE_RUN_TITLE: ${{ fromJSON(needs.source.outputs.source).display_title }}
@@ -765,6 +767,11 @@ jobs:
           source_event = required_environment("SOURCE_RUN_EVENT")
           if source_event not in {"pull_request", "repository_dispatch"}:
               fail("source event is not an allowed PR image source")
+          publication_trigger = required_environment("PUBLICATION_TRIGGER")
+          if publication_trigger not in {"workflow_run", "repository_dispatch"}:
+              fail("publication trigger is not allowed")
+          if publication_trigger == "repository_dispatch" and source_event != "repository_dispatch":
+              fail("typed publication requires a repository_dispatch source run")
           if required_environment("SOURCE_RUN_CONCLUSION") != "success":
               fail("source workflow did not succeed")
           if required_environment("SOURCE_HEAD_REPOSITORY") != repository:
