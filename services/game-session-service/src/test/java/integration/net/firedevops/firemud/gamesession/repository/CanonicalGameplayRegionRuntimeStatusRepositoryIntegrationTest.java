@@ -278,16 +278,16 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
         };
     var failingRepository =
         new CanonicalGameplayRegionRuntimeStatusRepository(
-            DSL.using(dsl.configuration().derive(new DefaultExecuteListenerProvider(failOwnerRead))));
-    assertThatThrownBy(
-            () ->
-                installAfterBarrier(
-                    failingRepository,
-                    prior,
-                    SECOND_LEASE_CORRELATION,
-                    "instance-failure",
-                    new CountDownLatch(1),
-                    new CountDownLatch(0)))
+            DSL.using(
+                dsl.configuration().derive(new DefaultExecuteListenerProvider(failOwnerRead))));
+    assertThatThrownBy(() ->
+            installAfterBarrier(
+                failingRepository,
+                prior,
+                SECOND_LEASE_CORRELATION,
+                "instance-failure",
+                new CountDownLatch(1),
+                new CountDownLatch(0)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical Game Session region ownership is unavailable")
         .hasRootCauseMessage("Injected owner-row database failure");

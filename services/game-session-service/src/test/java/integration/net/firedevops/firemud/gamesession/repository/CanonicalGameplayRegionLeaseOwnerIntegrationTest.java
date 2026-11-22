@@ -173,7 +173,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         CompletableFuture.supplyAsync(() -> {
           long startedAt = System.nanoTime();
           Throwable failure =
-              catchThrowable(() -> owner.readInstallationIncarnation(transferOwner, deadline, source));
+              catchThrowable(
+                  () -> owner.readInstallationIncarnation(transferOwner, deadline, source));
           return new ReadOutcome(failure, System.nanoTime() - startedAt);
         });
 
