@@ -50,6 +50,7 @@ import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.ResolveRunOwnedFixtureLookRequest;
+import net.firedevops.firemud.gamelogic.v1.ResolveRunOwnedFixtureLookResponse;
 import net.firedevops.firemud.gamelogic.v1.RunOwnedFixtureLookServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
@@ -72,6 +73,7 @@ public class GameLogicClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
+  private RunOwnedFixtureLookServiceGrpc.RunOwnedFixtureLookServiceBlockingStub fixtureLookStub;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
@@ -101,6 +103,8 @@ public class GameLogicClient
   @Override
   protected GameLogicServiceGrpc.GameLogicServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
+    // The protected fixture receiver authenticates only the mTLS workload.
+    fixtureLookStub = RunOwnedFixtureLookServiceGrpc.newBlockingStub(channel);
     return applyStubCustomizer(
         GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
@@ -134,13 +138,20 @@ public class GameLogicClient
   public LookResult resolveRunOwnedFixtureLook(ReadRunOwnedFixtureLookRoomRequest request) {
     var target = WorldCanonicalInstanceLifecycleGrpcCodec.fromRequest(request.getLifecycle());
     String peer = "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-logic-service";
-    var response =
-        RunOwnedFixtureLookServiceGrpc.newBlockingStub(stub().getChannel())
-            .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer))
-            .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer))
-            .withDeadlineAfter(8, TimeUnit.SECONDS)
-            .resolveRunOwnedFixtureLook(
-                ResolveRunOwnedFixtureLookRequest.newBuilder().setRoom(request).build());
+    ResolveRunOwnedFixtureLookResponse response;
+    try {
+      response =
+          fixtureLookStub
+              .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer))
+              .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer))
+              .withDeadlineAfter(8, TimeUnit.SECONDS)
+              .resolveRunOwnedFixtureLook(
+                  ResolveRunOwnedFixtureLookRequest.newBuilder().setRoom(request).build());
+    } catch (io.grpc.StatusRuntimeException unavailable) {
+      LOG.warn(
+          "Protected fixture LOOK failed with gRPC status {}", unavailable.getStatus().getCode());
+      throw unavailable;
+    }
     if (!response.hasLook() || !response.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalStateException("The fixture LOOK response is unavailable");
     }
