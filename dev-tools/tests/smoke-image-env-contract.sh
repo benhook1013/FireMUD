@@ -167,7 +167,7 @@ bash() {
         "$certificate_root/workloads/world-management-service/client.crt"
       cp "$certificate_root/workloads/game-session-service/ca.crt" \
         "$certificate_root/workloads/world-management-service/ca.crt"
-      mkdir -m 700 -p "$certificate_root/websocket-client"
+      (umask 077; mkdir -p "$certificate_root/websocket-client")
       cp "$certificate_root/workloads/game-session-service/client.crt" \
         "$certificate_root/websocket-client/client.crt"
       (umask 077; : >"$certificate_root/websocket-client/client.key")
