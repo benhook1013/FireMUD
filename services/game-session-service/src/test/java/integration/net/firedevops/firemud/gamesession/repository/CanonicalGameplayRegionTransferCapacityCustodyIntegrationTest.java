@@ -314,6 +314,129 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     }
   }
 
+  @Test
+  void recreatedOwnerObservesAppliedReceiptBeforeRetainingItsExactFence() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      long deadline = transferDeadline();
+      var item =
+          proof.transfers.within(deadline, ignored -> proof.transfers.capture(id).getFirst());
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            proof
+                .capacity(proof.sql)
+                .forTransferBudget(budget)
+                .fenceForTransfer(item, dispatch, deadline);
+            return null;
+          });
+      assertThat(proof.itemImage(id))
+          .contains("\"fence_apply_issued\": true", "\"fence_readback\": null");
+      proof.recreateTransferOwners();
+      var completed = new java.util.concurrent.CompletableFuture<ReceiptAction>();
+      var commands = new java.util.concurrent.atomic.AtomicInteger();
+      var observedRedis = org.mockito.Mockito.mock(io.lettuce.core.RedisClient.class);
+      org.mockito.Mockito.when(observedRedis.connect(ByteArrayCodec.INSTANCE))
+          .thenAnswer(ignored ->
+              observingReceiptConnection(
+                  proof.redis.connect(ByteArrayCodec.INSTANCE), completed, commands));
+      var recovered =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+              proof.sql, observedRedis, proof.scripts, proof.clock, proof.tags);
+      long recoveryDeadline = transferDeadline();
+      proof.transfers.within(
+          recoveryDeadline,
+          budget -> {
+            var before =
+                proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), recoveryDeadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            var actual =
+                recovered
+                    .forTransferBudget(budget)
+                    .fenceForTransfer(item, dispatch, recoveryDeadline);
+            var after =
+                proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), recoveryDeadline);
+            proof.transfers.retainFence(item, actual, before, after);
+            return null;
+          });
+      assertThat(completed.get(2, java.util.concurrent.TimeUnit.SECONDS))
+          .isEqualTo(ReceiptAction.OBSERVE);
+      assertThat(commands.get()).isEqualTo(1);
+      assertThat(proof.itemImage(id)).doesNotContain("\"fence_readback\": null");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  private enum ReceiptAction {
+    PREPARE,
+    APPLY,
+    OBSERVE
+  }
+
+  @SuppressWarnings("unchecked")
+  private static io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]>
+      observingReceiptConnection(
+          io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]> real,
+          java.util.concurrent.CompletableFuture<ReceiptAction> completed,
+          java.util.concurrent.atomic.AtomicInteger commands) {
+    var actual = real.async();
+    var observed =
+        java.lang.reflect.Proxy.newProxyInstance(
+            io.lettuce.core.api.async.RedisAsyncCommands.class.getClassLoader(),
+            new Class<?>[] {io.lettuce.core.api.async.RedisAsyncCommands.class},
+            (proxy, method, arguments) -> {
+              if (!"evalsha".equals(method.getName())
+                  || arguments.length != 4
+                  || !(arguments[3] instanceof byte[][] values)
+                  || values.length != 9) return invokeRedis(actual, method, arguments);
+              // Do not stringify, retain, or render any argument; classify only the action.
+              ReceiptAction action = null;
+              for (var candidate : ReceiptAction.values()) {
+                if (java.util.Arrays.equals(values[0], ascii(candidate.name()))) action = candidate;
+              }
+              if (action == null || commands.incrementAndGet() != 1) {
+                throw new AssertionError("Unexpected transfer receipt action or replay");
+              }
+              ReceiptAction observedAction = action;
+              var result = (io.lettuce.core.RedisFuture<?>) invokeRedis(actual, method, arguments);
+              result.whenComplete((value, failure) -> {
+                if (failure == null
+                    && value instanceof List<?> row
+                    && row.size() == 3
+                    && Long.valueOf(
+                            CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
+                                .CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED)
+                        .equals(row.get(0))
+                    && row.get(2) instanceof byte[] state
+                    && java.util.Arrays.equals(ascii("APPLIED"), state)) {
+                  completed.complete(observedAction);
+                } else {
+                  completed.completeExceptionally(
+                      new AssertionError("Redis did not complete the exact terminal observation"));
+                }
+              });
+              return result;
+            });
+    return (io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]>)
+        java.lang.reflect.Proxy.newProxyInstance(
+            io.lettuce.core.api.StatefulRedisConnection.class.getClassLoader(),
+            new Class<?>[] {io.lettuce.core.api.StatefulRedisConnection.class},
+            (proxy, method, arguments) ->
+                "async".equals(method.getName()) ? observed : invokeRedis(real, method, arguments));
+  }
+
+  private static Object invokeRedis(Object receiver, java.lang.reflect.Method method, Object[] args)
+      throws Throwable {
+    try {
+      return method.invoke(receiver, args);
+    } catch (java.lang.reflect.InvocationTargetException failure) {
+      throw failure.getCause();
+    }
+  }
+
   @Override
   PostgreSQLContainer<?> postgresContainer() {
     return POSTGRES;
