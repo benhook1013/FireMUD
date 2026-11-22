@@ -133,9 +133,57 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
             cancellation.get("cancellation_receipt_digest", String.class),
             cancellation.get("cancellation_row_version", Long.class),
             cancellation.get("cancellation_committed_transaction_id", Long.class));
-    if ((inserted != 0 && inserted != 1)
-        || !candidate.requestId().equals(retainedConflictRequestId(verified))) throw refused();
+    if (inserted == 1) {
+      if (!candidate.requestId().equals(retainedConflictRequestId(verified))) throw refused();
+    } else if (inserted == 0) {
+      requireMatchingSubscriptionConflict(invoice, candidate, cancellation, verified);
+    } else {
+      throw refused();
+    }
     return true;
+  }
+
+  private void requireMatchingSubscriptionConflict(
+      AccountHostingFirstInvoicePayment invoice,
+      ConfirmationDispatch candidate,
+      Record cancellation,
+      VerifiedEvent verified) {
+    Record winner =
+        dsl.fetchOne(
+            "SELECT conflict.request_id, conflict.lifecycle_request_id, conflict.creation_request_id, "
+                + "conflict.tuple_digest, conflict.cancellation_request_id, "
+                + "conflict.cancellation_receipt_digest, conflict.cancellation_row_version, "
+                + "conflict.cancellation_committed_transaction_id, conflict.event_payload_digest, "
+                + "inbox.raw_payload, inbox.payload_sha256 FROM "
+                + TABLE
+                + " conflict JOIN stripe_event_inbox inbox USING (provider_event_id) "
+                + "WHERE conflict.subscription_id = ?",
+            invoice.subscriptionId());
+    if (winner == null
+        || !candidate.requestId().equals(winner.get("request_id", UUID.class))
+        || !candidate.lifecycleRequestId().equals(winner.get("lifecycle_request_id", UUID.class))
+        || !invoice.creationRequestId().equals(winner.get("creation_request_id", UUID.class))
+        || !invoice.digest().equals(winner.get("tuple_digest", String.class))
+        || !Objects.equals(
+            cancellation.get("cancellation_request_id", UUID.class),
+            winner.get("cancellation_request_id", UUID.class))
+        || !Objects.equals(
+            cancellation.get("cancellation_receipt_digest", String.class),
+            winner.get("cancellation_receipt_digest", String.class))
+        || !Objects.equals(
+            cancellation.get("cancellation_row_version", Long.class),
+            winner.get("cancellation_row_version", Long.class))
+        || !Objects.equals(
+            cancellation.get("cancellation_committed_transaction_id", Long.class),
+            winner.get("cancellation_committed_transaction_id", Long.class))) throw refused();
+    byte[] retainedPayload = winner.get("raw_payload", byte[].class);
+    String digest = winner.get("payload_sha256", String.class);
+    if (retainedPayload == null
+        || !sha256(retainedPayload).equals(digest)
+        || !digest.equals(winner.get("event_payload_digest", String.class))
+        || !signedSuccessTuple(decodeUtf8(retainedPayload))
+            .payment()
+            .equals(signedSuccessTuple(verified.rawPayload()).payment())) throw refused();
   }
 
   private Record exactCommittedCancellation(AccountHostingFirstInvoicePayment invoice) {
@@ -226,14 +274,15 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
           eventId.asText(),
           created.asLong(),
           apiVersion.isTextual() ? apiVersion.asText() : null,
-          eventLivemode.asBoolean(),
-          id.asText(),
-          customer.asText(),
-          paymentMethod.asText(),
-          amount.asLong(),
-          amountReceived.asLong(),
-          currency.asText(),
-          livemode.asBoolean());
+          new SignedPaymentTuple(
+              eventLivemode.asBoolean(),
+              id.asText(),
+              customer.asText(),
+              paymentMethod.asText(),
+              amount.asLong(),
+              amountReceived.asLong(),
+              currency.asText(),
+              livemode.asBoolean()));
     } catch (JacksonException malformed) {
       throw refused();
     }
@@ -270,6 +319,9 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
       String eventId,
       long eventCreatedAtEpochSeconds,
       String providerApiVersion,
+      SignedPaymentTuple payment) {}
+
+  private record SignedPaymentTuple(
       boolean eventLivemode,
       String paymentIntentId,
       String customerId,

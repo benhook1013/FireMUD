@@ -523,15 +523,20 @@ jobs:
             };
 
             const hasRuntimeChange = async (pullRequest) => {
-              const files = await github.paginate(
-                github.rest.pulls.listFiles,
-                fanoutOptions({
+              const files = [];
+              for (let page = 1; ; page += 1) {
+                // Pagination must refresh the signal against the same fan-out deadline on every page.
+                const {data} = await github.rest.pulls.listFiles(fanoutOptions({
                   ...context.repo,
                   pull_number: pullRequest.number,
-                  per_page: 100,
-                }),
-                (response) => response.data
-              );
+                  per_page: 100, page,
+                }));
+                if (!Array.isArray(data) || data.length > 100) {
+                  throw new Error(`PR #${pullRequest.number} changed-file page is malformed`);
+                }
+                files.push(...data);
+                if (data.length < 100) break;
+              }
               const expectedFileCount = pullRequest.changed_files;
               const validFileEntries = Number.isInteger(expectedFileCount) &&
                 files.length === expectedFileCount &&
@@ -795,7 +800,9 @@ jobs:
               const ref = path.slice(prefix.length);
               return validWorkflowRef(ref);
             };
-            const findExactExistingProducer = (tuple, inventory) => {
+            // Bind both admission reads to the same terminal attempt; never cache native proof.
+            const disregardedTypedAttempts = new Map();
+            const findExactExistingProducer = async (tuple, inventory) => {
               const expectedTitle =
                 `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
                 `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
@@ -846,6 +853,43 @@ jobs:
                 return [newest];
               }
               if (newest.status === "completed") {
+                if (newest.event === "repository_dispatch" && ["cancelled", "timed_out"].includes(newest.conclusion)) {
+                  const repository = `${context.repo.owner}/${context.repo.repo}`;
+                  const defaultBranch = context.payload.repository?.default_branch;
+                  const attemptBinding = JSON.stringify([
+                    newest.run_attempt, newest.conclusion, newest.head_sha, newest.path, newest.created_at,
+                  ]);
+                  if (!Number.isSafeInteger(newest.run_attempt) || newest.run_attempt <= 0 ||
+                      context.payload.repository?.full_name !== repository ||
+                      typeof defaultBranch !== "string" || !defaultBranch || newest.head_branch !== defaultBranch ||
+                      typeof newest.head_sha !== "string" || !shaPattern.test(newest.head_sha) ||
+                      (disregardedTypedAttempts.has(newest.id) && disregardedTypedAttempts.get(newest.id) !== attemptBinding)) {
+                    throw new Error(`Terminal typed runtime producer ${newest.id} has incomplete or changed attempt identity`);
+                  }
+                  const {data: workflow} = await github.rest.actions.getWorkflow(fanoutOptions({
+                    ...context.repo, workflow_id: "runtime-images.yml",
+                  }));
+                  const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({
+                    ...context.repo, run_id: newest.id,
+                  }));
+                  if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
+                      workflow.id !== newest.workflow_id || workflow.path !== expectedWorkflowPath ||
+                      workflow.name !== "Build Runtime Images" ||
+                      latest?.id !== newest.id || latest.run_attempt !== newest.run_attempt ||
+                      latest.workflow_id !== workflow.id || latest.event !== "repository_dispatch" ||
+                      latest.path !== newest.path || !workflowPathMatches(latest.path) ||
+                      ![workflow.name, expectedTitle].includes(latest.name) || latest.display_title !== expectedTitle ||
+                      latest.repository?.full_name !== repository || latest.head_repository?.full_name !== repository ||
+                      latest.head_branch !== defaultBranch || latest.head_sha !== newest.head_sha ||
+                      latest.created_at !== newest.created_at || latest.status !== "completed" ||
+                      latest.conclusion !== newest.conclusion) {
+                    throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
+                  }
+                  // Neither conclusion can supply ordinary or diagnostic PLAY acceptance.
+                  // Success/failure classification and POST visibility deliberately remain unchanged.
+                  disregardedTypedAttempts.set(newest.id, attemptBinding);
+                  return [];
+                }
                 // Same-second or incomparable completion evidence is ambiguous and
                 // suppresses a duplicate; only a valid, strictly older producer may recover.
                 const ciCompleted = Date.parse(workflowRun.updated_at || "");
@@ -899,10 +943,21 @@ jobs:
                 core.warning("Skipping PR runtime reconciliation: current CI workflow/run identity differs from callback.");
                 return;
               }
-              const jobs = await github.paginate(
-                "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
-                fanoutOptions({...context.repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100})
-              );
+              const jobs = [];
+              let jobsTotal;
+              for (let page = 1; ; page += 1) {
+                const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
+                  ...context.repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100, page,
+                }));
+                if (!Number.isSafeInteger(data?.total_count) || data.total_count < 0 ||
+                    (jobsTotal !== undefined && data.total_count !== jobsTotal) || !Array.isArray(data.jobs) ||
+                    data.jobs.length !== Math.min(100, Math.max(0, data.total_count - (page - 1) * 100))) {
+                  throw new Error("Exact source CI attempt job inventory is incomplete or inconsistent");
+                }
+                jobsTotal ??= data.total_count;
+                jobs.push(...data.jobs);
+                if (jobs.length === jobsTotal) break;
+              }
               const gates = jobs.filter((job) => job.name === "Validation Gate");
               const gate = gates.length === 1 ? gates[0] : null;
               const preservation = gate?.steps?.filter((step) =>
@@ -945,20 +1000,25 @@ jobs:
               return;
             }
 
+            const listOpenPullRequests = async (scope) => {
+              const pulls = [];
+              for (let page = 1; ; page += 1) {
+                const {data} = await github.rest.pulls.list(fanoutOptions({
+                  ...context.repo, state: "open", ...scope, per_page: 100, page,
+                }));
+                if (!Array.isArray(data) || data.length > 100) {
+                  throw new Error("Open pull request inventory page is malformed");
+                }
+                pulls.push(...data);
+                if (data.length < 100) break;
+              }
+              return pulls;
+            };
             // Protected push callbacks own dependent fan-out; PR callbacks for
             // those heads still reconcile their own exact source PR below.
             const protectedPrHead = workflowRun.event === "pull_request" &&
               ["main", "develop"].includes(refreshBranch);
-            const pullRequests = protectedPrHead ? [] : await github.paginate(
-              github.rest.pulls.list,
-              fanoutOptions({
-                ...context.repo,
-                state: "open",
-                base: refreshBranch,
-                per_page: 100,
-              }),
-              (response) => response.data
-            );
+            const pullRequests = protectedPrHead ? [] : await listOpenPullRequests({base: refreshBranch});
             const refreshTargets = [];
             for (let pullRequestIndex = 0; pullRequestIndex < pullRequests.length; pullRequestIndex += 1) {
               const listedPullRequest = pullRequests[pullRequestIndex];
@@ -994,16 +1054,7 @@ jobs:
             if (workflowRun.event === "pull_request") {
               // A retarget/edit can carry an unusable event merge SHA. CI completion
               // is only a reconcile signal: re-read its source's current exact tuple.
-              const sourcePullRequests = await github.paginate(
-                github.rest.pulls.list,
-                fanoutOptions({
-                  ...context.repo,
-                  state: "open",
-                  head: `${context.repo.owner}:${refreshBranch}`,
-                  per_page: 100,
-                }),
-                (response) => response.data
-              );
+              const sourcePullRequests = await listOpenPullRequests({head: `${context.repo.owner}:${refreshBranch}`});
               for (const source of sourcePullRequests) {
                 if (String(source.number) !== sourcePrNumber ||
                   source.state !== "open" || source.head?.sha !== refreshSha ||
@@ -1075,7 +1126,7 @@ jobs:
                 }
                 if (!fallbackReason) {
                   try {
-                    existingProducers = findExactExistingProducer(tuple, inventory);
+                    existingProducers = await findExactExistingProducer(tuple, inventory);
                     if (!inventory.complete) {
                       // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
                       existingProducers = [];
@@ -1147,7 +1198,7 @@ jobs:
                   try {
                     runtimeInventoryPromise = loadExistingRuntimeRuns();
                     inventory = await runtimeInventoryPromise;
-                    const latestProducers = findExactExistingProducer(tuple, inventory);
+                    const latestProducers = await findExactExistingProducer(tuple, inventory);
                     if (!inventory.complete || !latestProducers.length && inventory.absenceProven === false) {
                       throw new Error(inventory.reason || "the final producer inventory cannot prove absence");
                     }
@@ -1267,14 +1318,39 @@ jobs:
             const expectedRepository = `${context.repo.owner}/${context.repo.repo}`;
             const defaultBranch = context.payload.repository?.default_branch;
             let runtimeWorkflow = null;
-            const isTransientVisibilityError = error => {
+            let rateLimitBackoffMs = 60000;
+            // Only visibility GETs use this retry policy; dispatch POSTs remain one-shot.
+            const visibilityRetryDelay = error => {
               const status = error?.status ?? error?.response?.status;
               const code = error?.code ?? error?.cause?.code;
-              return code === "VISIBILITY_PAGINATION_DRIFT" ||
-                [408, 425, 429, 500, 502, 503, 504].includes(status) ||
+              const headers = error?.response?.headers ?? {};
+              const retryAfter = String(headers["retry-after"] ?? "").trim();
+              const retryAfterDate = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(retryAfter)
+                ? Date.parse(retryAfter) : NaN;
+              const retryAfterMs = /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000
+                : Number.isFinite(retryAfterDate) && new Date(retryAfterDate).toUTCString() === retryAfter
+                  ? Math.max(0, retryAfterDate - Date.now()) : NaN;
+              const hasRetryAfter = Number.isFinite(retryAfterMs) && retryAfterMs >= 0;
+              const primaryExhausted = String(headers["x-ratelimit-remaining"] ?? "").trim() === "0";
+              const reset = String(headers["x-ratelimit-reset"] ?? "").trim();
+              const resetMs = /^\d+$/.test(reset) ? Number(reset) * 1000 : NaN;
+              const rateLimited = [403, 429].includes(status) && (status === 429 || hasRetryAfter || primaryExhausted ||
+                /\brate[ -]limit\b|\babuse detection\b/i.test(error?.response?.data?.message || error?.message || ""));
+              if (rateLimited) {
+                // GitHub REST guidance: Retry-After first, then an exhausted
+                // primary reset; otherwise wait at least a minute and back off.
+                const delay = hasRetryAfter ? retryAfterMs
+                  : primaryExhausted && Number.isFinite(resetMs) ? Math.max(0, resetMs - Date.now())
+                    : rateLimitBackoffMs;
+                rateLimitBackoffMs = Math.min(rateLimitBackoffMs * 2, 120000);
+                return delay;
+              }
+              const transient = code === "VISIBILITY_PAGINATION_DRIFT" ||
+                [408, 425, 500, 502, 503, 504].includes(status) ||
                 (status == null && (["ABORT_ERR", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
                   "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code) ||
                   ["AbortError", "TimeoutError"].includes(error?.name)));
+              return transient ? 5000 : null;
             };
             if (pendingVisibility.length > 0) {
               try {
@@ -1293,10 +1369,11 @@ jobs:
                     }
                     runtimeWorkflow = workflow;
                   } catch (error) {
-                    if (!isTransientVisibilityError(error)) throw error;
+                    const retryDelayMs = visibilityRetryDelay(error);
+                    if (retryDelayMs === null) throw error;
                     core.warning("Producer workflow identity lookup is temporarily unavailable; retrying within the existing visibility deadline without retrying any POST.");
                     const remaining = visibilityDeadline - Date.now();
-                    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(5000, remaining)));
+                    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(retryDelayMs, remaining)));
                   }
                 }
                 if (!runtimeWorkflow) {
@@ -1312,6 +1389,7 @@ jobs:
                 core.setFailed(`Refresh dispatch ${dispatchState} but visibility is unknown for PRs ${pendingVisibility.map(item => item.tuple.prNumber).join(", ")}; no retry issued`);
                 break;
               }
+              let retryDelayMs = 5000;
               try {
                 const observed = await readInventory(
                   visibilitySince,
@@ -1363,15 +1441,17 @@ jobs:
                   }
                 }
               } catch (error) {
-                if (!isTransientVisibilityError(error)) {
+                const delay = visibilityRetryDelay(error);
+                if (delay === null) {
                   core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
                   break;
                 }
+                retryDelayMs = delay;
                 core.warning("Runtime refresh visibility read is temporarily unavailable; keep observing without retrying any POST.");
               }
               if (pendingVisibility.length === 0) break;
               const remaining = visibilityDeadline - Date.now();
-              if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(5000, remaining)));
+              if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(retryDelayMs, remaining)));
             }
 
   build-base-image:

@@ -1862,6 +1862,19 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     java.time.OffsetDateTime.ofInstant(f.clock().instant(), ZoneOffset.UTC)));
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
+    var distinctSuccess =
+        checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_second_success_"));
+    assertThat(owner.completeSigned(distinctSuccess.payload(), distinctSuccess.signature()))
+        .isEqualTo(conflict);
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
+    assertThat(
+            c.setup()
+                .fetchSingle(
+                    "SELECT provider_event_id FROM subscription_first_invoice_late_paid_conflicts")
+                .get(0, String.class))
+        .isEqualTo(verified.providerEventId());
+    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
+
     checkout.status("requires_confirmation");
     assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
     assertThat(owner.completeSigned(equivalent.payload(), equivalent.signature()))

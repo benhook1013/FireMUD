@@ -58,6 +58,10 @@ if ! git merge-base --is-ancestor "$base_sha" "$head_sha"; then
   echo "refusing hosted deployment: $reason_source is not an ancestor of the target SHA" >&2
   exit 1
 fi
+if [[ "$base_sha" == "$head_sha" ]]; then
+  echo "refusing hosted deployment: the namespace already records the target SHA; inspect the existing rollout and database before retrying" >&2
+  exit 1
+fi
 if [[ "$event_name" == push && -n "$event_before_sha" ]]; then
   if [[ ! "$event_before_sha" =~ ^[0-9a-f]{40}$ ]] || [[ "$event_before_sha" =~ ^0{40}$ ]]; then
     echo "refusing hosted deployment: supplied push before-SHA is malformed" >&2

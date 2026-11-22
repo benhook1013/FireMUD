@@ -135,6 +135,8 @@ assert_activation true push "$account_v25_sha" "$capacity_origin_sha"
 assert_activation true workflow_dispatch "" "$capacity_origin_sha"
 
 namespace_for_head "$capacity_origin_sha"
+assert_rejected workflow_dispatch "" "$capacity_origin_sha"
+assert_rejected push "$account_v25_sha" "$capacity_origin_sha"
 printf '%s\n' '-- unsupported later capacity migration' >"$capacity_migration_dir/V1040.7__unqualified.sql"
 git -C "$repo" add .
 git -C "$repo" commit -qm "Unsupported later capacity origin migration"

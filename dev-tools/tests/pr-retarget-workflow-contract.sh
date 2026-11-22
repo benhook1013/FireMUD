@@ -866,6 +866,7 @@ const titleFor = (tuple) =>
 const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
   id: Number(tuple.prNumber) * 100 + (event === "pull_request" ? 1 : 2),
   workflow_id: 701,
+  run_attempt: 1,
   name: "Build Runtime Images",
   path: ".github/workflows/runtime-images.yml",
   event,
@@ -899,6 +900,7 @@ async function runDispatcher({
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
   pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
+  pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {},
   initialTime = "2026-01-08T00:00:00Z",
 }) {
   const dispatches = [];
@@ -911,9 +913,11 @@ async function runDispatcher({
   const inventoryCalls = [];
   const observationPostCounts = [];
   const timerPostCounts = [];
+  const timerDelays = [];
   const deadlineSignals = [];
   const apiRequestRecords = [];
   const lateProducers = [];
+  const runtimeRunReads = [];
   let lateProducerAdded = false;
   let runtimeWorkflowLookupCount = 0;
   let waitedMillis = 0;
@@ -972,7 +976,7 @@ async function runDispatcher({
     assert(deadlineSignals.includes(options.request.signal), `${name} must use the actual extracted deadline helper`);
     assert(Number.isSafeInteger(options.request.signal.timeoutMs) && options.request.signal.timeoutMs > 0,
       `${name} must receive a positive remaining wall-clock deadline`);
-    apiRequestRecords.push({name, options, abortedAtIssue: options.request.signal.aborted});
+    apiRequestRecords.push({name, options, issuedAt: fakeNow, abortedAtIssue: options.request.signal.aborted});
     if (expireOnFirstRequest) {
       expireOnFirstRequest = false;
       fakeNow += options.request.signal.timeoutMs;
@@ -981,6 +985,7 @@ async function runDispatcher({
       error.name = "TimeoutError";
       throw error;
     }
+    fakeNow += apiRequestMillis;
     return options.request.signal;
   };
   const github = {
@@ -1002,9 +1007,11 @@ async function runDispatcher({
         list: async (request) => {
           recordApiRequest("pulls.list", request);
           pullListRequests.push(request);
-          return { data: (request.head ? sourceTuples : tuples)
+          const pulls = (request.head ? sourceTuples : tuples)
             .filter((tuple) => request.head || tuple.baseRef === request.base)
-            .map(pullRequestFor) };
+            .map(pullRequestFor);
+          return { data: pullListResponse ? pullListResponse(request, pulls)
+            : pulls.slice((request.page - 1) * 100, request.page * 100) };
         },
         get: async (request) => {
           recordApiRequest("pulls.get", request);
@@ -1028,7 +1035,8 @@ async function runDispatcher({
           recordApiRequest("pulls.listFiles", request);
           const {pull_number} = request;
           if (String(pull_number) === filesFailurePr) throw new Error("fixture changed-files lookup failed");
-          return { data: filesByPr[String(pull_number)] ?? [{ filename: "services/example/src/Main.java" }] };
+          const files = filesByPr[String(pull_number)] ?? [{ filename: "services/example/src/Main.java" }];
+          return { data: files.slice((request.page - 1) * 100, request.page * 100) };
         },
       },
       repos: {
@@ -1080,15 +1088,36 @@ async function runDispatcher({
           if (workflow_id === "runtime-images.yml") {
             runtimeWorkflowLookupCount += 1;
             const failure = runtimeWorkflowLookupFailures[runtimeWorkflowLookupCount - 1];
-            if (failure) throw Object.assign(new Error("fixture producer workflow lookup failed"), {status: failure});
+            if (failure) throw Object.assign(new Error("fixture producer workflow lookup failed"),
+              typeof failure === "number" ? {status: failure} : failure);
             return {data: {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}};
           }
           return {data: {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})}};
         },
         getWorkflowRun: async (request) => {
           recordApiRequest("actions.getWorkflowRun", request);
+          if (request.run_id !== ciRun.id) {
+            runtimeRunReads.push(request.run_id);
+            const reads = runtimeRunReads.filter(id => id === request.run_id).length;
+            const runs = [...Object.values(inventories).flatMap(inventory => Array.isArray(inventory)
+              ? inventory : [...(inventory.initial ?? inventory.runs ?? []), ...(inventory.refined ?? [])]),
+              ...lateProducers, ...postedRuns];
+            const run = runs.find(run => run?.id === request.run_id);
+            assert(run, "native runtime lookup must target an inventoried producer");
+            const override = runtimeRunOverrides[request.run_id];
+            return {data: {...run, ...(typeof override === "function" ? override(reads, run) : override ?? {})}};
+          }
           ciRunReads += 1;
           return { data: { ...ciRun, ...(ciEvidence.run ?? {}), ...(ciRunReads > 1 ? ciEvidence.latest ?? {} : {}) } };
+        },
+        listJobsForWorkflowRunAttempt: async (request) => {
+          recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
+          ciJobRequests.push(request);
+          const jobs = ciEvidence.jobs ?? [ciGate];
+          return {data: ciEvidence.jobPage ? ciEvidence.jobPage(request, jobs) : {
+            total_count: jobs.length,
+            jobs: jobs.slice((request.page - 1) * 100, request.page * 100),
+          }};
         },
         listWorkflowRuns: async (request) => {
           recordApiRequest("actions.listWorkflowRuns", request);
@@ -1145,15 +1174,6 @@ async function runDispatcher({
         },
       },
     },
-    paginate: async (endpoint, request, map) => {
-      if (typeof endpoint === "string") {
-        assert.equal(endpoint, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-        recordApiRequest("paginate.jobs", request);
-        ciJobRequests.push(request);
-        return ciEvidence.jobs ?? [ciGate];
-      }
-      return map(await endpoint(request));
-    },
   };
   const context = {
     repo: { owner: "owner", repo: "repo" },
@@ -1182,6 +1202,7 @@ async function runDispatcher({
   };
   global.setTimeout = (resolve, millis) => {
     timerPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh").length);
+    timerDelays.push(millis);
     waitedMillis += millis;
     fakeNow += millis;
     resolve();
@@ -1201,7 +1222,7 @@ async function runDispatcher({
   }
   return { dispatches, errors, infos, warnings, inventoryCalls, observationPostCounts, timerPostCounts, waitedMillis,
     ciJobRequests, pullListRequests, pullReads, refRequests, deadlineSignals, apiRequestRecords,
-    runtimeWorkflowLookupCount, fatalError };
+    runtimeWorkflowLookupCount, runtimeRunReads, timerDelays, fatalError };
 }
 
 (async () => {
@@ -1210,7 +1231,9 @@ async function runDispatcher({
   const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
   const assertRequestContracts = (result) => {
     assert.equal(result.fatalError, null, "the mocked dispatcher must complete unless a deadline-abort fixture is selected");
-    for (const {name, options} of result.apiRequestRecords) {
+    assert.equal(new Set(result.apiRequestRecords.map(({options}) => options.request.signal)).size,
+      result.apiRequestRecords.length, "every direct API request must receive a fresh deadline signal");
+    for (const {name, options, issuedAt} of result.apiRequestRecords) {
       const request = options.request;
       const oneShot = name === "repos.createDispatchEvent";
       assert.deepEqual(Object.keys(request).sort(), oneShot ? ["retries", "signal"] : ["signal"],
@@ -1220,6 +1243,8 @@ async function runDispatcher({
       assert(result.deadlineSignals.includes(request.signal), `${name} must use a source-derived AbortSignal timeout`);
       assert(Number.isSafeInteger(request.signal.timeoutMs) && request.signal.timeoutMs > 0,
         `${name} must receive a positive remaining wall-clock deadline`);
+      assert.equal(request.signal.timeoutMs, request.signal.deadline - issuedAt,
+        `${name} must refresh its timeout at the actual page request boundary`);
       assert.equal(result.apiRequestRecords.find((call) => call.name === name && call.options === options).abortedAtIssue,
         false, `${name} must not issue a request with an already-expired signal`);
     }
@@ -1240,11 +1265,64 @@ async function runDispatcher({
   }
   assert.equal(reconcile.ciJobRequests.length, 1, "PR callbacks require one exact current native CI attempt jobs request");
   const {request: ciJobRequestOptions, ...ciJobRequest} = reconcile.ciJobRequests[0];
-  assert.deepEqual(ciJobRequest, { owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100 },
+  assert.deepEqual(ciJobRequest, { owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100, page: 1 },
     "PR callbacks require the exact current native CI attempt jobs request shape");
   assert.deepEqual(Object.keys(ciJobRequestOptions).sort(), ["signal"], "CI job listing carries only its AbortSignal request option");
   assert.equal(reconcile.deadlineSignals[0].timeoutMs, 12 * 60 * 1000, "the first fan-out API call receives the full wall-clock budget");
   assertRequestContracts(reconcile);
+  const pagedFiles = [...Array.from({length: 100}, (_, index) => ({filename: `docs/page-${index}.md`})),
+    {filename: "services/example/src/Main.java"}];
+  const pagedCiJobs = (request, jobs) => {
+    const completeJobs = [...Array.from({length: 100}, (_, index) => ({id: 8100 + index, name: "Other job"})), ...jobs];
+    return {total_count: completeJobs.length, jobs: completeJobs.slice((request.page - 1) * 100, request.page * 100)};
+  };
+  const pagedFanout = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback, apiRequestMillis: 25,
+    pullListResponse: (request, pulls) => [
+      ...Array.from({length: 100}, (_, index) => ({number: 2000 + index, state: "closed"})), ...pulls,
+    ].slice((request.page - 1) * 100, request.page * 100),
+    filesByPr: {[source.prNumber]: pagedFiles},
+    pullOverrides: {[source.prNumber]: {changed_files: pagedFiles.length}},
+    ciEvidence: {jobPage: pagedCiJobs},
+  });
+  assert.deepEqual(runtimeDispatches(pagedFanout).map(item => item.client_payload.pr_number).sort(),
+    [source.prNumber, child.prNumber].sort(), "page-two source, dependent, CI gate and runtime file evidence must all be retained");
+  assert.deepEqual(pagedFanout.errors, []);
+  const assertFanoutPages = (requests, expectedScope) => {
+    assert.deepEqual(requests.map(({request, ...scope}) => scope), [1, 2].map(page => ({
+      owner: "owner", repo: "repo", ...expectedScope, per_page: 100, page,
+    })), "direct page requests must preserve their exact API scope");
+    assert(requests[1].request.signal.timeoutMs < requests[0].request.signal.timeoutMs,
+      "later pages must receive only the remaining fan-out budget, not a reused timeout");
+    assert.equal(requests[0].request.signal.deadline, requests[1].request.signal.deadline,
+      "pagination cannot extend the shared fan-out deadline");
+  };
+  assertFanoutPages(pagedFanout.ciJobRequests, {run_id: 7001, attempt_number: 1});
+  assertFanoutPages(pagedFanout.pullListRequests.filter(request => request.base), {state: "open", base: source.headRef});
+  assertFanoutPages(pagedFanout.pullListRequests.filter(request => request.head), {state: "open", head: `owner:${source.headRef}`});
+  assertFanoutPages(pagedFanout.apiRequestRecords.filter(({name, options}) =>
+    name === "pulls.listFiles" && String(options.pull_number) === source.prNumber).map(({options}) => options),
+  {pull_number: Number(source.prNumber)});
+  assertRequestContracts(pagedFanout);
+  for (const jobPage of [
+    () => ({total_count: 1, jobs: []}),
+    () => ({total_count: 1, jobs: {}}),
+    (request, jobs) => request.page === 1 ? pagedCiJobs(request, jobs)
+      : {total_count: 102, jobs: [jobs[0], {id: 9999, name: "Other job"}]},
+  ]) {
+    await assert.rejects(runDispatcher({tuples: [child], sourceTuples: [source], callback: prCallback,
+      ciEvidence: {jobPage}}), /Exact source CI attempt job inventory is incomplete or inconsistent/,
+    "short, malformed or shifted exact-attempt job pages cannot authorize dispatch");
+  }
+  const cutoffJobPages = [];
+  await assert.rejects(runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback, apiRequestMillis: 4 * 60 * 1000,
+    ciEvidence: {jobPage: (request, jobs) => {
+      cutoffJobPages.push(request.page);
+      return pagedCiJobs(request, jobs);
+    }},
+  }), /Runtime fan-out deadline reached; request not issued/);
+  assert.deepEqual(cutoffJobPages, [1], "a completed first page at the cutoff must not issue page two or reach a handoff");
   for (const branch of ["main", "develop", "feature/parent"]) {
     const branchSource = { ...source, headRef: branch, baseRef: branch === "develop" ? "main" : "develop" };
     const dependent = { ...child, baseRef: branch };
@@ -1737,6 +1815,92 @@ async function runDispatcher({
     });
     assert.equal(numbers(result).length, expected, "completed refresh suppresses an earlier or same-second signal");
   }
+  const terminalTyped = conclusion => producer(tuple, "repository_dispatch", "completed", conclusion, {
+    created_at: "2026-01-03T00:00:00Z",
+  });
+  for (const conclusion of ["cancelled", "timed_out"]) {
+    const existing = terminalTyped(conclusion);
+    for (const signalAt of ["2026-01-02T00:00:00Z", "2026-01-03T00:00:00.200Z", "2026-01-04T00:00:00Z"]) {
+      const replaced = await runDispatcher({tuples: [tuple], callback: {updated_at: signalAt},
+        inventories: {repository_dispatch: [existing]},
+      });
+      assert.deepEqual(numbers(replaced), ["101"], `${conclusion} exact typed producer permits only one replacement`);
+      assert.deepEqual(replaced.runtimeRunReads, [existing.id, existing.id],
+        "both initial selection and the final pre-POST fence require fresh native terminal-attempt proof");
+      assert.equal(previewDispatches(replaced).length, 1, "terminal runtime recovery retains independent preview handoff");
+      assert.deepEqual(replaced.errors, []);
+      assertRequestContracts(replaced);
+    }
+    const unresolved = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
+      inventories: {repository_dispatch: [existing]}, postFailurePr: "101",
+    });
+    assert.deepEqual(numbers(unresolved), ["101"], "an unresolved replacement POST is never issued a second time");
+    assert.equal(unresolved.waitedMillis, 120000);
+    assert(unresolved.errors.some(message => message.includes("attempted but visibility is unknown")),
+      "the old terminal run cannot confirm receipt of its replacement");
+  }
+  for (const conclusion of ["failure", "success", null]) {
+    const held = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
+      inventories: {repository_dispatch: [terminalTyped(conclusion)]},
+    });
+    assert.deepEqual(numbers(held), [],
+      "legacy failure/PLAY, success and unknown dispositions keep the existing typed refresh hold");
+    assert.deepEqual(held.runtimeRunReads, [], "this narrow rule must not classify other terminal PLAY outcomes");
+    assert.deepEqual(held.errors, []);
+  }
+  const cancelledTyped = terminalTyped("cancelled");
+  for (const changed of [
+    {run_attempt: 2}, {run_attempt: 0}, {run_attempt: null}, {id: cancelledTyped.id + 1},
+    {repository: {full_name: "other/repo"}}, {head_repository: {full_name: "fork/repo"}},
+    {workflow_id: 999}, {path: ".github/workflows/other.yml"}, {event: "pull_request"},
+    {name: "Other workflow"}, {display_title: "different tuple"}, {head_branch: "feature/ci"},
+    {head_sha: sha("f")}, {created_at: "2026-01-03T00:00:01Z"},
+    {status: "in_progress", conclusion: null}, {conclusion: "timed_out"}, {conclusion: "failure"},
+  ]) {
+    for (const failedRead of [1, 2]) {
+      const changedNative = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
+        inventories: {repository_dispatch: [cancelledTyped]},
+        runtimeRunOverrides: {[cancelledTyped.id]: reads => reads === failedRead ? changed : {}},
+      });
+      assert.deepEqual(numbers(changedNative), [], "changed native evidence at either admission read prevents replacement");
+      assert.equal(changedNative.runtimeRunReads.length, failedRead);
+      assert(changedNative.errors.some(message => message.includes("same trusted terminal attempt")));
+      assertRequestContracts(changedNative);
+    }
+  }
+  for (const failedRead of [1, 2]) {
+    const unavailableNative = await runDispatcher({tuples: [tuple],
+      inventories: {repository_dispatch: [cancelledTyped]},
+      runtimeRunOverrides: {[cancelledTyped.id]: reads => {
+        if (reads === failedRead) throw Object.assign(new Error("terminal native lookup unavailable"), {status: 503});
+        return {};
+      }},
+    });
+    assert.deepEqual(numbers(unavailableNative), [], "unavailable native evidence is not replacement authority");
+    assert(unavailableNative.errors.some(message => message.includes("terminal native lookup unavailable")));
+    const unavailableWorkflow = await runDispatcher({tuples: [tuple],
+      inventories: {repository_dispatch: [cancelledTyped]},
+      runtimeWorkflowLookupFailures: failedRead === 1 ? [503] : [null, 503],
+    });
+    assert.deepEqual(numbers(unavailableWorkflow), [], "canonical workflow lookup must succeed at both admission fences");
+    assert(unavailableWorkflow.errors.some(message => message.includes("fixture producer workflow lookup failed")));
+  }
+  const shiftingTerminalInventory = [cancelledTyped];
+  const shiftedTerminalAttempt = await runDispatcher({tuples: [tuple],
+    inventories: {repository_dispatch: shiftingTerminalInventory},
+    runtimeRunOverrides: {[cancelledTyped.id]: reads => {
+      if (reads === 1) shiftingTerminalInventory[0] = {...cancelledTyped, run_attempt: 2};
+      return {};
+    }},
+  });
+  assert.deepEqual(numbers(shiftedTerminalAttempt), [],
+    "a newly listed terminal attempt cannot replace the attempt bound by the first admission read in this callback");
+  assert(shiftedTerminalAttempt.errors.some(message => message.includes("incomplete or changed attempt identity")));
+  const missingTerminalAttempt = await runDispatcher({tuples: [tuple],
+    inventories: {repository_dispatch: [{...cancelledTyped, run_attempt: null}]},
+  });
+  assert.deepEqual(numbers(missingTerminalAttempt), [], "the inventory must identify a positive attempt before native proof lookup");
+  assert.deepEqual(missingTerminalAttempt.runtimeRunReads, []);
   const invisible = await runDispatcher({ tuples: [tuple], hideDispatchVisibility: true });
   assert.deepEqual(numbers(invisible), ["101"], "accepted invisible POST must never be repeated");
   assert(invisible.errors.some(message => message.includes("visibility is unknown")));
@@ -1809,8 +1973,69 @@ async function runDispatcher({
   assert.equal(expiredProducerIdentity.waitedMillis, 120000);
   assert(expiredProducerIdentity.errors.some(message => message.includes("visibility deadline")));
   assertRequestContracts(expiredProducerIdentity);
+  const visibilityEpoch = Date.parse("2026-01-08T00:00:00Z");
+  const rateLimitError = (status, headers = {}, message = "fixture read refusal") => ({
+    status, message, response: {status, headers, data: {message}},
+  });
+  for (const [label, failure, expectedDelay] of [
+    ["Retry-After seconds overrides primary reset", rateLimitError(403, {"retry-after": "7",
+      "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(visibilityEpoch / 1000 + 90)}), 7000],
+    ["Retry-After HTTP date", rateLimitError(429, {"retry-after": new Date(visibilityEpoch + 12000).toUTCString()}), 12000],
+    ["exhausted primary reset", rateLimitError(403, {"x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(visibilityEpoch / 1000 + 90)}), 90000],
+    ["malformed Retry-After falls back to primary reset", rateLimitError(403, {"retry-after": "tomorrow",
+      "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(visibilityEpoch / 1000 + 10)}), 10000],
+    ["429 without guidance", rateLimitError(429), 60000],
+    ["secondary limit without guidance", rateLimitError(403, {}, "You have exceeded a secondary rate limit."), 60000],
+    ["abuse limit without guidance", rateLimitError(403, {}, "abuse detection mechanism"), 60000],
+    ["primary limit with unusable reset", rateLimitError(403, {"x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": "invalid"}), 60000],
+  ]) {
+    for (const phase of ["identity", "inventory"]) {
+      let reads = 0;
+      const recovered = await runDispatcher({tuples: [tuple],
+        ...(phase === "identity" ? {runtimeWorkflowLookupFailures: [failure]} : {
+          visibilityResponse: (_request, posted) => {
+            if (++reads === 1) throw failure;
+            return {total_count: posted.length, workflow_runs: posted};
+          },
+        }),
+      });
+      assert.deepEqual(numbers(recovered), ["101"], `${phase}: ${label} must retry only GET observation`);
+      assert.deepEqual(recovered.timerDelays, [expectedDelay], `${phase}: ${label} must honor GitHub REST delay guidance`);
+      assert.equal(phase === "identity" ? recovered.runtimeWorkflowLookupCount : reads, 2);
+      assert.deepEqual(recovered.errors, [], `${phase}: ${label} can confirm the one handoff after waiting`);
+      assertRequestContracts(recovered);
+    }
+  }
+  for (const phase of ["identity", "inventory"]) {
+    let reads = 0;
+    const beyondDeadline = rateLimitError(429, {"retry-after": "300"});
+    const exhausted = await runDispatcher({tuples: [tuple],
+      ...(phase === "identity" ? {runtimeWorkflowLookupFailures: [beyondDeadline]} : {
+        visibilityResponse: () => { reads += 1; throw beyondDeadline; },
+      }),
+    });
+    assert.deepEqual(numbers(exhausted), ["101"], "a rate limit cannot repeat the accepted POST");
+    assert.deepEqual(exhausted.timerDelays, [120000], "rate-limit waiting cannot extend the shared visibility deadline");
+    assert.equal(phase === "identity" ? exhausted.runtimeWorkflowLookupCount : reads, 1,
+      "a Retry-After beyond the remaining budget must not issue another GET");
+    assert(exhausted.errors.some(message => message.includes(phase === "identity" ? "visibility deadline" : "visibility is unknown")));
+  }
+  let sharedQuotaReads = 0;
+  const sharedQuotaDeadline = await runDispatcher({tuples: [tuple],
+    runtimeWorkflowLookupFailures: [rateLimitError(403, {}, "secondary rate limit")],
+    visibilityResponse: () => { sharedQuotaReads += 1; throw rateLimitError(429); },
+  });
+  assert.deepEqual(numbers(sharedQuotaDeadline), ["101"]);
+  assert.deepEqual(sharedQuotaDeadline.timerDelays, [60000, 60000],
+    "rate-limit waits are capped by the same deadline across identity and inventory GETs");
+  assert.equal(sharedQuotaReads, 1);
+  assert(sharedQuotaDeadline.errors.some(message => message.includes("visibility is unknown")));
   for (const [failure, reason] of [
     [() => { throw Object.assign(new Error("visibility forbidden"), {status: 403}); }, "visibility forbidden"],
+    [() => { throw rateLimitError(403, {"retry-after": "invalid", "x-ratelimit-remaining": "1",
+      "x-ratelimit-reset": String(visibilityEpoch / 1000 + 10)}, "permission denied"); }, "permission denied"],
     [() => ({total_count: 1, workflow_runs: []}), "recent run inventory is incomplete"],
   ]) {
     const terminal = await runDispatcher({tuples: transientTuples, visibilityResponse: failure});
@@ -1836,14 +2061,28 @@ async function runDispatcher({
     assert.deepEqual(numbers(conflicting), ["101"], "a conflicting native identity never retries the POST");
     assert(conflicting.errors.some(error => error.includes("untrusted native workflow identity")));
   }
+  let shiftedObservationReads = 0;
   const shiftedObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
-    total_count: page === 1 ? 101 : 102,
+    total_count: ++shiftedObservationReads === 1 ? 101 : 102,
+    workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
+      ...posted, id: 700000 + index, display_title: "unrelated"
+    })) : [posted, {...posted, id: 800000, display_title: "new unrelated run"}],
+  })});
+  assert.deepEqual(numbers(shiftedObservation), ["101"], "a shifting observation inventory never retries the accepted POST");
+  assert.deepEqual(shiftedObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page),
+    [1, 2, 1, 2], "discard shifted pages, reread from page one, then confirm the complete stable two-page inventory");
+  assert.equal(shiftedObservation.waitedMillis, 5000);
+  assert.deepEqual(shiftedObservation.errors, [], "a consistent complete reread confirms visibility without another POST");
+  const shortPageObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
+    total_count: 102,
     workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
       ...posted, id: 700000 + index, display_title: "unrelated"
     })) : [posted],
   })});
-  assert.deepEqual(numbers(shiftedObservation), ["101"], "a shifting observation inventory never retries the accepted POST");
-  assert(shiftedObservation.errors.some(error => error.includes("visibility is uncertain")));
+  assert.deepEqual(numbers(shortPageObservation), ["101"], "a short second page never retries the accepted POST");
+  assert.deepEqual(shortPageObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page), [1, 2]);
+  assert.equal(shortPageObservation.waitedMillis, 0, "a short page for its own total is terminal, not pagination drift");
+  assert(shortPageObservation.errors.some(error => error.includes("recent run inventory is incomplete")));
   const staleObservation = await runDispatcher({tuples: [tuple], visibilityResponse: (_request, [posted]) => ({
     total_count: 1, workflow_runs: [{...posted, created_at: "2026-01-07T23:59:58Z"}],
   })});
