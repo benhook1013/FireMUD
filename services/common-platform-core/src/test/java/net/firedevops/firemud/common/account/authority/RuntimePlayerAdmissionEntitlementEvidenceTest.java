@@ -125,8 +125,9 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
     assertThat(fixture.fields().get("target")).isEqualTo(human.fields().get("target"));
     var references = (Map<?, ?>) fixture.fields().get("sourceReferences");
     assertThat(references.get("fixturePolicySealDigest")).isEqualTo("sha256:" + "c".repeat(64));
-    assertThat(references.keySet())
-        .doesNotContain("worldCaptureId", "publishedPolicySetDigest", "worldLifecycleDigest");
+    assertThat(references.containsKey("worldCaptureId")).isFalse();
+    assertThat(references.containsKey("publishedPolicySetDigest")).isFalse();
+    assertThat(references.containsKey("worldLifecycleDigest")).isFalse();
     assertThat(fixture.fields().get("snapshotIdentity"))
         .isNotEqualTo(human.fields().get("snapshotIdentity"));
     assertThat(RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(fixture.canonicalBytes()))

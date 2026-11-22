@@ -28,8 +28,10 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import org.jooq.DSLContext;
+import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.NestedExceptionUtils;
 
 /** Composes ordinary NEW admission for the verified run-owned fixture. */
 public final class PreV1CanonicalPlayAdmissionOwner {
@@ -165,13 +167,15 @@ public final class PreV1CanonicalPlayAdmissionOwner {
             new CanonicalGameplayAdmissionDecision(
                 transitionId, lease, identity, generation, null, target);
 
-        phase = "candidate-and-indexes";
+        phase = "candidate-install";
         new CanonicalGameplayOriginalNewCandidateRedisOwner(
                 standIns.coordination(), standIns.scripts(), inventory, standIns.tags())
             .installOnce(decision);
+        phase = "account-index-repair";
         new CanonicalGameplayAccountMemberRepairOwner(
                 dsl, standIns.coordination(), standIns.scripts())
             .repair(transitionId);
+        phase = "issuer-index-ack";
         var projection =
             new CanonicalGameplayIssuerBindingLocalRedisOwner(
                     standIns.coordination(),
@@ -264,11 +268,16 @@ public final class PreV1CanonicalPlayAdmissionOwner {
       }
     } catch (RuntimeException failure) {
       StackTraceElement[] trace = failure.getStackTrace();
+      Throwable cause = NestedExceptionUtils.getMostSpecificCause(failure);
+      PSQLException postgres = cause instanceof PSQLException sql ? sql : null;
+      var databaseError = postgres == null ? null : postgres.getServerErrorMessage();
       LOG.warn(
-          "Run-owned PLAY unavailable phase={} type={} grpcStatus={} source={}",
+          "Run-owned PLAY unavailable phase={} type={} grpcStatus={} sqlState={} constraint={} source={}",
           phase,
           failure.getClass().getSimpleName(),
           failure instanceof StatusRuntimeException rpc ? rpc.getStatus().getCode() : null,
+          postgres == null ? null : postgres.getSQLState(),
+          databaseError == null ? null : databaseError.getConstraint(),
           trace.length == 0 ? "unknown" : trace[0]);
       throw unavailable();
     }
