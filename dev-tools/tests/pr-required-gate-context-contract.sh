@@ -1055,10 +1055,11 @@ async function scenario(kind, event = "pull_request") {
     if (kind === "transient-exact-attempt" && exactAttemptReads <= 4) {
       throw Object.assign(new Error("temporary exact-attempt lookup"), {status: 502});
     }
-    if (kind === "sparse-exact-attempt-source" && exactAttemptReads === 3) {
+    // The first exact-attempt read classifies the cancelled original.
+    if (kind === "sparse-exact-attempt-source" && exactAttemptReads === 2) {
       return {data: {...source, run_attempt: undefined}};
     }
-    if (kind === "sparse-exact-attempt-status" && exactAttemptReads === 3) {
+    if (kind === "sparse-exact-attempt-status" && exactAttemptReads === 2) {
       return {data: {...source, status: undefined}};
     }
     return {data: {...source, ...(sourceMutations[kind] || {})}};
@@ -1083,6 +1084,9 @@ async function scenario(kind, event = "pull_request") {
     if (kind === "sparse-exact-job-snapshots" && snapshots === 2) {
       return [{...job, steps: job.steps.filter(step =>
         step.name !== "Known canonical transition PLAY failure with successful authenticated cleanup")}];
+    }
+    if (kind === "sparse-exact-cleanup" && snapshots === 2) {
+      return [{...job, steps: job.steps.filter(step => step.name !== "Stop smoke stack")}];
     }
     if (kind === "sparse-exact-job-identity" && snapshots === 2) {
       return [{...job, run_id: undefined}];
@@ -1110,7 +1114,7 @@ async function scenario(kind, event = "pull_request") {
   const clock = {now: () => now, parse: Date.parse};
   await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
     clock, (callback, duration) => {now += duration; waitedMillis += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots, observedBaseMove, waitedMillis};
+  return {failures, refs, snapshots, exactAttemptReads, observedBaseMove, waitedMillis};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -1137,10 +1141,12 @@ async function scenario(kind, event = "pull_request") {
   }
   for (const kind of ["transient-exact-attempt", "transient-exact-job-list",
     "transient-canonical-job-list", "sparse-exact-attempt-source", "sparse-exact-attempt-status",
-    "sparse-exact-job-snapshots", "sparse-exact-job-identity"]) {
+    "sparse-exact-job-snapshots", "sparse-exact-cleanup", "sparse-exact-job-identity"]) {
     const result = await scenario(kind, "repository_dispatch");
     assert.deepEqual(result.failures, [], `${kind} remains pending until fresh exact-attempt proof is available`);
-    assert(result.snapshots >= 3 && result.waitedMillis > 0, `${kind} retries within the existing proof budget`);
+    assert(result.snapshots >= 2 && result.waitedMillis > 0, `${kind} retries within the existing proof budget`);
+    if (kind === "transient-exact-attempt") assert(result.exactAttemptReads >= 5);
+    if (kind.startsWith("sparse-exact-attempt-")) assert(result.exactAttemptReads >= 3);
   }
   const changedJobId = await scenario("cross-snapshot-changed-job-id", "repository_dispatch");
   assert.equal(changedJobId.failures.length, 1,
@@ -4382,7 +4388,8 @@ function markerAccepted(overrides = {}) {
   assert.deepEqual(sequencedReplacement.failures, []);
   assert.equal(sequencedReplacement.proofReads, 2,
     "a same-tuple replacement becomes authoritative only after a fresh complete exact proof");
-  assert.equal(sequencedReplacement.runtimeJobReads, 1);
+  assert.equal(sequencedReplacement.runtimeJobReads, 0,
+    "a freshly proved replacement needs only the final currentness fences, without rereading its job inventory");
   assert.equal(sequencedReplacement.now, 10);
   const invalidReplacement = await sameTupleCancellation("completed", [false]);
   assert.equal(invalidReplacement.failures.length, 1);
