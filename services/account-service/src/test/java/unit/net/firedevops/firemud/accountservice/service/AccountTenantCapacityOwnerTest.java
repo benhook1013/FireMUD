@@ -20,6 +20,7 @@ import io.grpc.Context;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
@@ -318,7 +320,10 @@ class AccountTenantCapacityOwnerTest {
           .fetchOne(
               startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
       retainOriginThenAdvanceClock(
-          f, f.request, quotaFull ? "NO_ACCEPT" : "ACCEPTED", f.request.evidence().expiresAt());
+          f,
+          f.request,
+          quotaFull ? "NO_ACCEPT" : "ACCEPTED",
+          () -> f.databaseNow.set(f.request.evidence().expiresAt()));
 
       assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
           .isInstanceOfSatisfying(
@@ -372,7 +377,8 @@ class AccountTenantCapacityOwnerTest {
     org.mockito.Mockito.doReturn(mock(Record.class))
         .when(f.dsl)
         .fetchOne(startsWith(usageLock), any(Object[].class));
-    retainOriginThenAdvanceClock(f, next, "ACCEPTED", claimExpiry);
+    retainOriginThenAdvanceClock(
+        f, next, "ACCEPTED", () -> when(f.clock.instant()).thenReturn(claimExpiry));
     var rearm =
         AccountTenantCapacityOwner.class.getDeclaredMethod(
             "rearm", Request.class, Request.class, UUID.class, long.class);
@@ -396,7 +402,7 @@ class AccountTenantCapacityOwnerTest {
   }
 
   private static void retainOriginThenAdvanceClock(
-      Fixture f, Request request, String decision, java.time.Instant afterWrite) {
+      Fixture f, Request request, String decision, Runnable afterWrite) {
     Record retained = mock(Record.class);
     when(retained.get("admission_attempt_id", UUID.class)).thenReturn(request.admissionAttemptId());
     when(retained.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
@@ -410,7 +416,7 @@ class AccountTenantCapacityOwnerTest {
             startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
         .thenAnswer(invocation -> {
           f.pendingOriginDecision = retained;
-          when(f.clock.instant()).thenReturn(afterWrite);
+          afterWrite.run();
           return 1;
         });
   }
@@ -806,15 +812,11 @@ class AccountTenantCapacityOwnerTest {
     f.existing = false;
     f.retained = true;
     qualifySources(f);
-    var now =
-        new java.util.concurrent.atomic.AtomicReference<>(
-            CapacityAdmissionTestFixture.NOW.plusSeconds(1));
-    when(f.clock.instant()).thenAnswer(ignored -> now.get());
     var scope = f.scopes.findCanonicalEvidenceByTokenHash("fixture");
     org.mockito.Mockito.clearInvocations(f.scopes);
     when(f.scopes.findCanonicalEvidenceByTokenHash(anyString()))
         .thenAnswer(ignored -> {
-          now.set(f.request.evidence().expiresAt());
+          f.databaseNow.set(f.request.evidence().expiresAt());
           return scope;
         });
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
@@ -937,6 +939,7 @@ class AccountTenantCapacityOwnerTest {
         mock(AccountGameplayDelegationIssuanceRepository.class);
     private final AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
     private final Clock clock = mock(Clock.class);
+    private final AtomicReference<Instant> databaseNow = new AtomicReference<>();
     private final Request request;
     private final UUID reservation = UUID.randomUUID();
     private final AccountTenantCapacityOwner owner;
@@ -1019,12 +1022,12 @@ class AccountTenantCapacityOwnerTest {
             throw new AssertionError(sql);
           });
       Record databaseTime = mock(Record.class);
-      var databaseNow =
+      databaseNow.set(
           expired
               ? request.evidence().expiresAt()
-              : request.evidence().evaluatedAt().plusSeconds(1);
+              : request.evidence().evaluatedAt().plusSeconds(1));
       when(databaseTime.get("observed_at", java.time.OffsetDateTime.class))
-          .thenReturn(AccountTenantCapacityRepository.at(databaseNow));
+          .thenAnswer(ignored -> AccountTenantCapacityRepository.at(databaseNow.get()));
       when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
       owner =
           new AccountTenantCapacityOwner(
