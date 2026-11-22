@@ -54,7 +54,9 @@ parse_namespace_tuple() {
           metadata_field(.metadata; "resourceVersion")
         ]
       | if (
-          (.[13] == "" and .[14] == "" and .[15] == "" and .[16] == "" and .[17] == "")
+          (($annotations | has("firemud.dev/proof-retry-count") | not)
+            and ($annotations | has("firemud.dev/proof-retry-reservation-id") | not)
+            and .[13] == "" and .[14] == "" and .[15] == "" and .[16] == "" and .[17] == "")
           or (
             (.[13] | test("^[1-3]$"))
             and (.[14] | test("^[0-9a-f]{40}$"))
@@ -63,14 +65,44 @@ parse_namespace_tuple() {
             and (.[17] | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
           )
         ) then . else error("namespace proof-retry evidence is malformed") end
+      | if (($annotations | has("firemud.dev/proof-retry-reservation-id") | not)
+          or ($annotations["firemud.dev/proof-retry-reservation-id"]
+            | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")))
+        then . else error("namespace proof-retry reservation ID is malformed") end
       | join("|")
     end
   ' <<<"$1"
 }
 
+validated_proof_retry_reservation_version() {
+  local snapshot="$1" namespace="$2" uid="$3" deployed_tuple="$4"
+  local retry_tuple="$5" count="$6" reservation_id="$7" previous_version="$8"
+  parse_namespace_tuple "$snapshot" >/dev/null || return 1
+  jq -ers --arg namespace "$namespace" --arg uid "$uid" --arg deployed "$deployed_tuple" \
+    --arg retry "$retry_tuple" --arg count "$count" --arg id "$reservation_id" \
+    --arg previous_version "$previous_version" '
+    select(length == 1) | .[0]
+    | .metadata as $metadata | ($metadata.annotations // {}) as $annotations
+    | select($uid != "" and $id != "" and $metadata.name == $namespace and $metadata.uid == $uid
+        and ($metadata.resourceVersion | type == "string" and length > 0 and . != $previous_version)
+        and $annotations["firemud.dev/proof-retry-reservation-id"] == $id
+        and $annotations["firemud.dev/proof-retry-count"] == $count
+        and ([$annotations["firemud.dev/last-preview-base-sha"] // "",
+              $annotations["firemud.dev/last-preview-head-sha"] // "",
+              $annotations["firemud.dev/last-preview-merge-sha"] // "",
+              $annotations["firemud.dev/last-preview-image-tag"] // ""] | join("|")) == $deployed
+        and ([$annotations["firemud.dev/proof-retry-base-sha"],
+              $annotations["firemud.dev/proof-retry-head-sha"],
+              $annotations["firemud.dev/proof-retry-merge-sha"],
+              $annotations["firemud.dev/proof-retry-image-tag"]] | join("|")) == $retry)
+    | $metadata.resourceVersion
+  ' <<<"$snapshot"
+}
+
 readonly repair_success=0
 readonly repair_skip=10
 readonly repair_dispatch=11
+readonly repair_missing_proof=12
 readonly repair_abort=20
 
 repair_requested_tuple() {
@@ -84,6 +116,7 @@ repair_requested_tuple() {
   local requested_head_sha="$8"
   local requested_merge_sha="$9"
   local requested_image_tag="${10}"
+  local expected_namespace_uid="${11}"
   local fresh_namespace_json
   local fresh_namespace_tuple
   local fresh_last_base_sha
@@ -122,6 +155,10 @@ repair_requested_tuple() {
     fresh_proof_namespace_uid _ _ _ _ _ \
     fresh_namespace_uid \
     fresh_namespace_resource_version <<<"${fresh_namespace_tuple}"
+  if [[ "${fresh_namespace_uid}" != "${expected_namespace_uid}" ]]; then
+    echo "Skipping preview repair for PR #${pr_number}: namespace UID changed during annotation repair check."
+    return "$repair_skip"
+  fi
   if [[ "${fresh_last_base_sha}" != "${base_sha}" ||
     "${fresh_last_head_sha}" != "${head_sha}" ||
     "${fresh_last_merge_sha}" != "${merge_sha}" ||
@@ -136,7 +173,7 @@ repair_requested_tuple() {
     -z "${fresh_namespace_uid}" ||
     "${fresh_proof_namespace_uid}" != "${fresh_namespace_uid}" ]]; then
     echo "Preview ${namespace} deployed tuple is missing proof for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}; dispatching retry."
-    return "$repair_dispatch"
+    return "$repair_missing_proof"
   fi
   if [[ "${fresh_requested_base_sha}" == "${base_sha}" &&
     "${fresh_requested_head_sha}" == "${head_sha}" &&
@@ -213,10 +250,19 @@ prepare_preview_dispatch() {
   local namespace_uid
   local namespace_resource_version
   local next_retry_count
+  local previous_reservation_id
+  local reservation_id
+  local reservation_resource_version
   local reservation_namespace_json
+  local annotation_failed=false
+  local recheck_namespace_name
+  local recheck_namespace_uid
+  local recheck_namespace_resource_version
   local exact_retry_tuple=false
 
   proof_retry_reservation_count=""
+  proof_retry_reservation_id=""
+  proof_retry_previous_reservation_id=""
   proof_retry_previous_count=""
   proof_retry_previous_base_sha=""
   proof_retry_previous_head_sha=""
@@ -310,7 +356,17 @@ prepare_preview_dispatch() {
     echo "Skipping PR #${pr_number}: Namespace retry custody is unavailable." >&2
     return 1
   fi
+  previous_reservation_id="$(jq -r '.metadata.annotations["firemud.dev/proof-retry-reservation-id"] // ""' <<<"${fresh_namespace_json}")"
+  # uuid4 uses the OS cryptographic random source. The ID is custody for this
+  # invocation only, not a durable retry ledger across Namespace deletion.
+  if ! reservation_id="$(python3 -c 'import uuid; print(uuid.uuid4())')" ||
+    [[ ! "$reservation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "Unable to generate proof-retry reservation ID for PR #${pr_number}; refusing dispatch." >&2
+    dispatch_outcome_failed=true
+    return 1
+  fi
   if ! reservation_namespace_json="$(kubectl annotate namespace "${namespace}" \
+    "firemud.dev/proof-retry-reservation-id=${reservation_id}" \
     "firemud.dev/proof-retry-count=${next_retry_count}" \
     "firemud.dev/proof-retry-base-sha=${base_sha}" \
     "firemud.dev/proof-retry-head-sha=${head_sha}" \
@@ -318,10 +374,59 @@ prepare_preview_dispatch() {
     "firemud.dev/proof-retry-image-tag=${image_tag}" \
     --overwrite \
     --resource-version "${namespace_resource_version}" -o json)"; then
-    echo "Skipping PR #${pr_number}: Namespace ${namespace} changed before proof retry evidence could be recorded." >&2
+    annotation_failed=true
+    # A failed kubectl response proves neither a CAS conflict nor that the
+    # reservation was not committed. Bound classification to one API reread;
+    # never retry the write or compensate a reservation we cannot attribute.
+    if ! reservation_namespace_json="$(kubectl get namespace "${namespace}" \
+      --ignore-not-found -o json --request-timeout=10s)"; then
+      echo "Unable to recheck Namespace ${namespace} after proof-retry annotation failure; refusing dispatch with reservation outcome unknown." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    if [[ -z "${reservation_namespace_json}" ]]; then
+      echo "Skipping PR #${pr_number}: Namespace ${namespace} disappeared after proof-retry annotation failure; retry on a later cycle." >&2
+      return 1
+    fi
+  fi
+  # The successful CAS response and a lost-response reread need the same full
+  # positive evidence; tuple/count alone must never attribute another writer.
+  if ! reservation_resource_version="$(validated_proof_retry_reservation_version \
+    "$reservation_namespace_json" "$namespace" "$namespace_uid" \
+    "${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}" \
+    "${base_sha}|${head_sha}|${merge_sha}|${image_tag}" "$next_retry_count" \
+    "$reservation_id" "$namespace_resource_version")"; then
+    if [[ "$annotation_failed" == false ]]; then
+      echo "Unable to prove proof-retry reservation custody for PR #${pr_number} from the annotation response; leaving its budget charged without dispatch." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    if ! fresh_namespace_tuple="$(parse_namespace_tuple "${reservation_namespace_json}")" ||
+      ! recheck_namespace_name="$(jq -er '.metadata.name | select(type == "string" and length > 0 and (test("[|\\r\\n]") | not))' \
+        <<<"${reservation_namespace_json}")"; then
+      echo "Unable to verify Namespace ${namespace} after proof-retry annotation failure; refusing dispatch with reservation outcome unknown." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    IFS='|' read -r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \
+      recheck_namespace_uid recheck_namespace_resource_version <<<"${fresh_namespace_tuple}"
+    if [[ "${recheck_namespace_name}" != "${namespace}" ||
+      ( -n "${recheck_namespace_uid}" && "${recheck_namespace_uid}" != "${namespace_uid}" ) ]]; then
+      echo "Skipping PR #${pr_number}: Namespace identity changed after proof-retry annotation failure; retry on a later cycle." >&2
+      return 1
+    fi
+    if [[ -z "${recheck_namespace_uid}" || -z "${recheck_namespace_resource_version}" ||
+      "${recheck_namespace_resource_version}" == "${namespace_resource_version}" ]]; then
+      echo "Unable to prove a Namespace change after proof-retry annotation failure for PR #${pr_number}; refusing dispatch." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    echo "Skipping PR #${pr_number}: competing Namespace resource version observed after proof-retry annotation failure; retry on a later cycle." >&2
     return 1
   fi
   proof_retry_reservation_count="${next_retry_count}"
+  proof_retry_reservation_id="${reservation_id}"
+  proof_retry_previous_reservation_id="${previous_reservation_id}"
   proof_retry_previous_count="${retry_count}"
   proof_retry_previous_base_sha="${retry_base_sha}"
   proof_retry_previous_head_sha="${retry_head_sha}"
@@ -329,9 +434,7 @@ prepare_preview_dispatch() {
   proof_retry_previous_image_tag="${retry_image_tag}"
   proof_retry_reservation_namespace_uid="${namespace_uid}"
   proof_retry_reservation_deployed_tuple="${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}"
-  proof_retry_reservation_resource_version="$(jq -er --arg uid "${namespace_uid}" \
-    '.metadata | select(.uid == $uid) | .resourceVersion | select(type == "string" and length > 0)' \
-    <<<"${reservation_namespace_json}" 2>/dev/null || true)"
+  proof_retry_reservation_resource_version="${reservation_resource_version}"
   proof_retry_reservation_base_sha="${base_sha}"
   proof_retry_reservation_head_sha="${head_sha}"
   proof_retry_reservation_merge_sha="${merge_sha}"
@@ -344,17 +447,6 @@ compensate_rejected_proof_retry() {
   local namespace="$1"
   local pr_number="$2"
   local fresh_namespace_json
-  local fresh_namespace_tuple
-  local current_base_sha
-  local current_head_sha
-  local current_merge_sha
-  local current_image_tag
-  local retry_count
-  local retry_base_sha
-  local retry_head_sha
-  local retry_merge_sha
-  local retry_image_tag
-  local namespace_uid
   local namespace_resource_version
   local -a annotations=()
 
@@ -365,27 +457,23 @@ compensate_rejected_proof_retry() {
     echo "Unable to verify proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
     return 1
   fi
-  if [[ -z "${fresh_namespace_json}" ]] ||
-    ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
-    echo "Unable to verify proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
-    return 1
-  fi
-  IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
-    _ _ _ _ _ _ _ _ _ retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag \
-    namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
-  if [[ "${namespace_uid}" != "${proof_retry_reservation_namespace_uid}" ||
-    -z "${proof_retry_reservation_resource_version}" ||
-    "${current_base_sha}|${current_head_sha}|${current_merge_sha}|${current_image_tag}" != "${proof_retry_reservation_deployed_tuple}" ||
-    "${retry_count}" != "${proof_retry_reservation_count}" ||
-    "${retry_base_sha}" != "${proof_retry_reservation_base_sha}" ||
-    "${retry_head_sha}" != "${proof_retry_reservation_head_sha}" ||
-    "${retry_merge_sha}" != "${proof_retry_reservation_merge_sha}" ||
-    "${retry_image_tag}" != "${proof_retry_reservation_image_tag}" ||
-    -z "${namespace_resource_version}" ]]; then
+  # An unrelated RV advance is safe only while the exact reservation ID and
+  # every custody field still match; the compensating CAS uses this fresh RV.
+  if [[ -z "${proof_retry_reservation_resource_version}" ]] ||
+    ! namespace_resource_version="$(validated_proof_retry_reservation_version \
+      "$fresh_namespace_json" "$namespace" "$proof_retry_reservation_namespace_uid" \
+      "$proof_retry_reservation_deployed_tuple" \
+      "${proof_retry_reservation_base_sha}|${proof_retry_reservation_head_sha}|${proof_retry_reservation_merge_sha}|${proof_retry_reservation_image_tag}" \
+      "$proof_retry_reservation_count" "$proof_retry_reservation_id" "")"; then
     echo "Proof-retry reservation for PR #${pr_number} changed before confirmed-rejection compensation; leaving its budget charged." >&2
     return 1
   fi
 
+  if [[ -n "${proof_retry_previous_reservation_id}" ]]; then
+    annotations+=("firemud.dev/proof-retry-reservation-id=${proof_retry_previous_reservation_id}")
+  else
+    annotations+=(firemud.dev/proof-retry-reservation-id-)
+  fi
   if [[ -n "${proof_retry_previous_count}" ]]; then
     annotations+=(
       "firemud.dev/proof-retry-count=${proof_retry_previous_count}"
@@ -435,11 +523,28 @@ preview_source_skipped_render() {
   '
 }
 
+preview_source_uploaded_render() {
+  local run_id="$1" attempt="$2" head="$3"
+  jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
+    .jobs as $jobs
+    | ([$jobs[] | select(.name == "Render Sanitized Preview Artifact")] | length) == 1
+      and any($jobs[]; .name == "Render Sanitized Preview Artifact" and .run_id == $id
+        and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
+        and .head_sha == $head and .status == "completed" and .conclusion == "success"
+        and (.steps | type == "array")
+        and all(.steps[]; type == "object" and (.name | type == "string")
+          and (.status | type == "string") and (.conclusion | type == "string"))
+        and ([.steps[] | select(.name == "Upload sanitized render artifact")] | length) == 1
+        and any(.steps[]; .name == "Upload sanitized render artifact"
+          and .status == "completed" and .conclusion == "success"))
+  '
+}
+
 automatic_preview_has_tuple() {
   local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" jobs latest jobs_available=true
   local dispatch_tuple="${tuple#Preview resolved tuple }"
   local dispatch_title="Preview dispatch ${dispatch_tuple// /-}"
-  # 0: exact active tuple, 1: proven nonmatch, 2: unavailable/unfinished proof.
+  # 0: exact active tuple, 1: proven nonmatch, 2: unavailable proof, 3: completed upload.
   jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
   latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
   jq -e '
@@ -507,21 +612,7 @@ automatic_preview_has_tuple() {
       # A completed, successful, explicitly explained no-op cannot still hand off a render.
       return 1
     fi
-    if ! jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
-      .jobs as $jobs
-      | ([$jobs[] | select(.name == "Render Sanitized Preview Artifact")] | length) == 1
-        and any($jobs[]; .name == "Render Sanitized Preview Artifact" and .run_id == $id
-          and ((has("run_attempt") | not) or (.run_attempt | type == "number" and . == $attempt))
-          and .head_sha == $head and .status == "completed" and .conclusion == "success"
-          and (.steps | type == "array")
-          and all(.steps[]; type == "object" and (.name | type == "string")
-            and (.status | type == "string") and (.conclusion | type == "string"))
-          and ([.steps[] | select(.name == "Upload sanitized render artifact")] | length) == 1
-          and any(.steps[]; .name == "Upload sanitized render artifact"
-            and .status == "completed" and .conclusion == "success"))
-    ' <<<"$jobs" >/dev/null; then
-      return 2
-    fi
+    preview_source_uploaded_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
     if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null; then
       completed_preview_source_updated_at="$(jq -r '.updated_at // empty' <<<"$latest")"
       return 3
@@ -583,6 +674,7 @@ automatic_preview_has_tuple() {
     any(.jobs[] | select(.name == "Preview Plan") | .steps[]; .name == $tuple)
     ' <<<"$jobs" >/dev/null || return 1
   if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null; then
+    preview_source_uploaded_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
     completed_preview_source_updated_at="$(jq -r '.updated_at // empty' <<<"$latest")"
     # The trusted consumer may be queued after the active-run inventory.
     # Defer one cycle after an exact successful source completion.
@@ -1020,7 +1112,7 @@ dispatch_candidates() {
       repair_status="$repair_success"
       if repair_requested_tuple \
         "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
-        "$requested_base_sha" "$requested_head_sha" "$requested_merge_sha" "$requested_image_tag"; then
+        "$requested_base_sha" "$requested_head_sha" "$requested_merge_sha" "$requested_image_tag" "$namespace_uid"; then
         repair_status="$repair_success"
       else
         repair_status=$?
@@ -1031,6 +1123,9 @@ dispatch_candidates() {
           ;;
         "$repair_dispatch")
           namespace_exists=false
+          ;;
+        "$repair_missing_proof")
+          # The exact same Namespace remains live and must keep its UID and budget fence.
           ;;
         "$repair_abort")
           exit 1
@@ -1226,6 +1321,8 @@ dispatch_candidates() {
   fi
   # A consumer may finish deployment and proof during the active-run lookup.
   local proof_retry_reservation_count=""
+  local proof_retry_reservation_id=""
+  local proof_retry_previous_reservation_id=""
   local proof_retry_previous_count=""
   local proof_retry_previous_base_sha=""
   local proof_retry_previous_head_sha=""
@@ -1314,17 +1411,31 @@ candidate_rows="$(
     | sort -t $'\t' -k1,1n -k2,2n
 )"
 if [[ -n "$candidate_rows" ]]; then
+  if ! preview_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml" | jq -er --arg name "$preview_workflow_name" '
+    select(.name == $name and .path == ".github/workflows/preview.yml")
+    | .id | select(type == "number" and . > 0 and . == floor)
+  ')"; then
+    echo "Unable to establish canonical Preview workflow identity; refusing preview reconcile." >&2
+    exit 1
+  fi
+  if ! consumer_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/hosted-identity-request.yml" | jq -er '
+    select(.name == "Trusted Hosted Identity Request" and .path == ".github/workflows/hosted-identity-request.yml")
+    | .id | select(type == "number" and . > 0 and . == floor)
+  ')"; then
+    echo "Unable to establish canonical trusted preview consumer identity; refusing preview reconcile." >&2
+    exit 1
+  fi
   active_preview_run_sets=()
   for active_status in requested queued in_progress waiting pending; do
     for active_run_scope in branch pull_request pull_request_target workflow_run; do
       if [[ "$active_run_scope" == branch ]]; then
-        active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
+        active_run_query="repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
         active_run_branch_filtered=true
       elif [[ "$active_run_scope" == pull_request || "$active_run_scope" == pull_request_target ]]; then
-        active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=${active_run_scope}&status=${active_status}&per_page=100"
+        active_run_query="repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs?event=${active_run_scope}&status=${active_status}&per_page=100"
         active_run_branch_filtered=false
       else
-        active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_run&status=${active_status}&per_page=100"
+        active_run_query="repos/${GITHUB_REPOSITORY}/actions/workflows/${consumer_workflow_id}/runs?event=workflow_run&status=${active_status}&per_page=100"
         active_run_branch_filtered=false
       fi
       if ! active_preview_run_pages_json="$(gh api --paginate --slurp "$active_run_query")"; then
@@ -1334,9 +1445,17 @@ if [[ -n "$candidate_rows" ]]; then
       if ! active_preview_runs_for_query="$(
         jq -c \
           --argjson branch_filtered "$active_run_branch_filtered" '
-            if type != "array" then
-              error("workflow run pages are not an array")
+            if type != "array" or length == 0 then
+              error("workflow run pages are unavailable")
             else
+              .[0].total_count as $count
+              | if ($count | type) != "number" or $count < 0 or $count != ($count | floor) or $count >= 1000
+                  or any(.[]; type != "object" or (.workflow_runs | type) != "array" or .total_count != $count)
+                  or ([.[].workflow_runs[]] | length) != $count
+                  or ([.[].workflow_runs[].id] | unique | length) != $count then
+                  error("active workflow run inventory is incomplete or saturated")
+                else . end
+              |
               [
                 .[] as $page
                 | if ($page | type) != "object" or ($page.workflow_runs | type) != "array" then
@@ -1387,20 +1506,6 @@ if [[ -n "$candidate_rows" ]]; then
     '
   )"; then
     echo "Unable to merge active preview workflow runs; refusing preview reconcile." >&2
-    exit 1
-  fi
-  if ! preview_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml" | jq -er --arg name "$preview_workflow_name" '
-    select(.name == $name and .path == ".github/workflows/preview.yml")
-    | .id | select(type == "number" and . > 0 and . == floor)
-  ')"; then
-    echo "Unable to establish canonical Preview workflow identity; refusing preview reconcile." >&2
-    exit 1
-  fi
-  if ! consumer_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/hosted-identity-request.yml" | jq -er '
-    select(.name == "Trusted Hosted Identity Request" and .path == ".github/workflows/hosted-identity-request.yml")
-    | .id | select(type == "number" and . > 0 and . == floor)
-  ')"; then
-    echo "Unable to establish canonical trusted preview consumer identity; refusing preview reconcile." >&2
     exit 1
   fi
   dispatch_candidates <<<"$candidate_rows"

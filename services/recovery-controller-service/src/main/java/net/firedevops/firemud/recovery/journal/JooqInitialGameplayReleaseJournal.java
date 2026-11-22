@@ -27,7 +27,9 @@ import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.jooq.Record;
 import org.jooq.conf.Settings;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.springframework.dao.DuplicateKeyException;
 
 /**
  * PostgreSQL compare-and-set journal and transactional outbox for initial gameplay release only.
@@ -58,31 +60,42 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     JSONB scopePayload = JSONB.valueOf(tupleCodec.toJson(scope));
     JSONB bindingPayload = JSONB.valueOf(tupleCodec.toJson(scope.peerStorageBinding()));
     Instant now = Instant.now();
-    return dsl.transactionResult(configuration -> {
-      DSLContext tx = DSL.using(configuration);
-      tx.execute(
-          """
-          INSERT INTO recovery_control.initial_gameplay_release_operation (
-              operation_id, operation_kind, target_namespace, playable_state_namespace_id,
-              peer_storage_binding, scope_payload, evidence_ref, scope_digest,
-              maintenance_lock_identity, phase, revision, created_at, updated_at
-          ) VALUES (?, 'initial_gameplay_release', ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, 'collecting', 1, CAST(? AS timestamptz), CAST(? AS timestamptz))
-          ON CONFLICT (operation_id) DO NOTHING
-          """,
-          scope.operationId(),
-          scope.targetNamespace(),
-          scope.playableStateNamespaceId(),
-          bindingPayload,
-          scopePayload,
-          scope.evidenceRef(),
-          scopeDigest,
-          controllerIssuedLockIdentity,
-          toOffsetDateTime(now),
-          toOffsetDateTime(now));
-      Operation operation = selectOperation(tx, scope.operationId(), true);
-      requireSameScope(operation.scope(), scope, scopeDigest);
-      return operation;
-    });
+    try {
+      return dsl.transactionResult(configuration -> {
+        DSLContext tx = DSL.using(configuration);
+        tx.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_operation (
+                operation_id, operation_kind, target_namespace, playable_state_namespace_id,
+                peer_storage_binding, scope_payload, evidence_ref, scope_digest,
+                maintenance_lock_identity, phase, revision, created_at, updated_at
+            ) VALUES (?, 'initial_gameplay_release', ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, 'collecting', 1, CAST(? AS timestamptz), CAST(? AS timestamptz))
+            ON CONFLICT (operation_id) DO NOTHING
+            """,
+            scope.operationId(),
+            scope.targetNamespace(),
+            scope.playableStateNamespaceId(),
+            bindingPayload,
+            scopePayload,
+            scope.evidenceRef(),
+            scopeDigest,
+            controllerIssuedLockIdentity,
+            toOffsetDateTime(now),
+            toOffsetDateTime(now));
+        Operation operation = selectOperation(tx, scope.operationId(), true);
+        requireSameScope(operation.scope(), scope, scopeDigest);
+        return operation;
+      });
+    } catch (DuplicateKeyException failure) {
+      // Auto-configured jOOQ may translate the same violation at the Spring boundary.
+      throw conflict("maintenance-lock identity is already bound");
+    } catch (DataAccessException failure) {
+      if ("23505".equals(failure.sqlState())) {
+        // PostgreSQL's unique-key detail contains the credential. Never retain its cause.
+        throw conflict("maintenance-lock identity is already bound");
+      }
+      throw failure;
+    }
   }
 
   @Override
@@ -450,12 +463,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
             && readbackDigest.equals(storedDigest)) {
           requireValidExactStoredReadback(readback, stored, storedDigest, current);
+          requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
           requireTerminalReplayWithinAttempt(readback, stored, now);
           return operation;
         }
         if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
             && stored != null
             && sameRetainedOutcome(readback, stored, storedDigest)) {
+          requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
           requireTerminalReplayWithinAttempt(readback, stored, now);
           return operation;
         }
@@ -923,6 +938,17 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     requireReadbackMatches(
         saved, current, current.effect().operationId(), current.effect().effectId());
+  }
+
+  private void requireRetainedClosureMatchesStoredReadback(
+      DSLContext tx, OutboxEntry current, Record stored, String storedDigest) {
+    EffectReadback retained =
+        findRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount());
+    if (retained == null) {
+      throw conflict("durable owner closure has no retained attempt identity");
+    }
+    // Compare the first durable receipt, not a replay's possibly newer observation time.
+    requireValidExactStoredReadback(retained, stored, storedDigest, current);
   }
 
   private void requireNonRegressingReadback(

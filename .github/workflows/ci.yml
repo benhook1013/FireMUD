@@ -132,7 +132,7 @@ jobs:
                   const entries = await github.paginate(github.rest.pulls.listFiles, {
                     ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,
                   }, response => response.data);
-                  const knownDoc = path => path === "README.md" || path === "mkdocs.yml" || (typeof path === "string" &&
+                  const knownDoc = path => path === "README.md" || path === "AGENTS.md" || path === "mkdocs.yml" || (typeof path === "string" &&
                     /^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) &&
                     !path.split("/").includes(".."));
                   const knownDesignDoc = path => knownDoc(path) && path.startsWith("design/");

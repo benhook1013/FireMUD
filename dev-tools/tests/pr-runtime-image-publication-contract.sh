@@ -1326,8 +1326,14 @@ PY
 cat > "$fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == api ]] || exit 2
-printf '%s\n' "$HEAD_SHA"
+[[ "$*" == "api repos/benhook1013/FireMUD/git/ref/heads/develop --jq .object.sha" ]] || exit 2
+current_sha="$HEAD_SHA"
+if [[ "$RUNTIME_HEAD_MODE" == advance && -s "$RUNTIME_HEAD_READ_LOG" ]]; then
+  current_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  : > "$RUNTIME_HEAD_MOVED_MARKER"
+fi
+printf '%s\n' "$current_sha" >> "$RUNTIME_HEAD_READ_LOG"
+printf '%s\n' "$current_sha"
 EOF
 chmod +x "$fixture_dir/gh"
 cat > "$fixture_dir/curl" <<'EOF'
@@ -1373,7 +1379,12 @@ PY
   exit 0
 fi
 if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == create ]]; then
+  [[ $# -eq 6 && "$4" == --tag ]] || exit 2
   printf '%s\n' "$*" >> "$RUNTIME_REGISTRY_MARKER"
+  if [[ -f "$RUNTIME_HEAD_MOVED_MARKER" && ( "$5" == *:develop || "$5" == *:latest ) ]]; then
+    echo "runtime fixture refused a mutable alias write after observed branch movement" >&2
+    exit 99
+  fi
   exit 0
 fi
 echo "unexpected runtime docker command: $*" >&2
@@ -1390,16 +1401,48 @@ runtime_common_env=(
   GHCR_USERNAME='test-user'
   GHCR_TOKEN='test-token'
   RUNTIME_REGISTRY_MARKER="$fixture_dir/runtime-registry-marker"
+  RUNTIME_HEAD_READ_LOG="$fixture_dir/runtime-head-reads"
+  RUNTIME_HEAD_MOVED_MARKER="$fixture_dir/runtime-head-moved"
   PATH="$fixture_dir:$PATH"
 )
 run_runtime() {
-  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" bash "$runtime_script"
+  : > "$fixture_dir/runtime-head-reads"
+  rm -f "$fixture_dir/runtime-head-moved"
+  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" RUNTIME_HEAD_MODE="${2:-unchanged}" bash "$runtime_script"
 }
 
+# Unchanged A remains eligible for immutable A, develop and latest publication.
 rm -f "$fixture_dir/runtime-registry-marker"
 run_runtime missing
 if [[ "$(wc -l < "$fixture_dir/runtime-registry-marker")" -ne 33 ]]; then
   echo "runtime publisher did not create every explicitly absent alias" >&2
+  exit 1
+fi
+if grep -Fvxq "$head_sha" "$fixture_dir/runtime-head-reads"; then
+  echo "unchanged-A publication observed an unexpected branch head" >&2
+  exit 1
+fi
+
+# Admit A at the first promotion read, allow its immutable tag, then observe B
+# at the fence immediately before develop/latest. The sink logs even refused
+# alias attempts, so its safety guard cannot hide a missing production fence.
+rm -f "$fixture_dir/runtime-registry-marker"
+movement_status=0
+run_runtime missing advance >"$fixture_dir/runtime-head-movement.output" \
+  2>"$fixture_dir/runtime-head-movement.error" || movement_status=$?
+if [[ "$movement_status" -ne 1 || ! -f "$fixture_dir/runtime-head-moved" ]]; then
+  echo "runtime publisher did not reject observed A-to-B branch movement at its publication fence" >&2
+  exit 1
+fi
+grep -Fq "Refusing canonical runtime publication: develop moved from ${head_sha} to ${base_sha}." \
+  "$fixture_dir/runtime-head-movement.error"
+if [[ "$(cat "$fixture_dir/runtime-head-reads")" != "${head_sha}"$'\n'"${base_sha}" ]]; then
+  echo "runtime branch movement fixture must expose A first and B before mutable alias promotion" >&2
+  exit 1
+fi
+if [[ ! -f "$fixture_dir/runtime-registry-marker" || \
+      "$(cat "$fixture_dir/runtime-registry-marker")" != "buildx imagetools create --tag ghcr.io/benhook1013/account-service:${head_sha} ghcr.io/benhook1013/account-service:candidate" ]]; then
+  echo "runtime publisher must permit only the immutable A tag before rejecting movement, never develop/latest after it" >&2
   exit 1
 fi
 

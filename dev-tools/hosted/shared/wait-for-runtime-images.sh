@@ -645,6 +645,19 @@ while (( SECONDS < deadline )); do
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
     if [[ "${wait_mode}" == "branch" ]] && ! verify_branch_publication "$run_id" "$run_state"; then
       printf 'Trusted branch runtime-image run %s has no verified promotion for %s yet.\n' "$run_id" "$image_tag" >&2
+      # A successful no-op can never provide promotion proof for an obsolete
+      # target. Only a positive trusted ref read can end this wait early.
+      if current_branch_ref="$(fetch_alternate_run_metadata "$deadline" "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch_name}")" &&
+        current_branch_sha="$(jq -ser --arg ref "refs/heads/${branch_name}" '
+          select(length == 1) | .[0] | select(.ref == $ref) | .object.sha
+          | select(type == "string" and length == 40 and test("^[0-9a-fA-F]{40}$"))
+          | ascii_downcase
+        ' <<<"$current_branch_ref")" &&
+        [[ "$current_branch_sha" =~ ^[0-9a-f]{40}$ && "$current_branch_sha" != "${head_sha,,}" ]]; then
+        printf 'Branch runtime-image target %s@%s is obsolete: current head is %s; refusing deployment without verified promotion.\n' \
+          "$branch_name" "$head_sha" "$current_branch_sha" >&2
+        exit 1
+      fi
       sleep "${sleep_seconds}"
       continue
     fi

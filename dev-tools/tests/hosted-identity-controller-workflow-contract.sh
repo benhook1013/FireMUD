@@ -6551,6 +6551,7 @@ if [[ "$1" == run && "$2" == download ]]; then
     previous="$argument"
   done
   [[ -n "$artifact_name" && -n "$artifact_directory" ]]
+  printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
   mkdir -p "$artifact_directory"
   case "${FAKE_ARTIFACT_FILES:-valid}" in
     valid|extra|missing-metadata)
@@ -6646,6 +6647,7 @@ case "$resource" in
     printf '%s' '{"sha":"dddddddddddddddddddddddddddddddddddddddd","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
+    printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
     if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
       printf '%s' "$FAKE_ARTIFACTS_JSON"
     else
@@ -6801,6 +6803,18 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON="$qualified_source_run_json" \
   run_deploy_target_fixture qualified-source-deploy 0 'action=deploy'
 grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+for reference in develop refs/heads/develop; do
+  dispatch_run="$(jq -c --arg reference "$reference" '
+    .event = "repository_dispatch" | .head_branch = "develop" | .path += ("@" + $reference)
+    | del(.pull_requests)' <<<"$valid_workflow_run_json")"
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$dispatch_run" FAKE_METADATA_EVENT=repository_dispatch \
+    FAKE_METADATA_ACTION=deploy run_deploy_target_fixture "dispatch-${reference##*/}-${#reference}" 0 'action=deploy'
+done
+foreign_dispatch_run="$(jq -c '
+  .event = "repository_dispatch" | .head_branch = "develop" | .path += "@refs/heads/not-develop"
+  | del(.pull_requests)' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$foreign_dispatch_run" \
+  run_deploy_target_fixture foreign-dispatch-path 1 'Unexpected source run path'
 cross_pr_qualified_source_run_json="$(jq -c '
   .path += "@refs/pull/901/merge" | .pull_requests += [{number:901,head:{sha:.head_sha}}]
 ' <<<"$valid_workflow_run_json")"
@@ -6884,6 +6898,21 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON="$association_head_only_json" \
   run_deploy_target_fixture association-head-only 0 'Ignoring source run without a bound pull request association.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-association-head-only.output"
 
+# Reach the final artifact binding guard: PR 901/D satisfies the initial run
+# association check, but the bare-path run/callback head D cannot authorize PR 900/C.
+final_run_head_mismatch_json="$(jq -c --arg sha "$distinct_source_sha" '
+  .head_sha = $sha | .pull_requests = [{number:901,head:{sha:$sha}}] + .pull_requests
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$final_run_head_mismatch_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture final-run-head-mismatch 0 'Ignoring artifact not bound to the source run pull request and head.'
+test "$(cat "$TEMP_DIR/deploy-target-final-run-head-mismatch.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
+grep -Fxq 'api repos/example/FireMUD/actions/runs/42' \
+  "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
+grep -Fxq 'api --paginate --slurp repos/example/FireMUD/actions/runs/42/artifacts?per_page=100' \
+  "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
+grep -Fxq "run download 42 --repo example/FireMUD --name $canonical_artifact_name --dir $TEMP_DIR/deploy-target-final-run-head-mismatch-artifact" \
+  "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
 
 # Unrelated native associations do not erase the uniquely selected artifact target.
 for association_order in before after; do

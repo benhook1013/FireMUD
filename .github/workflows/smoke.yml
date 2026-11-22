@@ -536,6 +536,14 @@ jobs:
                 ].includes(code)));
             }
 
+            function canResumeAfterOptionalGitHubError(error, primary) {
+              // Missing optional refresh evidence permits only fresh selection of a
+              // retained pending native producer, never acceptance of missing proof.
+              const status = error?.status ?? error?.response?.status;
+              return isTransientOptionalGitHubError(error) ||
+                (status === 404 && primary?.event === "pull_request" && primary.status !== "completed");
+            }
+
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
               let retryDelayMs = 1000;
@@ -1021,7 +1029,8 @@ jobs:
                   newestPreExecutionCancellation ??= run;
                   continue;
                 }
-                if (run.status !== "completed" && !isRetryPrimary(selection, run)) {
+                if (run.status !== "completed" && selection.allowCompletedFallback !== false &&
+                    !isRetryPrimary(selection, run)) {
                   let checkedSuccesses = 0;
                   for (const {run: older} of matchingRuns.slice(index + 1)) {
                     if (older.status !== "completed") continue;
@@ -1260,7 +1269,7 @@ jobs:
                     "repository_dispatch", expectedDisplayTitle, currentIdentity
                   );
                 } catch (error) {
-                  if (!isTransientOptionalGitHubError(error)) throw error;
+                  if (!canResumeAfterOptionalGitHubError(error, matching)) throw error;
                   core.warning("Trusted refresh inventory is unavailable; retain the native wait.");
                 }
                 try {
@@ -1378,7 +1387,7 @@ jobs:
                   } catch (error) {
                     // Re-read the pending comparison on the next bounded poll. No
                     // partial evidence from this alternative carries into that poll.
-                    if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
                       `Runtime alternative ${matching.id} jobs are temporarily unavailable; retry exact primary selection.`
                     )) continue smokeGatePolling;
                     throw error;
@@ -1536,7 +1545,7 @@ jobs:
                     () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
                   ));
                 } catch (error) {
-                  if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                  if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
                     `Runtime run ${matching.id} final attempt is temporarily unavailable; retry exact selection.`,
                     { requirePendingPrimary: false }
                   )) continue smokeGatePolling;
@@ -1567,7 +1576,7 @@ jobs:
                       () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
                     ));
                   } catch (error) {
-                    if (isTransientOptionalGitHubError(error) && await retryExactSelection(
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
                       `Runtime run ${matching.id} final current-base attempt is temporarily unavailable; retry exact selection.`,
                       { requirePendingPrimary: false }
                     )) continue smokeGatePolling;
@@ -1588,6 +1597,51 @@ jobs:
                     currentIdentity = confirmedIdentity;
                     core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
                     continue smokeGatePolling;
+                  }
+                  // A rerun can start during that last live tuple lookup. This final
+                  // attempt fence does not make the separate GitHub reads atomic.
+                  let confirmedAttempt;
+                  try {
+                    ({ data: confirmedAttempt } = await withTransientGitHubRetry(
+                      "current-base runtime attempt lookup after final live tuple validation",
+                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                    ));
+                  } catch (error) {
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
+                      `Runtime run ${matching.id} confirmed current-base attempt is temporarily unavailable; retry exact selection.`,
+                      { requirePendingPrimary: false }
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
+                  if (confirmedAttempt.id !== matching.id || confirmedAttempt.run_attempt !== matching.run_attempt ||
+                      confirmedAttempt.status !== "completed" || confirmedAttempt.conclusion !== "success") {
+                    core.info("Runtime attempt changed during final live tuple validation; resume exact selection.");
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                }
+                if (selection.pendingPrimary) {
+                  // One fresh ordering read fences the older-success fallback. A
+                  // terminal or replaced primary must qualify through its own proof.
+                  let freshPrimary;
+                  try {
+                    freshPrimary = await findMatchingRuntimeImagesRun(
+                      selection.pendingPrimary.event, expectedDisplayTitle, currentIdentity,
+                      { allowCompletedFallback: false }
+                    );
+                  } catch (error) {
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
+                      "Runtime candidate ordering is unavailable; retry exact primary selection."
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
+                  if (freshPrimary?.id !== selection.pendingPrimary.id ||
+                      freshPrimary.run_attempt !== selection.pendingPrimary.run_attempt ||
+                      freshPrimary.status === "completed") {
+                    if (await retryExactSelection(
+                      "Runtime candidate ordering changed before accepting older success; retry exact primary selection."
+                    )) continue smokeGatePolling;
+                    break smokeGatePolling;
                   }
                 }
                 return;

@@ -15,6 +15,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.cfg.CoercionAction;
 import tools.jackson.databind.cfg.CoercionInputShape;
+import tools.jackson.databind.cfg.EnumFeature;
 import tools.jackson.databind.type.LogicalType;
 
 /** Stable JSON and digest encoding for the operation-owned immutable tuples. */
@@ -28,6 +29,7 @@ public final class InitialGameplayReleaseTupleCodec {
         Objects.requireNonNull(objectMapper, "objectMapper must not be null")
             .rebuild()
             .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+            .enable(EnumFeature.FAIL_ON_NUMBERS_FOR_ENUMS)
             .disable(tools.jackson.databind.DeserializationFeature.ACCEPT_FLOAT_AS_INT)
             .withCoercionConfig(
                 LogicalType.Integer,
@@ -157,7 +159,11 @@ public final class InitialGameplayReleaseTupleCodec {
 
   InitialGameplayReleaseModel.EffectReadback readEffectReadback(String json) {
     try {
-      return objectMapper.readValue(json, InitialGameplayReleaseModel.EffectReadback.class);
+      var readback = objectMapper.readValue(json, InitialGameplayReleaseModel.EffectReadback.class);
+      if (readback == null) {
+        throw new IllegalStateException("Persisted initial gameplay release readback is null");
+      }
+      return readback;
     } catch (JacksonException exception) {
       throw new IllegalStateException(
           "Unable to read persisted initial gameplay release effect readback", exception);

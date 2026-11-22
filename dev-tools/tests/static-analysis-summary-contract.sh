@@ -733,6 +733,63 @@ async function assertSkippedRequiredGates() {
     github.paginate = originalPaginate;
   }
 }
+async function assertDuplicateDeletionRecovery() {
+  const originalPaginate = github.paginate;
+  const originalIssues = github.rest.issues;
+  const comments = [
+    {id: 2, user: {login: "github-actions[bot]"}, body: "### Static Analysis Summary\nold"},
+    {id: 3, user: {login: "github-actions[bot]"}, body: "### Static Analysis Summary\nduplicate"},
+  ];
+  const writes = {updated: [], created: [], deleted: []};
+  const deletionFailure = {status: 500};
+  let failDeletion = true;
+  github.paginate = async (method, input) => method === commentsList
+    ? comments.map(comment => ({...comment})) : originalPaginate(method, input);
+  github.rest.issues = {
+    ...originalIssues,
+    updateComment: async input => {
+      writes.updated.push(input);
+      const comment = comments.find(({id}) => id === input.comment_id);
+      if (!comment) throw new Error("recovery must update the stored canonical comment");
+      comment.body = input.body;
+    },
+    createComment: async input => {
+      writes.created.push(input);
+      comments.push({id: 4, user: {login: "github-actions[bot]"}, body: input.body});
+    },
+    deleteComment: async ({comment_id}) => {
+      writes.deleted.push(comment_id);
+      if (failDeletion) throw deletionFailure;
+      const index = comments.findIndex(({id}) => id === comment_id);
+      if (index === -1) throw new Error("recovery must delete the stored duplicate");
+      comments.splice(index, 1);
+    },
+  };
+  try {
+    let failed = false;
+    try { await run(github, context, core); } catch (error) {
+      if (error !== deletionFailure) throw error;
+      failed = true;
+    }
+    if (!failed || writes.updated.length !== 1 || writes.updated[0].comment_id !== 2 ||
+        writes.created.length || writes.deleted.length !== 1 || writes.deleted[0] !== 3 ||
+        comments.length !== 2 || comments[0].body !== writes.updated[0].body ||
+        !comments[0].body.includes("checks failed")) {
+      throw new Error("duplicate deletion failure must propagate after persisting the canonical update");
+    }
+    const publishedBody = comments[0].body;
+    failDeletion = false;
+    await run(github, context, core);
+    if (writes.updated.length !== 1 || writes.created.length ||
+        writes.deleted.length !== 2 || writes.deleted[1] !== 3 ||
+        comments.length !== 1 || comments[0].id !== 2 || comments[0].body !== publishedBody) {
+      throw new Error("later callback must finish duplicate deletion without republishing the canonical summary");
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    github.rest.issues = originalIssues;
+  }
+}
 async function assertInterruptedRecovery() {
   const originalPaginate = github.paginate;
   const reset = () => {
@@ -848,9 +905,10 @@ run(github, context, core).then(async () => {
             return run(github, context, core).then(
               () => { throw new Error("non-404 duplicate deletion errors must propagate"); },
               async (error) => {
-                if (error?.status !== 500) throw error;
-                deleteStatus = null;
-                await assertCompletionOrders();
+                 if (error?.status !== 500) throw error;
+                 deleteStatus = null;
+                 await assertDuplicateDeletionRecovery();
+                 await assertCompletionOrders();
                 await assertProducerSelectionRace();
                 await assertExactBaseRef();
                 await assertSkippedRequiredGates();

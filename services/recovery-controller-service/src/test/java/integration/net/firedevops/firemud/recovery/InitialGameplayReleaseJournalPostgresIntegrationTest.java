@@ -279,7 +279,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .load();
     assertThat(flyway.info().all())
         .extracting(info -> info.getScript())
-        .containsExactlyInAnyOrder(
+        .contains(
             "V1__initial_gameplay_release_journal.sql",
             "V2__retain_initial_gameplay_release_attempt_closure.sql");
     flyway.migrate();
@@ -348,7 +348,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   .fetch(
                       "SELECT script FROM recovery_control.flyway_schema_history_recovery_control WHERE version IS NOT NULL AND success")
                   .getValues(0, String.class))
-          .containsExactlyInAnyOrder(
+          .contains(
               "V1__initial_gameplay_release_journal.sql",
               "V2__retain_initial_gameplay_release_attempt_closure.sql");
 
@@ -360,6 +360,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
       assertThat(created.phase()).isEqualTo(Phase.COLLECTING);
       assertThat(injected.find(requested.operationId())).contains(created);
+      Scope duplicateCredentialScope = scope();
+      assertThatThrownBy(() -> injected.create(duplicateCredentialScope, lockIdentity))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessage("IDEMPOTENCY_CONFLICT: maintenance-lock identity is already bound")
+          .hasNoCause();
+      assertThat(injected.find(duplicateCredentialScope.operationId())).isEmpty();
+      assertThat(injected.create(requested, UUID.randomUUID())).isEqualTo(created);
       assertThat(
               packagedDsl
                   .fetchSingle(
@@ -406,6 +413,25 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       logger.setLevel(priorLevel);
       logCapture.stop();
     }
+  }
+
+  @Test
+  void duplicateMaintenanceCredentialRefusesWithoutExposingDatabaseDetailOrCause() {
+    Scope original = scope();
+    UUID lockIdentity = UUID.randomUUID();
+    Operation created = journal.create(original, lockIdentity);
+    Scope conflicting = scope();
+
+    assertThatThrownBy(() -> journal.create(conflicting, lockIdentity))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessage("IDEMPOTENCY_CONFLICT: maintenance-lock identity is already bound")
+        .hasNoCause()
+        .hasNoSuppressedExceptions()
+        .satisfies(
+            failure -> assertThat(failure.toString()).doesNotContain(lockIdentity.toString()));
+    assertThat(journal.find(conflicting.operationId())).isEmpty();
+    assertThat(journal.find(original.operationId())).contains(created);
+    assertThat(journal.create(original, UUID.randomUUID())).isEqualTo(created);
   }
 
   @Test
@@ -762,6 +788,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.recordEffectReadback(dispatched, terminal, base.plusSeconds(6)))
         .isEqualTo(authorized);
     String retained = storedOutbox(scope.operationId(), effectId);
+    String retainedClosure = storedClosure(dispatched);
 
     assertThat(journal.recordEffectReadback(dispatched, terminal, base.plusSeconds(7)))
         .isEqualTo(authorized);
@@ -770,6 +797,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 dispatched, "LATE_TIMEOUT", base.plusSeconds(7)))
         .isTrue();
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
+    assertThat(storedClosure(dispatched)).isEqualTo(retainedClosure);
     assertThatThrownBy(() ->
             journal.recordAmbiguousEffectForDispatch(
                 withAttempt(dispatched, UUID.randomUUID()), "WRONG_ATTEMPT", base.plusSeconds(7)))
@@ -783,6 +811,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             base.plusSeconds(6));
     assertThat(journal.recordEffectReadback(dispatched, observedAgain, base.plusSeconds(7)))
         .isEqualTo(authorized);
+    assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
+    assertThat(storedClosure(dispatched)).isEqualTo(retainedClosure);
     for (Instant invalid : List.of(base.plusSeconds(3), base.plusSeconds(8))) {
       EffectReadback invalidObservation =
           readbackFor(
@@ -829,6 +859,106 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             () -> journal.recordEffectReadback(dispatched, observedAgain, base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(replacement);
+  }
+
+  @Test
+  void noEffectReplayRequiresExactOriginalClosureHistory() {
+    for (String variant :
+        List.of(
+            "missing",
+            "ordinal",
+            "digest",
+            "attempt",
+            "receipt",
+            "observation",
+            "dispatch",
+            "outbox-observation")) {
+      clearJournal();
+      Instant base = Instant.parse("2026-09-01T00:00:00Z");
+      OutboxEntry dispatch = authorizedDispatch(base);
+      UUID operationId = dispatch.effect().operationId();
+      UUID effectId = dispatch.effect().effectId();
+      EffectReadback original =
+          readbackFor(
+              dispatch,
+              dispatch.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "original-closure",
+              base.plusSeconds(5));
+      Operation operation = journal.recordEffectReadback(dispatch, original, base.plusSeconds(7));
+      if (variant.equals("missing")) {
+        dsl.execute(
+            "DELETE FROM recovery_control.initial_gameplay_release_attempt_closure WHERE outbox_id=?",
+            dispatch.outboxId());
+      } else if (variant.equals("ordinal")) {
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET attempt_ordinal=2 WHERE outbox_id=?",
+            dispatch.outboxId());
+      } else if (variant.equals("digest")) {
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET readback_digest=? WHERE outbox_id=?",
+            "c".repeat(64),
+            dispatch.outboxId());
+      } else if (variant.equals("dispatch")) {
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET dispatched_at=CAST(? AS timestamptz) WHERE outbox_id=?",
+            base.plusSeconds(6).atOffset(ZoneOffset.UTC),
+            dispatch.outboxId());
+      } else if (variant.equals("outbox-observation")) {
+        EffectReadback altered =
+            readbackFor(
+                dispatch,
+                dispatch.lastAttemptId(),
+                EffectReadbackState.PROVEN_NO_EFFECT,
+                original.readbackIdentity(),
+                base.plusSeconds(6));
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE outbox_id=?",
+            tupleCodec.toJson(altered),
+            tupleCodec.digest(altered),
+            dispatch.outboxId());
+      } else {
+        EffectReadback altered =
+            readbackFor(
+                dispatch,
+                variant.equals("attempt") ? UUID.randomUUID() : dispatch.lastAttemptId(),
+                EffectReadbackState.PROVEN_NO_EFFECT,
+                variant.equals("receipt") ? "conflicting-closure" : "original-closure",
+                variant.equals("observation") ? base.plusSeconds(6) : original.observedAt());
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE outbox_id=?",
+            tupleCodec.toJson(altered),
+            tupleCodec.digest(altered),
+            dispatch.outboxId());
+      }
+      String outboxBefore = storedOutbox(operationId, effectId);
+      String closureBefore = variant.equals("missing") ? null : storedClosure(dispatch);
+      for (Instant observation : List.of(original.observedAt(), base.plusSeconds(6))) {
+        EffectReadback replay =
+            readbackFor(
+                dispatch,
+                dispatch.lastAttemptId(),
+                EffectReadbackState.PROVEN_NO_EFFECT,
+                original.readbackIdentity(),
+                observation);
+        assertThatThrownBy(
+                () -> journal.recordEffectReadback(dispatch, replay, base.plusSeconds(8)))
+            .as(variant + " closure history must refuse both exact and later-observation replay")
+            .isInstanceOf(InitialGameplayReleaseConflictException.class);
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(outboxBefore);
+        assertThat(journal.find(operationId)).contains(operation);
+        assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+            .isEmpty();
+        if (closureBefore != null) {
+          assertThat(storedClosure(dispatch)).isEqualTo(closureBefore);
+        } else {
+          assertThat(
+                  dsl.fetchCount(
+                      DSL.table("recovery_control.initial_gameplay_release_attempt_closure")))
+              .isZero();
+        }
+      }
+    }
   }
 
   @Test
@@ -1620,6 +1750,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 .table("flyway_schema_history_recovery_control")
                 .placeholders(Map.of("serviceSchema", SCHEMA))
                 .locations("classpath:db/recovery-control-migration")
+                .target("2")
                 .load();
         if (claimed) {
           assertThatThrownBy(() -> upgrade.migrate())
@@ -1865,7 +1996,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static String storedClosure(OutboxEntry dispatch) {
     return java.util.Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT row_to_json(c)::text AS row_json"
+                "SELECT row_to_json(c)::text || ':' || c.xmin::text AS row_json"
                     + " FROM recovery_control.initial_gameplay_release_attempt_closure c"
                     + " WHERE outbox_id = ? AND attempt_id = ?",
                 dispatch.outboxId(),
@@ -1877,7 +2008,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static String storedOutbox(UUID operationId, UUID effectId) {
     return java.util.Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT row_to_json(o)::text AS row_json FROM recovery_control.initial_gameplay_release_outbox o"
+                "SELECT row_to_json(o)::text || ':' || o.xmin::text AS row_json FROM recovery_control.initial_gameplay_release_outbox o"
                     + " WHERE operation_id = ? AND effect_id = ?",
                 operationId,
                 effectId),

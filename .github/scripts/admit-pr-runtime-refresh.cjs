@@ -236,30 +236,41 @@ module.exports = async function admitPrRuntimeRefresh({
     core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
   }
 
-  let activeProducerVerified = false;
-  if (inventoryComplete && newestExact && isExactActiveRun(newestExact)) {
+  const selectedProducerIsActive = async () => {
     try {
       const latest = dataOf(await github.rest.actions.getWorkflowRun({
         ...contextRepo, run_id: newestExact.id,
       }));
-      activeProducerVerified = isExactActiveRun(latest) && latest.id === newestExact.id &&
+      return isExactActiveRun(latest) && latest.id === newestExact.id &&
         latest.run_attempt === newestExact.run_attempt && latest.event === newestExact.event &&
         latest.head_sha === newestExact.head_sha &&
         Date.parse(latest.created_at) === Date.parse(newestExact.created_at);
     } catch {
       core.warning('The exact active runtime producer could not be reread; preserving the required refresh fallback.');
+      return false;
     }
-  }
+  };
+  const activeProducerVerified = inventoryComplete && newestExact && isExactActiveRun(newestExact) &&
+    await selectedProducerIsActive();
   if (!await currentIdentity()) {
     core.info('Runtime refresh tuple changed during admission; no dispatch.');
     return 'obsolete';
   }
   if (activeProducerVerified) {
-    core.info('The unique newest exact runtime producer is already active; no dispatch.');
-    return 'already-active';
+    // Tuple resolution can wait for merge computation. Do not suppress a repair
+    // using producer evidence from before that final live comparison lookup.
+    if (await selectedProducerIsActive()) {
+      core.info('The unique newest exact runtime producer is already active; no dispatch.');
+      return 'already-active';
+    }
+    if (!await currentIdentity()) {
+      core.info('Runtime refresh tuple changed during the final producer lookup; no dispatch.');
+      return 'obsolete';
+    }
   }
 
   const dispatchCreatedSince = secondsUtc(Date.now());
+  const nextDispatchSecond = Date.parse(dispatchCreatedSince) + 1000;
   await github.rest.repos.createDispatchEvent({
     ...contextRepo,
     event_type: 'pr-runtime-base-refresh',
@@ -285,7 +296,9 @@ module.exports = async function admitPrRuntimeRefresh({
       });
       if (Array.isArray(inventory?.workflow_runs) &&
           inventory.workflow_runs.some(run => isExactActiveRun(run) &&
-            run.event === 'repository_dispatch' && Date.parse(run.created_at) >= Date.parse(dispatchCreatedSince) &&
+            // Unseen activity in the dispatch second may predate this request.
+            // Second-resolution chronology cannot confirm its attribution.
+            run.event === 'repository_dispatch' && Date.parse(run.created_at) >= nextDispatchSecond &&
             !observedRunIds.has(`${run.event}:${run.id}:${run.run_attempt}`))) {
         core.info('The dispatched runtime refresh is visible as an exact active producer.');
         return 'dispatched-observed';

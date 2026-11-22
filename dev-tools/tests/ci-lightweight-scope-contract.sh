@@ -46,6 +46,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
   for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false] of [
     [[{filename: "design/README.md"}], 1, true, undefined, false, true],
     [[{filename: "README.md"}], 1, true],
+    [[{filename: "AGENTS.md"}], 1, true],
     [[{filename: "README.md", status: "renamed", previous_filename: "design/guide.md"}], 1, true, undefined, false, true],
     [[{filename: "dev-tools/validation/check-flyway-versions.py"}], 1, true, undefined, true],
     [[{filename: "dev-tools/validation/gradle-run-supervisor.py"}], 1, false],

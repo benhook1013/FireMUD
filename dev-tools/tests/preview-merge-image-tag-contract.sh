@@ -32,7 +32,23 @@ if [[ "$*" == *"/pulls/7" ]]; then
   exit 0
 fi
 if [[ "$*" == *"/git/ref/heads/"* ]]; then
-  printf '%s' '{"ref":"refs/heads/'"${GH_BASE_REF:-develop}"'","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+  case "${GH_FIXTURE:-}" in
+    branch_runs|branch_unpromoted_current)
+      printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$head_sha"
+      ;;
+    branch_ref_unavailable)
+      exit 1
+      ;;
+    branch_ref_malformed)
+      printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"not-a-commit-sha"}}'
+      ;;
+    branch_ref_wrong_branch)
+      printf '{"ref":"refs/heads/main","object":{"sha":"%s"}}' "$base_sha"
+      ;;
+    *)
+      printf '%s' '{"ref":"refs/heads/'"${GH_BASE_REF:-develop}"'","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+      ;;
+  esac
   exit 0
 fi
 if [[ "$*" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]; then
@@ -65,7 +81,7 @@ case "${GH_FIXTURE:-}" in
   empty)
     printf '%s' '[[]]'
     ;;
-  branch_runs|branch_obsolete)
+  branch_runs|branch_obsolete|branch_unpromoted_current|branch_ref_unavailable|branch_ref_malformed|branch_ref_wrong_branch)
     source="$(printf '{"id":103,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
     case "$*" in
       *actions/runs/103)
@@ -73,7 +89,7 @@ case "${GH_FIXTURE:-}" in
         ;;
       *actions/runs/103/attempts/2/jobs?per_page=100)
         conclusion=success
-        [[ "$GH_FIXTURE" != branch_obsolete ]] || conclusion=skipped
+        [[ "$GH_FIXTURE" == branch_runs ]] || conclusion=skipped
         printf '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"%s","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"%s"}]}]}' "$conclusion" "$conclusion"
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
@@ -175,6 +191,10 @@ if [[ "${0##*/}" == wait-for-runtime-images.sh ]]; then
   unset SECONDS
   SECONDS=0
   sleep() {
+    if [[ "${GH_FIXTURE:-}" == branch_obsolete ]]; then
+      echo "obsolete branch waiter must refuse before sleeping" >&2
+      exit 99
+    fi
     SECONDS=$((SECONDS + 1))
   }
 fi
@@ -206,7 +226,8 @@ GH_FIXTURE=branch_runs \
   HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
   HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-  timeout 15s bash "$WAITER" "$head_sha" >/dev/null
+  timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-success.out"
+grep -Fq "Matching runtime-images workflow 103 succeeded for ${head_sha} after" "$TEMP_DIR/branch-success.out"
 
 branch_obsolete_status=0
 branch_obsolete_output="$(
@@ -218,7 +239,31 @@ if [[ "$branch_obsolete_status" != 1 ]]; then
   exit 1
 fi
 grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_obsolete_output"
-grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha} after" <<<"$branch_obsolete_output"
+grep -Fq "Branch runtime-image target develop@${head_sha} is obsolete: current head is ${base_sha}; refusing deployment without verified promotion." <<<"$branch_obsolete_output"
+if grep -Fq 'Timed out waiting' <<<"$branch_obsolete_output"; then
+  echo "obsolete branch waiter exhausted its deadline instead of refusing immediately" >&2
+  exit 1
+fi
+
+# Current, unavailable, malformed, or wrong-ref metadata cannot replace promotion
+# proof or positively establish that the requested develop target is obsolete.
+for branch_fixture in branch_unpromoted_current branch_ref_unavailable branch_ref_malformed branch_ref_wrong_branch; do
+  branch_ref_status=0
+  branch_ref_output="$(
+    GH_FIXTURE="$branch_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      timeout 15s bash "$WAITER" "$head_sha" 2>&1
+  )" || branch_ref_status=$?
+  if [[ "$branch_ref_status" != 1 ]]; then
+    printf 'unpromoted branch waiter must refuse with status 1 for %s, got %s\n' "$branch_fixture" "$branch_ref_status" >&2
+    exit 1
+  fi
+  grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_ref_output"
+  grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha} after" <<<"$branch_ref_output"
+  if grep -Fq 'is obsolete:' <<<"$branch_ref_output"; then
+    printf 'branch waiter inferred obsolescence from %s without a verified different develop head\n' "$branch_fixture" >&2
+    exit 1
+  fi
+done
 
 if branch_timeout_output="$(
   GH_FIXTURE=branch_wrong \

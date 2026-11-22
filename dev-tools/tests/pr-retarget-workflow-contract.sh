@@ -1883,7 +1883,7 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
   assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
   assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
 done
-require_contains "$preview_reconciler_script" 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
+require_contains "$preview_reconciler_script" 'actions/workflows/${preview_workflow_id}/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
 require_contains "$preview_reconciler_script" 'gh api --paginate --slurp'
 require_contains "$preview_reconciler_script" '.display_title == $run_name'
 require_contains "$preview_reconciler_script" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
@@ -2927,8 +2927,13 @@ if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=
   echo "A typed native publisher title without its source run ID must not be accepted" >&2
   exit 1
 fi
-require_contains "$contract_fixture_dir/typed-native-old.error" \
-  'Timed out waiting for trusted PR image publisher'
+if ! grep -Eq '^(Timed out waiting for trusted PR image publisher|No trusted PR image publisher appeared)' \
+  "$contract_fixture_dir/typed-native-old.error"; then
+  cat "$contract_fixture_dir/typed-native-old.output" >&2
+  cat "$contract_fixture_dir/typed-native-old.error" >&2
+  echo "Expected a refusal because no publisher proved the typed source run" >&2
+  exit 1
+fi
 
 BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
   CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
@@ -3542,8 +3547,14 @@ async function choose(runs, verifiedId, smokeConclusion = "success") {
   assert.deepEqual(await choose([pending, older(3)], 3, "skipped"), {id: 10, lookedUp: [3]});
   assert.deepEqual(await choose([pending, {...older(3), display_title: "wrong tuple"}], 3),
     {id: 10, lookedUp: []});
-  assert.deepEqual(await choose([pending, older(4), older(3), older(2), older(1)], 1),
-    {id: 10, lookedUp: [4, 3, 2]});
+  // Shuffle completed rows and put the newest pending run last. Creation time
+  // outranks even the largest ID; equal-time candidates retain descending IDs.
+  const boundedCandidates = [older(2), {...older(99), created_at: "2026-07-24T00:00:00Z"},
+    older(3), older(4), pending];
+  assert.deepEqual(await choose(boundedCandidates, 2), {id: 2, lookedUp: [4, 3, 2]},
+    "completed fallback must select verified proof at the third lookup in native chronology order");
+  assert.deepEqual(await choose(boundedCandidates, 99), {id: 10, lookedUp: [4, 3, 2]},
+    "completed fallback must retain pending when verified proof lies beyond the three-candidate cap");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 NODE_DUPLICATE_SMOKE
 

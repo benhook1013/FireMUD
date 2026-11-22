@@ -54,14 +54,15 @@ function admissionFixture() {
         const run = runs.find(run => run.id === run_id);
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
       },
-      listWorkflowRuns: async ({workflow_id, status, event, page, created}) => {
+      listWorkflowRuns: async ({workflow_id, status, event, per_page, page, created}) => {
         assert.equal(workflow_id, 42);
-        assert.ok(page <= 3);
-        state.lookups.push({status, event, page, created});
+        assert.equal(per_page, 100);
+        assert.ok(Number.isSafeInteger(page) && page > 0 && page <= 3);
+        state.lookups.push({status, event, per_page, page, created});
         state.afterInventory?.();
         const matching = runs.filter(run => (!status || run.status === status) && run.event === event &&
           (!created || Date.parse(run.created_at) >= Date.parse(created.split('..')[0])));
-        return {data: {workflow_runs: matching.slice((page - 1) * 100, page * 100),
+        return {data: {workflow_runs: matching.slice((page - 1) * per_page, page * per_page),
           total_count: matching.length}};
       },
     },
@@ -78,7 +79,9 @@ function admissionFixture() {
       },
       createDispatchEvent: async payload => {
         sent.push(payload);
-        state.newRun = makeRun({id: state.nextId++});
+        // Registration becomes visible after the fixture's first two-second wait.
+        state.newRun = makeRun({id: state.nextId++, created_at: state.dispatchCreatedAt ??
+          new Date(Date.now() + 2000).toISOString()});
       },
     },
   }};
@@ -216,40 +219,64 @@ test('admission suppresses only when the selected active producer still proves t
   f.runs.push(f.makeRun());
   f.state.refreshProducer = run => ({...run, status: 'in_progress'});
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
-  assert.deepEqual(f.state.producerReads, [300]);
+  assert.deepEqual(f.state.producerReads, [300, 300]);
   assert.deepEqual(f.sent, []);
 });
 
 test('a stale or unavailable selected producer leaves an exact refresh eligible', async () => {
-  for (const refreshProducer of [
+  const invalidProducers = [
     () => { throw Object.assign(new Error('missing run'), {status: 404}); },
     () => null,
     run => ({...run, id: run.id + 1}),
     run => ({...run, run_attempt: run.run_attempt + 1}),
+    ...[undefined, null, 0, -1, '1'].map(run_attempt => run => ({...run, run_attempt})),
     run => ({...run, event: 'pull_request'}),
     run => ({...run, display_title: run.display_title.replace(A, E)}),
+    run => ({...run, head_sha: E}),
+    run => ({...run, created_at: new Date(Date.parse(run.created_at) + 1000).toISOString()}),
     run => ({...run, status: 'completed', conclusion: 'success'}),
     run => ({...run, status: 'completed', conclusion: 'failure'}),
-  ]) {
-    const f = admissionFixture();
-    f.runs.push(f.makeRun());
-    f.state.refreshProducer = refreshProducer;
-    assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-    assert.deepEqual(f.state.producerReads, [300]);
-    assert.equal(f.sent.length, 1);
+    run => ({...run, status: 'completed', conclusion: 'cancelled'}),
+  ];
+  for (const afterFinalTuple of [false, true]) {
+    for (const refreshProducer of invalidProducers) {
+      const f = admissionFixture();
+      f.runs.push(f.makeRun());
+      f.state.refreshProducer = run => !afterFinalTuple || f.state.commitRefs.length >= 2 ?
+        refreshProducer(run) : run;
+      assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+      assert.deepEqual(f.state.producerReads, afterFinalTuple ? [300, 300] : [300]);
+      assert.deepEqual(f.state.commitRefs, afterFinalTuple ? [A, A, A] : [A, A]);
+      assert.equal(f.sent.length, 1);
+    }
   }
 });
 
-test('admission rereads the pinned comparison after the producer lookup before fallback', async () => {
+test('a producer that completes while the final live tuple is pending cannot suppress repair', async () => {
   const f = admissionFixture();
   f.runs.push(f.makeRun());
-  f.state.refreshProducer = run => {
-    f.state.base = D;
-    return {...run, status: 'completed', conclusion: 'failure'};
-  };
-  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
-  assert.deepEqual(f.state.producerReads, [300]);
-  assert.deepEqual(f.sent, []);
+  f.state.pullObservations = [{}, {mergeable: null, merge_commit_sha: null}];
+  f.state.afterWait = () => { f.runs[0] = {...f.runs[0], status: 'completed', conclusion: 'failure'}; };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.deepEqual(f.state.producerReads, [300, 300]);
+  assert.deepEqual(f.state.commitRefs, [A, A, A]);
+  assert.deepEqual(f.state.waits, [2000, 2000]);
+  assert.equal(f.sent.length, 1);
+});
+
+test('admission rereads the pinned comparison after the producer lookup before fallback', async () => {
+  for (const afterFinalTuple of [false, true]) {
+    const f = admissionFixture();
+    f.runs.push(f.makeRun());
+    f.state.refreshProducer = run => {
+      if (afterFinalTuple && f.state.commitRefs.length < 2) return run;
+      f.state.base = D;
+      return {...run, status: 'completed', conclusion: 'failure'};
+    };
+    assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+    assert.deepEqual(f.state.producerReads, afterFinalTuple ? [300, 300] : [300]);
+    assert.deepEqual(f.sent, []);
+  }
 });
 
 test('an active run from a different repository cannot suppress the repair', async () => {
@@ -267,7 +294,30 @@ test('indeterminate dispatch visibility does not silently consume a repair or ca
   assert.ok(f.warnings.length > 0);
 });
 
-test('both wake inputs are serialized by one exact tuple group on the default branch', () => {
+test('unseen same-second activity is ambiguous dispatch attribution and never triggers a retry', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-22T12:00:00.750Z'));
+  for (const milliseconds of ['000', '749', '750', '999']) {
+    const f = admissionFixture();
+    f.state.keepHidden = true;
+    const unseen = f.makeRun({created_at: `2026-11-22T12:00:00.${milliseconds}Z`});
+    f.state.afterWait = () => { if (!f.runs.includes(unseen)) f.runs.push(unseen); };
+    assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.state.waits.length, 7);
+    assert.ok(f.warnings.some(warning => warning.includes('remained unconfirmed')));
+  }
+});
+
+test('unseen exact activity in the next second can confirm bounded dispatch observation', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-22T12:00:00.750Z'));
+  const f = admissionFixture();
+  f.state.dispatchCreatedAt = '2026-11-22T12:00:01Z';
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
+  assert.deepEqual(f.state.waits, [2000]);
+});
+
+test('both wake inputs retain intent in one non-replacing exact tuple queue on the default branch', () => {
   const admissionWorkflow = JSON.parse(execFileSync('python3', ['-c',
     'import yaml,json,sys; print(json.dumps(yaml.load(open(sys.argv[1]), Loader=yaml.BaseLoader)))',
     path.join(root, '.github/workflows/admit-pr-runtime-refresh.yml')], {encoding: 'utf8'}));
@@ -277,6 +327,7 @@ test('both wake inputs are serialized by one exact tuple group on the default br
   assert.deepEqual(job.concurrency, {
     group: 'admit-pr-runtime-refresh-${{ github.event.client_payload.pr_number }}-${{ github.event.client_payload.base_sha }}-${{ github.event.client_payload.head_sha }}-${{ github.event.client_payload.merge_sha }}',
     'cancel-in-progress': 'false',
+    queue: 'max',
   });
   assert.deepEqual(job.permissions, {actions: 'read', contents: 'write', 'pull-requests': 'read'});
   assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
@@ -460,8 +511,12 @@ test('unexpected canonical image selection fails closed', async () => {
 test('qualified canonical workflow path remains eligible', async () => {
   const f = fixture(); f.run.path += '@refs/pull/7/merge';
   assert.equal((await execute(f)).length, 1);
+});
+test('a malformed qualified workflow path is refused before any commit lookup', async () => {
+  const f = fixture();
   f.run.path = '.github/workflows/preview.yml@';
   assert.deepEqual(await execute(f), []);
+  assert.deepEqual(f.mergeReads ?? [], []);
 });
 test('observer callbacks cannot replace a different source run or attempt', () => {
   const group = workflow.jobs.refresh.concurrency.group;

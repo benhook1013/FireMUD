@@ -30,6 +30,13 @@ public interface InitialGameplayReleaseJournal {
 
   Optional<OutboxEntry> findNextEffect(UUID operationId);
 
+  /**
+   * Uses a fresh attempt identity for each invocation, including retries after an uncertain claim
+   * outcome. An existing dispatched or ambiguous result is for exact owner readback, not permission
+   * to send again. Reuse is intentional only after a proven local NOT_DISPATCHED outcome; it
+   * creates a new dispatch ordinal. A durable owner rejection or closure permanently retires that
+   * identity.
+   */
   OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now);
 
   /** False only for an exact dispatch superseded after definitive owner rejection or closure. */

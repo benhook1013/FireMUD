@@ -16,6 +16,7 @@ import yaml
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
+PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
@@ -47,7 +48,7 @@ def relevant_path(path: str) -> bool:
     return bool(MIGRATION_PATH_RE.match(path)) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
-             or re.search(r"/src/main/resources/(?:config/)?application[^/]*\.ya?ml$", path))
+             or PACKAGED_CONFIG_RE.search(path))
     ) or (path.startswith("buildSrc/") and path.endswith((".kt", ".kts")))
 
 
@@ -55,6 +56,8 @@ def current_snapshot(repo_root: Path) -> Snapshot:
     paths = [*repo_root.glob("services/*/build.gradle.kts"),
              *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
              *repo_root.glob("services/*/src/main/resources/config/application*.y*ml"),
+             *repo_root.glob("services/*/src/main/resources/application*.properties"),
+             *repo_root.glob("services/*/src/main/resources/config/application*.properties"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
@@ -175,6 +178,11 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
     resource_root = f"services/{project}/src/main/resources"
+    # Properties and imported files can override the packaged YAML. This static
+    # check qualifies only the configuration sources it can evaluate completely.
+    properties_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.properties")
+    if any(properties_pattern.fullmatch(path) for path in snapshot):
+        return False
     # Config in the packaged config/ directory takes precedence over the root.
     # Within a location Spring Boot gives .yml precedence over .yaml.
     base_paths = [f"{directory}/application.{extension}"
@@ -197,6 +205,10 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
+            if any(path == "spring.config.import" or
+                   path.startswith(("spring.config.import.", "spring.config.import["))
+                   for path in properties):
+                return False
             enabled_path = "spring.flyway.enabled"
             locations_path = "spring.flyway.locations"
             guard_paths = {
@@ -362,6 +374,14 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("packaged property override cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config.removesuffix(".yml") + ".properties": b"spring.flyway.enabled=false\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("unchecked packaged import cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"spring.config.import: classpath:recovery-overrides.yml\n",
+    }, recovery_history, "historical effective migration no longer applied")
     yaml_config = recovery_config.removesuffix(".yml") + ".yaml"
     renamed_recovery_config = {recovery + "V1__journal.sql": b"-- journal", yaml_config: recovery_settings}
     check("equivalent application.yaml recovery history", renamed_recovery_config, recovery_history, None)

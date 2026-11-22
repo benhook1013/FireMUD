@@ -508,8 +508,27 @@ def check_candidate_checkout(step: dict[str, Any]) -> None:
         raise AssertionError("preview candidate must check out the current repository")
     if options.get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or options.get("path") != "candidate":
         raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
+    depth = options.get("fetch-depth")
+    if not re.fullmatch(r"0|[1-9][0-9]*", str(depth)) or int(depth) == 1:
+        raise AssertionError("preview candidate checkout must fetch depth 0 or an explicit integer at least 2 to verify ordered merge parents")
 
 check_candidate_checkout(render_checkouts[1])
+for depth in (0, 2, 3, "2"):
+    check_candidate_checkout({
+        **render_checkouts[1],
+        "with": {**render_checkouts[1]["with"], "fetch-depth": depth},
+    })
+for options in (
+    {key: value for key, value in render_checkouts[1]["with"].items() if key != "fetch-depth"},
+    {**render_checkouts[1]["with"], "fetch-depth": 1},
+):
+    try:
+        check_candidate_checkout({**render_checkouts[1], "with": options})
+    except AssertionError as error:
+        if str(error) != "preview candidate checkout must fetch depth 0 or an explicit integer at least 2 to verify ordered merge parents":
+            raise
+    else:
+        raise AssertionError(f"shallow candidate checkout escaped ordered-parent checking: {options}")
 try:
     check_candidate_checkout({
         **render_checkouts[1],

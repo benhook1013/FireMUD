@@ -6,6 +6,9 @@ self-hosted-runner:
 # actionlint release does not parse it, so suppress only that known parser lag
 # only in workflows explicitly using this documented queue option.
 paths:
+  .github/workflows/admit-pr-runtime-refresh.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
   .github/workflows/static-analysis-summary.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'

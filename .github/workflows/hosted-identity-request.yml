@@ -143,7 +143,9 @@ jobs:
                   length == 1 and .[0].head.sha == $head)
               ' <<<"$workflow_run_json" >/dev/null ||
                 emit_no_action "Ignoring qualified source path without a matching pull request and head."
-            else
+            elif [[ "$SOURCE_EVENT" != repository_dispatch || -z "${DEFAULT_BRANCH:-}" ||
+                ( "$source_path" != ".github/workflows/preview.yml@$DEFAULT_BRANCH" &&
+                  "$source_path" != ".github/workflows/preview.yml@refs/heads/$DEFAULT_BRANCH" ) ]]; then
               require_source_field path '.github/workflows/preview.yml' "$source_path"
             fi
             require_source_field conclusion success "$(jq -r '.conclusion // empty' <<<"$workflow_run_json")"

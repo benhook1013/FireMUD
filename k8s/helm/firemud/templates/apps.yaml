@@ -196,11 +196,12 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- with $.Values.previewStack.jvm }}
+            {{- if ne (empty .javaToolOptions) (empty .mallocArenaMax) }}
+            {{- fail "previewStack.jvm.javaToolOptions and mallocArenaMax must both be set or both be empty" }}
+            {{- end }}
             {{- if .javaToolOptions }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .javaToolOptions | quote }}
-            {{- end }}
-            {{- if .mallocArenaMax }}
             - name: MALLOC_ARENA_MAX
               value: {{ .mallocArenaMax | quote }}
             {{- end }}

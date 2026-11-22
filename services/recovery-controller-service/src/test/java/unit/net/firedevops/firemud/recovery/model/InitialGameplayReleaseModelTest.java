@@ -24,6 +24,8 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterF
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterFenceProof;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterInventory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -510,6 +512,34 @@ class InitialGameplayReleaseModelTest {
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> codec.readEvidence(stringJson))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
+  void persistedEvidenceEnumsRequireNamesRatherThanOrdinals(String replacement) {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    var original = evidence(scope(UUID.randomUUID()));
+    String json = codec.toJson(original);
+    assertThat(codec.readEvidence(json)).isEqualTo(original);
+    for (String pointer :
+        List.of(
+            "/migration/disposition",
+            "/writerFencing/legacyWriterDisposition",
+            "/writerFencing/writerAcknowledgements/0/disposition",
+            "/worldInitialization/ownerService",
+            "/worldInitialization/disposition",
+            "/entityInitialization/ownerService",
+            "/entityInitialization/disposition")) {
+      ObjectNode altered = (ObjectNode) mapper.readTree(json);
+      int fieldStart = pointer.lastIndexOf('/');
+      ((ObjectNode) altered.at(pointer.substring(0, fieldStart)))
+          .set(pointer.substring(fieldStart + 1), mapper.readTree(replacement));
+      String alteredJson = mapper.writeValueAsString(altered);
+      assertThatThrownBy(() -> codec.readEvidence(alteredJson))
+          .as(pointer + " must retain its textual enum name")
+          .isInstanceOf(IllegalStateException.class);
+    }
   }
 
   @Test
