@@ -699,7 +699,7 @@ cat > "$artifact_dir/pr-runtime-provenance.json" <<EOF
 EOF
 
 cat > "$fixture_dir/source-run.json" <<EOF
-{"id":${source_run_id},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
+{"id":${source_run_id},"run_attempt":1,"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
 EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
 {"number":${pr_number},"state":"open","user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
@@ -1047,6 +1047,7 @@ run_validation() {
   CURRENT_REPOSITORY="$repository" \
   PUBLICATION_TRIGGER="$publication_trigger" \
   SOURCE_RUN_ID="$source_run_id" \
+  SOURCE_RUN_ATTEMPT="${SOURCE_RUN_ATTEMPT:-1}" \
   SOURCE_RUN_URL="https://example.test/runs/$source_run_id" \
   SOURCE_RUN_TITLE="$source_title" \
   SOURCE_RUN_EVENT="$source_event" \
@@ -1076,6 +1077,11 @@ PY
 }
 
 run_validation
+if SOURCE_RUN_ATTEMPT=2 run_validation >/dev/null 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an artifact after the resolved source attempt changed" >&2
+  exit 1
+fi
+grep -Fq 'source workflow attempt changed before artifact validation' "$fixture_dir/attempt-error"
 if run_validation pull_request feature/ci "$head_sha" repository_dispatch 2>"$fixture_dir/typed-source-error"; then
   echo "typed publication accepted a pull-request producer" >&2
   exit 1

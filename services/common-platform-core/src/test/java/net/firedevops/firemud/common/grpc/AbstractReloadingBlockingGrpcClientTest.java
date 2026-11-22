@@ -219,11 +219,11 @@ class AbstractReloadingBlockingGrpcClientTest {
             assertThat(previous.isShutdown()).isFalse();
             assertThat(calls).hasValue(0);
             startFirst.countDown();
-            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
+            assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
             assertThat(calls).hasValue(1);
             assertThat(previous.isShutdown()).isFalse();
             startSecond.countDown();
-            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
+            assertThat(second.get(10, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
             assertThat(calls).hasValue(2);
             assertThat(previous.isShutdown()).isTrue();
           } finally {

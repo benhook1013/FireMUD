@@ -1112,7 +1112,7 @@ async function runDispatcher({
             ? inventory
             : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
           const runs = [...suppliedRuns,
-            ...(request.event === "repository_dispatch" ? lateProducers : []),
+            ...lateProducers.filter(run => run.event === request.event),
             ...(request.event === "repository_dispatch" ? postedRuns : [])];
           const createdMatch = /^(.+)\.\.\*$/.exec(request.created ?? "");
           const createdFloor = createdMatch ? Date.parse(createdMatch[1]) : Number.NaN;
@@ -1552,6 +1552,17 @@ async function runDispatcher({
   assert.equal(previewDispatches(refreshedAfterReuse).length, 2,
     "the last-minute producer discovery must not suppress independent preview reconciliation");
   assert.equal(refreshedAfterReuse.errors.length, 0, refreshedAfterReuse.errors.join("\n"));
+  const lateNative = await runDispatcher({
+    tuples: [tuple],
+    lateProducer: producer(tuple, "pull_request", "in_progress", null, {
+      id: 90203, created_at: "2026-01-03T00:00:00Z",
+    }),
+  });
+  assert.deepEqual(numbers(lateNative), [],
+    "a native producer that appears after the first inventory suppresses the exact runtime POST");
+  assert.equal(previewDispatches(lateNative).length, 1,
+    "a newly visible runtime producer leaves independent preview reconciliation available");
+  assert.equal(lateNative.errors.length, 0, lateNative.errors.join("\n"));
   const skippedFirst = await runDispatcher({
     tuples: [tuple, sibling], filesByPr: { "101": [{ filename: "README.md" }] },
   });

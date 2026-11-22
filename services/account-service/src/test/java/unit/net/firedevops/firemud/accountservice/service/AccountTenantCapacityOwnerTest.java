@@ -762,7 +762,7 @@ class AccountTenantCapacityOwnerTest {
               AccountTenantCapacityRepository.CapacityException.class,
               failure -> assertThat(failure.code()).isEqualTo(Failure.IDEMPOTENCY_CONFLICT));
       verify(f.dsl, never()).execute(anyString(), any(Object[].class));
-      verify(f.scopes, never()).findCanonicalEvidenceByTokenHash(anyString());
+      verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
     }
   }
 
