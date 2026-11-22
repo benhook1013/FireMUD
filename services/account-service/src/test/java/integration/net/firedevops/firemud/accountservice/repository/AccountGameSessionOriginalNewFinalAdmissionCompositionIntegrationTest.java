@@ -302,7 +302,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
             Files.createDirectory(
                 temporaryDirectory.resolve("actual-final-pki-" + UUID.randomUUID()));
         pki =
-            LoopbackMtlsTestPki.create(
+            LoopbackMtlsTestPki.createWithDirectSignedLeafRead(
                 pkiDirectory,
                 "Actual final composition test CA",
                 new LoopbackMtlsTestPki.IdentitySpec("account", ACCOUNT, true),
