@@ -1150,21 +1150,25 @@ discovery_session = CommandResponseSession(
     ]
 )
 discovery_results = []
-discovery_responses = run_telnet_smoke_session(
-    "example.test",
-    2323,
-    [
-        ("WORLDS", ["OK WORLDS"], "WORLDS"),
-        ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
-        ("PLAY demo", ["OK PLAY"], "PLAY"),
-        ("LOOK", ["OK LOOK"], "LOOK"),
-    ],
-    1,
-    open_session=lambda: discovery_session,
-    step_results=discovery_results,
-    tls_enabled=False,
-    discovery_selector="demo",
-)
+# The fixture controls the responses. Avoid spending its one-second deadline
+# on scheduler-dependent sleep while checking that the discovery poll retries.
+with patch("smoke_common.time.sleep") as discovery_sleep:
+    discovery_responses = run_telnet_smoke_session(
+        "example.test",
+        2323,
+        [
+            ("WORLDS", ["OK WORLDS"], "WORLDS"),
+            ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+            ("PLAY demo", ["OK PLAY"], "PLAY"),
+            ("LOOK", ["OK LOOK"], "LOOK"),
+        ],
+        1,
+        open_session=lambda: discovery_session,
+        step_results=discovery_results,
+        tls_enabled=False,
+        discovery_selector="demo",
+    )
+discovery_sleep.assert_called()
 assert discovery_session.sent == [
     "WORLDS\r\n",
     "WORLDS\r\n",

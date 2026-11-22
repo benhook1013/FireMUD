@@ -2706,7 +2706,7 @@ require_contains "$smoke_path" 'fullSmokeStep?.conclusion !== "success"'
 require_contains "$smoke_path" 'credential-free full-stack smoke step did not pass'
 require_ordered_sequence \
   "$smoke_path" \
-  'if (fullSmokeJob?.status === "completed") {' \
+  'if (fullSmokeJob?.status === "completed" && !attemptIdentityPending) {' \
   'if (fullSmokeJob?.conclusion !== "success") {' \
   'PR Full-Stack Smoke job did not complete successfully:'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
