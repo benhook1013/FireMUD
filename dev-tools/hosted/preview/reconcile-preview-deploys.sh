@@ -620,12 +620,12 @@ recent_successful_source_handoff() {
   local run_name="Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"
   local pr_title="PR preview ${pr_number}"
 
-  source_inventory_now="$(date -u +%s)"
   if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")" ||
     ! dispatch_source_runs="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")"; then
     echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
     return 2
   fi
+  source_inventory_now="$(date -u +%s)"
   if ! source_candidates="$(printf '%s\n' "$source_runs" "$dispatch_source_runs" | jq -r -s \
     --arg repository "$GITHUB_REPOSITORY" --arg head "$head_sha" \
     --arg default_branch "$DEFAULT_BRANCH" --arg workflow_name "$preview_workflow_name" \
