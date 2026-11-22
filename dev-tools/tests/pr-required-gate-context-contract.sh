@@ -5795,7 +5795,19 @@ async function dispatch(kind) {
           workflow_runs: rows}};
       },
     },
-    pulls: {list: "pulls", listFiles: "files", get: async () => ({data: pr})},
+    pulls: {
+      list: async ({state, base: baseBranch, per_page, page, request}) => {
+        assert.deepEqual([state, baseBranch, per_page, page], ["open", "develop", 100, 1]);
+        assert.ok(request.signal instanceof AbortSignal);
+        return {data: [pr]};
+      },
+      listFiles: async ({pull_number, per_page, page, request}) => {
+        assert.deepEqual([pull_number, per_page, page], [42, 100, 1]);
+        assert.ok(request.signal instanceof AbortSignal);
+        return {data: [{filename: "services/example/build.gradle.kts"}]};
+      },
+      get: async () => ({data: pr}),
+    },
     git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     repos: {
       getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
@@ -5805,9 +5817,6 @@ async function dispatch(kind) {
         posts++;
       },
     },
-  }, paginate: async method => {
-    assert.ok(["pulls", "files"].includes(method), method);
-    return method === "pulls" ? [pr] : [{filename: "services/example/build.gradle.kts"}];
   }};
   await execute(github, {repo: {owner: "example", repo: "firemud"}, payload: {
     repository: {full_name: repository, default_branch: "develop"},
