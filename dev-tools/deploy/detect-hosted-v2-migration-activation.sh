@@ -80,6 +80,7 @@ fi
 game_session_v2="services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"
 automation_v2="services/automation-scripting-service/src/main/resources/db/migration/V2__script_patch_readiness_single_active.sql"
 account_v25="services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
+account_migrations="services/account-service/src/main/resources/db/migration"
 migration_changed=false
 while IFS= read -r changed_path; do
   [[ -z "$changed_path" ]] && continue
@@ -89,7 +90,13 @@ while IFS= read -r changed_path; do
   fi
   if [[ "$changed_path" =~ ^services/[^/]+/src/main/resources/db/migration/.+[.]sql$ ]]; then
     case "$changed_path" in
-      "$game_session_v2"|"$automation_v2"|"$account_v25")
+      "$game_session_v2"|"$automation_v2"|"$account_v25"|\
+      "$account_migrations/V1040.1__account_capacity_origin_decisions.sql"|\
+      "$account_migrations/V1040.2__bound_capacity_origin_refusals.sql"|\
+      "$account_migrations/V1040.3__validate_only_inserted_refusal_budgets.sql"|\
+      "$account_migrations/V1040.4__unique_capacity_origin_attempt.sql"|\
+      "$account_migrations/V1040.5__arbitrate_origin_identity_before_refusal_budget.sql"|\
+      "$account_migrations/V1040.6__index_retained_capacity_refusal_slots.sql")
         # A retained-database activation is safe only for the first addition of a supported
         # migration. Re-editing or deleting a retained migration cannot prove
         # Flyway checksum/data compatibility, so stop before namespace mutation.

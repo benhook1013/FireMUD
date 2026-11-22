@@ -116,6 +116,37 @@ git -C "$repo" commit -qm "Account V25 migration"
 account_v25_sha="$(git -C "$repo" rev-parse HEAD)"
 assert_activation true push "$supported_v2_sha" "$account_v25_sha"
 
+git -C "$repo" switch -qc account-capacity-origin "$account_v25_sha"
+capacity_migration_dir="$repo/services/account-service/src/main/resources/db/migration"
+for migration in \
+  V1040.1__account_capacity_origin_decisions.sql \
+  V1040.2__bound_capacity_origin_refusals.sql \
+  V1040.3__validate_only_inserted_refusal_budgets.sql \
+  V1040.4__unique_capacity_origin_attempt.sql \
+  V1040.5__arbitrate_origin_identity_before_refusal_budget.sql \
+  V1040.6__index_retained_capacity_refusal_slots.sql; do
+  printf '%s\n' '-- capacity origin migration fixture' >"$capacity_migration_dir/$migration"
+done
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account capacity origin migration series"
+capacity_origin_sha="$(git -C "$repo" rev-parse HEAD)"
+namespace_for_head "$account_v25_sha"
+assert_activation true push "$account_v25_sha" "$capacity_origin_sha"
+assert_activation true workflow_dispatch "" "$capacity_origin_sha"
+
+namespace_for_head "$capacity_origin_sha"
+printf '%s\n' '-- unsupported later capacity migration' >"$capacity_migration_dir/V1040.7__unqualified.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Unsupported later capacity origin migration"
+assert_rejected push "$capacity_origin_sha" "$(git -C "$repo" rev-parse HEAD)"
+
+git -C "$repo" switch -qc edited-capacity-origin "$capacity_origin_sha"
+printf '%s\n' '-- retained migration changed' >>"$capacity_migration_dir/V1040.4__unique_capacity_origin_attempt.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Edit retained capacity uniqueness migration"
+assert_rejected push "$capacity_origin_sha" "$(git -C "$repo" rev-parse HEAD)"
+
+git -C "$repo" switch -q account-v25
 namespace_for_head "$account_v25_sha"
 echo '-- edited retained migration' >>"$repo/services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
 git -C "$repo" add .

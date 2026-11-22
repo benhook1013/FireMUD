@@ -971,7 +971,14 @@ const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-$
 async function scenario(kind, event = "pull_request") {
   let now = 1000, snapshots = 0, reads = 0;
   let qualifiedAttemptReads = 0, observedBaseMove = false, observedAttemptMove = false, waitedMillis = 0;
-  let typedListReads = 0;
+  let typedListReads = 0, listedAttempt = 1, postAttemptIdentityReads = 0;
+  const sparseAttempts = {
+    "ordinary-missing-attempt": undefined, "ordinary-null-attempt": null,
+    "ordinary-persistent-missing-attempt": undefined, "ordinary-persistent-null-attempt": null,
+    "ordinary-invalid-attempt": "1", "ordinary-zero-attempt": 0,
+    "ordinary-negative-attempt": -1, "ordinary-fractional-attempt": 1.5,
+  };
+  const finalGetDrift = kind.startsWith("ordinary-final-get-");
   const ordinary = kind.startsWith("ordinary-");
   const movedBase = "e".repeat(40), movedMerge = "f".repeat(40);
   const failures = [], refs = [];
@@ -1033,11 +1040,16 @@ async function scenario(kind, event = "pull_request") {
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      const moved = kind === "ordinary-final-base-drift" && qualifiedAttemptReads > 0;
+      const afterFinalGet = finalGetDrift && qualifiedAttemptReads >= 2;
+      if (afterFinalGet) postAttemptIdentityReads++;
+      const moved = kind === "ordinary-final-base-drift" && qualifiedAttemptReads > 0 ||
+        kind === "ordinary-final-get-base-drift" && afterFinalGet;
       observedBaseMove ||= moved;
       observedAttemptMove ||= kind === "ordinary-final-attempt-drift" && qualifiedAttemptReads > 0;
-      return {data: {state: "open", head: {sha: head},
-        base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: moved ? movedBase : base},
+      return {data: {state: afterFinalGet && kind === "ordinary-final-get-closed" ? "closed" : "open",
+        head: {sha: afterFinalGet && kind === "ordinary-final-get-head" ? "e".repeat(40) : head},
+        base: {ref: kind === "stale-final" && reads > 3 ||
+          afterFinalGet && kind === "ordinary-final-get-retarget" ? "other" : "develop", sha: moved ? movedBase : base},
         merge_commit_sha: moved ? movedMerge : merge}};
     }},
     git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: observedBaseMove ? movedBase : base}}})},
@@ -1063,6 +1075,7 @@ async function scenario(kind, event = "pull_request") {
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    if (ordinary) assert.equal(listedAttempt, 1, "attempt proof cannot precede complete typed list identity");
     exactAttemptReads++;
     if (kind === "transient-exact-attempt" && exactAttemptReads <= 4) {
       throw Object.assign(new Error("temporary exact-attempt lookup"), {status: 502});
@@ -1079,6 +1092,7 @@ async function scenario(kind, event = "pull_request") {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    if (ordinary) assert.equal(listedAttempt, 1, "attempt jobs cannot precede complete typed list identity");
     snapshots++;
     if (kind === "lagging-cleanup" && snapshots <= 2) {
       return [{...job, steps: job.steps.filter(step => step.name !== "Stop smoke stack")}];
@@ -1118,8 +1132,18 @@ async function scenario(kind, event = "pull_request") {
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
-    if (ordinary && ++typedListReads === 1 && kind === "ordinary-sparse-head") {
-      yield {data: [{...source, head_sha: undefined}]}; return;
+    if (ordinary) {
+      typedListReads++;
+      if (Object.hasOwn(sparseAttempts, kind) && (typedListReads === 1 ||
+          kind.startsWith("ordinary-persistent-") || kind.includes("invalid") ||
+          kind.includes("zero") || kind.includes("negative") || kind.includes("fractional"))) {
+        listedAttempt = sparseAttempts[kind];
+        yield {data: [{...source, run_attempt: listedAttempt}]}; return;
+      }
+      listedAttempt = 1;
+      if (typedListReads === 1 && kind === "ordinary-sparse-head") {
+        yield {data: [{...source, head_sha: undefined}]}; return;
+      }
     }
     if (event === "repository_dispatch" && input.event === "pull_request") {
       yield {data: [{...source, event: "pull_request", head_sha: head, conclusion: "cancelled"}]}; return;
@@ -1129,7 +1153,8 @@ async function scenario(kind, event = "pull_request") {
   const clock = {now: () => now, parse: Date.parse};
   await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
     clock, (callback, duration) => {now += duration; waitedMillis += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots, exactAttemptReads, observedBaseMove, observedAttemptMove, waitedMillis};
+  return {failures, refs, snapshots, exactAttemptReads, observedBaseMove, observedAttemptMove, waitedMillis,
+    typedListReads, postAttemptIdentityReads};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -1173,11 +1198,43 @@ async function scenario(kind, event = "pull_request") {
   const sparseHead = await scenario("ordinary-sparse-head", "repository_dispatch");
   assert.deepEqual(sparseHead.failures, [], "a temporarily missing typed list head waits for a complete run row");
   assert(sparseHead.waitedMillis > 0);
+  for (const kind of ["ordinary-missing-attempt", "ordinary-null-attempt"]) {
+    const sparse = await scenario(kind, "repository_dispatch");
+    assert.deepEqual(sparse.failures, [], `${kind} must re-list before reading exact attempt proof`);
+    assert.equal(sparse.typedListReads, 2);
+    assert.equal(sparse.waitedMillis, 15000);
+    assert(sparse.snapshots > 0 && sparse.exactAttemptReads > 0);
+  }
+  for (const kind of ["ordinary-persistent-missing-attempt", "ordinary-persistent-null-attempt"]) {
+    const sparse = await scenario(kind, "repository_dispatch");
+    assert.equal(sparse.failures.length, 1);
+    assert.match(sparse.failures[0], /without the typed run-list attempt or head SHA/);
+    assert.equal(sparse.waitedMillis, 120000, "sparse list identity retains the existing snapshot allowance");
+    assert.equal(sparse.snapshots, 0);
+    assert.equal(sparse.exactAttemptReads, 0);
+  }
+  for (const kind of ["ordinary-invalid-attempt", "ordinary-zero-attempt", "ordinary-negative-attempt", "ordinary-fractional-attempt"]) {
+    const invalid = await scenario(kind, "repository_dispatch");
+    assert.deepEqual(invalid.failures, ["Typed runtime smoke producer lacks an exact attempt."]);
+    assert.equal(invalid.waitedMillis, 0);
+    assert.equal(invalid.snapshots, 0);
+    assert.equal(invalid.exactAttemptReads, 0);
+  }
   for (const kind of ["ordinary-final-base-drift", "ordinary-final-attempt-drift"]) {
     const moved = await scenario(kind, "repository_dispatch");
     assert(kind.endsWith("base-drift") ? moved.observedBaseMove : moved.observedAttemptMove);
     assert.equal(moved.failures.length, 1);
     assert.match(moved.failures[0], /^Timed out waiting for the exact runtime-images/);
+  }
+  const finalGetBase = await scenario("ordinary-final-get-base-drift", "repository_dispatch");
+  assert(finalGetBase.observedBaseMove && finalGetBase.postAttemptIdentityReads > 0);
+  assert.equal(finalGetBase.failures.length, 1);
+  assert.match(finalGetBase.failures[0], /^Timed out waiting for the exact runtime-images/,
+    "base movement during the final GET cannot accept the old typed proof");
+  for (const change of ["closed", "head", "retarget"]) {
+    const obsolete = await scenario(`ordinary-final-get-${change}`, "repository_dispatch");
+    assert(obsolete.postAttemptIdentityReads > 0, `${change} during the final GET must reach the repeated PR fence`);
+    assert.deepEqual(obsolete.failures, [], "obsolete gates exit rather than failing the new PR identity");
   }
   console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");
 })().catch(error => {console.error(error); process.exitCode = 1;});
@@ -3963,6 +4020,10 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
       if (options.lookupError) throw options.lookupError;
       return replacement;
     }, (_label, call) => call(), {paginate: async (route, input) => {
+      assert.ok(Number.isSafeInteger(replacement.run_attempt) && replacement.run_attempt > 0,
+        "sparse or invalid list attempts cannot read attempt-bound jobs");
+      assert.ok(["success", "failure"].includes(replacement.conclusion),
+        "sparse or invalid list conclusions cannot read terminal attempt jobs");
       assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
       assert.equal(input.run_id, replacement.id); assert.equal(input.attempt_number, replacement.run_attempt);
       return options.noProducer ? [] : [selectedCandidate];
@@ -3997,9 +4058,9 @@ async function failedProof(error, event = "pull_request") {
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
-async function selectedProducerFinalFence(event, moved = false, superseded = false, rerunDuringIdentity = false) {
+async function selectedProducerFinalFence(event, moved = false, superseded = false, rerunDuringIdentity = false, duringFinal = null) {
   const outputs = [], failures = [], required = [];
-  let proofs = 0, sleeps = 0, attemptChanged = false;
+  let proofs = 0, sleeps = 0, attemptChanged = false, afterAttempt = false;
   const core = {warning: () => {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
   core.summary = {addHeading() {return this;}, addRaw() {return this;}, async write() {}};
   const execute = new Function("fullSmokeJob", "matching", "canonicalSmokeJobName", "currentIdentity",
@@ -4012,22 +4073,67 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
     TerminalGitHubRequestError, core, async (_label, current) => {
       required.push(current);
       attemptChanged = rerunDuringIdentity;
+      if (afterAttempt && ["closed", "head", "retarget"].includes(duringFinal)) return {obsolete: true};
       return {...identity, canonicalPlayEligible: true,
         ...(current ? {sourceEvent: "repository_dispatch"} : {}),
-        ...(current && moved ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
+        ...(current && (moved || afterAttempt && duringFinal === "base")
+          ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); },
-    async () => !attemptChanged, resolve => {sleeps++; resolve();}, 0);
+    async () => {afterAttempt = true; return !attemptChanged;}, resolve => {sleeps++; resolve();}, 0);
   assert.equal(proofs, superseded ? 2 : 1);
   assert.equal(sleeps, superseded || rerunDuringIdentity ? 1 : 0);
-  assert.deepEqual(required, Array(proofs - (superseded ? 1 : 0)).fill(event === "repository_dispatch"));
+  const fenceCount = event === "repository_dispatch" && !moved && !rerunDuringIdentity ? 2 : 1;
+  assert.deepEqual(required, Array((proofs - (superseded ? 1 : 0)) * fenceCount).fill(event === "repository_dispatch"));
   assert.deepEqual(failures, []);
-  assert.equal(outputs.length, (event === "repository_dispatch" && moved) || rerunDuringIdentity ? 0 : 1,
+  assert.equal(outputs.length, (event === "repository_dispatch" && (moved || duringFinal)) || rerunDuringIdentity ? 0 : 1,
     "an exception must retain its exact attempt through the final live identity read");
 }
 // Execute the failed-run branch so proof errors retain the deterministic failure diagnostic.
 const legacyFailedStart = script.indexOf('if (matching.conclusion !== "success")');
 const legacyFailedEnd = script.indexOf("async function fenceCompletedRuntimeIdentity", legacyFailedStart);
 const legacyFailedBranch = script.slice(legacyFailedStart, legacyFailedEnd);
+// Both ordinary recovery and the unchanged exception must fence the PR again
+// after the final attempt GET, not merely before that awaited request.
+async function recoveredFinalFence(disposition, change = null) {
+  let finalAttempts = 0, postAttemptFences = 0, resumedPolling = false;
+  const outputs = [], failures = [];
+  const selected = {...source, id: 98, event: "pull_request", conclusion: "failure"};
+  const selectedIdentity = {...identity, sourceEvent: "pull_request", canonicalPlayEligible: true};
+  const proofRun = {id: 99, run_attempt: 2, conclusion: "success"};
+  const core = {info() {}, warning() {}, setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
+  core.summary = {addHeading() {return this;}, addRaw() {return this;}, async write() {}};
+  const execute = new Function("matching", "repositoryName", "github", "owner", "repo", "canonicalSmokeJobName",
+    "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure", "isCurrentPullRequestObsolete",
+    "TerminalGitHubRequestError", "core", "verifyFailedPullCanonicalRefresh", "context", "resolveCurrentIdentity",
+    "identityKey", "positiveInteger", "isCurrentCanonicalAttempt", "setTimeout", "sleepMs", "onResume",
+    `return (async () => { let requireCurrentIdentity = false, iterations = 0;
+      let absentRefreshKey = null, discoveredRefreshKey = null, absentRefreshObservedAt = null;
+      let incompleteRefreshKey = null, incompleteRefreshObservedAt = null, sameTupleCancellationDeadline = null;
+      smokeGatePolling: while (iterations++ < 1) { ${legacyFailedBranch} break; }
+      onResume(); })();`);
+  await execute(selected, repositoryName, {paginate: async () => [candidate]}, "benhook1013", "FireMUD",
+    canonicalSmokeJobName, selectedIdentity, (_label, call) => call(), async () => false, async () => false,
+    TerminalGitHubRequestError, core, async () => ({status: disposition, run: proofRun}),
+    {payload: {pull_request: {head: {repo: {full_name: repositoryName}}}}}, async (_label, live) => {
+      assert.equal(live, true);
+      if (finalAttempts > 0) {
+        postAttemptFences++;
+        if (["closed", "head", "retarget"].includes(change)) return {obsolete: true};
+        if (change === "unavailable") return null;
+      }
+      return {...selectedIdentity, sourceEvent: "repository_dispatch",
+        ...(finalAttempts > 0 && change === "base" ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
+    }, selected => JSON.stringify([selected.baseRef, selected.baseSha, selected.headSha, selected.mergeSha, selected.sourceEvent]),
+    value => Number.isSafeInteger(value) && value > 0, async selected => {
+      assert.deepEqual(selected, proofRun); finalAttempts++; return true;
+    }, resolve => resolve(), 0, () => {resumedPolling = true;});
+  assert.equal(finalAttempts, 1);
+  assert.equal(postAttemptFences, 1);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
+  assert.equal(resumedPolling, ["base", "unavailable"].includes(change),
+    "changed or unavailable final identity resumes polling; obsolete identity exits");
+}
 async function failedLegacyProof(stage, error, event = "pull_request") {
   const warnings = [], failures = [], outputs = [];
   const github = {paginate: async () => {
@@ -4147,6 +4253,10 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         : status === "nonterminal-step" ? {candidate: {steps: candidate.steps.map(step => step.name === "Stop smoke stack" ? {...step, status: "in_progress", conclusion: null} : step)}}
         : status === "missing-job" ? {noProducer: true}
         : status === "pending-job" ? {candidate: {status: "in_progress", conclusion: null}}
+        : status === "missing-attempt" ? {replacement: {run_attempt: undefined}}
+        : status === "null-attempt" ? {replacement: {run_attempt: null}}
+        : status === "missing-conclusion" ? {replacement: {conclusion: undefined}}
+        : status === "null-conclusion" ? {replacement: {conclusion: null}}
         : {replacement: {status, conclusion: status === "completed" ? "success" : null,
           run_attempt: statuses[0] === "superseded" && polls > 1 ? 3 : 2}},
         selectedRun, selectedIdentity, true)).accepted;
@@ -4279,11 +4389,12 @@ async function movedCancellation(ordinaryProof, listedOldReplacement = false) {
   assert.deepEqual(outputs, [], "ordinary proof never publishes an exception output");
   assert.deepEqual(failures, ordinaryProof ? [] : ["Moved cancelled-run recovery did not supply authenticated smoke proof."]);
 }
-async function sameTupleCancellation(replacementStatus, proofSequence = [], sparseAttempt = false) {
-  let now = 0, proofReads = 0, runtimeJobReads = 0, sleeps = 0;
+async function sameTupleCancellation(replacementStatus, proofSequence = [], sparseAttempt = false, options = {}) {
+  let now = 0, proofReads = 0, runtimeJobReads = 0, sleeps = 0, listedReplacements = 0;
   const sameIdentity = {...identity, sourceEvent: "pull_request"};
   const old = {...source, id: 98, event: "pull_request", status: "completed", conclusion: "cancelled",
-    head_sha: identity.headSha, head_branch: "feature", repository: {full_name: "other/repo"},
+    head_sha: identity.headSha, head_branch: "feature",
+    repository: {full_name: options.recoverableOriginal ? repositoryName : "other/repo"},
     display_title: `Build Runtime Images secure-pr-artifact pr-3390 base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`};
   const replacement = {...source, id: 99, event: "repository_dispatch", status: replacementStatus,
     conclusion: replacementStatus === "completed" ? "success" : null, head_sha: workflowSha,
@@ -4318,13 +4429,27 @@ async function sameTupleCancellation(replacementStatus, proofSequence = [], spar
     async () => true, isTransientGitHubFailure, hasPendingCanonicalSmokeTerminalEvidence, async () => false,
     async () => false, TerminalGitHubRequestError, core, async () => sameIdentity,
     selected => JSON.stringify(selected), resolve => {sleeps++; now += 10; resolve();}, 10,
-    {now: () => now}, 0, 1000, 1, async event => event === "pull_request" ? old : replacement,
+    {now: () => now}, 0, options.overallMs ?? 1000, 1, async event => {
+      if (event === "pull_request") return old;
+      if (now < (options.visibleAt ?? 0)) return null;
+      if (options.hiddenAfter !== undefined && now >= options.hiddenAfter) return null;
+      if (options.completeAt !== undefined) {
+        replacement.status = now < options.completeAt ? "in_progress" : "completed";
+        replacement.conclusion = replacement.status === "completed" ? "success" : null;
+      }
+      if (options.listedAttempts) {
+        replacement.run_attempt = options.listedAttempts[Math.min(listedReplacements++, options.listedAttempts.length - 1)];
+      }
+      return replacement;
+    },
     "3390", "test identity", 50,
     {payload: {pull_request: {head: {ref: "feature", repo: {full_name: repositoryName}}}}},
     200, 100, 10, value => Number.isSafeInteger(value) && value > 0, async () => true,
     async (run, selected) => {
       proofReads++;
       assert.equal(run, replacement);
+      assert.ok(Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
+      assert.ok(["success", "failure"].includes(run.conclusion));
       assert.deepEqual(selected, sameIdentity);
       return proofSequence[Math.min(proofReads - 1, proofSequence.length - 1)] ?? false;
     });
@@ -4414,16 +4539,17 @@ function markerAccepted(overrides = {}) {
   assert.deepEqual(await sameTupleProof("skipped", false, true), {result: false, verifiers: ["ordinary"]});
   const unprovenInProgressReplacement = await sameTupleCancellation("in_progress");
   assert.equal(unprovenInProgressReplacement.failures.length, 1);
-  assert.match(unprovenInProgressReplacement.failures[0], /no freshly proven exact replacement/);
-  assert.equal(unprovenInProgressReplacement.now, 50,
-    "an in-progress speculative replacement cannot extend the original cancellation deadline");
+  assert.match(unprovenInProgressReplacement.failures[0], /^Timed out waiting for the exact/);
+  assert.equal(unprovenInProgressReplacement.now, 1000,
+    "an identified in-progress replacement uses only the existing overall Smoke allowance");
   assert.equal(unprovenInProgressReplacement.proofReads, 0);
   assert.equal(unprovenInProgressReplacement.runtimeJobReads, 0,
     "an unproven replacement does not take over the cancelled original");
   const sparseReplacement = await sameTupleCancellation("completed", ["snapshot-pending"]);
   assert.equal(sparseReplacement.failures.length, 1);
-  assert.equal(sparseReplacement.now, 50,
-    "sparse exact replacement snapshots remain bounded by the original cancellation deadline");
+  assert.match(sparseReplacement.failures[0], /within the snapshot convergence allowance/);
+  assert.equal(sparseReplacement.now, 100,
+    "sparse exact replacement proof retains its own terminal metadata bound, not the discovery-only deadline");
   assert.equal(sparseReplacement.runtimeJobReads, 0);
   const sparseReplacementAttempt = await sameTupleCancellation("completed", [], true);
   assert.equal(sparseReplacementAttempt.failures.length, 1);
@@ -4443,6 +4569,53 @@ function markerAccepted(overrides = {}) {
   assert.match(invalidReplacement.failures[0], /contradictory identity or invalid terminal smoke proof/);
   assert.equal(invalidReplacement.runtimeJobReads, 0,
     "invalid terminal replacement proof remains fail-closed rather than falling back to unverified jobs");
+  const noReplacement = await sameTupleCancellation("completed", ["ordinary"], false, {visibleAt: Infinity});
+  assert.equal(noReplacement.now, 50);
+  assert.match(noReplacement.failures[0], /has no exact repository_dispatch replacement/);
+  assert.equal(noReplacement.proofReads, 0, "a no-show still exhausts the discovery-only allowance");
+  const recoverableNoShow = await sameTupleCancellation("completed", ["ordinary"], false,
+    {visibleAt: Infinity, recoverableOriginal: true});
+  assert.equal(recoverableNoShow.now, 200, "eligible originals retain the longer existing discovery allowance");
+  assert.match(recoverableNoShow.failures[0], /has no exact repository_dispatch replacement/);
+  const disappearedTerminal = await sameTupleCancellation("completed", ["snapshot-pending"], false, {hiddenAfter: 10});
+  assert.equal(disappearedTerminal.now, 100);
+  assert.match(disappearedTerminal.failures[0], /within the snapshot convergence allowance/);
+  assert.equal(disappearedTerminal.proofReads, 1,
+    "a temporarily absent list row cannot reset an observed terminal metadata window");
+  const lostAttemptIdentity = await sameTupleCancellation("completed", ["snapshot-pending"], false,
+    {listedAttempts: [2, null]});
+  assert.equal(lostAttemptIdentity.now, 100);
+  assert.match(lostAttemptIdentity.failures[0], /within the snapshot convergence allowance/);
+  assert.equal(lostAttemptIdentity.proofReads, 1,
+    "a sparse row after positive identification neither reads proof early nor resets the terminal window");
+  const tooLateReplacement = await sameTupleCancellation("completed", ["ordinary"], false, {visibleAt: 60});
+  assert.equal(tooLateReplacement.now, 50);
+  assert.match(tooLateReplacement.failures[0], /has no exact repository_dispatch replacement/);
+  for (const options of [
+    {visibleAt: 40, completeAt: 180}, {visibleAt: 50, completeAt: 180},
+    {visibleAt: 190, completeAt: 400, recoverableOriginal: true},
+  ]) {
+    const lateCompletion = await sameTupleCancellation("in_progress", ["snapshot-pending", "ordinary"], false,
+      options);
+    assert.deepEqual(lateCompletion.failures, [], "a visible exact replacement can finish after discovery expires");
+    assert.deepEqual(lateCompletion.outputs, []);
+    assert.equal(lateCompletion.now, options.completeAt + 10, "terminal proof may converge within its separate bounded allowance");
+    assert.equal(lateCompletion.proofReads, 2);
+    assert.equal(lateCompletion.runtimeJobReads, 0, "only freshly verified exact proof becomes authoritative");
+  }
+  const overOverallLimit = await sameTupleCancellation("in_progress", ["ordinary"], false,
+    {visibleAt: 40, completeAt: 180, overallMs: 150});
+  assert.equal(overOverallLimit.now, 150);
+  assert.match(overOverallLimit.failures[0], /^Timed out waiting for the exact/);
+  assert.equal(overOverallLimit.proofReads, 0, "discovery cannot extend the overall Smoke cap");
+  const supersedingReplacement = await sameTupleCancellation("completed", ["attempt-superseded", "ordinary"], false,
+    {listedAttempts: [2, 3]});
+  assert.deepEqual(supersedingReplacement.failures, []);
+  assert.equal(supersedingReplacement.proofReads, 2, "a freshly listed superseding exact attempt may recover");
+  const regressedReplacement = await sameTupleCancellation("completed", ["attempt-superseded", "attempt-superseded", "ordinary"], false,
+    {listedAttempts: [2, 3, 2]});
+  assert.match(regressedReplacement.failures[0], /regressed to an older run or attempt/);
+  assert.equal(regressedReplacement.proofReads, 2, "an older attempt cannot replace an already observed newer attempt");
   assert.equal((await recoveredFailure({original: {conclusion: "timed_out"}})).accepted, true);
   await pendingRefreshCaller(["queued", "completed"], false, {originalConclusion: "timed_out"});
   for (const siblingStatus of ["in_progress", "queued"]) {
@@ -4477,6 +4650,12 @@ function markerAccepted(overrides = {}) {
   }
   await pendingRefreshCaller(["missing-step", "completed"]);
   await pendingRefreshCaller(["nonterminal-step", "completed"]);
+  await pendingRefreshCaller(["missing-attempt", "completed"]);
+  await pendingRefreshCaller(["null-attempt", "completed"]);
+  await pendingRefreshCaller(["missing-attempt", "null-attempt", "missing-attempt", "completed"], false, {snapshotExpires: true});
+  await pendingRefreshCaller(["missing-conclusion", "completed"]);
+  await pendingRefreshCaller(["null-conclusion", "completed"]);
+  await pendingRefreshCaller(["missing-conclusion", "null-conclusion", "missing-conclusion", "completed"], false, {snapshotExpires: true});
   await pendingRefreshCaller(["missing-step", "missing-step", "missing-step", "completed"], false, {snapshotExpires: true});
   const missingCleanup = candidate.steps.filter(step => step.name !== "Stop smoke stack");
   assert.equal((await recoveredFailure({candidate: {steps: missingCleanup}, mutateProof: data => {
@@ -4524,7 +4703,31 @@ function markerAccepted(overrides = {}) {
   for (const status of ["queued", "in_progress", "waiting", "pending", "requested"]) {
     assert.deepEqual(await recoveredFailure({replacement: {status, conclusion: null}}),
       {accepted: "pending", verified: 0, queries: 1});
+    assert.equal((await recoveredFailure({replacement: {status, conclusion: "success", run_attempt: undefined}})).accepted, false,
+      "a missing attempt must not hide a contradictory nonterminal conclusion");
   }
+  for (const run_attempt of [undefined, null]) {
+    assert.deepEqual(await recoveredFailure({replacement: {run_attempt}}),
+      {accepted: "snapshot-pending", verified: 0, queries: 1},
+      "a missing typed replacement attempt waits without reading attempt proof");
+  }
+  for (const conclusion of [undefined, null]) {
+    assert.deepEqual(await recoveredFailure({replacement: {run_attempt: 2, status: "completed", conclusion}}),
+      {accepted: "snapshot-pending", verified: 0, queries: 1},
+      "an exact completed typed attempt with missing conclusion must wait without reading job proof");
+    assert.deepEqual(await recoveredFailure({replacement: {run_attempt: 0, conclusion}}),
+      {accepted: false, verified: 0, queries: 1}, "a missing conclusion cannot hide an invalid supplied attempt");
+  }
+  for (const conclusion of ["", false, 0, {}, "cancelled", "timed_out"]) {
+    assert.deepEqual(await recoveredFailure({replacement: {conclusion}}),
+      {accepted: false, verified: 0, queries: 1}, "an invalid present conclusion cannot become pending");
+  }
+  for (const run_attempt of [0, -1, 1.5, "2", true, {}]) {
+    assert.deepEqual(await recoveredFailure({replacement: {run_attempt}}),
+      {accepted: false, verified: 0, queries: 1}, "an invalid present attempt cannot become pending or read proof");
+  }
+  assert.equal((await recoveredFailure({mutateProof: data => {data.source.run_attempt = 3;}})).accepted, false,
+    "an already-positive listed attempt still must match the exact attempt proof");
   assert.deepEqual(await recoveredFailure({headRepository: "fork/FireMUD", absent: true}),
     {accepted: false, verified: 0, queries: 0});
   await pendingRefreshCaller(["completed"], false, {labelRemoved: true});
@@ -4604,6 +4807,14 @@ function markerAccepted(overrides = {}) {
   }
   await selectedProducerFinalFence("repository_dispatch", false, true);
   await selectedProducerFinalFence("repository_dispatch", false, false, true);
+  for (const change of ["base", "closed", "head", "retarget"]) {
+    await selectedProducerFinalFence("repository_dispatch", false, false, false, change);
+  }
+  for (const disposition of ["ordinary", "verified"]) {
+    for (const change of [null, "base", "closed", "head", "retarget", "unavailable"]) {
+      await recoveredFinalFence(disposition, change);
+    }
+  }
   await pendingRefreshCaller(["completed"], true, {finalIdentity: {baseSha: "d".repeat(40)}});
   await pendingRefreshCaller(["completed"], true, {finalIdentity: {mergeSha: "e".repeat(40)}});
   await pendingRefreshCaller(["completed", "completed"], false, {
@@ -4802,6 +5013,9 @@ Path(sys.argv[2] + ".admission").write_text(json.dumps(
     {name: publisher["jobs"][name]["if"] for name in ("source", "reconcile-failed-pr-runtime")}
 ))
 Path(sys.argv[2]).write_text(next(step["with"]["script"] for step in job["steps"] if "github-script" in step.get("uses", "")))
+Path(sys.argv[2] + ".dispatcher").write_text(next(
+    step["with"]["script"] for step in runtime["jobs"]["dispatch-pr-base-refreshes"]["steps"] if "github-script" in step.get("uses", "")
+))
 PY
 node - "$smoke_clock_fixture.reconcile" <<'NODE'
 const assert = require("node:assert/strict"), fs = require("node:fs");
@@ -4827,7 +5041,7 @@ const reconciler = "reconcile-failed-pr-runtime";
 const validation = {name: validationName, path: validationPath};
 for (const conclusion of ["success", "failure", "timed_out", "cancelled"]) {
   assert.equal(admits("source", {...validation, conclusion}), false, conclusion);
-  assert.equal(admits(reconciler, {...validation, conclusion}), conclusion === "cancelled", conclusion);
+  assert.equal(admits(reconciler, {...validation, conclusion}), ["success", "cancelled"].includes(conclusion), conclusion);
   assert.equal(admits("source", {conclusion}), conclusion === "success", conclusion);
   assert.equal(admits(reconciler, {conclusion}), conclusion !== "success", conclusion);
 }
@@ -4835,6 +5049,7 @@ const qualified = path => `${path}@refs/heads/develop`;
 assert.equal(admits("source", {path: qualified(runtimePath)}), true);
 assert.equal(admits(reconciler, {path: qualified(runtimePath), conclusion: "failure"}), true);
 assert.equal(admits(reconciler, {...validation, path: qualified(validationPath), conclusion: "cancelled"}), true);
+assert.equal(admits(reconciler, {...validation, path: qualified(validationPath), conclusion: "success"}), true);
 assert.equal(admits("source", {path: ".github/workflows/untrusted.yml"}), false);
 assert.equal(admits(reconciler, {...validation, path: ".github/workflows/untrusted.yml", conclusion: "cancelled"}), false);
 assert.equal(admits(reconciler, {...validation, conclusion: "cancelled", event: "push"}), false);
@@ -4854,33 +5069,63 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     display_title: `CI — Validation pr-42 base-${base} head-${head}`};
   const wake = kind.startsWith("wake-");
   if (wake) kind = kind.slice("wake-".length);
-  const cancelledCase = kind.startsWith("cancel-");
+  const metadataWake = kind.startsWith("metadata-wake-");
+  const cancelledCase = kind.startsWith("cancel-") || metadataWake;
   if (kind === "qualified-runtime") source.path = qualified(runtimePath);
-  const olderCi = cancelledCase && kind !== "cancel-older-failed" ? {...ci, conclusion: "success"} : ci;
+  const olderCi = cancelledCase && !["cancel-older-failed", "metadata-wake-older-failed"].includes(kind) ? {...ci, conclusion: "success"} : ci;
   const newerCancelled = {...ci, id: 91, conclusion: "cancelled",
     path: kind === "cancel-qualified" ? qualified(validationPath) : validationPath};
+  const newerMetadata = {...ci, id: 92, conclusion: "success",
+    path: kind === "metadata-wake-qualified" ? qualified(validationPath) : validationPath};
   const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40),
     created_at: shared.refreshCreatedAt ?? source.created_at};
-  const event = structuredClone(wake ? newerCancelled : source);
+  const event = structuredClone(wake ? metadataWake ? newerMetadata : newerCancelled : source);
   event.name = event.display_title;
   if (kind === "malformed-callback-path") event.path += "@refs/heads/a..b";
   if (kind === "cancel-wake-wrong-id") event.workflow_id = source.workflow_id;
   if (kind === "cancel-wake-stale-head") event.head_sha = base;
   if (kind === "cancel-wake-fork") event.head_repository.full_name = "fork/repo";
   if (kind === "cancel-wake-nonterminal") event.status = "in_progress";
+  if (kind === "metadata-wake-wrong-workflow") event.workflow_id = source.workflow_id;
+  if (kind === "metadata-wake-wrong-attempt") event.run_attempt = 2;
+  if (kind === "metadata-wake-stale-head") event.head_sha = base;
+  if (kind === "metadata-wake-foreign") event.repository.full_name = "foreign/repo";
+  if (kind === "metadata-wake-fork") event.head_repository.full_name = "foreign/repo";
+  if (kind === "metadata-wake-malformed-path") event.path += "@refs/heads/a..b";
   if (kind === "typed-callback") event.event = "repository_dispatch";
   if (kind === "nested-callback") event.event = "workflow_run";
   if (kind === "fork") event.head_repository.full_name = "fork/repo";
   if (kind === "success") event.conclusion = "success";
   const startClock = Date.parse(source.created_at);
   const sameSecond = ["same-second", "ambiguous-same-second"].includes(kind);
-  let clock = startClock + (sameSecond ? 200 : 0), tupleReads = 0, sourceReads = 0, metadataReads = 0, ciInventoryReads = 0, refreshInventoryReads = 0;
+  let clock = startClock + (sameSecond ? 200 : 0), tupleReads = 0, sourceReads = 0, metadataReads = 0, wakeReads = 0, ciInventoryReads = 0, refreshInventoryReads = 0;
+  let observedCancelledJobs = [];
   const github = {rest: {
     actions: {
+      listJobsForWorkflowRunAttempt: async ({run_id, attempt_number, per_page, page}) => {
+        assert.equal(run_id, 91);
+        assert.equal(attempt_number, 1);
+        assert.equal(per_page, 100);
+        assert.equal(page, 1);
+        const jobs = structuredClone(observedCancelledJobs);
+        if (kind === "cancel-inventory-disagrees") jobs[1].conclusion = "failure";
+        return {data: {jobs, total_count: jobs.length + (kind === "cancel-inventory-short" ? 1 : 0)}};
+      },
       getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
         ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
         : {id: 7, path: runtimePath, name: source.name}}),
       getWorkflowRun: async ({run_id}) => {
+        if (metadataWake && run_id === 92) {
+          wakeReads++;
+          if (kind === "metadata-wake-missing" || kind === "metadata-wake-late-missing" && wakeReads >= 8) return {data: null};
+          if (kind === "metadata-wake-unavailable" || kind === "metadata-wake-late-unavailable" && wakeReads >= 8) {
+            throw new Error("wake unavailable");
+          }
+          return {data: {...newerMetadata,
+            ...(kind === "metadata-wake-late-rerun" && wakeReads >= 8 ? {run_attempt: 2} : {}),
+            ...(kind === "metadata-wake-late-path" && wakeReads >= 8 ? {path: qualified(validationPath)} : {})}};
+        }
+        if (metadataWake && run_id === 93) return {data: {...ci, id: 93, status: "in_progress", conclusion: null}};
         if (run_id === 91) metadataReads++;
         if (cancelledCase && run_id === 90) return {data: olderCi};
         if (cancelledCase && run_id === 91) return {data: {...newerCancelled,
@@ -4894,6 +5139,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         return {data: {...source, ...((kind === "stale-attempt" || kind === "late-rerun" && sourceReads > 1) ? {run_attempt: 2} : {})}};
       },
       listWorkflowRuns: async ({workflow_id, page, event: runEvent, created}) => {
+        (shared.inventoryPages ??= []).push({workflow_id, page, event: runEvent, post: shared.posts});
         if (workflow_id === "ci.yml") ciInventoryReads++;
         let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
           : shared.visible ? [refresh] : [];
@@ -4903,6 +5149,12 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         }
         if (workflow_id === "ci.yml" && cancelledCase) runs = kind === "cancel-wake-not-inventory"
           ? [olderCi] : kind === "cancel-wake-newer-ci" ? [{...ci, id: 92, status: "in_progress"}, newerCancelled, olderCi] : [newerCancelled, olderCi];
+        if (workflow_id === "ci.yml" && metadataWake) {
+          runs = [newerMetadata, newerCancelled, olderCi];
+          if (kind === "metadata-wake-only") runs = [newerMetadata];
+          if (kind === "metadata-wake-absent" || kind === "metadata-wake-late-absent" && ciInventoryReads > 1) runs = [newerCancelled, olderCi];
+          if (kind === "metadata-wake-newer-pending") runs.unshift({...ci, id: 93, status: "in_progress", conclusion: null});
+        }
         if (workflow_id === "ci.yml" && ciInventoryReads > 1 && kind.startsWith("late-ci-")) {
           runs = kind === "late-ci-absent" ? [] : [{...ci, id: 91, ...(kind === "late-ci-pending" ? {status: "in_progress"} : {})}, ci];
         }
@@ -4924,6 +5176,19 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           }
           if (kind === "post-read-forbidden") throw Object.assign(new Error("visibility forbidden"), {status: 403});
           if (kind === "post-read-incomplete") return {data: {total_count: 1, workflow_runs: []}};
+          if (kind.startsWith("visibility-")) {
+            (shared.visibilityPages ??= []).push(page);
+            const drift = kind === "visibility-drift-timeout" || shared.observations <= 2;
+            if (drift) {
+              const noise = Array.from({length: 101}, (_, i) => ({...refresh, id: 1000 + i, display_title: "unrelated"}));
+              const duplicate = kind.includes("duplicate");
+              runs = page === 1 ? [refresh, ...noise.slice(0, 99)] : duplicate ? [refresh] : noise.slice(99);
+              if (kind === "visibility-contradictory-duplicate" && page === 2) runs[0] = {...refresh, head_sha: "e".repeat(40)};
+              if (kind === "visibility-malformed-provenance" && page === 2) runs[0] = {...refresh, workflow_id: 999};
+              return {data: {total_count: page === 1 || duplicate ? 101 : kind === "visibility-malformed-total" ? "102" : 102,
+                workflow_runs: runs}};
+            }
+          }
           if (kind === "ambiguous-same-second") runs = [refresh, {...refresh, id: refresh.id + 1}];
           if (kind === "ambiguous-visible" && clock - startClock >= 5000) {
             shared.visible = true;
@@ -4940,7 +5205,11 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           assert(Number.isFinite(floor));
           runs = runs.filter(run => Date.parse(run.created_at) >= floor);
         }
-        return {data: {total_count: kind === "incomplete" ? 1001 : kind === "at-cap" ? 1000 : runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100)}};
+        if (["at-cap", "below-cap"].includes(kind) && workflow_id === "ci.yml") {
+          const count = kind === "at-cap" ? 1000 : 999;
+          runs = [ci, ...Array.from({length: count - 1}, (_, i) => ({...ci, id: 1000 + i, display_title: "unrelated"}))];
+        }
+        return {data: {total_count: kind === "incomplete" ? 1001 : runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100)}};
       },
     },
     pulls: {get: async () => { tupleReads++; return {data: {state: "open",
@@ -4967,6 +5236,31 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   }, paginate: async (_route, request) => {
     assert.equal(_route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     assert.equal(request.attempt_number, 1);
+    if (metadataWake && request.run_id === 92) {
+      const expression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
+      const gate = {id: 32, run_id: 92, run_attempt: 1, head_sha: head,
+        name: kind === "metadata-wake-expression" ? expression : kind === "metadata-wake-wrapped" ? "${{ " + expression + " }}" : "PR Metadata Edit (Validation Gate)",
+        workflow_name: "CI — Validation", status: "completed", conclusion: "skipped",
+        check_run_url: `https://api.github.com/repos/${repository}/check-runs/32`};
+      if (kind === "metadata-wake-job-attempt") gate.run_attempt = 2;
+      if (kind === "metadata-wake-job-run") gate.run_id = 91;
+      if (kind === "metadata-wake-job-head") gate.head_sha = base;
+      if (kind === "metadata-wake-job-url") gate.check_run_url = "https://api.github.com/repos/foreign/repo/check-runs/32";
+      if (kind === "metadata-wake-job-success") gate.conclusion = "success";
+      if (kind === "metadata-wake-job-pending") gate.status = "in_progress";
+      if (kind === "metadata-wake-plain-success") return [];
+      if (kind === "metadata-wake-mixed") return [gate, {...gate, id: 33, name: "Validation Gate"}];
+      if (kind.startsWith("metadata-wake-preservation") || kind === "metadata-wake-substantive-success") {
+        Object.assign(gate, {name: "Validation Gate", conclusion: "success", steps: [
+          {name: "Preserve successful required gate on metadata-only edit", status: "completed",
+            conclusion: kind === "metadata-wake-substantive-success" ? "skipped" : kind === "metadata-wake-preservation-failed" ? "failure" : "success"},
+          {name: "Enforce validation success", status: "completed",
+            conclusion: kind === "metadata-wake-substantive-success" ? "success" : "skipped"},
+        ]});
+        if (kind === "metadata-wake-preservation-duplicate") gate.steps.push({...gate.steps[0]});
+      }
+      return [gate];
+    }
     if ((kind.startsWith("new-meta") || kind === "late-ci-new-metadata") && request.run_id === 91) {
       const expression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
       const job = {id: 31, run_id: 91, run_attempt: 1, head_sha: head,
@@ -5004,6 +5298,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         run_attempt: kind === "cancel-upstream-wrong-attempt" ? 2 : 1,
         check_run_url: `https://api.github.com/repos/${repository}/check-runs/31`,
         conclusion: ({
+          "metadata-wake-masked-failure": "failure",
           "cancel-upstream-failure": "failure", "cancel-upstream-timeout": "timed_out",
           "cancel-upstream-action": "action_required", "cancel-upstream-startup": "startup_failure",
           "cancel-upstream-in-flight": "cancelled",
@@ -5017,7 +5312,8 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         {...gate, name: "PR Metadata Edit (Validation Gate)", conclusion: "skipped", steps: []},
         {...upstream, conclusion: "failure"},
       ];
-      return [gate, upstream];
+      observedCancelledJobs = kind === "cancel-gate-only" ? [gate] : [gate, upstream];
+      return observedCancelledJobs;
     }
     const metadata = kind === "metadata" || ["metadata-newer", "old-meta-rerun", "late-ci-old-metadata"].includes(kind) && request.run_id === 91;
     return [{id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
@@ -5047,6 +5343,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   await assert.rejects(run("ambiguous-same-second", ambiguousSameSecond), /dispatch outcome is ambiguous/);
   assert.equal(ambiguousSameSecond.posts, 1, "ambiguous visibility must never repeat the POST");
   assert.equal(await run("cancel-before-enforcement"), 1);
+  for (const kind of ["cancel-gate-only", "cancel-inventory-short", "cancel-inventory-disagrees"]) {
+    assert.equal(await run("wake-" + kind), 0, "incomplete cancellation proof cannot reveal older CI: " + kind);
+  }
   assert.equal(await run("qualified-runtime"), 1);
   assert.equal(await run("wake-cancel-qualified"), 1);
   assert.equal(await run("malformed-callback-path"), 0);
@@ -5058,6 +5357,21 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   assert.equal(await run("pending-newer", delayedWake), 0, "original completion cannot ignore pending CI");
   assert.equal(await run("wake-cancel-before-enforcement", delayedWake), 1, "exact cancelled CI wake restores liveness");
   assert.equal(await run("wake-cancel-before-enforcement", delayedWake), 1, "replayed wake does not redispatch");
+  for (const kind of ["native", "qualified", "expression", "wrapped", "preservation"]) {
+    assert.equal(await run("wake-metadata-wake-" + kind), 1, "exact positive metadata wake reveals older substantive success: " + kind);
+  }
+  assert.equal(await run("wake-metadata-wake-native", delayedWake), 1, "metadata wake cannot redispatch an already visible refresh");
+  for (const kind of ["wrong-workflow", "wrong-attempt", "stale-head", "foreign", "fork", "malformed-path",
+    "late-rerun", "late-path", "missing", "late-missing", "only", "absent", "late-absent", "newer-pending", "older-failed", "masked-failure",
+    "job-attempt", "job-run", "job-head", "job-url", "job-success", "job-pending", "plain-success", "mixed",
+    "preservation-failed", "preservation-duplicate", "substantive-success"]) {
+    assert.equal(await run("wake-metadata-wake-" + kind), 0, "metadata wake fails closed: " + kind);
+  }
+  for (const kind of ["unavailable", "late-unavailable"]) {
+    const state = {visible: false, posts: 0};
+    await assert.rejects(run("wake-metadata-wake-" + kind, state), /wake unavailable/);
+    assert.equal(state.posts, 0);
+  }
   for (const scenario of ["cancel-wake-wrong-id", "cancel-wake-stale-head", "cancel-wake-fork",
     "cancel-wake-nonterminal", "cancel-rerun", "cancel-upstream-step-failed", "cancel-older-failed",
     "cancel-wake-not-inventory", "cancel-wake-newer-ci", "cancel-wake-newer-original", "cancel-wake-no-original"]) {
@@ -5097,7 +5411,35 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     const state = {visible: false, posts: 0};
     await assert.rejects(run(scenario, state));
     assert.equal(state.posts, ["incomplete", "at-cap"].includes(scenario) ? 0 : 1, "never retry unknown POST");
+    if (scenario === "at-cap") assert.deepEqual(state.inventoryPages.filter(call => call.workflow_id === "ci.yml").map(call => call.page), [1],
+      "a coherent 1,000-row inventory is refused on page one, not because its page is short");
   }
+  const belowCap = {visible: false, posts: 0};
+  assert.equal(await run("below-cap", belowCap), 1);
+  assert.deepEqual(belowCap.inventoryPages.filter(call => call.workflow_id === "ci.yml").map(call => call.page),
+    [...Array.from({length: 10}, (_, i) => i + 1), ...Array.from({length: 10}, (_, i) => i + 1)],
+    "the comparable 999-row inventory must paginate completely on both selections");
+  for (const scenario of ["visibility-total-drift", "visibility-duplicate-drift"]) {
+    const state = {visible: false, posts: 0};
+    assert.equal(await run(scenario, state), 1);
+    assert.deepEqual(state.visibilityPages, [1, 2, 1], "discard all pages and restart visibility at page one");
+    assert.equal(state.posts, 1);
+  }
+  for (const [scenario, reason] of [
+    ["visibility-contradictory-duplicate", /contradictory duplicate/],
+    ["visibility-malformed-provenance", /conflicting native provenance/],
+    ["visibility-malformed-total", /inventory is incomplete/],
+  ]) {
+    const state = {visible: false, posts: 0};
+    await assert.rejects(run(scenario, state), reason);
+    assert.deepEqual(state.visibilityPages, [1, 2], "malformed evidence must not restart visibility");
+    assert.equal(state.posts, 1);
+  }
+  const drifting = {visible: false, posts: 0};
+  await assert.rejects(run("visibility-drift-timeout", drifting), /accepted but visibility is unknown/);
+  assert.equal(drifting.posts, 1);
+  assert.deepEqual(drifting.visibilityPages, Array.from({length: 48}, (_, i) => i % 2 + 1),
+    "persistent drift retains the existing 120-second budget and lock, not a fresh deadline");
   const readTransient = {visible: false, posts: 0};
   assert.equal(await run("post-read-transient", readTransient), 1);
   assert.equal(readTransient.observations, 2);
@@ -5133,5 +5475,104 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   const shared = {visible: false, posts: 0};
   await run("valid", shared); await run("valid", shared); assert.equal(shared.posts, 1);
   console.log("Failed original runtime reconciliation contracts passed (offline serialized model, not GitHub delivery proof).");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+NODE
+
+# The dispatcher must use the same whole-inventory visibility restart, never a POST retry.
+node - "$smoke_clock_fixture.reconcile.dispatcher" <<'NODE'
+const assert = require("node:assert/strict"), fs = require("node:fs");
+const execute = new Function("github", "context", "core", "Date", "setTimeout",
+  `return (async () => {${fs.readFileSync(process.argv[2], "utf8")}\n})()`);
+async function dispatch(kind) {
+  const repository = "example/firemud", base = "b".repeat(40), head = "a".repeat(40), merge = "c".repeat(40);
+  const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+  const pr = {number: 42, state: "open", mergeable: true, mergeable_state: "clean", merge_commit_sha: merge,
+    base: {ref: "develop", sha: base, repo: {full_name: repository}},
+    head: {ref: "feature", sha: head, repo: {full_name: repository}},
+    user: {login: "renovate[bot]"}, labels: [], changed_files: 1}; // No independent preview POST in this model.
+  const start = Date.parse("2026-11-18T00:00:00Z");
+  let now = start, posts = 0, observations = 0;
+  const pages = [], failures = [], warnings = [];
+  const refresh = {id: 110, workflow_id: 7, run_attempt: 1, event: "repository_dispatch",
+    display_title: title, name: "Build Runtime Images", path: ".github/workflows/runtime-images.yml",
+    repository: {full_name: repository}, head_repository: {full_name: repository}, head_branch: "develop",
+    head_sha: "d".repeat(40), created_at: new Date(start).toISOString(), status: "queued", conclusion: null};
+  const noise = Array.from({length: 101}, (_, i) => ({...refresh, id: 1000 + i, display_title: "unrelated"}));
+  const github = {rest: {
+    actions: {
+      getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
+      listWorkflowRuns: async ({page, event}) => {
+        if (!posts && kind !== "preflight-drift") return {data: {total_count: 0, workflow_runs: []}};
+        if (!posts && event !== "pull_request") return {data: {total_count: 0, workflow_runs: []}};
+        if (posts) observations++;
+        pages.push(page);
+        const drift = kind === "preflight-drift" || kind === "persistent-drift" || observations <= 2;
+        if (!drift) return {data: {total_count: 1, workflow_runs: [refresh]}};
+        const duplicate = kind.includes("duplicate");
+        let rows = page === 1 ? [refresh, ...noise.slice(0, 99)] : duplicate ? [refresh] : noise.slice(99);
+        if (kind === "contradictory-duplicate" && page === 2) rows = [{...refresh, head_sha: "e".repeat(40)}];
+        if (kind === "malformed-provenance" && page === 2) rows[0] = {...refresh, workflow_id: 999};
+        if (kind === "same-page-duplicate" && page === 1) rows[1] = refresh;
+        return {data: {total_count: page === 1 || duplicate ? 101 : kind === "malformed-total" ? "102" : 102,
+          workflow_runs: rows}};
+      },
+    },
+    pulls: {list: "pulls", listFiles: "files", get: async () => ({data: pr})},
+    git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
+    repos: {
+      getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
+      createDispatchEvent: async ({event_type, request}) => {
+        assert.equal(event_type, "pr-runtime-base-refresh");
+        assert.equal(request.retries, 0);
+        posts++;
+      },
+    },
+  }, paginate: async method => {
+    assert.ok(["pulls", "files"].includes(method), method);
+    return method === "pulls" ? [pr] : [{filename: "services/example/build.gradle.kts"}];
+  }};
+  await execute(github, {repo: {owner: "example", repo: "firemud"}, payload: {
+    repository: {full_name: repository, default_branch: "develop"},
+    workflow_run: {event: "push", head_branch: "develop", head_sha: base, updated_at: new Date(start).toISOString()},
+  }}, {info: () => {}, warning: text => warnings.push(text), setFailed: text => failures.push(text)},
+  class extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }, (callback, delay) => { now += delay; callback(); });
+  return {posts, pages, failures, warnings, elapsed: now - start};
+}
+(async () => {
+  for (const kind of ["total-drift", "duplicate-drift"]) {
+    const result = await dispatch(kind);
+    assert.equal(result.posts, 1);
+    assert.deepEqual(result.pages, [1, 2, 1], "restart the actual dispatcher inventory from page one");
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.elapsed, 5000);
+  }
+  for (const [kind, reason, pages] of [
+    ["contradictory-duplicate", /contradictory duplicate/, [1, 2]],
+    ["malformed-provenance", /untrusted native workflow identity/, [1, 2]],
+    ["malformed-total", /inventory is malformed/, [1, 2]],
+    ["same-page-duplicate", /duplicate or invalid run IDs/, [1]],
+  ]) {
+    const result = await dispatch(kind);
+    assert.equal(result.posts, 1);
+    assert.deepEqual(result.pages, pages, "malformed visibility evidence is terminal");
+    assert.equal(result.failures.length, 1);
+    assert.match(result.failures[0], reason);
+    assert.equal(result.elapsed, 0, "no retry or early successful lock release on malformed evidence");
+  }
+  const persistent = await dispatch("persistent-drift");
+  assert.equal(persistent.posts, 1);
+  assert.equal(persistent.elapsed, 120000, "drift cannot renew the observation deadline or release the lock early");
+  assert.equal(persistent.failures.length, 1);
+  assert.match(persistent.failures[0], /visibility is unknown/);
+  assert.deepEqual(persistent.pages, Array.from({length: 48}, (_, i) => i % 2 + 1));
+  const preflight = await dispatch("preflight-drift");
+  assert.equal(preflight.posts, 0, "pre-POST inventory drift remains fail closed, not retryable");
+  assert.deepEqual(preflight.pages, [1, 2]);
+  assert.equal(preflight.failures.length, 1);
+  assert.match(preflight.failures[0], /inventory shifted/);
+  console.log("Runtime dispatcher visibility drift contracts passed (offline model only).");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
