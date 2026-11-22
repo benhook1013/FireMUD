@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "6482868075dd050438a52b0f2cf2537f7a469d21cabf2759b79b30aa4466e0a9";
+            const canonicalRuntimeWorkflowSha256 = "094ece17d1b7418151b808959028fea2584f434629e1c5f1e5bfaed3cebeeb3c";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -930,10 +930,14 @@ jobs:
                   step.name === "Run credential-free full-stack smoke"
                 );
                 if (smokeSteps.length > 1) return false;
-                if (smokeSteps.length === 0) return pendingExactSnapshot();
-                if (smokeSteps[0].conclusion != null && smokeSteps[0].conclusion !== "success") return false;
-                if (smokeSteps[0].status !== "completed" ||
-                    smokeSteps[0].conclusion == null) return pendingExactSnapshot();
+                // Only the fingerprinted terminal guard can attest an omitted probe
+                // row. Older definitions still need affirmative step evidence.
+                if (smokeSteps.length === 0 && !currentDefinition) return pendingExactSnapshot();
+                if (smokeSteps.length === 1) {
+                  if (smokeSteps[0].conclusion != null && smokeSteps[0].conclusion !== "success") return false;
+                  if (smokeSteps[0].status !== "completed" ||
+                      smokeSteps[0].conclusion == null) return pendingExactSnapshot();
+                }
                 for (const name of [
                   "Stop smoke stack",
                   "Require successful runtime smoke and authenticated cleanup",
@@ -1232,6 +1236,22 @@ jobs:
               }
             }
 
+            // Cancellation/timeout grants waiting time, never smoke proof. Even that bounded
+            // recovery requires an attributable native typed producer for this tuple.
+            function isReplaceableTypedProducer(run, identity) {
+              const title = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
+                `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
+              return run.event === "repository_dispatch" && run.status === "completed" &&
+                ["cancelled", "timed_out"].includes(run.conclusion) && positiveInteger(run.id) && positiveInteger(run.run_attempt) &&
+                positiveInteger(run.workflow_id) && run.repository?.full_name === repositoryName &&
+                run.head_repository?.full_name === repositoryName &&
+                isRuntimeSourceWorkflowPath(run.path, run.event, prNumber) && run.display_title === title &&
+                typeof context.payload.repository?.default_branch === "string" &&
+                context.payload.repository.default_branch.length > 0 &&
+                run.head_branch === context.payload.repository.default_branch &&
+                typeof run.head_sha === "string" && /^[0-9a-f]{40}$/.test(run.head_sha);
+            }
+
             async function verifyFailedPullCanonicalRefresh(run, identity) {
               if (repositoryName !== "benhook1013/FireMUD" ||
                   context.payload.pull_request.head.repo?.full_name !== repositoryName ||
@@ -1250,6 +1270,9 @@ jobs:
               // before the asynchronous producer can finish within its existing deadline.
               if (["queued", "in_progress", "waiting", "pending", "requested"].includes(replacement.status)) {
                 return replacement.conclusion == null ? "pending" : false;
+              }
+              if (replacement.status === "completed" && ["cancelled", "timed_out"].includes(replacement.conclusion)) {
+                return isReplaceableTypedProducer(replacement, identity) ? replacement.conclusion : false;
               }
               if (replacement.status !== "completed" ||
                   (replacement.conclusion != null && !["success", "failure"].includes(replacement.conclusion))) return false;
@@ -1524,9 +1547,12 @@ jobs:
             let absentRefreshObservedAt = null;
             let requireCurrentIdentity = false;
             let cancelledRunId = null;
+            let cancelledRunAttempt = null;
             let cancelledRunObservedAt = null;
             let cancelledReplacement = null;
             let cancelledRecoveryMoved = false;
+            let cancelledTypedRecoveryKey = null;
+            let cancelledTypedRecoveryObservedAt = null;
             async function verifySameTupleReplacementProof(replacement, identity) {
               if (replacement.event !== "repository_dispatch" ||
                   !positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) ||
@@ -1615,20 +1641,25 @@ jobs:
                 currentIdentity.sourceEvent === "pull_request" &&
                 cancelledRunId !== null &&
                 (matching?.id !== cancelledRunId ||
+                  matching.run_attempt !== cancelledRunAttempt ||
                   matching.status !== "completed" ||
                   matching.conclusion !== "cancelled")
               ) {
                 cancelledRunId = null;
+                cancelledRunAttempt = null;
                 cancelledRunObservedAt = null;
                 cancelledReplacement = null;
+                incompleteRefreshKey = null;
+                incompleteRefreshObservedAt = null;
               }
               if (
                 currentIdentity.sourceEvent === "pull_request" &&
                 matching?.status === "completed" &&
                 matching.conclusion === "cancelled"
               ) {
-                if (cancelledRunId !== matching.id) {
+                if (cancelledRunId !== matching.id || cancelledRunAttempt !== matching.run_attempt) {
                   cancelledRunId = matching.id;
+                  cancelledRunAttempt = matching.run_attempt;
                   cancelledRunObservedAt = Date.now();
                   cancelledReplacement = null;
                 }
@@ -1654,7 +1685,8 @@ jobs:
                   (replacement.id > cancelledReplacement.id ||
                     (replacement.id === cancelledReplacement.id &&
                       replacement.run_attempt > cancelledReplacement.run_attempt));
-                if (cancelledReplacement?.terminalObservedAt != null && !supersedingReplacement &&
+                if (!["cancelled", "timed_out"].includes(replacement?.conclusion) &&
+                    cancelledReplacement?.terminalObservedAt != null && !supersedingReplacement &&
                     Date.now() - cancelledReplacement.terminalObservedAt >= completedSnapshotTimeoutMs) {
                   core.setFailed("Cancelled runtime replacement did not expose complete exact smoke proof within the snapshot convergence allowance.");
                   return;
@@ -1671,7 +1703,8 @@ jobs:
                       continue smokeGatePolling;
                     }
                   }
-                  if (!cancelledReplacement && Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
+                  if ((!cancelledReplacement || cancelledReplacement.awaitingReplacement) &&
+                      Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
                     if (await isCurrentPullRequestObsolete("Stopping obsolete cancelled-run smoke gate for")) {
                       return;
                     }
@@ -1693,7 +1726,8 @@ jobs:
                 const liveIdentity = await resolveCurrentIdentity("Fencing listed cancelled-run replacement", true);
                 if (liveIdentity?.obsolete) return;
                 if (!liveIdentity) {
-                  if (!cancelledReplacement && Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
+                  if ((!cancelledReplacement || cancelledReplacement.awaitingReplacement) &&
+                      Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
                     core.setFailed("Cancelled runtime replacement lacks a verified live PR tuple.");
                     return;
                   }
@@ -1726,6 +1760,23 @@ jobs:
                     replacement.id !== cancelledReplacement.id ||
                     replacement.run_attempt !== cancelledReplacement.run_attempt)) {
                   cancelledReplacement = {id: replacement.id, run_attempt: replacement.run_attempt, terminalObservedAt: null};
+                }
+                if (replacement.status === "completed" && ["cancelled", "timed_out"].includes(replacement.conclusion)) {
+                  if (!isReplaceableTypedProducer(replacement, currentIdentity)) {
+                    core.setFailed("Cancelled or timed-out typed runtime producer has an invalid source identity.");
+                    return;
+                  }
+                  cancelledReplacement.awaitingReplacement = true;
+                  cancelledReplacement.terminalObservedAt = null;
+                  incompleteRefreshKey = null;
+                  incompleteRefreshObservedAt = null;
+                  if (Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
+                    core.setFailed("Cancelled runtime replacement has no newer exact producer within the recovery allowance.");
+                    return;
+                  }
+                  core.info(`Exact typed replacement ${replacement.id}/${replacement.run_attempt} ended ${replacement.conclusion}; waiting for a newer exact producer.`);
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
                 }
                 if (cancelledReplacement?.id === replacement.id &&
                     (replacement.status === "completed" || replacement.status == null)) {
@@ -1880,6 +1931,45 @@ jobs:
               }
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
+                if (matching.event === "repository_dispatch" && matching.status === "completed" &&
+                    matching.conclusion == null) {
+                  if (matching.run_attempt != null && !positiveInteger(matching.run_attempt)) {
+                    core.setFailed("Typed runtime smoke producer lacks an exact attempt.");
+                    return;
+                  }
+                  // A sparse run-list row must be re-listed; a jobs read cannot
+                  // supply its conclusion. Null and absent share one bounded age.
+                  const snapshotKey = `typed-list-conclusion:${matching.id}:${matching.run_attempt ?? "missing"}:${identityKey(currentIdentity)}`;
+                  if (incompleteRefreshKey !== snapshotKey) {
+                    incompleteRefreshKey = snapshotKey;
+                    incompleteRefreshObservedAt = Date.now();
+                  }
+                  if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                    core.setFailed("Completed typed runtime producer lacks a conclusion within the snapshot convergence allowance.");
+                    return;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, snapshotSleepMs));
+                  continue smokeGatePolling;
+                }
+                if (matching.event === "repository_dispatch" && matching.status === "completed" &&
+                    ["cancelled", "timed_out"].includes(matching.conclusion)) {
+                  if (!isReplaceableTypedProducer(matching, currentIdentity)) {
+                    core.setFailed("Cancelled or timed-out typed runtime producer has an invalid source identity.");
+                    return;
+                  }
+                  const recoveryKey = identityKey(currentIdentity);
+                  if (cancelledTypedRecoveryKey !== recoveryKey) {
+                    cancelledTypedRecoveryKey = recoveryKey;
+                    cancelledTypedRecoveryObservedAt = Date.now();
+                  }
+                  if (Date.now() - cancelledTypedRecoveryObservedAt >= refreshDiscoveryTimeoutMs) {
+                    core.setFailed("Cancelled or timed-out typed runtime producer has no newer exact producer within the recovery allowance.");
+                    return;
+                  }
+                  core.info(`Exact typed runtime producer ${matching.id}/${matching.run_attempt} ended ${matching.conclusion}; waiting for a newer exact producer.`);
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
                 if (matching.status !== "completed") {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue;
@@ -1927,10 +2017,13 @@ jobs:
                       }
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
-                      if (isTransientGitHubFailure(error)) {
+                      if (isTransientGitHubFailure(error) && (matching.event !== "pull_request" ||
+                          context.payload.pull_request.head.repo?.full_name !== repositoryName)) {
                         await new Promise((resolve) => setTimeout(resolve, sleepMs));
                         continue smokeGatePolling;
                       }
+                      // Unavailable original proof cannot attest that original, but
+                      // must not starve the independent exact-refresh proof below.
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
                     }
                     try {
@@ -1955,7 +2048,9 @@ jobs:
                         }
                         const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
                         const refreshKey = `${matching.id}:${identityKey(currentIdentity)}`;
-                        if (refreshProof === "absent" && discoveredRefreshKey !== refreshKey) {
+                        const replaceableRefresh = ["cancelled", "timed_out"].includes(refreshProof);
+                        if (replaceableRefresh) discoveredRefreshKey = null;
+                        if ((refreshProof === "absent" && discoveredRefreshKey !== refreshKey) || replaceableRefresh) {
                           const missingKey = refreshKey;
                           if (absentRefreshKey !== missingKey) {
                             absentRefreshKey = missingKey;
@@ -1986,7 +2081,7 @@ jobs:
                           incompleteRefreshKey = null;
                           incompleteRefreshObservedAt = null;
                         }
-                        if (refreshProof === "pending" || refreshProof === "absent" || snapshotPending) {
+                        if (refreshProof === "pending" || refreshProof === "absent" || replaceableRefresh || snapshotPending) {
                           core.info("Exact canonical refresh is pending; continuing within the existing smoke-gate deadline.");
                           await new Promise((resolve) => setTimeout(resolve, sleepMs));
                           continue smokeGatePolling;
@@ -2161,10 +2256,14 @@ jobs:
                   }
                   let proof;
                   try {
-                    const ordinaryProducerVerified = matching.conclusion === "success" &&
-                      (await verifyCanonicalSmokeProducer(matching, null, currentIdentity, true)) === true;
+                    const ordinaryProducerProof = matching.conclusion === "success" &&
+                      await verifyCanonicalSmokeProducer(matching, null, currentIdentity, true);
+                    const ordinaryProducerVerified = ordinaryProducerProof === true;
                     proof = ordinaryProducerVerified ? "ordinary" :
                       await verifyKnownPlayFailure(matching, null, currentIdentity, true, true);
+                    if (proof === false && ["snapshot-pending", "attempt-superseded"].includes(ordinaryProducerProof)) {
+                      proof = ordinaryProducerProof;
+                    }
                     if (proof === "ordinary" && !ordinaryProducerVerified) {
                       const ordinaryProof = await verifyCanonicalSmokeProducer(matching, null, currentIdentity, true);
                       if (ordinaryProof !== true) {
@@ -2354,9 +2453,9 @@ jobs:
                       const markerNeedsVerification = !(fullSmokeJob.steps ?? []).some((step) =>
                         step.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
                         step.status === "completed" && step.conclusion != null);
-                      if (fullSmokeStep?.status === "completed" && (markerNeedsVerification ||
+                      if ((fullSmokeStep?.status === "completed" && markerNeedsVerification) ||
                           (canonicalProof !== "snapshot-pending" &&
-                          !hasPendingCanonicalSmokeTerminalEvidence(fullSmokeJob)))) break;
+                          !hasPendingCanonicalSmokeTerminalEvidence(fullSmokeJob))) break;
                     } else if (fullSmokeStep?.status === "completed") {
                       // The native pull_request path keeps its existing step-proof behavior.
                       break;

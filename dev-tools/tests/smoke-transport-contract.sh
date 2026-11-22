@@ -1150,9 +1150,18 @@ discovery_session = CommandResponseSession(
     ]
 )
 discovery_results = []
-# The fixture controls the responses. Avoid spending its one-second deadline
-# on scheduler-dependent sleep while checking that the discovery poll retries.
-with patch("smoke_common.time.sleep") as discovery_sleep:
+positive_discovery_clock = [0.0]
+
+
+def advance_positive_discovery_clock(duration):
+    positive_discovery_clock[0] += duration
+
+
+# Both the deadline and polling delay are fixture-owned; a paused CI process
+# cannot exhaust the budget between these scripted WORLDS responses.
+with patch("smoke_common.time.time", side_effect=lambda: positive_discovery_clock[0]), patch(
+    "smoke_common.time.sleep", side_effect=advance_positive_discovery_clock
+) as discovery_sleep:
     discovery_responses = run_telnet_smoke_session(
         "example.test",
         2323,
@@ -1168,7 +1177,8 @@ with patch("smoke_common.time.sleep") as discovery_sleep:
         tls_enabled=False,
         discovery_selector="demo",
     )
-discovery_sleep.assert_called()
+discovery_sleep.assert_called_once_with(0.5)
+assert positive_discovery_clock == [0.5]
 assert discovery_session.sent == [
     "WORLDS\r\n",
     "WORLDS\r\n",
@@ -1235,7 +1245,10 @@ for transient_error in (
         transient_discovery_sessions.append(session)
         return session
 
-    with patch("smoke_common.time.sleep") as discovery_sleep:
+    positive_discovery_clock[0] = 0.0
+    with patch("smoke_common.time.time", side_effect=lambda: positive_discovery_clock[0]), patch(
+        "smoke_common.time.sleep", side_effect=advance_positive_discovery_clock
+    ) as discovery_sleep:
         run_telnet_smoke_session(
             "example.test",
             2323,
@@ -1259,6 +1272,7 @@ for transient_error in (
         "PLAY demo\r\n",
     ]
     discovery_sleep.assert_called_once_with(0.5)
+    assert positive_discovery_clock == [0.5]
 
 
 discovery_clock = [0.0]
