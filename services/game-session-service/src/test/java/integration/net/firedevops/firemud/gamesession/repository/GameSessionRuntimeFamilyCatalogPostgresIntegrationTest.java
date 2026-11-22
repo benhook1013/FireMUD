@@ -97,7 +97,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(27);
+      assertThat(catalog.catalogEpoch()).isEqualTo(28);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -228,7 +228,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1070",
               "catalog-installation:1071",
               "catalog-installation:1072",
-              "catalog-installation:1073")
+              "catalog-installation:1073",
+              "catalog-installation:1074")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -257,7 +258,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1070:")
                       || identity.contains(":1071:")
                       || identity.contains(":1072:")
-                      || identity.contains(":1073:"));
+                      || identity.contains(":1073:")
+                      || identity.contains(":1074:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -800,7 +802,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(26);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(28);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -962,7 +964,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1070",
             "1071",
             "1072",
-            "1073")) {
+            "1073",
+            "1074")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -985,7 +988,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           "INSERT INTO "
               + f.history
               + "(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
-              + " VALUES(10000,'1074','controlled later migration','SQL','V1074__probe.sql',1,current_user,0,true)");
+              + " VALUES(10000,'1075','controlled later migration','SQL','V1075__probe.sql',1,current_user,0,true)");
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
@@ -1017,7 +1020,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1070",
             "1071",
             "1072",
-            "1073")) {
+            "1073",
+            "1074")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "

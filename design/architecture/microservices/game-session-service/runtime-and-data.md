@@ -165,7 +165,7 @@ The protected reservation retains the complete Account protection and original o
 
 The completed `RUNNING` row version is immutable provenance and a lower bound for later lease-bound decisions. An ordinary owner save may advance the current row version; each decision still requires the actual current `RUNNING` state, a version no earlier than completion, and every original launch, target, protection and terminal binding. A stopped runtime or changed source does not acquire authority through a later version number.
 
-For the run-owned Compose fixture, the lease-bound decision uses the fixture policy seal and retained runtime completion. The runtime fence locks the exact current fixture row and checks its completion version, committed attempt, current OPEN pointer and matching audit identity. The same fence applies when the candidate becomes provisional and when its final receipt commits.
+For the run-owned Compose fixture, the lease-bound decision uses the fixture policy seal and retained runtime completion. The runtime fence locks the exact current fixture row, checks that its version is at least the completion version, and verifies the committed attempt, current OPEN pointer and matching audit identity. The same fence applies when the candidate becomes provisional and when its final receipt commits.
 
 ### Persisted actor admission boundary
 
