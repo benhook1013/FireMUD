@@ -277,7 +277,15 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
             } else {
               var finalOwner =
                   new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                      proof.redis, proof.scripts, proof.clock, proof.tags);
+                      proof.redis,
+                      proof.scripts,
+                      proof.clock,
+                      proof.tags.withCapacityExecutionDsl(budget.sql(proof.sql)),
+                      () ->
+                          CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                              proof.redis, budget),
+                      budget::remainingMillis,
+                      budget::awaitAsyncClose);
               var prepared =
                   finalOwner.prepareTransferReceipt(
                       item.execution(), item.candidate(), item.assignment(), dispatch, deadline);
