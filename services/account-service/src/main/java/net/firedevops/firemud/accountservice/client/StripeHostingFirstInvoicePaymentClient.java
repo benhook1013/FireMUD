@@ -72,22 +72,29 @@ public final class StripeHostingFirstInvoicePaymentClient {
     require(invoiceId != null && invoiceId.matches("in_[A-Za-z0-9]+"));
     var result =
         readInvoice(
-            invoiceId,
-            providerId,
-            binding.providerCustomerId(),
-            binding.providerPaymentMethodId(),
-            binding.livemode(),
-            dispatch.claim().creation().planQuote().providerPriceId(),
-            dispatch.claim().creation().planQuote().providerQuantity(),
-            started,
-            Instant.ofEpochSecond(subscription.getCreated()).plus(Duration.ofHours(23)));
+                invoiceId,
+                providerId,
+                binding.providerCustomerId(),
+                binding.providerPaymentMethodId(),
+                binding.livemode(),
+                binding.providerPriceId(),
+                binding.expectedQuantity(),
+                started,
+                Instant.ofEpochSecond(subscription.getCreated()).plus(Duration.ofHours(23)),
+                true)
+            .observation();
     require(!"succeeded".equals(result.status()));
     return result;
   }
 
   public Observation observe(AccountHostingFirstInvoicePayment expected) throws StripeException {
     outsideSql();
-    var result =
+    return observeOriginal(expected, false).observation();
+  }
+
+  private InvoiceRead observeOriginal(
+      AccountHostingFirstInvoicePayment expected, boolean allowUnassigned) throws StripeException {
+    var read =
         readInvoice(
             expected.invoiceId(),
             expected.providerSubscriptionId(),
@@ -97,12 +104,14 @@ public final class StripeHostingFirstInvoicePaymentClient {
             expected.providerPriceId(),
             expected.providerQuantity(),
             clock.instant(),
-            expected.expiresAt());
+            expected.expiresAt(),
+            allowUnassigned);
+    var result = read.observation();
     require(
         expected.paymentIntentId().equals(result.paymentIntentId())
             && expected.amount() == result.amount()
             && expected.currency().equals(result.currency()));
-    return result;
+    return read;
   }
 
   /**
@@ -212,13 +221,17 @@ public final class StripeHostingFirstInvoicePaymentClient {
     if (!dispatch.independentlyRead() || !clock.instant().isBefore(dispatch.validUntil())) {
       throw new IllegalStateException("Committed current billing-owner consent required");
     }
-    Observation observation = observe(dispatch.invoice());
-    PaymentIntent intent = stripe.paymentIntents().retrieve(observation.paymentIntentId(), options);
+    boolean allowUnassigned = dispatch.initialCommandAvailable();
+    var read = observeOriginal(dispatch.invoice(), allowUnassigned);
+    PaymentIntent intent =
+        stripe.paymentIntents().retrieve(read.observation().paymentIntentId(), options);
     validateIntent(
         intent,
         dispatch.invoice().providerCustomerId(),
         dispatch.invoice().providerPaymentMethodId(),
-        dispatch.invoice().livemode());
+        dispatch.invoice().livemode(),
+        allowUnassigned);
+    require(read.unassigned() == (intent.getPaymentMethod() == null));
     require(
         dispatch.invoice().paymentIntentId().equals(intent.getId())
             && Long.valueOf(dispatch.invoice().amount()).equals(intent.getAmount())
@@ -254,7 +267,8 @@ public final class StripeHostingFirstInvoicePaymentClient {
         intent,
         dispatch.invoice().providerCustomerId(),
         dispatch.invoice().providerPaymentMethodId(),
-        dispatch.invoice().livemode());
+        dispatch.invoice().livemode(),
+        false);
     require(
         dispatch.invoice().paymentIntentId().equals(intent.getId())
             && Long.valueOf(dispatch.invoice().amount()).equals(intent.getAmount())
@@ -267,7 +281,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
     return new Handoff(intent.getStatus(), secret);
   }
 
-  private Observation readInvoice(
+  private InvoiceRead readInvoice(
       String invoiceId,
       String subscriptionId,
       String customerId,
@@ -276,7 +290,8 @@ public final class StripeHostingFirstInvoicePaymentClient {
       String priceId,
       long quantity,
       Instant started,
-      Instant expiry)
+      Instant expiry,
+      boolean allowUnassigned)
       throws StripeException {
     Invoice invoice =
         stripe
@@ -328,7 +343,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
     PaymentIntent intent = payment.getPayment().getPaymentIntentObject();
     if (intent == null) throw refused();
     require(payment.getPayment().getPaymentIntent().equals(intent.getId()));
-    validateIntent(intent, customerId, methodId, livemode);
+    validateIntent(intent, customerId, methodId, livemode, allowUnassigned);
     require(
         invoice.getAmountDue() != null
             && invoice.getAmountDue() > 0
@@ -352,31 +367,40 @@ public final class StripeHostingFirstInvoicePaymentClient {
     require(
         !observed.isBefore(started)
             && Duration.between(started, observed).compareTo(Duration.ofSeconds(20)) < 0);
-    return new Observation(
-        subscriptionId,
-        customerId,
-        methodId,
-        livemode,
-        priceId,
-        quantity,
-        invoiceId,
-        intent.getId(),
-        intent.getAmount(),
-        intent.getCurrency(),
-        intent.getStatus(),
-        started,
-        observed,
-        expiry);
+    return new InvoiceRead(
+        new Observation(
+            subscriptionId,
+            customerId,
+            methodId,
+            livemode,
+            priceId,
+            quantity,
+            invoiceId,
+            intent.getId(),
+            intent.getAmount(),
+            intent.getCurrency(),
+            intent.getStatus(),
+            started,
+            observed,
+            expiry),
+        intent.getPaymentMethod() == null);
   }
 
+  private record InvoiceRead(Observation observation, boolean unassigned) {}
+
   private static void validateIntent(
-      PaymentIntent intent, String customer, String method, boolean live) {
+      PaymentIntent intent, String customer, String method, boolean live, boolean allowUnassigned) {
     require(
         intent != null
             && "payment_intent".equals(intent.getObject())
             && intent.getId() != null
             && customer.equals(intent.getCustomer())
-            && method.equals(intent.getPaymentMethod())
+            && (method.equals(intent.getPaymentMethod())
+                || (allowUnassigned
+                    && intent.getPaymentMethod() == null
+                    && "requires_payment_method".equals(intent.getStatus())
+                    && Long.valueOf(0).equals(intent.getAmountReceived())
+                    && intent.getLatestCharge() == null))
             && Boolean.valueOf(live).equals(intent.getLivemode())
             && "automatic".equals(intent.getConfirmationMethod())
             && java.util.Set.of(

@@ -27,6 +27,7 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository.CommandClaim;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -92,6 +93,149 @@ class StripeHostingFirstInvoicePaymentClientTest {
     assertThat(transport.options.get(2).getIdempotencyKey()).isEqualTo(KEY.toString());
     assertThat(transport.options)
         .allSatisfy(options -> assertThat(options.getMaxNetworkRetries()).isZero());
+  }
+
+  @Test
+  void checkoutCaptureAcceptsUnassignedIntentOnlyWithExactReservedSubscriptionDefault()
+      throws Exception {
+    var dispatch = mock(ProviderDispatch.class);
+    when(dispatch.readyForProviderIo()).thenReturn(true);
+    when(dispatch.expectedBinding("sub_exact"))
+        .thenReturn(
+            new StripeHostingSubscriptionObserver.ExpectedBinding(
+                "sub_exact",
+                INVOICE.subscriptionId(),
+                "cus_exact",
+                "pm_exact",
+                "price_exact",
+                1,
+                StripeHostingSubscriptionObserver.OperationType.SUBSCRIPTION_PROVISIONING,
+                INVOICE.creationRequestId(),
+                false));
+    String subscription =
+        """
+        {"object":"subscription","id":"sub_exact","customer":"cus_exact",
+         "default_payment_method":"pm_exact","livemode":false,"status":"incomplete",
+         "latest_invoice":"in_exact","created":%d,"metadata":{"firemud_operation_id":"%s",
+         "firemud_subscription_id":"%s"}}
+        """
+            .formatted(NOW.getEpochSecond(), INVOICE.creationRequestId(), INVOICE.subscriptionId());
+    var transport = new Transport(subscription, unassigned(invoice("requires_payment_method")));
+    var observation = client(transport).capture(dispatch, "sub_exact");
+    assertThat(observation.paymentIntentId()).isEqualTo("pi_exact");
+    assertThat(observation.providerPaymentMethodId()).isEqualTo("pm_exact");
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+
+    var wrongDefault = new Transport(subscription.replace("pm_exact", "pm_other"));
+    assertThatThrownBy(() -> client(wrongDefault).capture(dispatch, "sub_exact"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(wrongDefault.methods).containsExactly(RequestMethod.GET);
+  }
+
+  @Test
+  void exactUnassignedUnpaidIntentUsesReservedMethodAndOriginalOneShotConfirmation()
+      throws Exception {
+    String unpaidInvoice = unassigned(invoice("requires_payment_method"));
+    String unpaidIntent = unassigned(intent("requires_payment_method"));
+    var transport = new Transport(unpaidInvoice, unpaidIntent, intent("requires_action"));
+    var dispatch = dispatch();
+    var provider = client(transport);
+    assertThat(
+            provider.confirm(dispatch, StripeHostingFirstInvoicePaymentClientTest::claim).status())
+        .isEqualTo("requires_action");
+    assertThat(transport.methods)
+        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.POST);
+    assertThat(transport.params.get(2)).containsEntry("payment_method", "pm_exact");
+    assertThat(transport.options.get(2).getIdempotencyKey()).isEqualTo(KEY.toString());
+  }
+
+  @Test
+  void unassignedObservationDoesNotReplaceTheDurableOneShotClaim() throws Exception {
+    var transport =
+        new Transport(
+            unassigned(invoice("requires_payment_method")),
+            unassigned(intent("requires_payment_method")));
+    assertThat(client(transport).confirm(dispatch(), () -> null).status())
+        .isEqualTo("AUTHORIZED_NOT_CONFIRMED");
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"requires_confirmation", "requires_action", "processing", "succeeded"})
+  void absentMethodInOtherProviderStatesIsNotPreConfirmationEvidence(String status) {
+    var transport = new Transport(unassigned(invoice(status)));
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(
+                    dispatch(),
+                    () -> {
+                      throw new AssertionError("Unqualified intent cannot claim a command");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(transport.methods).containsExactly(RequestMethod.GET);
+  }
+
+  @Test
+  void missingMethodRequiresZeroReceivedNoChargeAndConsistentOriginalReads() {
+    String unpaidInvoice = unassigned(invoice("requires_payment_method"));
+    String unpaid = unassigned(intent("requires_payment_method"));
+    for (String conflicting :
+        List.of(
+            unpaid.replace("\"amount_received\":0", "\"amount_received\":1"),
+            unpaid.replace(
+                "\"object\":\"payment_intent\"",
+                "\"latest_charge\":\"ch_prior\",\"object\":\"payment_intent\""),
+            unpaid.replace("\"pi_exact\"", "\"pi_other\""),
+            unpaid.replace("\"cus_exact\"", "\"cus_other\""),
+            intent("requires_payment_method"),
+            intent("requires_payment_method").replace("pm_exact", "pm_conflict"))) {
+      var transport = new Transport(unpaidInvoice, conflicting);
+      assertThatThrownBy(() ->
+              client(transport)
+                  .confirm(
+                      dispatch(),
+                      () -> {
+                        throw new AssertionError("Contradictory intent cannot claim a command");
+                      }))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+    }
+  }
+
+  @Test
+  void missingMethodNeverQualifiesOrdinaryReadOrAlreadyClaimedConfirmation() {
+    String unpaidInvoice = unassigned(invoice("requires_payment_method"));
+    var readTransport = new Transport(unpaidInvoice);
+    assertThatThrownBy(() -> client(readTransport).observe(INVOICE))
+        .isInstanceOf(IllegalStateException.class);
+    var recoveryTransport = new Transport(unpaidInvoice);
+    var recovery = dispatch();
+    when(recovery.initialCommandAvailable()).thenReturn(false);
+    assertThatThrownBy(() ->
+            client(recoveryTransport)
+                .confirm(
+                    recovery,
+                    () -> {
+                      throw new AssertionError("Recovery cannot claim");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(readTransport.methods).containsExactly(RequestMethod.GET);
+    assertThat(recoveryTransport.methods).containsExactly(RequestMethod.GET);
+  }
+
+  @Test
+  void providerConfirmationResponseStillRequiresExactReservedMethod() {
+    var transport =
+        new Transport(
+            unassigned(invoice("requires_payment_method")),
+            unassigned(intent("requires_payment_method")),
+            unassigned(intent("requires_action")));
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(transport.methods)
+        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.POST);
   }
 
   @ParameterizedTest
@@ -393,6 +537,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
     var dispatch = mock(ConfirmationDispatch.class);
     when(dispatch.invoice()).thenReturn(INVOICE);
     when(dispatch.independentlyRead()).thenReturn(true);
+    when(dispatch.initialCommandAvailable()).thenReturn(true);
     when(dispatch.takeInitialCommandPermission()).thenReturn(true);
     when(dispatch.providerIdempotencyId()).thenReturn(KEY);
     when(dispatch.validUntil()).thenReturn(NOW.plusSeconds(120));
@@ -450,6 +595,10 @@ class StripeHostingFirstInvoicePaymentClientTest {
         clock,
         Duration.ofMillis(250),
         Duration.ofSeconds(1));
+  }
+
+  private static String unassigned(String response) {
+    return response.replace("\"payment_method\":\"pm_exact\"", "\"payment_method\":null");
   }
 
   private static String intent(String status) {

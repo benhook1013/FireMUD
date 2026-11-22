@@ -1174,6 +1174,13 @@ public final class AccountHostingFirstInvoicePaymentRepository {
       return independentlyRead;
     }
 
+    /**
+     * Read-only hint for pre-confirmation evidence; only the claim can authorize a provider call.
+     */
+    public boolean initialCommandAvailable() {
+      return initialCommandAllowed.get();
+    }
+
     public boolean takeInitialCommandPermission() {
       return initialCommandAllowed.getAndSet(false);
     }
