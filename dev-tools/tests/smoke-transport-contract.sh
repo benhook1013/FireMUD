@@ -2350,6 +2350,9 @@ case "$command_name" in
     exit 1
     ;;
   compose)
+    if [[ "${1:-}" == --project-name ]]; then
+      printf '%s\n' "$2" >"$state_dir/compose-down-project"
+    fi
     saw_down=false
     for argument in "$@"; do
       [[ "$argument" != down ]] || saw_down=true
@@ -2610,6 +2613,29 @@ printf 'game-session|%s|game-session-service|exited|\n' "$COMPOSE_PROJECT_NAME" 
 run_owned_helper stop_run_owned_compose_project -f docker-compose.yml
 [[ ! -e "$marker_path" ]]
 [[ -e "$FAKE_DOCKER_STATE/compose-down" ]]
+[[ "$(cat "$FAKE_DOCKER_STATE/compose-down-project")" == "$COMPOSE_PROJECT_NAME" ]]
+
+# The transport reset retains the original claim and removes only its generated receipt.
+run_owned_helper claim_run_owned_compose_project
+printf 'game-session|%s|game-session-service|running|\n' "$COMPOSE_PROJECT_NAME" >"$FAKE_DOCKER_STATE/containers"
+receipt_dir="${marker_path%.marker}.authored-world-source"
+mkdir -m 777 "$receipt_dir"
+chmod 777 "$receipt_dir"
+printf 'generated\n' >"$receipt_dir/source-receipt.json"
+printf 'retained\n' >"$receipt_dir/other-file"
+reset_command=(
+  env FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true
+  FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH="$receipt_dir"
+  bash -c "$RUN_OWNED_CHILD_BASH" _ "$RUN_OWNED_COMPOSE_HELPER"
+  reset_run_owned_fixture_for_next_transport -f docker-compose.yml
+)
+assert_command_rejects "authenticated project name" "${reset_command[@]}" --project-name=other
+[[ -e "$FAKE_DOCKER_STATE/containers" && -e "$receipt_dir/source-receipt.json" ]]
+"${reset_command[@]}"
+[[ -e "$marker_path" && ! -e "$receipt_dir/source-receipt.json" && -e "$receipt_dir/other-file" ]]
+[[ ! -e "$FAKE_DOCKER_STATE/containers" ]]
+[[ "$(cat "$FAKE_DOCKER_STATE/compose-down-project")" == "$COMPOSE_PROJECT_NAME" ]]
+run_owned_helper release_run_owned_compose_project
 
 echo "smoke script boundary contract checks passed"
 

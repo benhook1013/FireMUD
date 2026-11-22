@@ -6,11 +6,17 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
+import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
+import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.socket.WebSocketHandler;
@@ -22,19 +28,45 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   private final boolean authenticatedListenerEnabled;
   private final int authenticatedPort;
   private final String namespace;
+  private final String fixtureWebSocketCertificateSha256;
+  private final Runnable verifyFixture;
 
   public GameSessionWebSocketHandshakeInterceptor() {
     this(false, 8444, "");
   }
 
+  public GameSessionWebSocketHandshakeInterceptor(boolean enabled, int port, String namespace) {
+    this(enabled, port, namespace, "", () -> {});
+  }
+
   @Autowired
-  public GameSessionWebSocketHandshakeInterceptor(
+  GameSessionWebSocketHandshakeInterceptor(
       @Value("${firemud.gameplay.authenticated-listener.enabled:false}") boolean enabled,
       @Value("${firemud.gameplay.authenticated-listener.port:8444}") int port,
-      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
+      @Value("${firemud.grpc.workload-namespace:}") String namespace,
+      @Value("${FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256:}")
+          String fixtureCertificateSha256,
+      Environment environment,
+      ObjectProvider<RunOwnedCanonicalLaunchPreparationOwner> fixture) {
+    this(
+        enabled,
+        port,
+        namespace,
+        PreV1GateWaivers.from(environment).enabled() ? fixtureCertificateSha256 : "",
+        () -> fixture.getObject().loadFixedVerifiedEvidence().requireVerifiedFixture());
+  }
+
+  GameSessionWebSocketHandshakeInterceptor(
+      boolean enabled,
+      int port,
+      String namespace,
+      String fixtureCertificateSha256,
+      Runnable verifyFixture) {
     authenticatedListenerEnabled = enabled;
     authenticatedPort = port;
     this.namespace = namespace;
+    this.fixtureWebSocketCertificateSha256 = fixtureCertificateSha256;
+    this.verifyFixture = verifyFixture;
   }
 
   static final String GAME_INSTANCE_HEADER = "X-Game-Instance-Id";
@@ -68,6 +100,11 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
       ServerHttpResponse response,
       WebSocketHandler wsHandler,
       Map<String, Object> attributes) {
+    attributes.remove(AuthenticatedDirectTextIngress.ATTRIBUTE);
+    attributes.remove(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR);
+    if (AuthenticatedDirectTextIngress.FIXTURE_WEBSOCKET_PATH.equals(request.getURI().getPath())) {
+      return authenticateFixtureWebSocket(request, response, attributes);
+    }
     String bootstrapGameInstanceId = request.getHeaders().getFirst(GAME_INSTANCE_HEADER);
     String sessionId =
         deriveTransportSessionId(
@@ -76,10 +113,8 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
             bootstrapGameInstanceId,
             request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
     attributes.put(SESSION_ID_ATTR, sessionId);
-    attributes.remove(AuthenticatedDirectTextIngress.ATTRIBUTE);
-    attributes.remove(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR);
     boolean tcp = "trusted_tcp_proxy".equals(request.getHeaders().getFirst(CONNECTION_MODE_HEADER));
-    if (tcp || "/ws/game/tcp".equals(request.getURI().getPath())) {
+    if (tcp || AuthenticatedDirectTextIngress.TCP_PATH.equals(request.getURI().getPath())) {
       try {
         if (!authenticatedListenerEnabled)
           throw new IllegalArgumentException("Listener unavailable");
@@ -120,6 +155,34 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
             request.getHeaders().getFirst(LOCALE_HEADER),
             request.getHeaders().getFirst(ACCEPT_LANGUAGE_HEADER)));
     return true;
+  }
+
+  private boolean authenticateFixtureWebSocket(
+      ServerHttpRequest request, ServerHttpResponse response, Map<String, Object> attributes) {
+    try {
+      if (!authenticatedListenerEnabled
+          || !fixtureWebSocketCertificateSha256.matches("[0-9a-f]{64}")
+          || !(request instanceof ServletServerHttpRequest servlet)) {
+        throw new IllegalArgumentException("Fixture WebSocket unavailable");
+      }
+      UUID connectionId = UUID.randomUUID();
+      String sessionId = Long.toString(stablePositiveLong(connectionId.toString()));
+      var ingress =
+          AuthenticatedDirectTextIngress.authenticateFixtureWebSocket(
+              servlet,
+              authenticatedPort,
+              fixtureWebSocketCertificateSha256,
+              sessionId,
+              connectionId);
+      verifyFixture.run();
+      attributes.put(SESSION_ID_ATTR, sessionId);
+      attributes.put(AuthenticatedDirectTextIngress.ATTRIBUTE, ingress);
+      attributes.put(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR, ingress.transport());
+      return true;
+    } catch (RuntimeException failure) {
+      response.setStatusCode(HttpStatus.FORBIDDEN);
+      return false;
+    }
   }
 
   @Override

@@ -11,6 +11,7 @@ import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -37,6 +38,7 @@ public final class AccountGameplayAuthenticateReceiver {
   private final AccountGameplayPrimaryCredentialVerifier verifier;
   private final String expectedWorkload;
   private final AccountInitialGameplayLoginDisposalOwner disposalOwner;
+  private final BooleanSupplier fixtureWebSocketReady;
 
   public AccountGameplayAuthenticateReceiver(
       AccountGameplayCanonicalLoginOwner owner,
@@ -50,12 +52,22 @@ public final class AccountGameplayAuthenticateReceiver {
       AccountGameplayPrimaryCredentialVerifier verifier,
       String expectedNamespace,
       AccountInitialGameplayLoginDisposalOwner disposalOwner) {
+    this(owner, verifier, expectedNamespace, disposalOwner, () -> false);
+  }
+
+  public AccountGameplayAuthenticateReceiver(
+      AccountGameplayCanonicalLoginOwner owner,
+      AccountGameplayPrimaryCredentialVerifier verifier,
+      String expectedNamespace,
+      AccountInitialGameplayLoginDisposalOwner disposalOwner,
+      BooleanSupplier fixtureWebSocketReady) {
     if (!GrpcPeerIdentity.isValidNamespace(expectedNamespace)) {
       throw new IllegalArgumentException("An exact Account workload namespace is required");
     }
     this.owner = Objects.requireNonNull(owner, "Canonical LOGIN owner is required");
     this.verifier = Objects.requireNonNull(verifier, "Primary credential authority is required");
     this.disposalOwner = disposalOwner;
+    this.fixtureWebSocketReady = Objects.requireNonNull(fixtureWebSocketReady);
     expectedWorkload = "spiffe://firemud/ns/" + expectedNamespace + "/sa/game-session-service";
   }
 
@@ -208,15 +220,21 @@ public final class AccountGameplayAuthenticateReceiver {
       fail(responseObserver, Status.CANCELLED, "CANCELLED", "Canonical LOGIN call was cancelled");
       return;
     }
-    if (request == null
-        || !request.hasSourceContext()
-        || request.getSourceContext().getTransportClass()
-            != GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY) {
+    var transport =
+        request == null || !request.hasSourceContext()
+            ? GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_UNSPECIFIED
+            : request.getSourceContext().getTransportClass();
+    boolean fixtureWebSocket =
+        transport
+            == GameplayLoginTransportClass
+                .GAMEPLAY_LOGIN_TRANSPORT_CLASS_RUN_OWNED_FIXTURE_WEBSOCKET;
+    if (transport != GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY
+        && !(fixtureWebSocket && fixtureWebSocketReady.getAsBoolean())) {
       fail(
           responseObserver,
           Status.PERMISSION_DENIED,
           "PERMISSION_DENIED",
-          "Credential LOGIN requires the trusted TCP Proxy source");
+          "Credential LOGIN requires a permitted authenticated transport source");
       return;
     }
 
@@ -232,7 +250,7 @@ public final class AccountGameplayAuthenticateReceiver {
           new GameplayCredentialSourceContext(
               requireV4(source.getCallerContextId()),
               source.getCanonicalClientAddress(),
-              "trusted_tcp_proxy");
+              fixtureWebSocket ? "run_owned_fixture_websocket" : "trusted_tcp_proxy");
       canonical =
           new CanonicalGameplayLoginRequest(
               requestId, request.getEmail(), request.getPassword(), context);

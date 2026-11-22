@@ -156,7 +156,13 @@ if [[ "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" == "baseline" ]]; then
   bash "$HEALTH_SCRIPT" "${COMPOSE_FILES[@]}"
   # Both transport legs are baseline-only; mutation parity requires independent
   # transport identities/state and is rejected by this wrapper above.
-  bash "$WS_SMOKE_SCRIPT"
+  FIREMUD_SMOKE_LOCK_FD="$FIREMUD_SMOKE_LOCK_FD" \
+    FIREMUD_SMOKE_LOCK_PROJECT_KEY="$FIREMUD_SMOKE_LOCK_PROJECT_KEY" bash "$WS_SMOKE_SCRIPT"
+  if [[ -n "${FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256:-}" ]]; then
+    reset_run_owned_fixture_for_next_transport "${COMPOSE_FILES[@]}"
+    docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
+    bash "$HEALTH_SCRIPT" "${COMPOSE_FILES[@]}"
+  fi
   bash "$TCP_SMOKE_SCRIPT"
 else
   echo "Smoke admission qualification: held (direct backend LOGIN -> PLAY -> LOOK plus Gateway/Telnet fail-closed proof)."

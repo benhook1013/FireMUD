@@ -139,7 +139,7 @@ public final class AuthenticatedDirectTextSessions {
         admitted = null;
         playStarted.set(false);
         credentials =
-            InitialGameplayLoginCredentialPresentation.fromAuthenticatedTcp(
+            InitialGameplayLoginCredentialPresentation.fromAuthenticatedIngress(
                 ingress, email, ownedSecret);
         requireLive();
         InitialGameplayLoginOwner.Outcome received =
