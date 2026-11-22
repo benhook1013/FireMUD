@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** Real forward migration with retained tenant provenance. No existing usage is guessed. */
@@ -71,7 +72,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       UUID attempt = UUID.randomUUID();
       for (int index = 0; index < 2; index++) {
         dsl.execute(
-            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id,"
+                + " capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload,"
+                + " decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
             UUID.randomUUID(),
             UUID.randomUUID(),
             UUID.randomUUID(),
@@ -83,7 +86,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       capacityMigrations(data, schema).target("1040.3").load().migrate();
       var original =
           dsl.fetch(
-                  "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
+                  "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence,"
+                      + " admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex')"
+                      + " AS payload, decision, decision_id, refusal_code, xmin::text AS"
+                      + " row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
               .intoMaps();
       assertThatThrownBy(() -> capacityMigrations(data, schema).target("1040.4").load().migrate())
           .isInstanceOf(org.flywaydb.core.api.FlywayException.class)
@@ -97,7 +103,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           });
       assertThat(
               dsl.fetch(
-                      "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
+                      "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence,"
+                          + " admission_attempt_id, mutation_digest, encode(canonical_payload,"
+                          + " 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS"
+                          + " row_version FROM account_capacity_origin_decisions ORDER BY"
+                          + " decision_id")
                   .intoMaps())
           .isEqualTo(original);
       assertThat(original).hasSize(2);
@@ -121,7 +131,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       UUID retainedAttempt = UUID.randomUUID();
       for (int index = 0; index < 3; index++) {
         dsl.execute(
-            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id,"
+                + " capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload,"
+                + " decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
             tenant.canonicalTenantId(),
             UUID.randomUUID(),
             UUID.randomUUID(),
@@ -168,7 +180,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var original =
           Objects.requireNonNull(
                   dsl.fetchOne(
-                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
+                      "SELECT *, xmin::text AS row_version FROM"
+                          + " account_capacity_origin_refusal_budget"))
               .intoMap();
       transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
       assertThatThrownBy(() ->
@@ -184,12 +197,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(
               Objects.requireNonNull(
                       dsl.fetchOne(
-                          "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
+                          "SELECT *, xmin::text AS row_version FROM"
+                              + " account_capacity_origin_refusal_budget"))
                   .intoMap())
           .isEqualTo(original);
       assertThatThrownBy(() ->
               dsl.execute(
-                  "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+                  "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id,"
+                      + " admission_id, capacity_rearm_fence, admission_attempt_id,"
+                      + " mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?,"
+                      + " ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
                   tenant.canonicalTenantId(),
                   UUID.randomUUID(),
                   UUID.randomUUID(),
@@ -232,7 +249,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(
               Objects.requireNonNull(
                       dsl.fetchOne(
-                          "SELECT capacity_birth_transaction FROM account_fresh_tenant_identity_associations WHERE canonical_tenant_id = ?",
+                          "SELECT capacity_birth_transaction FROM"
+                              + " account_fresh_tenant_identity_associations WHERE"
+                              + " canonical_tenant_id = ?",
                           existing.canonicalTenantId()))
                   .get("capacity_birth_transaction"))
           .isNull();
@@ -255,7 +274,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(
               Objects.requireNonNull(
                       dsl.fetchOne(
-                          "SELECT capacity_birth_transaction FROM account_fresh_tenant_identity_associations WHERE canonical_tenant_id = ?",
+                          "SELECT capacity_birth_transaction FROM"
+                              + " account_fresh_tenant_identity_associations WHERE"
+                              + " canonical_tenant_id = ?",
                           later.canonicalTenantId()))
                   .get("capacity_birth_transaction"))
           .isNotNull();
@@ -272,14 +293,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           status -> budgets.provision(existing.canonicalTenantId(), 4));
       var beforeBudget =
           dsl.fetchSingle(
-                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid=?",
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"
+                      + " WHERE tenant_uuid=?",
                   existing.canonicalTenantId())
               .intoMap();
       transaction.executeWithoutResult(
           status -> budgets.provision(existing.canonicalTenantId(), 4));
       assertThat(
               dsl.fetchSingle(
-                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid=?",
+                      "SELECT *, xmin::text AS row_version FROM"
+                          + " account_capacity_origin_refusal_budget WHERE tenant_uuid=?",
                       existing.canonicalTenantId())
                   .intoMap())
           .isEqualTo(beforeBudget);
@@ -356,7 +379,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(dsl.execute(insert, retry)).isZero();
       assertThat(
               dsl.fetchSingle(
-                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+                      "SELECT *, xmin::text AS row_version FROM"
+                          + " account_capacity_origin_refusal_budget")
                   .intoMap())
           .isEqualTo(retainedBudget);
       assertThatThrownBy(() ->
@@ -421,14 +445,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       UUID losingAdmission = UUID.randomUUID();
       UUID losingAttempt = UUID.randomUUID();
       UUID losingDecision = UUID.randomUUID();
-      UUID freshRequest = UUID.randomUUID();
-      UUID freshAdmission = UUID.randomUUID();
-      UUID freshAttempt = UUID.randomUUID();
-      UUID freshDecision = UUID.randomUUID();
-      assertThat(List.of(winningRequest, losingRequest, freshRequest)).doesNotHaveDuplicates();
-      assertThat(List.of(winningAdmission, losingAdmission, freshAdmission))
-          .doesNotHaveDuplicates();
-      assertThat(List.of(winningAttempt, losingAttempt, freshAttempt)).doesNotHaveDuplicates();
+      assertThat(losingRequest).isNotEqualTo(winningRequest);
+      assertThat(losingAdmission).isNotEqualTo(winningAdmission);
+      assertThat(losingAttempt).isNotEqualTo(winningAttempt);
       String concurrentRefusalInsert =
           "INSERT INTO account_capacity_origin_decisions "
               + "(tenant_uuid, request_id, admission_id, capacity_rearm_fence, "
@@ -490,16 +509,20 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .containsEntry("decision", "NO_ACCEPT")
           .containsEntry("decision_id", winningDecision)
           .containsEntry("refusal_code", "CAPACITY_QUOTA_EXCEEDED");
+      // Retry the exact rolled-back loser in a fresh transaction/snapshot, not a new original.
+      var retryTransaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      retryTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
       assertThatThrownBy(() ->
-              dsl.execute(
-                  concurrentRefusalInsert,
-                  concurrentTenant.canonicalTenantId(),
-                  freshRequest,
-                  freshAdmission,
-                  freshAttempt,
-                  "e".repeat(64),
-                  new byte[] {5},
-                  freshDecision))
+              retryTransaction.executeWithoutResult(status ->
+                  dsl.execute(
+                      concurrentRefusalInsert,
+                      concurrentTenant.canonicalTenantId(),
+                      losingRequest,
+                      losingAdmission,
+                      losingAttempt,
+                      "d".repeat(64),
+                      new byte[] {4},
+                      losingDecision)))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> {
@@ -620,7 +643,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       UUID secondHistoricalDecision = UUID.fromString("00000000-0000-0000-0000-000000001042");
       UUID otherHistoricalDecision = UUID.fromString("00000000-0000-0000-0000-000000001043");
       String historicalInsert =
-          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)";
+          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id,"
+              + " capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload,"
+              + " decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)";
       dsl.execute(
           historicalInsert,
           historicalTenant.canonicalTenantId(),
@@ -679,7 +704,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       Instant reconcileDeadline = reservationExpiresAt.plusSeconds(60);
       transaction.executeWithoutResult(status -> {
         dsl.execute(
-            "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?::timestamptz, ?::timestamptz)",
+            "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity,"
+                + " snapshot_identity, tenant_uuid, caller_workload, owner_service,"
+                + " canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?,"
+                + " 'game-session-service', ?, ?::timestamptz, ?::timestamptz)",
             evaluationIdentity,
             snapshotIdentity,
             acceptedTenant.canonicalTenantId(),
@@ -689,11 +717,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             AccountTenantCapacityRepository.at(evaluationExpiresAt));
         assertThat(
                 dsl.execute(
-                    "UPDATE account_tenant_capacity_usage SET held_units = 1, usage_revision = 2 WHERE tenant_uuid = ? AND owner_service = 'game-session-service' AND held_units = 0 AND used_units = 0 AND usage_revision = 1",
+                    "UPDATE account_tenant_capacity_usage SET held_units = 1, usage_revision = 2"
+                        + " WHERE tenant_uuid = ? AND owner_service = 'game-session-service' AND"
+                        + " held_units = 0 AND used_units = 0 AND usage_revision = 1",
                     acceptedTenant.canonicalTenantId()))
             .isEqualTo(1);
         dsl.execute(
-            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'ACCEPTED', ?)",
+            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id,"
+                + " capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload,"
+                + " decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'ACCEPTED', ?)",
             acceptedTenant.canonicalTenantId(),
             acceptedRequest,
             acceptedAdmission,
@@ -702,7 +734,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             acceptedPayload,
             acceptedDecision);
         dsl.execute(
-            "INSERT INTO account_tenant_capacity_reservations (tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state, execution_status) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, ?::timestamptz, ?::timestamptz, 'RESERVED', 'OWNER_EXECUTION_PENDING')",
+            "INSERT INTO account_tenant_capacity_reservations (tenant_uuid, request_id,"
+                + " admission_id, reservation_id, owner_service, caller_workload,"
+                + " admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest,"
+                + " canonical_payload, evaluation_identity, capacity_delta, expires_at,"
+                + " reconcile_deadline, state, execution_status) VALUES (?, ?, ?, ?,"
+                + " 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, ?::timestamptz, ?::timestamptz,"
+                + " 'RESERVED', 'OWNER_EXECUTION_PENDING')",
             acceptedTenant.canonicalTenantId(),
             acceptedRequest,
             acceptedAdmission,
@@ -723,17 +761,22 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       });
       var provisionedBudgetAtV1040_5 =
           dsl.fetchSingle(
-                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"
+                      + " WHERE tenant_uuid = ?",
                   historicalTenant.canonicalTenantId())
               .intoMap();
       var otherProvisionedBudgetAtV1040_5 =
           dsl.fetchSingle(
-                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"
+                      + " WHERE tenant_uuid = ?",
                   otherHistoricalTenant.canonicalTenantId())
               .intoMap();
       var originalDecisions =
           dsl.fetch(
-                  "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
+                  "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence,"
+                      + " admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex')"
+                      + " AS payload, decision, decision_id, refusal_code, xmin::text AS"
+                      + " row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
               .intoMaps();
       assertThat(originalDecisions).hasSize(4);
       var acceptedReservationsAtV1040_5 = reservationRows(dsl, acceptedTenant.canonicalTenantId());
@@ -747,13 +790,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .isEqualTo(acceptedUsageAtV1040_5);
       assertThat(
               dsl.fetchSingle(
-                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                      "SELECT *, xmin::text AS row_version FROM"
+                          + " account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
                       historicalTenant.canonicalTenantId())
                   .intoMap())
           .isEqualTo(provisionedBudgetAtV1040_5);
       assertThat(
               dsl.fetchSingle(
-                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
+                      "SELECT *, xmin::text AS row_version FROM"
+                          + " account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
                       otherHistoricalTenant.canonicalTenantId())
                   .intoMap())
           .isEqualTo(otherProvisionedBudgetAtV1040_5);
@@ -767,7 +812,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(otherRemainingHeadroom).isEqualTo(2L);
       assertThat(
               dsl.fetch(
-                      "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
+                      "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence,"
+                          + " admission_attempt_id, mutation_digest, encode(canonical_payload,"
+                          + " 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS"
+                          + " row_version FROM account_capacity_origin_decisions ORDER BY"
+                          + " decision_id")
                   .intoMaps())
           .isEqualTo(originalDecisions);
       assertThat(refusalSlots(dsl))
@@ -795,7 +844,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   otherHistoricalTenant.canonicalTenantId(), 1, otherHistoricalDecision));
       assertThatThrownBy(() ->
               dsl.execute(
-                  "INSERT INTO account_capacity_origin_refusal_slots (tenant_uuid, slot, decision_id) VALUES (?, 3, ?)",
+                  "INSERT INTO account_capacity_origin_refusal_slots (tenant_uuid, slot,"
+                      + " decision_id) VALUES (?, 3, ?)",
                   acceptedTenant.canonicalTenantId(),
                   acceptedDecision))
           .isInstanceOfSatisfying(
@@ -803,7 +853,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
       assertThatThrownBy(() ->
               dsl.execute(
-                  "INSERT INTO account_capacity_origin_refusal_slots (tenant_uuid, slot, decision_id) VALUES (?, 3, ?)",
+                  "INSERT INTO account_capacity_origin_refusal_slots (tenant_uuid, slot,"
+                      + " decision_id) VALUES (?, 3, ?)",
                   acceptedTenant.canonicalTenantId(),
                   firstHistoricalDecision))
           .isInstanceOfSatisfying(
@@ -812,7 +863,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
 
       String insertedDecision =
-          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING";
+          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id,"
+              + " capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload,"
+              + " decision, decision_id, refusal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON"
+              + " CONFLICT DO NOTHING";
       assertThat(
               dsl.fetchOne(
                   "SELECT 1 FROM account_capacity_origin_refusal_budget WHERE tenant_uuid = ?",
@@ -886,14 +940,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       });
       assertThat(
               dsl.fetchOne(
-                  "SELECT 1 FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                  "SELECT 1 FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND"
+                      + " request_id = ? AND admission_id = ?",
                   acceptedTenant.canonicalTenantId(),
                   rolledBackAccepted.requestId(),
                   rolledBackAccepted.admissionId()))
           .isNull();
       assertThat(
               dsl.fetchOne(
-                  "SELECT 1 FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                  "SELECT 1 FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND"
+                      + " request_id = ? AND admission_id = ?",
                   acceptedTenant.canonicalTenantId(),
                   rolledBackAccepted.requestId(),
                   rolledBackAccepted.admissionId()))
@@ -1030,7 +1086,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
 
       assertThatThrownBy(() ->
               dsl.execute(
-                  "UPDATE account_capacity_origin_refusal_slots SET slot = slot + 10 WHERE tenant_uuid = ? AND slot = 1",
+                  "UPDATE account_capacity_origin_refusal_slots SET slot = slot + 10 WHERE"
+                      + " tenant_uuid = ? AND slot = 1",
                   historicalTenant.canonicalTenantId()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
@@ -1039,7 +1096,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       .hasMessageContaining("Account capacity origin decisions are immutable"));
       assertThatThrownBy(() ->
               dsl.execute(
-                  "DELETE FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ? AND slot = 1",
+                  "DELETE FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ? AND slot"
+                      + " = 1",
                   historicalTenant.canonicalTenantId()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
@@ -1060,7 +1118,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
 
   private static List<RefusalSlot> refusalSlots(org.jooq.DSLContext dsl) {
     return dsl.fetch(
-            "SELECT tenant_uuid, slot, decision_id FROM account_capacity_origin_refusal_slots ORDER BY tenant_uuid, slot")
+            "SELECT tenant_uuid, slot, decision_id FROM account_capacity_origin_refusal_slots ORDER"
+                + " BY tenant_uuid, slot")
         .map(row ->
             new RefusalSlot(
                 row.get("tenant_uuid", UUID.class),
@@ -1098,7 +1157,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     assertThat(attempt.reservationExpiresAt()).isBefore(attempt.evaluationExpiresAt());
     String callerWorkload = "controlled-capacity-fixture";
     dsl.execute(
-        "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?::timestamptz, ?::timestamptz)",
+        "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity,"
+            + " tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at,"
+            + " expires_at) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?::timestamptz,"
+            + " ?::timestamptz)",
         attempt.evaluationIdentity(),
         attempt.snapshotIdentity(),
         tenantUuid,
@@ -1108,7 +1170,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         AccountTenantCapacityRepository.at(attempt.evaluationExpiresAt()));
     assertThat(
             dsl.execute(
-                "UPDATE account_tenant_capacity_usage SET held_units = ?, usage_revision = ? WHERE tenant_uuid = ? AND owner_service = 'game-session-service' AND held_units = ? AND used_units = 0 AND usage_revision = ?",
+                "UPDATE account_tenant_capacity_usage SET held_units = ?, usage_revision = ? WHERE"
+                    + " tenant_uuid = ? AND owner_service = 'game-session-service' AND held_units ="
+                    + " ? AND used_units = 0 AND usage_revision = ?",
                 newHeldUnits,
                 newHeldUnits + 1,
                 tenantUuid,
@@ -1117,7 +1181,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         .isEqualTo(1);
     assertThat(
             dsl.execute(
-                "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, 1, ?, ?, ?, 'ACCEPTED', ?, NULL)",
+                "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id,"
+                    + " admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest,"
+                    + " canonical_payload, decision, decision_id, refusal_code) VALUES (?, ?, ?, 1,"
+                    + " ?, ?, ?, 'ACCEPTED', ?, NULL)",
                 tenantUuid,
                 attempt.requestId(),
                 attempt.admissionId(),
@@ -1128,7 +1195,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         .isEqualTo(1);
     assertThat(
             dsl.execute(
-                "INSERT INTO account_tenant_capacity_reservations (tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state, execution_status) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, ?::timestamptz, ?::timestamptz, 'RESERVED', 'OWNER_EXECUTION_PENDING')",
+                "INSERT INTO account_tenant_capacity_reservations (tenant_uuid, request_id,"
+                    + " admission_id, reservation_id, owner_service, caller_workload,"
+                    + " admission_attempt_id, capacity_rearm_fence, reservation_fence,"
+                    + " mutation_digest, canonical_payload, evaluation_identity, capacity_delta,"
+                    + " expires_at, reconcile_deadline, state, execution_status) VALUES (?, ?, ?,"
+                    + " ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, ?::timestamptz,"
+                    + " ?::timestamptz, 'RESERVED', 'OWNER_EXECUTION_PENDING')",
                 tenantUuid,
                 attempt.requestId(),
                 attempt.admissionId(),
@@ -1146,7 +1219,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   private static List<java.util.Map<String, Object>> originRows(
       org.jooq.DSLContext dsl, UUID tenantUuid) {
     return dsl.fetch(
-            "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions WHERE tenant_uuid = ? ORDER BY decision_id",
+            "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence,"
+                + " admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS"
+                + " payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM"
+                + " account_capacity_origin_decisions WHERE tenant_uuid = ? ORDER BY decision_id",
             tenantUuid)
         .intoMaps();
   }
@@ -1154,7 +1230,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   private static List<java.util.Map<String, Object>> reservationRows(
       org.jooq.DSLContext dsl, UUID tenantUuid) {
     return dsl.fetch(
-            "SELECT tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, encode(canonical_payload, 'hex') AS payload, evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state, execution_status, recovery_owner, recovery_claim_fence, recovery_claim_expires_at, next_reconcile_at, recovery_policy_version, recovery_attempt_count, recovery_escalated_at, encode(owner_readback, 'hex') AS owner_readback, owner_readback_digest, xmin::text AS row_version FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? ORDER BY request_id, admission_id",
+            "SELECT tenant_uuid, request_id, admission_id, reservation_id, owner_service,"
+                + " caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence,"
+                + " mutation_digest, encode(canonical_payload, 'hex') AS payload,"
+                + " evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state,"
+                + " execution_status, recovery_owner, recovery_claim_fence,"
+                + " recovery_claim_expires_at, next_reconcile_at, recovery_policy_version,"
+                + " recovery_attempt_count, recovery_escalated_at, encode(owner_readback, 'hex') AS"
+                + " owner_readback, owner_readback_digest, xmin::text AS row_version FROM"
+                + " account_tenant_capacity_reservations WHERE tenant_uuid = ? ORDER BY request_id,"
+                + " admission_id",
             tenantUuid)
         .intoMaps();
   }
@@ -1162,7 +1247,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   private static List<java.util.Map<String, Object>> usageRows(
       org.jooq.DSLContext dsl, UUID tenantUuid) {
     return dsl.fetch(
-            "SELECT tenant_uuid, owner_service, bootstrap_request_id, creation_evidence_digest, held_units, used_units, usage_revision, xmin::text AS row_version FROM account_tenant_capacity_usage WHERE tenant_uuid = ? ORDER BY owner_service",
+            "SELECT tenant_uuid, owner_service, bootstrap_request_id, creation_evidence_digest,"
+                + " held_units, used_units, usage_revision, xmin::text AS row_version FROM"
+                + " account_tenant_capacity_usage WHERE tenant_uuid = ? ORDER BY owner_service",
             tenantUuid)
         .intoMaps();
   }
@@ -1171,7 +1258,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       org.jooq.DSLContext dsl, UUID tenantUuid) {
     var rows =
         dsl.fetch(
-                "SELECT u.owner_service, u.held_units, u.used_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state IN ('RESERVED', 'QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION')), 0) AS reservation_held_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE r.state = 'FINALIZED'), 0) AS reservation_used_units FROM account_tenant_capacity_usage u LEFT JOIN account_tenant_capacity_reservations r ON r.tenant_uuid = u.tenant_uuid AND r.owner_service = u.owner_service WHERE u.tenant_uuid = ? GROUP BY u.owner_service, u.held_units, u.used_units ORDER BY u.owner_service",
+                "SELECT u.owner_service, u.held_units, u.used_units, COALESCE(sum(r.capacity_delta)"
+                    + " FILTER (WHERE r.state IN ('RESERVED',"
+                    + " 'QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION')), 0) AS"
+                    + " reservation_held_units, COALESCE(sum(r.capacity_delta) FILTER (WHERE"
+                    + " r.state = 'FINALIZED'), 0) AS reservation_used_units FROM"
+                    + " account_tenant_capacity_usage u LEFT JOIN"
+                    + " account_tenant_capacity_reservations r ON r.tenant_uuid = u.tenant_uuid AND"
+                    + " r.owner_service = u.owner_service WHERE u.tenant_uuid = ? GROUP BY"
+                    + " u.owner_service, u.held_units, u.used_units ORDER BY u.owner_service",
                 tenantUuid)
             .intoMaps();
     assertThat(rows).hasSize(2);

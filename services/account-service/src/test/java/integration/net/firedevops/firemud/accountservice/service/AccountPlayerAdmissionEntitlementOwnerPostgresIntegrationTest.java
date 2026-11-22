@@ -19,6 +19,7 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
@@ -455,7 +456,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(value.membershipSource().gameplayAdmissionAllowed()).isTrue();
     var retained =
         f.dsl.fetchOne(
-            "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations"
+                + " WHERE evaluation_identity = ?",
             value.fields().get("evaluationIdentity"));
     assertThat(retained).isNotNull();
     byte[] retainedEvidence = retained.get("canonical_evidence", byte[].class);
@@ -531,6 +533,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
     assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
 
+    // Recovery claims are checked against live PostgreSQL time, not the frozen evaluation clock.
+    Clock recoveryClock = mock(Clock.class);
+    when(recoveryClock.instant())
+        .thenAnswer(invocation ->
+            f.dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant());
     // The external no-execution observation is controlled; all Account storage mutations are real.
     var recovery =
         new AccountTenantCapacityRecoveryWorker(
@@ -548,7 +555,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     7,
                     "sha256:" + "e".repeat(64),
                     "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            f.clock);
+            recoveryClock);
     assertThat(
             recovery
                 .reconcile(

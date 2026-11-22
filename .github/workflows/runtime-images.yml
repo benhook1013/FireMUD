@@ -800,10 +800,23 @@ jobs:
               const ref = path.slice(prefix.length);
               return validWorkflowRef(ref);
             };
+            const samePrPath = (left, right, path, number) => left === right ||
+              left === path && right === `${path}@refs/pull/${number}/merge` ||
+              right === path && left === `${path}@refs/pull/${number}/merge`;
             // The older PLAY diagnostic can leave the source run red. Only a
             // complete native attempt with its marker explicitly skipped can
             // prove that a failed producer did not supply that exception.
             const provesOrdinaryTypedFailure = async (run, workflowName) => {
+              const repository = `${context.repo.owner}/${context.repo.repo}`;
+              const matchesSelected = candidate => candidate &&
+                ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "head_branch", "head_sha", "status", "conclusion"]
+                  .every(field => candidate[field] === run[field]) &&
+                [workflowName, run.display_title].includes(candidate.name) &&
+                candidate.repository?.full_name === repository && candidate.head_repository?.full_name === repository;
+              const {data: attempt} = await github.rest.actions.getWorkflowRunAttempt(fanoutOptions({
+                ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
+              }));
+              if (!matchesSelected(attempt)) return false;
               const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
                 ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100, page: 1,
               }));
@@ -816,10 +829,26 @@ jobs:
                   job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
               if (markers.length !== 1 || markers[0].status !== "completed" || markers[0].conclusion !== "skipped") return false;
-              const times = [run.run_started_at, job.started_at, markers[0].started_at, markers[0].completed_at,
-                job.completed_at, run.updated_at].map(value =>
-                  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) ? Date.parse(value) : NaN);
-              return times.every((time, index) => Number.isFinite(time) && (index === 0 || time >= times[index - 1]));
+              const timestamp = value => {
+                const match = typeof value === "string" && /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+                const time = match ? Date.parse(value) : NaN;
+                const wall = match ? `${match[1]}.${(match[2] || "").padEnd(3, "0")}Z` : "";
+                const wallMillis = Date.parse(wall);
+                return Number.isFinite(time) && Number.isFinite(wallMillis) && new Date(wallMillis).toISOString() === wall ? time : NaN;
+              };
+              const [start, jobStart, jobEnd, end] = [attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
+              if (![start, jobStart, jobEnd, end].every(Number.isFinite) || end < start ||
+                  jobStart < Math.floor(start / 1000) * 1000 || jobEnd < jobStart || jobEnd > Math.floor(end / 1000) * 1000 + 999) return false;
+              // A skipped step normally has no execution timestamps. If supplied,
+              // both timestamps must still agree with the actually attempted job.
+              const marker = markers[0];
+              if (marker.started_at != null || marker.completed_at != null) {
+                const markerStart = timestamp(marker.started_at), markerEnd = timestamp(marker.completed_at);
+                if (!Number.isFinite(markerStart) || !Number.isFinite(markerEnd) ||
+                    markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
+              }
+              const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: run.id}));
+              return matchesSelected(latest);
             };
             // Bind both admission reads to the same terminal attempt; never cache native proof.
             const disregardedTypedAttempts = new Map();
@@ -860,69 +889,70 @@ jobs:
                 }
               }
               ordered.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
-              if (ordered.length > 1 && Date.parse(ordered[0].created_at) === Date.parse(ordered[1].created_at)) {
-                throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
-              }
-              const newest = ordered[0];
-              if (!newest) {
-                return [];
-              }
-              if (["queued", "waiting", "requested", "pending", "in_progress"].includes(newest.status)) {
-                if (newest.conclusion !== null && newest.conclusion !== undefined) {
-                  throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
+              for (const [index, newest] of ordered.entries()) {
+                if (index + 1 < ordered.length && Date.parse(newest.created_at) === Date.parse(ordered[index + 1].created_at)) {
+                  throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
                 }
-                return [newest];
-              }
-              if (newest.status === "completed") {
-                if (newest.event === "repository_dispatch" && ["cancelled", "timed_out", "failure"].includes(newest.conclusion)) {
-                  const repository = `${context.repo.owner}/${context.repo.repo}`;
-                  const defaultBranch = context.payload.repository?.default_branch;
-                  const attemptBinding = JSON.stringify([
-                    newest.run_attempt, newest.conclusion, newest.head_sha, newest.path, newest.created_at,
-                  ]);
-                  if (!Number.isSafeInteger(newest.run_attempt) || newest.run_attempt <= 0 ||
-                      context.payload.repository?.full_name !== repository ||
-                      typeof defaultBranch !== "string" || !defaultBranch || newest.head_branch !== defaultBranch ||
-                      typeof newest.head_sha !== "string" || !shaPattern.test(newest.head_sha) ||
-                      (disregardedTypedAttempts.has(newest.id) && disregardedTypedAttempts.get(newest.id) !== attemptBinding)) {
-                    throw new Error(`Terminal typed runtime producer ${newest.id} has incomplete or changed attempt identity`);
+                if (["queued", "waiting", "requested", "pending", "in_progress"].includes(newest.status)) {
+                  if (newest.conclusion !== null && newest.conclusion !== undefined) {
+                    throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
                   }
-                  const {data: workflow} = await github.rest.actions.getWorkflow(fanoutOptions({
-                    ...context.repo, workflow_id: "runtime-images.yml",
-                  }));
-                  const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({
-                    ...context.repo, run_id: newest.id,
-                  }));
-                  if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
-                      workflow.id !== newest.workflow_id || workflow.path !== expectedWorkflowPath ||
-                      workflow.name !== "Build Runtime Images" ||
-                      latest?.id !== newest.id || latest.run_attempt !== newest.run_attempt ||
-                      latest.workflow_id !== workflow.id || latest.event !== "repository_dispatch" ||
-                      latest.path !== newest.path || !workflowPathMatches(latest.path) ||
-                      ![workflow.name, expectedTitle].includes(latest.name) || latest.display_title !== expectedTitle ||
-                      latest.repository?.full_name !== repository || latest.head_repository?.full_name !== repository ||
-                      latest.head_branch !== defaultBranch || latest.head_sha !== newest.head_sha ||
-                      latest.created_at !== newest.created_at || latest.status !== "completed" ||
-                      latest.conclusion !== newest.conclusion) {
-                    throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
-                  }
-                  if (newest.conclusion === "failure" && !await provesOrdinaryTypedFailure(latest, workflow.name)) {
-                    return [newest];
-                  }
-                  disregardedTypedAttempts.set(newest.id, attemptBinding);
-                  return [];
-                }
-                // Same-second or incomparable completion evidence is ambiguous and
-                // suppresses a duplicate; only a valid, strictly older producer may recover.
-                const ciCompleted = Date.parse(workflowRun.updated_at || "");
-                if (newest.event === "repository_dispatch" &&
-                    (!Number.isFinite(ciCompleted) ||
-                     Math.floor(Date.parse(newest.created_at) / 1000) >= Math.floor(ciCompleted / 1000))) {
                   return [newest];
                 }
-                return [];
+                if (newest.status === "completed") {
+                  if (newest.event === "repository_dispatch" && ["cancelled", "timed_out", "failure"].includes(newest.conclusion)) {
+                    const repository = `${context.repo.owner}/${context.repo.repo}`;
+                    const defaultBranch = context.payload.repository?.default_branch;
+                    const attemptBinding = JSON.stringify([
+                      newest.run_attempt, newest.conclusion, newest.head_sha, newest.path, newest.created_at,
+                    ]);
+                    if (!Number.isSafeInteger(newest.run_attempt) || newest.run_attempt <= 0 ||
+                        context.payload.repository?.full_name !== repository ||
+                        typeof defaultBranch !== "string" || !defaultBranch || newest.head_branch !== defaultBranch ||
+                        typeof newest.head_sha !== "string" || !shaPattern.test(newest.head_sha) ||
+                        (disregardedTypedAttempts.has(newest.id) && disregardedTypedAttempts.get(newest.id) !== attemptBinding)) {
+                      throw new Error(`Terminal typed runtime producer ${newest.id} has incomplete or changed attempt identity`);
+                    }
+                    const {data: workflow} = await github.rest.actions.getWorkflow(fanoutOptions({
+                      ...context.repo, workflow_id: "runtime-images.yml",
+                    }));
+                    const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({
+                      ...context.repo, run_id: newest.id,
+                    }));
+                    if (!Number.isSafeInteger(workflow?.id) || workflow.id <= 0 ||
+                        workflow.id !== newest.workflow_id || workflow.path !== expectedWorkflowPath ||
+                        workflow.name !== "Build Runtime Images" ||
+                        latest?.id !== newest.id || latest.run_attempt !== newest.run_attempt ||
+                        latest.workflow_id !== workflow.id || latest.event !== "repository_dispatch" ||
+                        latest.path !== newest.path || !workflowPathMatches(latest.path) ||
+                        ![workflow.name, expectedTitle].includes(latest.name) || latest.display_title !== expectedTitle ||
+                        latest.repository?.full_name !== repository || latest.head_repository?.full_name !== repository ||
+                        latest.head_branch !== defaultBranch || latest.head_sha !== newest.head_sha ||
+                        latest.created_at !== newest.created_at || latest.status !== "completed" ||
+                        latest.conclusion !== newest.conclusion) {
+                      throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
+                    }
+                    if (newest.conclusion === "failure" && !await provesOrdinaryTypedFailure(latest, workflow.name)) {
+                      return [newest];
+                    }
+                    disregardedTypedAttempts.set(newest.id, attemptBinding);
+                    // Discarding an unusable replacement does not establish
+                    // absence: an earlier exact producer may still be running.
+                    continue;
+                  }
+                  // Same-second or incomparable completion evidence is ambiguous and
+                  // suppresses a duplicate; only a valid, strictly older producer may recover.
+                  const ciCompleted = Date.parse(workflowRun.updated_at || "");
+                  if (newest.event === "repository_dispatch" &&
+                      (!Number.isFinite(ciCompleted) ||
+                       Math.floor(Date.parse(newest.created_at) / 1000) >= Math.floor(ciCompleted / 1000))) {
+                    return [newest];
+                  }
+                  continue;
+                }
+                throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
               }
-              throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
+              return [];
             };
 
             if (!shaPattern.test(refreshSha) || typeof refreshBranch !== "string" ||
@@ -949,7 +979,8 @@ jobs:
                 run.head_branch === refreshBranch && run.head_sha === refreshSha &&
                 run.display_title === workflowRun.display_title &&
                 [ciName, workflowRun.display_title].includes(run.name) &&
-                workflowPathMatches(run.path, ciPath) && run.path === workflowRun.path;
+                workflowPathMatches(run.path, ciPath) &&
+                samePrPath(run.path, workflowRun.path, ciPath, titleMatch?.[1]);
               if (!titleMatch || titleMatch[3] !== refreshSha) {
                 core.warning("Skipping PR runtime reconciliation: callback lacks exact CI PR/base/head title metadata.");
                 return;
@@ -1104,8 +1135,6 @@ jobs:
             }
             const pendingVisibility = [];
             let visibilitySince;
-            let runtimeInventoryPromise;
-            let runtimeInventoryError = null;
             const reportFanoutCutoff = (targetIndex, stage) => {
               const incompleteTargets = refreshTargets.slice(targetIndex)
                 .map(({tuple: targetTuple}) => `#${targetTuple.prNumber}`).join(", ");
@@ -1135,16 +1164,13 @@ jobs:
                 let existingProducers = [];
                 let fallbackReason = null;
                 let inventory;
-                if (runtimeInventoryError) {
-                  fallbackReason = runtimeInventoryError;
-                } else {
-                  try {
-                    runtimeInventoryPromise ??= loadExistingRuntimeRuns();
-                    inventory = await runtimeInventoryPromise;
-                  } catch (error) {
-                    fallbackReason = error.message || String(error);
-                    runtimeInventoryError = fallbackReason;
-                  }
+                try {
+                  // Earlier targets and preview work can outlive a producer.
+                  // Classify this target from a fresh complete snapshot, not a
+                  // prior target's queued/in-progress duplicate hold.
+                  inventory = await loadExistingRuntimeRuns();
+                } catch (error) {
+                  fallbackReason = error.message || String(error);
                 }
                 if (!fallbackReason) {
                   try {
@@ -1166,8 +1192,6 @@ jobs:
                     break;
                   }
                   core.setFailed(`Cannot verify exact runtime producer inventory for PR #${tuple.prNumber}; no dispatch issued: ${fallbackReason}`);
-                  runtimeInventoryPromise = undefined;
-                  runtimeInventoryError = null;
                   break runtimeRefresh;
                 }
                 if (existingProducers.length > 0) {
@@ -1218,8 +1242,7 @@ jobs:
                   // both duplicate suppression and the visibility baseline after
                   // the potentially slow live comparison checks.
                   try {
-                    runtimeInventoryPromise = loadExistingRuntimeRuns();
-                    inventory = await runtimeInventoryPromise;
+                    inventory = await loadExistingRuntimeRuns();
                     const latestProducers = await findExactExistingProducer(tuple, inventory);
                     if (!inventory.complete || !latestProducers.length && inventory.absenceProven === false) {
                       throw new Error(inventory.reason || "the final producer inventory cannot prove absence");
@@ -1234,8 +1257,6 @@ jobs:
                       break;
                     }
                     core.setFailed(`Cannot verify final runtime producer inventory for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
-                    runtimeInventoryPromise = undefined;
-                    runtimeInventoryError = null;
                     break runtimeRefresh;
                   }
                   if (Date.now() >= fanoutDeadline) {
@@ -1281,10 +1302,8 @@ jobs:
                     }
                     pending.responseUnknown = true;
                     core.warning(`Runtime refresh handoff for PR #${tuple.prNumber} is uncertain; no retry issued: ${error.message || error}`);
-                    runtimeInventoryPromise = undefined;
                     break runtimeRefresh;
                   }
-                  runtimeInventoryPromise = undefined;
                 }
               } else if (runtimeChanges === false) {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
