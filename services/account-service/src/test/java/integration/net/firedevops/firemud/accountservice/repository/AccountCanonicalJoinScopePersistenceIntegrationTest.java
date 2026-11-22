@@ -268,7 +268,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
   }
 
   @Test
-  void firstInvoiceAndCapacityUpgradeFromParent1036Through1040PreservesCanonicalRowsAndHistory() {
+  void firstInvoiceAndCapacityUpgradeFromParent1036Through1041PreservesCanonicalRowsAndHistory() {
     String schema = createSchema("canonical_join_scope_");
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway parent = accountFlyway(dataSource, schema, "1036");
@@ -349,14 +349,16 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .isEqualTo(MigrationVersion.fromVersion("1041"));
 
     List<Map<String, Object>> upgradedHistory = flywayHistory(setupDsl);
-    assertThat(upgradedHistory).hasSize(parentHistory.size() + 7);
+    assertThat(upgradedHistory).hasSize(parentHistory.size() + 11);
     assertThat(upgradedHistory.subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     List<Map<String, Object>> addedHistory =
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
     assertThat(addedHistory)
         .extracting(row -> row.get("version"))
-        .containsExactly("1037", "1038", "1039", "1040", "1040.1", "1040.2", "1041");
+        .containsExactly(
+            "1037", "1038", "1039", "1040", "1040.1", "1040.2", "1040.3", "1040.4", "1040.5",
+            "1040.6", "1041");
     assertThat(addedHistory)
         .extracting(row -> row.get("script"))
         .containsExactly(
@@ -366,6 +368,10 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
             "V1040__account_tenant_capacity_owner.sql",
             "V1040.1__account_capacity_origin_decisions.sql",
             "V1040.2__bound_capacity_origin_refusals.sql",
+            "V1040.3__validate_only_inserted_refusal_budgets.sql",
+            "V1040.4__unique_capacity_origin_attempt.sql",
+            "V1040.5__arbitrate_origin_identity_before_refusal_budget.sql",
+            "V1040.6__index_retained_capacity_refusal_slots.sql",
             "V1041__hosting_first_invoice_completion.sql");
     assertThat(addedHistory)
         .allSatisfy(row -> {
@@ -390,11 +396,11 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     List<String> installedConstraints =
         setupDsl
             .fetch(
-                "SELECT constraint_row.conname FROM pg_constraint constraint_row "
-                    + "JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid "
-                    + "JOIN pg_namespace schema_row ON schema_row.oid = table_row.relnamespace "
-                    + "WHERE schema_row.nspname = ? AND table_row.relname = 'account_join_operations' "
-                    + "AND constraint_row.contype = 'c' AND constraint_row.convalidated",
+                "SELECT constraint_row.conname FROM pg_constraint constraint_row JOIN pg_class"
+                    + " table_row ON table_row.oid = constraint_row.conrelid JOIN pg_namespace"
+                    + " schema_row ON schema_row.oid = table_row.relnamespace WHERE"
+                    + " schema_row.nspname = ? AND table_row.relname = 'account_join_operations'"
+                    + " AND constraint_row.contype = 'c' AND constraint_row.convalidated",
                 schema)
             .getValues(0, String.class);
     assertThat(installedConstraints)
@@ -406,12 +412,12 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     assertThat(
             Objects.requireNonNull(
                     setupDsl.fetchOne(
-                        "SELECT count(*) FROM pg_trigger trigger_row "
-                            + "JOIN pg_class table_row ON table_row.oid = trigger_row.tgrelid "
-                            + "JOIN pg_namespace schema_row ON schema_row.oid = table_row.relnamespace "
-                            + "WHERE schema_row.nspname = ? AND table_row.relname = 'account_join_operations' "
-                            + "AND trigger_row.tgname = 'account_join_operation_identity_guard' "
-                            + "AND trigger_row.tgenabled = 'O' AND NOT trigger_row.tgisinternal",
+                        "SELECT count(*) FROM pg_trigger trigger_row JOIN pg_class table_row ON"
+                            + " table_row.oid = trigger_row.tgrelid JOIN pg_namespace schema_row ON"
+                            + " schema_row.oid = table_row.relnamespace WHERE schema_row.nspname ="
+                            + " ? AND table_row.relname = 'account_join_operations' AND"
+                            + " trigger_row.tgname = 'account_join_operation_identity_guard' AND"
+                            + " trigger_row.tgenabled = 'O' AND NOT trigger_row.tgisinternal",
                         schema))
                 .get(0, Long.class))
         .isEqualTo(1L);
@@ -439,7 +445,8 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
             requestId);
     assertThatThrownBy(() ->
             setupDsl.execute(
-                "UPDATE account_join_operations SET verified_caller_binding = ? WHERE request_id = ?",
+                "UPDATE account_join_operations SET verified_caller_binding = ? WHERE request_id ="
+                    + " ?",
                 "changed-migration-caller",
                 requestId))
         .isInstanceOfSatisfying(
@@ -484,7 +491,8 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     Long v1AccountId =
         Objects.requireNonNull(
                 setupDsl.fetchOne(
-                    "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                    "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?)"
+                        + " RETURNING id",
                     "scope-cleanup-v1-account",
                     "scope-cleanup-v1@example.test",
                     "test-hash"))
@@ -618,7 +626,8 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     assertThatThrownBy(() ->
             f.dsl()
                 .execute(
-                    "UPDATE account_join_operations SET updated_at = CURRENT_TIMESTAMP WHERE request_id = ?",
+                    "UPDATE account_join_operations SET updated_at = CURRENT_TIMESTAMP WHERE"
+                        + " request_id = ?",
                     f.requestId()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(f.bytes()).isEqualTo(retained);
@@ -778,7 +787,8 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
             "entitlement_authority_availability = 'UNAVAILABLE'",
             "entitlement_version = 24",
             "request_digest = NULL",
-            "last_attempt_authority_availability = 'UNAVAILABLE', last_attempt_failure_code = NULL")) {
+            "last_attempt_authority_availability = 'UNAVAILABLE', last_attempt_failure_code ="
+                + " NULL")) {
       assertThatThrownBy(() ->
               f.dsl()
                   .execute(
@@ -853,7 +863,8 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     var account =
         Objects.requireNonNull(
             setup.fetchOne(
-                "INSERT INTO accounts (username, email, password_hash) VALUES ('journal-player', 'journal@example.test', 'controlled-hash') RETURNING id, account_uuid"));
+                "INSERT INTO accounts (username, email, password_hash) VALUES ('journal-player',"
+                    + " 'journal@example.test', 'controlled-hash') RETURNING id, account_uuid"));
     long privateAccountId = account.get("id", Long.class);
     UUID accountId = account.get("account_uuid", UUID.class);
     var fresh = new FreshTenantIdentityAssociationRepository(owner, "prod");
