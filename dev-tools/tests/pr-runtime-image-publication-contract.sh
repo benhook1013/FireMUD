@@ -182,7 +182,7 @@ node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" "$WORKFLOW" "$f
 const fs = require("fs");
 const assert = require("assert/strict");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", fs.readFileSync(process.argv[2], "utf8"));
+const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", "AbortSignal", fs.readFileSync(process.argv[2], "utf8"));
 const dispatch = new AsyncFunction("github", "context", fs.readFileSync(process.argv[3], "utf8"));
 const smokeScope = new AsyncFunction("github", "context", "core", fs.readFileSync(process.argv[7], "utf8"));
 const refreshSelector = new AsyncFunction("github", "context", "core", "Date", "AbortSignal",
@@ -190,24 +190,83 @@ const refreshSelector = new AsyncFunction("github", "context", "core", "Date", "
 const sha = character => character.repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} head-${sha("a")} merge-${sha("c")} mode-required`;
 const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
-const source = { id: 4242, workflow_id: 777, run_attempt: 1, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
+const source = { id: 4242, workflow_id: 777, run_attempt: 1, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success", created_at: "2026-01-08T00:00:00Z", run_started_at: "2026-01-08T00:00:00.500Z", updated_at: "2026-01-08T00:04:00Z" };
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
-async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs = [] } = {}) {
+function producerFor(run, required = true) {
+  const start = Math.floor(Date.parse(run.run_started_at) / 1000) * 1000;
+  const at = seconds => new Date(start + seconds * 1000).toISOString();
+  return {id: 8001, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+    workflow_name: "Build Runtime Images", name: `PR Full-Stack Smoke (runtime-required=${required})`,
+    status: "completed", conclusion: "success", started_at: at(1), completed_at: at(180),
+    steps: [{name: "Upload preview image artifact", number: 20, status: "completed", conclusion: "success",
+      started_at: at(120), completed_at: at(122)}]};
+}
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path },
+  error = false, jobs = null, nativeAttempt, jobPages = null, attemptError = false, jobError = false,
+  expectException = false, expireAfterAttempt = false, expireAfterJobs = false } = {}) {
   let reads = 0, clock = 0;
-  const output = {};
-  const github = { paginate: async () => jobs, rest: { actions: {
-    getWorkflow: async () => ({data: workflow}),
-    getWorkflowRun: async request => { assert.equal(request.run_id, 4242); reads++; if (error) throw Error("API unavailable"); return {data: runs[Math.min(reads - 1, runs.length - 1)]}; },
+  let selected;
+  const output = {}, proofRequests = [], signals = [];
+  class FixtureDate extends Date { static now() { return clock; } }
+  const recordProof = (method, options, paged = false) => {
+    const {request, ...normal} = options;
+    assert.deepEqual(normal, {...baseContext.repo, run_id: selected.id, attempt_number: selected.run_attempt,
+      ...(paged ? {per_page: 100, page: proofRequests.filter(row => row.method === method).length + 1} : {})},
+    `${method} must address the exact selected native attempt with explicit direct pagination`);
+    assert.deepEqual(Object.keys(request), ["signal"]);
+    assert.equal(request.signal, signals.at(-1));
+    assert.equal(request.signal.timeoutMs, 120000 - clock, "each proof read uses its remaining wall-clock budget");
+    assert(request.signal.timeoutMs > 0);
+    proofRequests.push({method, ...normal, signal: request.signal});
+  };
+  const github = { paginate: async () => { throw Error("producer proof must not use the run-wide paginator"); }, rest: { actions: {
+    getWorkflow: async options => {
+      assert.deepEqual(options, {...baseContext.repo, workflow_id: "runtime-images.yml"});
+      return {data: workflow};
+    },
+    getWorkflowRun: async options => {
+      assert.deepEqual(options, {...baseContext.repo, run_id: 4242});
+      reads++;
+      if (error) throw Error("API unavailable");
+      selected = runs[Math.min(reads - 1, runs.length - 1)];
+      return {data: selected};
+    },
+    getWorkflowRunAttempt: async options => {
+      recordProof("getWorkflowRunAttempt", options);
+      if (attemptError) throw Error("native attempt unavailable");
+      if (expireAfterAttempt) clock += 120000;
+      return {data: nativeAttempt === undefined ? selected : nativeAttempt};
+    },
+    listJobsForWorkflowRunAttempt: async options => {
+      recordProof("listJobsForWorkflowRunAttempt", options, true);
+      if (jobError) throw Error("native jobs unavailable");
+      if (expireAfterJobs) clock += 120000;
+      if (jobPages) return {data: jobPages[options.page - 1]};
+      const inventory = jobs ?? [producerFor(selected)];
+      return {data: {total_count: inventory.length, jobs: inventory.slice((options.page - 1) * 100, options.page * 100)}};
+    },
+    listJobsForWorkflowRun: async () => { throw Error("run-wide jobs cannot prove an artifact producer attempt"); },
   } } };
-  await resolver(github, context, {notice: () => {}, setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
-  if (jobs.some(job => (job.steps ?? []).some(step => step.conclusion === "success"))) {
+  try {
+    await resolver(github, context, {notice: () => {}, setOutput: (key, value) => {output[key] = value;}},
+      FixtureDate, fn => {clock += 60000; fn();},
+      {timeout: milliseconds => {const signal = {timeoutMs: milliseconds}; signals.push(signal); return signal;}});
+  } catch (failure) {
+    assert.deepEqual(output, {}, "invalid, incomplete or unavailable proof must expose no source before failing closed");
+    throw failure;
+  }
+  assert.equal(proofRequests[0]?.method, "getWorkflowRunAttempt");
+  assert(proofRequests.slice(1).every(row => row.method === "listJobsForWorkflowRunAttempt"));
+  assert.equal(new Set(proofRequests.map(row => row.signal)).size, proofRequests.length,
+    "each direct proof request must receive a fresh timeout signal");
+  if (expectException) {
     assert.deepEqual(output, {}, "exception attempts must expose no publication source");
-    return {reads, output};
+    return {reads, output, proofRequests};
   }
   assert.equal(output.title, title);
   assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}`);
   assert.equal(JSON.parse(output.source).status, "completed");
-  return {reads, output};
+  return {reads, output, proofRequests};
 }
 const runtimeWorkflow = fs.readFileSync(process.argv[4], "utf8");
 const diagnosticPaths = [
@@ -307,11 +366,133 @@ for (const publishable of ["false", "", undefined]) {
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
   const direct = await resolve();
-  const exceptionJob = {name: "PR Full-Stack Smoke (runtime-required=true)", steps: [{
+  const exceptionJob = {...producerFor(source), steps: [{
     name: "Known canonical transition PLAY failure with successful authenticated cleanup",
-    status: "completed", conclusion: "success"}]};
-  assert.deepEqual((await resolve({jobs: [exceptionJob]})).output, {});
-  assert.equal((await resolve({jobs: [{...exceptionJob, steps: [{...exceptionJob.steps[0], conclusion: "skipped"}]}]})).output.title, title);
+    number: 24, status: "completed", conclusion: "success"}]};
+  assert.deepEqual((await resolve({jobs: [exceptionJob], expectException: true})).output, {});
+  assert.equal((await resolve({jobs: [{...exceptionJob, steps: [
+    ...producerFor(source).steps, {...exceptionJob.steps[0], conclusion: "skipped"},
+  ]}]})).output.title, title);
+  const producer = producerFor(source);
+  const uploadStep = producer.steps[0];
+  assert.equal((await resolve({jobs: [producerFor(source, false)]})).output.title, title,
+    "a positively proved runtime-required=false build remains publishable");
+  assert.equal((await resolve({jobs: [{...producer, workflow_name: title}]})).output.title, title);
+  assert.equal((await resolve({nativeAttempt: {...source, name: "Build Runtime Images"}})).output.title, title,
+    "both native workflow-name projections retain exact title identity");
+  assert.equal((await resolve({nativeAttempt: {...source, created_at: "2026-01-08T00:00:01Z"}})).output.title, title,
+    "native attempt creation can be rounded to the following second within one second of start");
+  assert.equal((await resolve({jobs: [{...producer, started_at: "2026-01-08T00:00:00Z"}]})).output.title, title,
+    "second-precision first-attempt execution may share the native fractional start's boundary second");
+
+  // A run-wide projection can retain the original timestamps on a rerun. Only
+  // the exact-attempt endpoint's own execution window can qualify its producer.
+  const rerun = {...source, run_attempt: 2};
+  const attempt2 = {...rerun, created_at: "2026-01-08T01:00:00Z",
+    run_started_at: "2026-01-08T01:00:00.500Z", updated_at: "2026-01-08T01:04:00Z"};
+  const rerunProducer = producerFor(attempt2);
+  const rerunResult = await resolve({runs: [rerun], nativeAttempt: attempt2, jobs: [rerunProducer]});
+  assert.deepEqual(JSON.parse(rerunResult.output.source), rerun,
+    "exact valid rerun proof preserves the selected source projection and existing artifact identity");
+  assert.deepEqual(rerunResult.proofRequests.map(({method, attempt_number}) => [method, attempt_number]),
+    [["getWorkflowRunAttempt", 2], ["listJobsForWorkflowRunAttempt", 2]]);
+  assert.equal((await resolve({runs: [rerun], nativeAttempt: attempt2, jobs: [producerFor(attempt2, false)]})).output.title,
+    title, "a positively proved runtime-required=false rerun remains publishable");
+  await assert.rejects(resolve({runs: [rerun], nativeAttempt: attempt2, jobs: [{...producer, id: 18001, run_attempt: 2}]}),
+    /did not execute within the selected native attempt/,
+    "copied attempt-1 producer timestamps cannot qualify a job relabelled as attempt 2");
+  await assert.rejects(resolve({runs: [rerun], nativeAttempt: attempt2,
+    jobs: [{...rerunProducer, steps: [uploadStep]}]}), /upload did not execute within/,
+  "a fresh rerun job cannot lend its window to a carried-forward upload step");
+  const rerunException = {...rerunProducer, steps: exceptionJob.steps};
+  assert.deepEqual((await resolve({runs: [rerun], nativeAttempt: attempt2,
+    jobs: [rerunException], expectException: true})).output, {},
+  "the exact-attempt canonical PLAY exception short-circuits without requiring an upload");
+
+  for (const change of [
+    {id: 4243}, {id: "4242"}, {run_attempt: 1}, {run_attempt: "2"}, {run_attempt: undefined},
+    {workflow_id: 778}, {path: ".github/workflows/other.yml"}, {path: `${source.path}@refs/heads/develop`},
+    {name: "other"}, {display_title: "other"}, {event: "pull_request"}, {head_branch: "other"},
+    {head_sha: sha("a")}, {head_sha: undefined}, {repository: {full_name: "fork/FireMUD"}},
+    {head_repository: {full_name: "fork/FireMUD"}}, {status: "in_progress"}, {conclusion: "failure"},
+  ]) {
+    await assert.rejects(resolve({runs: [rerun], nativeAttempt: {...attempt2, ...change}, jobs: [rerunProducer]}),
+      `exact native attempt identity must not drift: ${JSON.stringify(change)}`);
+  }
+  await assert.rejects(resolve({nativeAttempt: null}), /source attempt/);
+  await assert.rejects(resolve({attemptError: true}), /native attempt unavailable/);
+  await assert.rejects(resolve({jobError: true}), /native jobs unavailable/);
+  await assert.rejects(resolve({expireAfterAttempt: true}), /bounded deadline/,
+    "expiry after native metadata prevents any job request or source output");
+  await assert.rejects(resolve({expireAfterJobs: true}), /bounded deadline/,
+    "a last job response arriving after the proof deadline cannot expose a source");
+  for (const field of ["created_at", "run_started_at", "updated_at"]) {
+    for (const value of [undefined, null, "", "not-a-date", "2026-02-30T00:00:00Z", "2026-01-08T00:00:00+00:00"]) {
+      await assert.rejects(resolve({nativeAttempt: {...source, [field]: value}}), /UTC timestamp/);
+    }
+  }
+  for (const change of [
+    {created_at: "2026-01-08T00:00:02Z"}, {updated_at: "2026-01-07T23:59:59Z"},
+  ]) await assert.rejects(resolve({nativeAttempt: {...source, ...change}}), /chronology/);
+  for (const change of [
+    {id: 0}, {id: "8001"}, {run_id: 4243}, {run_attempt: 2}, {run_attempt: undefined},
+    {head_sha: sha("a")}, {head_sha: undefined}, {workflow_name: "other"},
+    {name: "PR Full-Stack Smoke (runtime-required=unknown)"}, {status: "in_progress"},
+    {conclusion: "skipped"}, {conclusion: "failure"}, {conclusion: "cancelled"},
+    {steps: undefined}, {steps: {}}, {steps: []},
+    {started_at: undefined}, {completed_at: null}, {started_at: "2026-01-07T23:59:59Z"},
+    {completed_at: "2026-01-08T00:00:00Z"}, {completed_at: "2026-01-08T00:04:01Z"},
+  ]) {
+    await assert.rejects(resolve({jobs: [{...producer, ...change}]}),
+      `producer proof must be complete, successful, attributable and chronological: ${JSON.stringify(change)}`);
+  }
+  for (const change of [
+    {name: "Upload other artifact"}, {number: undefined}, {number: 0}, {number: "20"},
+    {status: "in_progress"}, {conclusion: "skipped"}, {conclusion: "failure"}, {conclusion: "cancelled"},
+    {started_at: undefined}, {completed_at: undefined}, {started_at: "2026-01-08T00:00:00Z"},
+    {completed_at: "2026-01-08T00:01:59Z"}, {completed_at: "2026-01-08T00:03:01Z"},
+  ]) {
+    await assert.rejects(resolve({jobs: [{...producer, steps: [{...uploadStep, ...change}]}]}),
+      `the actual upload step must prove successful execution inside its producer: ${JSON.stringify(change)}`);
+  }
+  for (const steps of [[uploadStep, uploadStep], [uploadStep, {...uploadStep, number: 21}],
+      [uploadStep, {...uploadStep, name: "Other step"}]]) {
+    await assert.rejects(resolve({jobs: [{...producer, steps}]}), /actual successful Upload/,
+      "duplicate upload names or step numbers are ambiguous proof");
+  }
+  const sibling = {...producer, id: 8002, name: "Sibling"};
+  await assert.rejects(resolve({jobs: [{...producer, steps: []}, sibling]}), /actual successful Upload/,
+    "a successful upload in another job cannot substitute for the producer's upload");
+  await assert.rejects(resolve({jobs: [sibling]}), /one successful attributable artifact producer/);
+  await assert.rejects(resolve({jobs: []}), /one successful attributable artifact producer/);
+  await assert.rejects(resolve({jobs: [producer, {...producer, id: 8002}]}), /one successful attributable artifact producer/);
+  await assert.rejects(resolve({jobs: [producer, {...producerFor(source, false), id: 8002}]}),
+    /one successful attributable artifact producer/, "both evaluated producer names together remain ambiguous");
+  await assert.rejects(resolve({jobs: [producer, producer]}), /duplicate or unattributable/);
+
+  const siblings = Array.from({length: 999}, (_, index) => ({...sibling, id: 9000 + index}));
+  const paged = await resolve({jobs: [...siblings.slice(0, 100), producer]});
+  assert.deepEqual(paged.proofRequests.slice(1).map(row => row.page), [1, 2],
+    "the producer may be proved only after reading every page of its exact attempt inventory");
+  const bounded = await resolve({jobs: [...siblings, producer]});
+  assert.deepEqual(bounded.proofRequests.slice(1).map(row => row.page), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  await assert.rejects(resolve({jobs: [...siblings, {...sibling, id: 10000}, producer]}), /inventory/,
+    "over-budget inventories fail closed rather than truncating to a plausible producer");
+  for (const data of [undefined, {}, {total_count: -1, jobs: []}, {total_count: 1.5, jobs: [producer]},
+    {total_count: "1", jobs: [producer]}, {total_count: 1, jobs: null}, {total_count: 2, jobs: [producer]},
+    {total_count: 0, jobs: [producer]}]) {
+    await assert.rejects(resolve({jobPages: [data]}), /inventory/);
+  }
+  const firstPage = siblings.slice(0, 99).concat(producer);
+  for (const lastPage of [undefined, {total_count: 102, jobs: [sibling, {...sibling, id: 8003}]},
+    {total_count: 101, jobs: []}, {total_count: 101, jobs: [firstPage[0]]}]) {
+    await assert.rejects(resolve({jobPages: [{total_count: 101, jobs: firstPage}, lastPage]}), /inventory/,
+      "a valid producer on page one cannot authorize incomplete, shifting or duplicate later evidence");
+  }
+  await assert.rejects(resolve({expectException: true, jobPages: [
+    {total_count: 101, jobs: [...siblings.slice(0, 99), exceptionJob]},
+    {total_count: 101, jobs: []},
+  ]}), /inventory/, "the PLAY exception is classified from the same complete exact-attempt inventory");
   const pending = {...source, status: "in_progress", conclusion: null};
   assert.equal((await resolve({runs: [pending, source]})).reads, 2);
   const callbackContext = {...baseContext, eventName: "workflow_run", payload: {repository, workflow_run: source}};
@@ -320,8 +501,61 @@ for (const publishable of ["false", "", undefined]) {
   assert.equal(callback.output.artifact_name, direct.output.artifact_name);
   const prSource = {...source, event: "pull_request", head_sha: sha("a"), head_branch: "feature/ci"};
   const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
+  assert.equal((await resolve({runs: [prSource], context: prCallback,
+    nativeAttempt: {...prSource, path: `${source.path}@refs/pull/42/merge`}})).output.title, title);
   await assert.rejects(resolve({runs: [prSource]}), /publication source run provenance is not trusted/);
   assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
+  const mergePath = `${source.path}@refs/pull/42/merge`;
+  for (const [apiPath, callbackPath] of [[source.path, mergePath], [mergePath, source.path]]) {
+    const apiRun = {...prSource, path: apiPath};
+    const callbackRun = {...prSource, path: callbackPath};
+    const context = {...prCallback, payload: {repository, workflow_run: callbackRun}};
+    const resolved = await resolve({runs: [apiRun], context});
+    assert.deepEqual(JSON.parse(resolved.output.source), apiRun, "path equivalence preserves the exact native API source");
+    assert.equal(resolved.output.artifact_name, direct.output.artifact_name);
+    for (const change of [
+      {id: 4243}, {id: "4242"}, {workflow_id: 778}, {workflow_id: "777"},
+      {run_attempt: 2}, {run_attempt: "1"}, {run_attempt: 0},
+      {repository: {full_name: "fork/FireMUD"}}, {head_repository: {full_name: "fork/FireMUD"}},
+      {head_sha: sha("d")}, {head_branch: "other"}, {event: "repository_dispatch"},
+      {display_title: title.replace("pr-42", "pr-43")},
+      {display_title: title.replace(`base-${sha("b")}`, `base-${sha("d")}`)},
+      {display_title: title.replace(`merge-${sha("c")}`, `merge-${sha("d")}`)},
+      {display_title: title.replace("mode-required", "mode-optional")},
+      {conclusion: "failure"},
+    ]) {
+      await assert.rejects(resolve({runs: [{...apiRun, ...change}], context}),
+        `path equivalence must not mask API identity drift: ${JSON.stringify(change)}`);
+      await assert.rejects(resolve({runs: [apiRun], context: {
+        ...context, payload: {repository, workflow_run: {...callbackRun, ...change}},
+      }}), `path equivalence must not mask callback identity drift: ${JSON.stringify(change)}`);
+    }
+    await assert.rejects(resolve({runs: [{...apiRun, status: "in_progress"}], context}), /bounded wait/);
+    // A typed refresh must retain exact path equality, even for a PR-shaped suffix.
+    await assert.rejects(resolve({runs: [{...source, path: apiPath}], context: {
+      ...callbackContext, payload: {repository, workflow_run: {...source, path: callbackPath}},
+    }}), /source API path differs from callback/);
+  }
+  for (const suffix of ["refs/pull/43/merge", "refs/pull/042/merge", "refs/pull/42/head",
+      "refs/pull/42/merge/extra", "refs/pull/42/merge-other", "refs/heads/feature/ci"]) {
+    const wrongPath = `${source.path}@${suffix}`;
+    for (const [apiPath, callbackPath] of [[source.path, wrongPath], [wrongPath, source.path],
+        [mergePath, wrongPath], [wrongPath, mergePath]]) {
+      await assert.rejects(resolve({runs: [{...prSource, path: apiPath}], context: {
+        ...prCallback, payload: {repository, workflow_run: {...prSource, path: callbackPath}},
+      }}), /source API path differs from callback/);
+    }
+  }
+  for (const eventSource of [source, prSource]) {
+    for (const path of [source.path, `${source.path}@refs/heads/feature/ci`, mergePath]) {
+      assert.equal((await resolve({runs: [{...eventSource, path}], context: {
+        ...callbackContext, payload: {repository, workflow_run: {...eventSource, path}},
+      }})).output.title, direct.output.title, "already equal trusted paths remain valid");
+    }
+    await assert.rejects(resolve({runs: [{...eventSource, path: `${source.path}@refs/heads/feature/ci`}], context: {
+      ...callbackContext, payload: {repository, workflow_run: {...eventSource, path: `${source.path}@refs/heads/other`}},
+    }}), /source API path differs from callback/);
+  }
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
   const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
@@ -361,7 +595,7 @@ for (const publishable of ["false", "", undefined]) {
   await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "4242", extra: true}}}}));
   await assert.rejects(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "../4242"}}}}));
   await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: {...source, head_sha: sha("d")}}}}), /differs from callback/);
-  console.log("Exact source handoff and terminal-resolution fixtures passed.");
+  console.log("Exact source handoff, terminal-resolution and bounded artifact-producer proof fixtures passed.");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 JS
 
@@ -418,7 +652,7 @@ const typedRefresh = {
 async function runReconcile({
   ambiguousPost = true, expireFirstRequest = false, initialDiscoveryUnavailable = false,
   ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
-  postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {},
+  postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {}, refreshAttemptJobs = {},
 } = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
@@ -510,6 +744,12 @@ async function runReconcile({
           record("actions.listJobsForWorkflowRunAttempt", options, {
             owner, repo, run_id, attempt_number, per_page: 100, page,
           });
+          const refresh = preflightRefreshRuns.find(run => run.id === run_id);
+          if (refresh) {
+            assert.equal(attempt_number, refresh.run_attempt);
+            assert.equal(page, 1);
+            return {data: refreshAttemptJobs[run_id] ?? {total_count: 0, jobs: []}};
+          }
           assert.equal(attempt_number, (ciNativeRuns[run_id] ?? ciRun).run_attempt);
           assert(Number.isInteger(page) && page > 0);
           nativeJobRunIds.push(run_id);
@@ -745,12 +985,28 @@ async function runReconcile({
     assert.equal(held.postAttempts, 0, "all other exact typed results continue suppressing recovery");
     assert.deepEqual(held.nativeRefreshRunIds, [], "only cancelled/timed_out results enter native verification");
   }
-  const legacyFailedPlay = {...typedRefresh, id: typedRefresh.id + 1, conclusion: "failure"};
+  const legacyFailedPlay = {...typedRefresh, id: typedRefresh.id + 1, conclusion: "failure",
+    run_started_at: "2026-01-06T00:00:00Z", updated_at: "2026-01-06T00:03:00Z"};
+  const marker = {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed",
+    conclusion: "skipped", started_at: "2026-01-06T00:01:00Z", completed_at: "2026-01-06T00:01:00Z"};
+  const failedJob = {id: 122, name: "PR Full-Stack Smoke (runtime-required=true)", run_id: legacyFailedPlay.id,
+    run_attempt: legacyFailedPlay.run_attempt, head_sha: legacyFailedPlay.head_sha, workflow_name: "Build Runtime Images",
+    status: "completed", conclusion: "failure", started_at: "2026-01-06T00:00:01Z", completed_at: "2026-01-06T00:02:00Z", steps: [marker]};
+  for (const [job, expectedPosts] of [
+    [failedJob, 1],
+    [{...failedJob, steps: [{...marker, conclusion: "success"}]}, 0],
+    [{...failedJob, started_at: "2026-01-05T23:59:59Z"}, 0],
+  ]) {
+    const result = await runReconcile({preflightRefreshRuns: [legacyFailedPlay],
+      refreshAttemptJobs: {[legacyFailedPlay.id]: {total_count: 1, jobs: [job]}}});
+    assert.equal(result.failure, null);
+    assert.equal(result.postAttempts, expectedPosts);
+  }
   const legacyFailureHold = await runReconcile({preflightRefreshRuns: [typedRefresh, legacyFailedPlay]});
   assert.equal(legacyFailureHold.failure, null);
   assert.equal(legacyFailureHold.postAttempts, 0,
     "a legacy failed PLAY typed refresh retains its hold even alongside a verified cancelled result");
-  assert.deepEqual(legacyFailureHold.nativeRefreshRunIds, [typedRefresh.id]);
+  assert.deepEqual(legacyFailureHold.nativeRefreshRunIds, [typedRefresh.id, legacyFailedPlay.id]);
   assert(legacyFailureHold.warnings.some(message => message.includes(String(legacyFailedPlay.id)) &&
     message.includes("failed") && message.includes("explicit investigation, not automatic replay")),
   "legacy failure holds must be reported separately from supported terminal recovery");
