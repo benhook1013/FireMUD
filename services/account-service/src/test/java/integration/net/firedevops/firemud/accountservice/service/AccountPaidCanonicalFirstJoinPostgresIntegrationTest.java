@@ -11,6 +11,7 @@ import integration.net.firedevops.firemud.accountservice.repository.CanonicalHos
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,7 +44,9 @@ import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTe
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import org.flywaydb.core.Flyway;
+import org.jooq.ExecuteListener;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -87,6 +90,47 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       jdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
     schemas.clear();
+  }
+
+  @Test
+  void canonicalJoinLocksAccountPairInSharedOrderAndDeduplicatesSelfPayer() {
+    Context c = context(false);
+    UUID payer = c.hosting.accountUuid();
+    UUID caller = c.scope.accountId();
+    assertThat(caller).isNotEqualTo(payer);
+    var captured = new ArrayList<UUID>();
+    var configuration =
+        c.hosting
+            .dsl()
+            .configuration()
+            .derive(
+                new DefaultExecuteListenerProvider(
+                    ExecuteListener.onExecuteStart(context -> {
+                      String sql = context.sql();
+                      var query = context.query();
+                      if (sql != null
+                          && query != null
+                          && sql.startsWith(
+                              "SELECT account_uuid FROM accounts WHERE account_uuid = ")
+                          && sql.endsWith(" FOR UPDATE")) {
+                        captured.add((UUID) query.getBindValues().getFirst());
+                      }
+                    })));
+    var repository = new AccountRepository(configuration.dsl());
+
+    c.hosting
+        .transaction()
+        .executeWithoutResult(
+            status -> repository.lockCanonicalJoinAccounts(c.hosting.tenantId(), caller));
+    assertThat(captured)
+        .containsExactlyElementsOf(List.of(caller, payer).stream().sorted().toList());
+
+    captured.clear();
+    c.hosting
+        .transaction()
+        .executeWithoutResult(
+            status -> repository.lockCanonicalJoinAccounts(c.hosting.tenantId(), payer));
+    assertThat(captured).containsExactly(payer);
   }
 
   @Test

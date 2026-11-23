@@ -51,6 +51,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionPaidSource;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingPlanCatalog;
@@ -314,6 +315,8 @@ public final class CanonicalHostingSubscriptionTestFixture {
             service,
             lifecycleRepository,
             observer,
+            new AccountGameplayAdmissionPaidSource(
+                catalog, clock, limits, policy, observer, namespace, false),
             source);
     fixture.providerStatus("active");
     return fixture;
@@ -1002,6 +1005,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final AccountHostingSubscriptionLifecycleService service;
     private final AccountHostingSubscriptionLifecycleRepository lifecycleRepository;
     private final StripeHostingSubscriptionObserver observer;
+    private final AccountGameplayAdmissionPaidSource admissionPaidSource;
     private final DataSource source;
     private FirstInvoiceCheckout checkout;
     private Path checkoutDirectory;
@@ -1023,6 +1027,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
         AccountHostingSubscriptionLifecycleService service,
         AccountHostingSubscriptionLifecycleRepository lifecycleRepository,
         StripeHostingSubscriptionObserver observer,
+        AccountGameplayAdmissionPaidSource admissionPaidSource,
         DataSource source) {
       this.jdbc = jdbc;
       this.dsl = dsl;
@@ -1040,6 +1045,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       this.service = service;
       this.lifecycleRepository = lifecycleRepository;
       this.observer = observer;
+      this.admissionPaidSource = admissionPaidSource;
       this.source = source;
     }
 
@@ -1118,6 +1124,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public StripeHostingSubscriptionObserver observer() {
       return observer;
+    }
+
+    public AccountGameplayAdmissionPaidSource admissionPaidSource() {
+      return admissionPaidSource;
     }
 
     /** Uses a JUnit-owned directory for both successful and partially constructed checkouts. */
