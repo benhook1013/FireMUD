@@ -103,14 +103,15 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   private final RedisScriptCatalog catalog;
   private final Clock handoffClock;
   private final long handoffDeadlineMillis;
+  private final CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget;
 
   CanonicalGameplayRegionLeaseRedisOwner(RedisClient redisClient, RedisScriptCatalog catalog) {
-    this(redisClient, null, catalog, null, 0L);
+    this(redisClient, null, catalog, null, 0L, null);
   }
 
   CanonicalGameplayRegionLeaseRedisOwner(
       RedisClient redisClient, RedisURI coordinationUri, RedisScriptCatalog catalog) {
-    this(redisClient, Objects.requireNonNull(coordinationUri), catalog, null, 0L);
+    this(redisClient, Objects.requireNonNull(coordinationUri), catalog, null, 0L, null);
   }
 
   private CanonicalGameplayRegionLeaseRedisOwner(
@@ -118,7 +119,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       RedisURI coordinationUri,
       RedisScriptCatalog catalog,
       Clock handoffClock,
-      long deadline) {
+      long deadline,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget) {
+    this.installationBudget = installationBudget;
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Coordination Redis client");
     this.coordinationUri = coordinationUri;
     this.catalog = Objects.requireNonNull(catalog, "Installed region lease script catalog");
@@ -132,15 +135,26 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         Objects.requireNonNull(coordinationUri, "Configured Coordination Redis URI"),
         catalog,
         Objects.requireNonNull(clock),
-        deadline);
+        deadline,
+        null);
   }
 
-  /** Freeze one deadline before the composed installation performs any source or SQL work. */
   CanonicalGameplayRegionLeaseRedisOwner forInstallation(Clock clock) {
     return forInstallation(clock, Long.MAX_VALUE);
   }
 
-  CanonicalGameplayRegionLeaseRedisOwner forInstallation(Clock clock, long installationDeadline) {
+  /** Borrow the composed installation's admission and frozen deadline; never reserve again. */
+  CanonicalGameplayRegionLeaseRedisOwner forInstallation(
+      Clock clock, CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (coordinationUri == null) return this;
+    long deadline = budget.absoluteDeadlineMillis();
+    if (handoffClock != null && handoffDeadlineMillis < deadline) throw unavailable();
+    return new CanonicalGameplayRegionLeaseRedisOwner(
+        redisClient, coordinationUri, catalog, clock, deadline, budget);
+  }
+
+  private CanonicalGameplayRegionLeaseRedisOwner forInstallation(
+      Clock clock, long installationDeadline) {
     // URI-less owners are the explicitly unbudgeted ordinary installation composition.
     if (coordinationUri == null) return this;
     Context caller = Context.current();
@@ -222,6 +236,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       Duration leaseTtl,
       RuntimeIdentity identity) {
+    if (installationBudget != null) {
+      var session =
+          prepareTimelineInitialization(preparation, leaseTtl, identity, installationBudget);
+      installationBudget.retainUntilAsyncClose(session.disposal);
+      return session;
+    }
     if (handoffClock != null) {
       requireNoAmbientTransaction();
       Object handoffLock = new Object();
@@ -352,6 +372,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         || !requireOwnerInstance(identity).equals(status.ownerInstanceId())
         || !Objects.equals(preparation.leaseTokenCorrelation(), status.leaseTokenCorrelation())) {
       throw unavailable();
+    }
+    if (installationBudget != null) {
+      return readRetainedInitialGrant(preparation, status, installationBudget);
     }
     if (handoffClock != null) {
       return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
@@ -904,21 +927,33 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       boolean hasLeaseDeadlineArgument,
       boolean acquiring) {
     requireNoAmbientTransaction();
+    if (installationBudget != null) {
+      return executeBoundedInteger(
+          script, keys, arguments, hasLeaseDeadlineArgument, acquiring, installationBudget);
+    }
     if (handoffClock != null) {
       return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
           handoffClock,
           handoffDeadlineMillis,
-          budget -> {
-            byte[][] scopedArguments = arguments;
-            if (hasLeaseDeadlineArgument) {
-              scopedArguments = Arrays.copyOf(arguments, arguments.length);
-              scopedArguments[arguments.length - 1] =
-                  ascii(Long.toString(budget.absoluteDeadlineMillis()));
-            }
-            return executeInteger(script, keys, scopedArguments, budget, acquiring);
-          });
+          budget ->
+              executeBoundedInteger(
+                  script, keys, arguments, hasLeaseDeadlineArgument, acquiring, budget));
     }
     return executeInteger(script, keys, arguments, null, false);
+  }
+
+  private long executeBoundedInteger(
+      byte[] script,
+      byte[][] keys,
+      byte[][] arguments,
+      boolean hasLeaseDeadlineArgument,
+      boolean acquiring,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (hasLeaseDeadlineArgument) {
+      arguments = Arrays.copyOf(arguments, arguments.length);
+      arguments[arguments.length - 1] = ascii(Long.toString(budget.absoluteDeadlineMillis()));
+    }
+    return executeInteger(script, keys, arguments, budget, acquiring);
   }
 
   private long executeInteger(

@@ -431,6 +431,11 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       this.canonicalSessionDurationMillis = canonicalSessionDurationMillis;
     }
 
+    Template copyForBoundedFinal() {
+      if (canonicalTemplateBytes == null) throw invalid();
+      return new Template(canonicalTemplateBytes, clock, canonicalSessionDurationMillis);
+    }
+
     /**
      * The final owner binds only its exact retained capacity execution, never an arbitrary hash.
      */

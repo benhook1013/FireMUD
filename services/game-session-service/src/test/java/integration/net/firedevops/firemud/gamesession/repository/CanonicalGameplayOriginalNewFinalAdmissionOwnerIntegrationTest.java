@@ -31,6 +31,74 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     extends CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
 
   @Test
+  void finalDeadlineIncludesPhysicalTagConnectionAcquisition() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    var initialSql = sqlImage();
+    var initialRedis = physicalImage();
+    var acquiring = new java.util.concurrent.CountDownLatch(1);
+    var allowAcquisition = new java.util.concurrent.CountDownLatch(1);
+    var returnedConnection = new java.util.concurrent.CountDownLatch(1);
+    var provider = fixture.dsl().configuration().connectionProvider();
+    var delayedProvider =
+        new org.jooq.ConnectionProvider() {
+          @Override
+          public java.sql.Connection acquire() {
+            acquiring.countDown();
+            try {
+              if (!allowAcquisition.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                throw new IllegalStateException("Controlled acquisition latch did not open");
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(interrupted);
+            }
+            return provider.acquire();
+          }
+
+          @Override
+          public void release(java.sql.Connection connection) {
+            provider.release(connection);
+            returnedConnection.countDown();
+          }
+        };
+    var scopedTags =
+        new CanonicalGameplayTenantGameplayTagRepository(
+            org.jooq.impl.DSL.using(fixture.dsl().configuration().derive(delayedProvider)),
+            "test",
+            1);
+    var owner =
+        new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+            ownerClient, catalog, CLOCK, scopedTags);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var bound = template.bindCapacityExecution(controlledCapacity);
+        var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+      var response =
+          executor.submit(() -> {
+            try (var ignored =
+                owner.finalizeOriginalNewOnce(
+                    source, bound, account, issuer, controlledCapacity, CLOCK.millis() + 1500)) {
+              throw new AssertionError("Expired acquisition must not return FINAL authority");
+            }
+          });
+      try {
+        assertThat(acquiring.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> response.get(3, java.util.concurrent.TimeUnit.SECONDS))
+            .hasCauseInstanceOf(IllegalStateException.class);
+      } finally {
+        allowAcquisition.countDown();
+      }
+      assertThat(returnedConnection.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
+    assertThat(sqlImage()).isEqualTo(initialSql);
+    assertThat(physicalImage()).isEqualTo(initialRedis);
+  }
+
+  @Test
   void recreatedCapacityOwnerRecoversCommittedRedisWithoutOriginalCredentialOrGrant()
       throws Exception {
     repairAccountMember();
