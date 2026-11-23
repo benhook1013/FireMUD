@@ -206,8 +206,12 @@ kubectl() {
       ;;
     "--request-timeout=10s -n dev logs job/$PROBE_FIXTURE_JOB_NAME")
       touch "$PROBE_JOB_READ"
-      printf 'account-v1040-4-probe=retained-no-duplicates namespace=dev namespace_uid=%s deployed_sha=%s target_sha=%s schema=account_service applied_origin_migrations=3 checksum_comparison=verified-v1040-prefix\n' \
-        "$PROBE_FIXTURE_UID" "$PROBE_FIXTURE_BASE" "$PROBE_FIXTURE_HEAD"
+      local captured_namespace captured_uid captured_base captured_head captured_prefix
+      IFS=$'\t' read -r captured_namespace captured_uid captured_base captured_head captured_prefix < <(
+        jq -er '.spec.template.spec.containers[0].args[2:] | @tsv' "$PROBE_JOB_MANIFEST"
+      )
+      printf 'account-v1040-4-probe=retained-no-duplicates namespace=%s namespace_uid=%s deployed_sha=%s target_sha=%s schema=account_service applied_origin_migrations=%s checksum_comparison=verified-v1040-prefix\n' \
+        "$captured_namespace" "$captured_uid" "$captured_base" "$captured_head" "$captured_prefix"
       ;;
     "--request-timeout=10s -n dev logs job/$PROBE_FIXTURE_JOB_NAME --tail=1")
       printf '%s\n' 'Account V1040.4 probe found duplicate retained admission attempts. Account-owned disposition is required.'
@@ -243,13 +247,16 @@ run_protected_probe() {
 run_protected_probe >"$temp_dir/receipt"
 grep -q 'checksum_comparison=verified-v1040-prefix' "$temp_dir/receipt"
 [[ -f "$PROBE_JOB_DELETED" ]]
-jq -e '
+jq -e \
+  --arg probe "$(cat "$root_dir/dev-tools/deploy/probe-dev-account-v1040-4.sh")" \
+  --arg namespace dev --arg uid "$namespace_uid" --arg base "$deployed_sha" \
+  --arg head "$PROBE_FIXTURE_HEAD" --arg prefix 3 '
   .kind == "Job" and .metadata.namespace == "dev" and
   .spec.backoffLimit == 0 and .spec.activeDeadlineSeconds == 70 and .spec.ttlSecondsAfterFinished == 300 and
   .spec.template.spec.automountServiceAccountToken == false and
   (.spec.template.spec.containers | if type == "array" then
     length == 1 and .[0].command == ["bash", "-c"] and
-    (.[0].args[0] | contains("REPEATABLE READ READ ONLY")) and
+    .[0].args == [$probe, "probe-dev-account-v1040-4", $namespace, $uid, $base, $head, $prefix] and
     .[0].env == [
       {name:"FIREMUD_POSTGRES_USER",valueFrom:{secretKeyRef:{name:"firemud-secret",key:"FIREMUD_POSTGRES_USER"}}},
       {name:"PGPASSWORD",valueFrom:{secretKeyRef:{name:"firemud-secret",key:"FIREMUD_POSTGRES_PASSWORD"}}}

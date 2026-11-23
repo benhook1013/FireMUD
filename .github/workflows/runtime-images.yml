@@ -806,7 +806,7 @@ jobs:
             // The older PLAY diagnostic can leave the source run red. Only a
             // complete native attempt with its marker explicitly skipped can
             // prove that a failed producer did not supply that exception.
-            const provesOrdinaryTypedOutcome = async (run, workflowName) => {
+            const classifyTypedOutcome = async (run, workflowName) => {
               const successful = run.conclusion === "success";
               const repository = `${context.repo.owner}/${context.repo.repo}`;
               const matchesSelected = candidate => candidate &&
@@ -835,7 +835,9 @@ jobs:
                   ![workflowName, run.display_title].includes(job.workflow_name) ||
                   job.status !== "completed" || job.conclusion !== run.conclusion || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
-              if (markers.length !== 1 || markers[0].status !== "completed" || markers[0].conclusion !== "skipped") return false;
+              if (markers.length !== 1 || markers[0].status !== "completed") return false;
+              const diagnostic = successful && markers[0].conclusion === "success";
+              if (!diagnostic && markers[0].conclusion !== "skipped") return false;
               const timestamp = value => {
                 const match = typeof value === "string" && /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
                 const time = match ? Date.parse(value) : NaN;
@@ -854,7 +856,7 @@ jobs:
                 if (!Number.isFinite(markerStart) || !Number.isFinite(markerEnd) ||
                     markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
               }
-              if (successful) {
+              if (successful && !diagnostic) {
                 // A green run or job alone can be a no-op or the diagnostic exception.
                 // Require affirmative ordinary smoke and authenticated cleanup in this attempt.
                 for (const name of ["Run credential-free full-stack smoke", "Stop smoke stack",
@@ -868,7 +870,7 @@ jobs:
               if (successful && (!matchesSelected(latest) || latest.created_at !== run.created_at)) {
                 throw new Error(`Successful typed runtime producer ${run.id} changed during exact attempt proof`);
               }
-              return matchesSelected(latest);
+              return matchesSelected(latest) ? (diagnostic ? "diagnostic" : "ordinary") : false;
             };
             // Bind both admission reads to the same terminal attempt; never cache native proof.
             const disregardedTypedAttempts = new Map();
@@ -953,8 +955,8 @@ jobs:
                       throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
                     }
                     if (["success", "failure"].includes(newest.conclusion)) {
-                      const ordinary = await provesOrdinaryTypedOutcome(latest, workflow.name);
-                      if (newest.conclusion === "success" ? ordinary : !ordinary) return [newest];
+                      const outcome = await classifyTypedOutcome(latest, workflow.name);
+                      if (newest.conclusion === "success" ? Boolean(outcome) : outcome !== "ordinary") return [newest];
                     }
                     // A recent success can be a validated transition diagnostic or
                     // awaiting downstream evidence. Preserve its existing hold.
@@ -1103,6 +1105,15 @@ jobs:
               ["main", "develop"].includes(refreshBranch);
             const pullRequests = protectedPrHead ? [] : await listOpenPullRequests({base: refreshBranch});
             const refreshTargets = [];
+            const refreshTargetKeys = new Set();
+            const addRefreshTarget = (resolved) => {
+              if (!resolved) return;
+              const {prNumber, baseRef, baseSha, headSha, mergeSha} = resolved.tuple;
+              const key = JSON.stringify([prNumber, baseRef, baseSha, headSha, mergeSha]);
+              if (refreshTargetKeys.has(key)) return;
+              refreshTargetKeys.add(key);
+              refreshTargets.push(resolved);
+            };
             for (let pullRequestIndex = 0; pullRequestIndex < pullRequests.length; pullRequestIndex += 1) {
               const listedPullRequest = pullRequests[pullRequestIndex];
               if (listedPullRequest.state !== "open" ||
@@ -1130,9 +1141,7 @@ jobs:
                 );
                 continue;
               }
-              if (resolved) {
-                refreshTargets.push(resolved);
-              }
+              addRefreshTarget(resolved);
             }
             if (workflowRun.event === "pull_request") {
               // A retarget/edit can carry an unusable event merge SHA. CI completion
@@ -1159,7 +1168,7 @@ jobs:
                 }
                 const resolved = await resolveExactMerge(source.number, source.base.ref, sourceBaseSha, refreshSha);
                 if (resolved && !refreshTargets.some((target) => target.tuple.prNumber === resolved.tuple.prNumber)) {
-                  refreshTargets.push(resolved);
+                  addRefreshTarget(resolved);
                 }
               }
             }
