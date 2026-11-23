@@ -48,6 +48,11 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
         operationDsl, workloadNamespace, allocationVersion);
   }
 
+  CanonicalGameplayTenantGameplayTagRepository forCapacityExecution(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    return withCapacityExecutionDsl(budget.sql(dsl));
+  }
+
   /** Loads or allocates a mapping only for the persisted candidate of this exact transition. */
   public Assignment assignmentForTransition(UUID transitionId) {
     requireNonNil(transitionId, "transitionId");

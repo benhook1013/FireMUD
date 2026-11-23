@@ -46,6 +46,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   static final class RetainedNoWriteRecovery {
     private boolean inUse;
     private int retainedWorkers;
+    private boolean cleanupActive;
     CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
   }
@@ -58,7 +59,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         retained = new RetainedNoWriteRecovery();
         noWriteRecoveries.put(operation, retained);
       }
-      if (retained.inUse || retained.retainedWorkers != 0) throw unavailable();
+      if (retained.inUse || retained.retainedWorkers != 0 || retained.cleanupActive)
+        throw unavailable();
       retained.inUse = true;
       return retained;
     }
@@ -67,7 +69,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   void releaseNoWriteRecovery(UUID operation, RetainedNoWriteRecovery retained) {
     synchronized (noWriteRecoveries) {
       retained.inUse = false;
-      if (retained.proof == null && retained.retainedWorkers == 0) {
+      if (retained.proof == null && retained.retainedWorkers == 0 && !retained.cleanupActive) {
         noWriteRecoveries.remove(operation, retained);
       }
     }
@@ -83,7 +85,10 @@ final class CanonicalGameplayRegionLeaseOwner {
     lifetime.whenComplete((ignored, failure) -> {
       synchronized (noWriteRecoveries) {
         retained.retainedWorkers--;
-        if (!retained.inUse && retained.retainedWorkers == 0 && retained.proof == null) {
+        if (!retained.inUse
+            && retained.retainedWorkers == 0
+            && !retained.cleanupActive
+            && retained.proof == null) {
           noWriteRecoveries.remove(operation, retained);
         }
       }
@@ -114,7 +119,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         if (retained.proof != null
             && retained.preparation != null
             && retained.preparation.transitionId().equals(transitionId)) {
-          if (retained.inUse || retained.retainedWorkers != 0) throw unavailable();
+          if (retained.inUse || retained.retainedWorkers != 0 || retained.cleanupActive)
+            throw unavailable();
           retained.inUse = true;
           selected = retained;
           break;
@@ -122,56 +128,60 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
     }
     if (selected == null) return;
-    var recovery = selected;
-    var workerOwnsRecovery = new java.util.concurrent.atomic.AtomicBoolean();
     try {
-      // Retry cleanup observes the caller's deadline. Its reservation follows the actual
-      // SQL worker, not the caller-facing timeout or completion of the SQL callback alone.
-      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-          clock,
-          absoluteDeadlineMillis,
-          cleanup -> {
-            if (!workerOwnsRecovery.compareAndSet(false, true)) throw unavailable();
-            cleanup
-                .workerLifetime()
-                .whenComplete((ignored, failure) ->
-                    releaseNoWriteRecovery(recovery.preparation.operationId(), recovery));
-            this.statusRepository
-                .forBudget(cleanup)
-                .releaseInitialTimelineNoWrite(
-                    recovery.preparation, recovery.proof, clock.instant());
-            synchronized (noWriteRecoveries) {
-              recovery.proof = null;
-            }
-            return null;
-          });
-    } finally {
-      // If the callback never acquired custody, prevent a late start and release safely.
-      if (workerOwnsRecovery.compareAndSet(false, true)) {
-        releaseNoWriteRecovery(recovery.preparation.operationId(), recovery);
+      if (absoluteDeadlineMillis == Long.MAX_VALUE) {
+        recoverNoWrite(selected.preparation, selected);
+      } else {
+        recoverNoWrite(selected.preparation, selected, clock, absoluteDeadlineMillis);
       }
+    } finally {
+      releaseNoWriteRecovery(selected.preparation.operationId(), selected);
     }
   }
 
   void recoverNoWrite(
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       RetainedNoWriteRecovery retained) {
-    if (retained.proof == null) return;
     io.grpc.Context previous = io.grpc.Context.ROOT.attach();
     try {
-      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-          Clock.systemUTC(),
-          Long.MAX_VALUE,
-          cleanup -> {
-            this.statusRepository
-                .forBudget(cleanup)
-                .releaseInitialTimelineNoWrite(preparation, retained.proof, clock.instant());
-            return null;
-          });
-      retained.proof = null;
+      recoverNoWrite(preparation, retained, Clock.systemUTC(), Long.MAX_VALUE);
     } finally {
       io.grpc.Context.ROOT.detach(previous);
     }
+  }
+
+  private void recoverNoWrite(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained,
+      Clock cleanupClock,
+      long cleanupDeadline) {
+    CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
+    synchronized (noWriteRecoveries) {
+      proof = retained.proof;
+      if (proof == null) return;
+      if (retained.cleanupActive) throw unavailable();
+      retained.cleanupActive = true;
+    }
+    var cleanupSucceeded = new java.util.concurrent.atomic.AtomicBoolean();
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        cleanupClock,
+        cleanupDeadline,
+        cleanup -> {
+          this.statusRepository
+              .forBudget(cleanup)
+              .releaseInitialTimelineNoWrite(preparation, proof, clock.instant());
+          cleanupSucceeded.set(true);
+          return null;
+        },
+        () -> {
+          synchronized (noWriteRecoveries) {
+            if (cleanupSucceeded.get()) retained.proof = null;
+            retained.cleanupActive = false;
+            if (!retained.inUse && retained.retainedWorkers == 0 && retained.proof == null) {
+              noWriteRecoveries.remove(preparation.operationId(), retained);
+            }
+          }
+        });
   }
 
   CanonicalGameplayRegionLeaseOwner(
@@ -247,8 +257,8 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
-    recoverRetainedNoWriteForTransition(transitionId, absoluteDeadlineMillis);
     if (!deadlineBoundInstallation || transferOwner != null) {
+      recoverRetainedNoWriteForTransition(transitionId, absoluteDeadlineMillis);
       return installForTransition(
           existingRegionInstallation,
           transitionId,
@@ -257,11 +267,21 @@ final class CanonicalGameplayRegionLeaseOwner {
           absoluteDeadlineMillis,
           bindingInventory,
           statusRepository,
-          redisOwner);
+          redisOwner,
+          null);
     }
-    return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+    long maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+    var monotonicDeadline =
+        io.grpc.Deadline.after(maximum, java.util.concurrent.TimeUnit.MILLISECONDS);
+    long installationDeadline = Math.min(absoluteDeadlineMillis, deadlineAfter(clock, maximum));
+    recoverRetainedNoWriteForTransition(transitionId, installationDeadline);
+    // A separate cleanup resource worker must not give the subsequent install a fresh window.
+    long remainingMillis =
+        monotonicDeadline.timeRemaining(java.util.concurrent.TimeUnit.MILLISECONDS);
+    long remainingDeadline = Math.min(installationDeadline, deadlineAfter(clock, remainingMillis));
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
         clock,
-        absoluteDeadlineMillis,
+        remainingDeadline,
         budget ->
             installForTransition(
                 existingRegionInstallation,
@@ -271,7 +291,17 @@ final class CanonicalGameplayRegionLeaseOwner {
                 budget.absoluteDeadlineMillis(),
                 bindingInventory.forBudget(budget),
                 statusRepository.forBudget(budget),
-                redisOwner.forInstallation(clock, budget.absoluteDeadlineMillis())));
+                redisOwner.forInstallation(clock, budget),
+                budget.operationDeadline()));
+  }
+
+  private static long deadlineAfter(Clock clock, long millis) {
+    if (millis <= 0) throw unavailable();
+    try {
+      return Math.addExact(clock.millis(), millis);
+    } catch (ArithmeticException invalid) {
+      throw unavailable();
+    }
   }
 
   private Installation installForTransition(
@@ -282,7 +312,8 @@ final class CanonicalGameplayRegionLeaseOwner {
       long absoluteDeadlineMillis,
       CanonicalGameplayBindingInventoryRepository bindingInventory,
       CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
-      CanonicalGameplayRegionLeaseRedisOwner redisOwner) {
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      Deadline admittedDeadline) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(transitionId, "transitionId");
     Objects.requireNonNull(worldRequest, "worldRequest");
@@ -302,7 +333,11 @@ final class CanonicalGameplayRegionLeaseOwner {
         transferOwner == null && !deadlineBoundInstallation
             ? requestedDeadline
             : Math.min(requestedDeadline, Math.addExact(startedAt, 5_000L));
-    Deadline worldDeadline = worldDeadline(startedAt, handoffDeadline);
+    Deadline scopedWorldDeadline = worldDeadline(startedAt, handoffDeadline);
+    Deadline worldDeadline =
+        admittedDeadline == null
+            ? scopedWorldDeadline
+            : admittedDeadline.minimum(scopedWorldDeadline);
     // A prior advance may have retained the positive SQL result before a later observation
     // failed. Recover only its captured original, never synthetic provisional authority.
     var frozenOriginal =
@@ -389,9 +424,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       transferOwner.requireFrozenOriginal(frozenOriginal, source, prior, handoffDeadline);
     }
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
-        transferOwner == null && !deadlineBoundInstallation
-            ? redisOwner
-            : redisOwner.forHandoffDeadline(clock, handoffDeadline);
+        transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     UUID transferId = null;
     CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource =
         retainedOriginal;
@@ -880,9 +913,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       long handoffDeadline,
       Deadline worldDeadline) {
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
-        transferOwner == null && !deadlineBoundInstallation
-            ? redisOwner
-            : redisOwner.forHandoffDeadline(clock, handoffDeadline);
+        transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     handoffRedisOwner.requireCurrent(grant);
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
     CanonicalGameplayRegionRuntimeStatus observed =

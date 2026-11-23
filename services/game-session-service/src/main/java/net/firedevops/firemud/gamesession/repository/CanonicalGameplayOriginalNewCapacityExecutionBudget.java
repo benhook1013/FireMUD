@@ -26,6 +26,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
@@ -39,6 +40,7 @@ import org.slf4j.LoggerFactory;
 final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private static final Logger LOG =
       LoggerFactory.getLogger(CanonicalGameplayOriginalNewCapacityExecutionBudget.class);
+  static final long MAX_OPERATION_MILLIS = 5_000L;
   static final int MAX_IN_FLIGHT_OPERATIONS = 4;
   private static final Semaphore OPERATIONS = new Semaphore(MAX_IN_FLIGHT_OPERATIONS);
   static final int MAX_BACKGROUND_OPERATIONS = 2;
@@ -72,7 +74,6 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final long absoluteDeadlineMillis;
   private final AtomicBoolean cancelled = new AtomicBoolean();
   private final CompletableFuture<Object> result = new CompletableFuture<>();
-  private final CompletableFuture<Void> workerLifetime = new CompletableFuture<>();
   private final Object resources = new Object();
   private final Object lifecycle = new Object();
   private final Map<Connection, OwnedConnection> connections = new IdentityHashMap<>();
@@ -85,6 +86,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private boolean cancellationStarted;
   private boolean cancellationDone;
   private boolean released;
+  private Runnable onPhysicalRelease;
 
   private CanonicalGameplayOriginalNewCapacityExecutionBudget(
       Clock clock, long explicitDeadline, ThreadFactory cancellationThreads, boolean background) {
@@ -93,7 +95,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
     caller = Context.current();
     long startedMillis = clock.millis();
-    long nanos = TimeUnit.SECONDS.toNanos(5);
+    long nanos = TimeUnit.MILLISECONDS.toNanos(MAX_OPERATION_MILLIS);
     if (caller.getDeadline() != null)
       nanos = Math.min(nanos, caller.getDeadline().timeRemaining(TimeUnit.NANOSECONDS));
     if (explicitDeadline != Long.MAX_VALUE) {
@@ -103,7 +105,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       } catch (ArithmeticException invalid) {
         throw unavailable();
       }
-      nanos = Math.min(nanos, TimeUnit.MILLISECONDS.toNanos(Math.min(5000, remaining)));
+      nanos =
+          Math.min(nanos, TimeUnit.MILLISECONDS.toNanos(Math.min(MAX_OPERATION_MILLIS, remaining)));
     }
     if (nanos <= 0 || caller.isCancelled()) throw unavailable();
     try {
@@ -133,7 +136,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       long explicitDeadline,
       Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
       ThreadFactory cancellationThreads) {
-    return run(clock, explicitDeadline, operation, cancellationThreads, false);
+    return run(clock, explicitDeadline, operation, cancellationThreads, false, null, null);
   }
 
   static <T> T runBackground(
@@ -145,7 +148,41 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         explicitDeadline,
         operation,
         Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
-        true);
+        true,
+        null,
+        null);
+  }
+
+  /** Notify only once admission refuses or all admitted physical work has finished. */
+  static <T> T runBackground(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      Runnable onPhysicalRelease) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        true,
+        null,
+        Objects.requireNonNull(onPhysicalRelease));
+  }
+
+  /** A result with private resources transfers ownership only after the caller's deadline check. */
+  static <T> T runOwned(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      Consumer<T> disposeAbandoned) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        false,
+        Objects.requireNonNull(disposeAbandoned),
+        null);
   }
 
   private static <T> T run(
@@ -153,17 +190,27 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       long explicitDeadline,
       Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
       ThreadFactory cancellationThreads,
-      boolean background) {
-    var budget =
-        new CanonicalGameplayOriginalNewCapacityExecutionBudget(
-            clock, explicitDeadline, cancellationThreads, background);
-    // Background reads and transfer work share the same four-operation ceiling, but cannot
-    // consume the two slots reserved for final admission. Neither class waits in a queue.
-    if (background && !BACKGROUND_OPERATIONS.tryAcquire()) throw unavailable();
-    if (!OPERATIONS.tryAcquire()) {
-      if (background) BACKGROUND_OPERATIONS.release();
-      throw unavailable();
+      boolean background,
+      Consumer<T> disposeAbandoned,
+      Runnable onPhysicalRelease) {
+    final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
+    try {
+      budget =
+          new CanonicalGameplayOriginalNewCapacityExecutionBudget(
+              clock, explicitDeadline, cancellationThreads, background);
+      // Background reads and transfer work share the same four-operation ceiling, but cannot
+      // consume the two slots reserved for final admission. Neither class waits in a queue.
+      if (background && !BACKGROUND_OPERATIONS.tryAcquire()) throw unavailable();
+      if (!OPERATIONS.tryAcquire()) {
+        if (background) BACKGROUND_OPERATIONS.release();
+        throw unavailable();
+      }
+    } catch (RuntimeException | Error refusal) {
+      if (onPhysicalRelease != null) onPhysicalRelease.run();
+      throw refusal;
     }
+    budget.onPhysicalRelease = onPhysicalRelease;
+    var resultClaimed = disposeAbandoned == null ? null : new CompletableFuture<Boolean>();
     Context.CancellationListener listener = ignored -> budget.cancel();
     budget.caller.addListener(listener, Runnable::run);
     try {
@@ -186,22 +233,19 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                 else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
               }
               try {
-                budget.caller.detach(previous);
-              } finally {
-                synchronized (budget.lifecycle) {
-                  budget.workerDone = true;
-                  budget.releaseIfFinished();
+                if (resultClaimed != null) {
+                  try {
+                    budget.publishResult(value, failure);
+                    if (!resultClaimed.join() && value != null) disposeAbandoned.accept(value);
+                  } finally {
+                    budget.workerFinished();
+                  }
+                } else {
+                  budget.workerFinished();
+                  budget.publishResult(value, failure);
                 }
-                budget.workerLifetime.complete(null);
-              }
-            }
-            if (failure != null) budget.result.completeExceptionally(failure);
-            else {
-              try {
-                budget.check();
-                budget.result.complete(value);
-              } catch (RuntimeException expired) {
-                budget.result.completeExceptionally(expired);
+              } finally {
+                budget.caller.detach(previous);
               }
             }
           };
@@ -217,6 +261,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       @SuppressWarnings("unchecked")
       T value = (T) budget.result.get(budget.remainingNanos(), TimeUnit.NANOSECONDS);
       budget.check();
+      if (resultClaimed != null) resultClaimed.complete(true);
       return value;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
@@ -229,7 +274,28 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       budget.cancel();
       throw unavailable();
     } finally {
+      if (resultClaimed != null) resultClaimed.complete(false);
       budget.caller.removeListener(listener);
+    }
+  }
+
+  private void workerFinished() {
+    synchronized (lifecycle) {
+      workerDone = true;
+      releaseIfFinished();
+    }
+  }
+
+  private void publishResult(Object value, Throwable failure) {
+    if (failure != null) {
+      result.completeExceptionally(failure);
+      return;
+    }
+    try {
+      check();
+      result.complete(value);
+    } catch (RuntimeException expired) {
+      result.completeExceptionally(expired);
     }
   }
 
@@ -295,10 +361,6 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   }
 
   /** Actual worker exit, including SQL resource cleanup; never the caller timeout. */
-  CompletableFuture<Void> workerLifetime() {
-    return workerLifetime;
-  }
-
   /** Keeps this operation's permits until borrowed work has actually exited. */
   void retainUntilCompletion(CompletableFuture<?> work) {
     Objects.requireNonNull(work);
@@ -469,6 +531,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       released = true;
       OPERATIONS.release();
       if (background) BACKGROUND_OPERATIONS.release();
+      if (onPhysicalRelease != null) onPhysicalRelease.run();
     }
   }
 

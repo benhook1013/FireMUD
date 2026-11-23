@@ -220,6 +220,44 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
       OriginalNewCapacityExecution execution,
       long absoluteDeadlineMillis) {
+    if (scopedConnection == null) {
+      requireNoAmbientTransaction();
+      var privateTemplate =
+          Objects.requireNonNull(template, "Authenticated session template is required")
+              .copyForBoundedFinal();
+      var templateClaimed = new java.util.concurrent.atomic.AtomicBoolean();
+      try {
+        return CanonicalGameplayOriginalNewCapacityExecutionBudget.runOwned(
+            clock,
+            Math.min(operationDeadlineMillis, absoluteDeadlineMillis),
+            budget -> {
+              if (!templateClaimed.compareAndSet(false, true)) throw unavailable();
+              try (privateTemplate) {
+                return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                        redisClient,
+                        catalog,
+                        clock,
+                        tenantTags.forCapacityExecution(budget),
+                        () ->
+                            CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                                redisClient, budget),
+                        budget::remainingMillis,
+                        budget::awaitAsyncClose,
+                        budget.absoluteDeadlineMillis())
+                    .finalizeOriginalNewOnce(
+                        source,
+                        privateTemplate,
+                        accountOpen,
+                        issuerOpen,
+                        execution,
+                        budget.absoluteDeadlineMillis());
+              }
+            },
+            Readback::close);
+      } finally {
+        if (templateClaimed.compareAndSet(false, true)) privateTemplate.close();
+      }
+    }
     if (operationDeadlineMillis == Long.MAX_VALUE) {
       return withDeadline(absoluteDeadlineMillis)
           .finalizeOriginalNewOnce(
