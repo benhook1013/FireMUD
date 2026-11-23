@@ -1,8 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
@@ -21,7 +19,6 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -603,7 +600,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     byte[] value = new byte[] {2, 0, (byte) 0xfe};
     admin.hset(hash, field, value);
     Map<String, byte[]> before = physicalImage(original);
-    verifyRawEnumerationOrderIsNotPartOfTheImage(hash, ascii(original.keys()[2]), field, value);
+    verifyRawEnumerationOrderIsNotPartOfTheImage(field, value);
     admin.hdel(hash, field);
     admin.hset(hash, field, value);
     assertPhysicalImage(original, before, 7);
@@ -624,39 +621,22 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
   }
 
-  private static void verifyRawEnumerationOrderIsNotPartOfTheImage(
-      byte[] hash, byte[] set, byte[] field, byte[] value) {
+  private static void verifyRawEnumerationOrderIsNotPartOfTheImage(byte[] field, byte[] value) {
     byte[] otherField = {0, (byte) 0xff, 2};
     byte[] otherValue = {2, 0, (byte) 0xff};
-    Map<byte[], byte[]> forwardFields = new LinkedHashMap<>();
-    forwardFields.put(field, value);
-    forwardFields.put(otherField, otherValue);
-    Map<byte[], byte[]> reverseFields = new LinkedHashMap<>();
-    reverseFields.put(otherField, otherValue);
-    reverseFields.put(field, value);
-    var forwardMembers = new LinkedHashSet<>(List.of(value, otherValue));
-    var reverseMembers = new LinkedHashSet<>(List.of(otherValue, value));
-    assertThat(forwardFields.keySet()).containsExactly(field, otherField);
-    assertThat(reverseFields.keySet()).containsExactly(otherField, field);
-    assertThat(forwardMembers).containsExactly(value, otherValue);
-    assertThat(reverseMembers).containsExactly(otherValue, value);
-
-    RedisCommands<byte[], byte[]> orderedRead = mock();
-    when(orderedRead.type(hash)).thenReturn("hash");
-    when(orderedRead.type(set)).thenReturn("set");
-    when(orderedRead.pexpiretime(hash)).thenReturn(-1L);
-    when(orderedRead.pexpiretime(set)).thenReturn(-1L);
-    when(orderedRead.hgetall(hash)).thenReturn(forwardFields).thenReturn(reverseFields);
-    when(orderedRead.smembers(set)).thenReturn(forwardMembers).thenReturn(reverseMembers);
     byte[] firstHash =
-        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, hash);
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.encodeSnapshot(
+            List.of(ascii("hash"), -1L, List.of(field, value, otherField, otherValue)));
     assertThat(
-            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, hash))
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.encodeSnapshot(
+                List.of(ascii("hash"), -1L, List.of(otherField, otherValue, field, value))))
         .containsExactly(firstHash);
     byte[] firstSet =
-        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, set);
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.encodeSnapshot(
+            List.of(ascii("set"), -1L, List.of(value, otherValue)));
     assertThat(
-            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(orderedRead, set))
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.encodeSnapshot(
+                List.of(ascii("set"), -1L, List.of(otherValue, value))))
         .containsExactly(firstSet);
   }
 

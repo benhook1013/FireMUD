@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Immutable Account decision; unique-key arbitration also excludes caller/account aliases. */
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Private transaction collaborator.")
@@ -28,6 +29,10 @@ public final class AccountCapacityOriginDecisionRepository {
   /** Read only. Missing row is not a refusal. */
   public Record find(Request request) {
     transaction();
+    return findExact(request);
+  }
+
+  private Record findExact(Request request) {
     Record row = findRow(request);
     if (row != null) requireExact(request, row, CapacityAdmissionDigest.preimage(request));
     return row;
@@ -47,7 +52,17 @@ public final class AccountCapacityOriginDecisionRepository {
 
   /** Replays an exact durable quota refusal before any mutable eligibility check. */
   public UUID retainedQuotaDenial(Request request) {
-    Record row = find(request);
+    return quotaDenialId(find(request));
+  }
+
+  /** Historical recovery SELECT, never part of the mutation transaction. */
+  public UUID readRetainedQuotaDenial(Request request) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
+    return quotaDenialId(findExact(request));
+  }
+
+  private static UUID quotaDenialId(Record row) {
     if (row == null) return null;
     return requireOutcome(row, "NO_ACCEPT", QUOTA_REFUSAL).get("decision_id", UUID.class);
   }

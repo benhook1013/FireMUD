@@ -21,7 +21,7 @@ kubectl() {
 export -f kubectl
 
 namespace_for_head() {
-  FAKE_NAMESPACE_JSON="$(jq -cn --arg head "$1" '{metadata:{name:"dev",labels:{"firemud.dev/dev-demo":"true","firemud.dev/environment-class":"dev-demo-cluster"},annotations:{"firemud.dev/last-dev-demo-head-sha":$head}}}')"
+  FAKE_NAMESPACE_JSON="$(jq -cn --arg head "$1" '{metadata:{name:"dev",uid:"fixture-dev-uid",labels:{"firemud.dev/dev-demo":"true","firemud.dev/environment-class":"dev-demo-cluster"},annotations:{"firemud.dev/last-dev-demo-head-sha":$head}}}')"
   export FAKE_NAMESPACE_JSON
 }
 
@@ -51,6 +51,9 @@ assert_rejected() {
 mkdir -p "$repo/services/example/src/main/resources/db/migration"
 printf '%s\n' 'CREATE TABLE baseline (id integer PRIMARY KEY);' \
   >"$repo/services/example/src/main/resources/db/migration/V1__baseline.sql"
+mkdir -p "$repo/services/account-service/src/main/resources/db/migration"
+printf '%s\n' '-- deployed capacity baseline' \
+  >"$repo/services/account-service/src/main/resources/db/migration/V1040__account_tenant_capacity_owner.sql"
 git -C "$repo" add .
 git -C "$repo" commit -qm "baseline"
 baseline_sha="$(git -C "$repo" rev-parse HEAD)"
@@ -121,7 +124,13 @@ capacity_migration_dir="$repo/services/account-service/src/main/resources/db/mig
 for migration in \
   V1040.1__account_capacity_origin_decisions.sql \
   V1040.2__bound_capacity_origin_refusals.sql \
-  V1040.3__validate_only_inserted_refusal_budgets.sql \
+  V1040.3__validate_only_inserted_refusal_budgets.sql; do
+  printf '%s\n' '-- retained capacity origin migration fixture' >"$capacity_migration_dir/$migration"
+done
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account capacity origin prefix"
+capacity_prefix_sha="$(git -C "$repo" rev-parse HEAD)"
+for migration in \
   V1040.4__unique_capacity_origin_attempt.sql \
   V1040.5__arbitrate_origin_identity_before_refusal_budget.sql \
   V1040.6__index_retained_capacity_refusal_slots.sql; do
@@ -133,6 +142,17 @@ capacity_origin_sha="$(git -C "$repo" rev-parse HEAD)"
 namespace_for_head "$account_v25_sha"
 assert_activation true push "$account_v25_sha" "$capacity_origin_sha"
 assert_activation true workflow_dispatch "" "$capacity_origin_sha"
+origin_receipt="$(cd "$repo" && bash "$detector" push "$account_v25_sha" "$capacity_origin_sha" dev)"
+grep -Fxq 'account_origin_probe=true' <<<"$origin_receipt"
+grep -Fxq 'account_origin_prefix=0' <<<"$origin_receipt"
+grep -Fxq "account_origin_base_sha=$account_v25_sha" <<<"$origin_receipt"
+grep -Fxq 'account_origin_namespace_uid=fixture-dev-uid' <<<"$origin_receipt"
+
+namespace_for_head "$capacity_prefix_sha"
+origin_receipt="$(cd "$repo" && bash "$detector" push "$capacity_prefix_sha" "$capacity_origin_sha" dev)"
+grep -Fxq 'account_origin_prefix=3' <<<"$origin_receipt"
+FAKE_NAMESPACE_JSON="$(jq 'del(.metadata.uid)' <<<"$FAKE_NAMESPACE_JSON")"
+assert_rejected push "$capacity_prefix_sha" "$capacity_origin_sha"
 
 namespace_for_head "$capacity_origin_sha"
 assert_rejected workflow_dispatch "" "$capacity_origin_sha"

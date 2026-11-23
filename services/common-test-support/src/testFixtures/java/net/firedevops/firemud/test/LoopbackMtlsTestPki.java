@@ -27,6 +27,21 @@ public final class LoopbackMtlsTestPki {
 
   public static Pki create(Path directory, String caCommonName, IdentitySpec... identities)
       throws Exception {
+    return create(directory, caCommonName, false, identities);
+  }
+
+  /** Reads each freshly signed test leaf directly from its certificate output. */
+  public static Pki createWithDirectSignedLeafRead(
+      Path directory, String caCommonName, IdentitySpec... identities) throws Exception {
+    return create(directory, caCommonName, true, identities);
+  }
+
+  private static Pki create(
+      Path directory,
+      String caCommonName,
+      boolean readSignedLeafDirectly,
+      IdentitySpec... identities)
+      throws Exception {
     Path caStore = directory.resolve("test-ca.p12");
     keytool(
         "-genkeypair",
@@ -69,8 +84,10 @@ public final class LoopbackMtlsTestPki {
     X509Certificate caCertificate = readCertificate(caFile);
     var issued = new java.util.LinkedHashMap<String, Identity>();
     for (IdentitySpec identity : identities) {
-      if (issued.putIfAbsent(identity.alias(), issueIdentity(directory, caStore, caFile, identity))
-          != null) {
+      Identity material =
+          issueIdentity(
+              directory, caStore, caFile, caCertificate, identity, readSignedLeafDirectly);
+      if (issued.putIfAbsent(identity.alias(), material) != null) {
         throw new IllegalArgumentException("duplicate test certificate alias: " + identity.alias());
       }
     }
@@ -159,7 +176,13 @@ public final class LoopbackMtlsTestPki {
   }
 
   private static Identity issueIdentity(
-      Path directory, Path caStore, Path caFile, IdentitySpec identity) throws Exception {
+      Path directory,
+      Path caStore,
+      Path caFile,
+      X509Certificate caCertificate,
+      IdentitySpec identity,
+      boolean readSignedLeafDirectly)
+      throws Exception {
     String alias = identity.alias();
     String san = "URI:" + identity.workloadUri() + ",DNS:localhost,IP:127.0.0.1";
     Path store = directory.resolve(alias + ".p12");
@@ -230,39 +253,53 @@ public final class LoopbackMtlsTestPki {
         "EKU=" + (identity.server() ? "serverAuth" : "clientAuth"),
         "-ext",
         "SAN=" + san);
-    keytool(
-        "-importcert",
-        "-alias",
-        "test-ca",
-        "-keystore",
-        store.toString(),
-        "-storetype",
-        "PKCS12",
-        "-storepass",
-        STORE_PASSWORD,
-        "-file",
-        caFile.toString(),
-        "-noprompt");
-    keytool(
-        "-importcert",
-        "-alias",
-        alias,
-        "-keystore",
-        store.toString(),
-        "-storetype",
-        "PKCS12",
-        "-storepass",
-        STORE_PASSWORD,
-        "-file",
-        certificate.toString(),
-        "-noprompt");
+    if (!readSignedLeafDirectly) {
+      keytool(
+          "-importcert",
+          "-alias",
+          "test-ca",
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-noprompt");
+      keytool(
+          "-importcert",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          certificate.toString(),
+          "-noprompt");
+    }
     KeyStore keyStore = KeyStore.getInstance("PKCS12");
     try (var input = Files.newInputStream(store)) {
       keyStore.load(input, STORE_PASSWORD.toCharArray());
     }
-    return new Identity(
-        (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
-        (X509Certificate) keyStore.getCertificate(alias));
+    PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray());
+    X509Certificate storedCertificate = (X509Certificate) keyStore.getCertificate(alias);
+    if (!readSignedLeafDirectly) {
+      return new Identity(privateKey, storedCertificate);
+    }
+
+    X509Certificate signedLeaf = readCertificate(certificate);
+    if (privateKey == null
+        || storedCertificate == null
+        || !signedLeaf.getPublicKey().equals(storedCertificate.getPublicKey())) {
+      throw new GeneralSecurityException(
+          "Signed test leaf does not match generated keypair: " + alias);
+    }
+    signedLeaf.verify(caCertificate.getPublicKey());
+    return new Identity(privateKey, signedLeaf);
   }
 
   private static void keytool(String... arguments) throws Exception {

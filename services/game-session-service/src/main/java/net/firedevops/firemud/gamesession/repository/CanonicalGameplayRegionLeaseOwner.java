@@ -493,6 +493,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionRuntimeStatus finalStatus =
         statusRepository.find(source).orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
     if (!installed.equals(finalStatus) || finalStatus.paused()) throw unavailable();
+    // The last World and SQL reads may outlast the recovered grant. Never renew or replace it.
+    if (recoveringInitialGrant) redisOwner.requireCurrent(grant);
     return new Installation(
         transitionId, worldRequest, evidence, source, incarnation, preparation, grant, installed);
   }

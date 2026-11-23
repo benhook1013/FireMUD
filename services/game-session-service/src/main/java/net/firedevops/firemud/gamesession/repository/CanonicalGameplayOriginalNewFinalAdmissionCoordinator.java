@@ -208,8 +208,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                 finalRedis.finalizeOriginalNewOnce(
                     source,
                     boundTemplate,
-                    requireAccountOpen(beforeFinalCas.accountOpen, source.candidate()),
-                    beforeFinalCas.issuerOpen,
+                    requireAccountOpen(atDispatch.accountOpen, source.candidate()),
+                    atDispatch.issuerOpen,
                     execution,
                     absoluteDeadlineMillis)) {
               requireFinalReadback(
@@ -625,7 +625,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
   private static IllegalStateException unavailable(Throwable cause) {
     return new IllegalStateException(
-        "Original NEW final admission could not be safely confirmed; retry the exact original operation",
+        "Original NEW final admission could not be safely confirmed; retry the exact original"
+            + " operation",
         cause);
   }
 

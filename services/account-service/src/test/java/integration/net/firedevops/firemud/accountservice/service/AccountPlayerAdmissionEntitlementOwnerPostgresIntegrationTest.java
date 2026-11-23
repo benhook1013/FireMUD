@@ -66,6 +66,7 @@ import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAsso
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner.Request;
 import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
+import net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
@@ -85,6 +86,7 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.client.AccountPlayerAdmissionEntitlementClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -371,7 +373,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
-  void exactCapacityRefusalReplaysAfterHeadroomReturnsAndEvaluationExpires() {
+  void exactCapacityRefusalRemainsReadableAfterHeadroomReturnsAndEvaluationExpires()
+      throws Exception {
     Fixture f = fixture(true, true);
     var request = capacityRequest(f);
     long quota = request.evidence().quota();
@@ -472,6 +475,36 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             .intoMaps();
     assertThat(retainedSlots).hasSize(1);
     assertThat(retainedSlots.get(0)).containsEntry("decision_id", decision.get());
+    var pki =
+        LoopbackMtlsTestPki.create(
+            certificateDirectory,
+            "Retained quota denial read",
+            new LoopbackMtlsTestPki.IdentitySpec("client", PEER, false),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "account", "spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service", true));
+    var server =
+        new AccountTenantCapacityGrpcService(f.capacityOwner, NAMESPACE)
+            .createUnregisteredServer(
+                "127.0.0.1:0",
+                pki.keyManagerFactory(pki.identity("account")),
+                pki.trustManagerFactory())
+            .start();
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService("localhost:" + server.getPort());
+    try (var recovered =
+        new AccountTenantCapacityClient(
+            endpoints,
+            pki.clientProperties(certificateDirectory, pki.identity("client")),
+            new GrpcChannelFactory(),
+            NAMESPACE,
+            f.clock)) {
+      recovered.init();
+      assertThat(recovered.readRetainedQuotaDenial(request, f.clock.millis() + 5_000L))
+          .isEqualTo(decision.get());
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
         .isInstanceOfSatisfying(
             CapacityException.class,

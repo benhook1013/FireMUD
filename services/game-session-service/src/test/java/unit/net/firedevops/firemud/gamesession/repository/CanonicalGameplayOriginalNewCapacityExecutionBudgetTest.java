@@ -446,6 +446,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
 
     CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization prepared = null;
+    ExecutorService closer = Executors.newSingleThreadExecutor();
     try {
       prepared =
           owner
@@ -454,9 +455,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertPermitRemainsHeld(operations, operationMaximum);
       assertPermitRemainsHeld(background, backgroundMaximum);
 
-      long closeStarted = System.nanoTime();
-      prepared.close();
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - closeStarted)).isLessThan(250);
+      var preparedInitialization = prepared;
+      closer.submit(preparedInitialization::close).get(1, TimeUnit.SECONDS);
       verify(connection, timeout(1000)).closeAsync();
       assertPermitRemainsHeld(operations, operationMaximum);
       assertPermitRemainsHeld(background, backgroundMaximum);
@@ -476,8 +476,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(commands, org.mockito.Mockito.times(1))
           .evalsha(any(), any(), any(), any(byte[][].class));
     } finally {
-      if (prepared != null) prepared.close();
       close.complete(null);
+      closer.shutdown();
+      try {
+        assertThat(closer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        if (prepared != null) prepared.close();
+      }
     }
   }
 
@@ -856,7 +861,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   @Test
-  void uncertainProviderReleaseRetainsOnePermitAndExposesItThroughMicrometer() {
+  void uncertainProviderReleaseRetainsOnePermitAndExposesItThroughMicrometer() throws Exception {
     ConnectionProvider provider = mock();
     Connection first = mock(), second = mock();
     when(provider.acquire()).thenReturn(first, second);
@@ -897,8 +902,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       captured.set(budget);
                       var scoped =
                           budget.sql(source(provider)).configuration().connectionProvider();
+                      Connection proxy = scoped.acquire();
                       scoped.acquire();
-                      scoped.acquire();
+                      assertThatThrownBy(() -> scoped.release(proxy))
+                          .hasMessage("Controlled uncertain pool return");
+                      assertThatThrownBy(proxy::rollback).isInstanceOf(java.sql.SQLException.class);
+                      assertThatThrownBy(() -> proxy.setAutoCommit(true))
+                          .isInstanceOf(java.sql.SQLException.class);
                       return true;
                     }))
             .isInstanceOf(IllegalStateException.class);
@@ -915,6 +925,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 (AtomicInteger)
                     ReflectionTestUtils.getField(captured.get(), "outstandingConnections"))
             .hasValue(2);
+        verify(first, never()).rollback();
+        verify(first, never()).setAutoCommit(true);
         verify(provider).release(first);
         verify(provider).release(second);
       } finally {

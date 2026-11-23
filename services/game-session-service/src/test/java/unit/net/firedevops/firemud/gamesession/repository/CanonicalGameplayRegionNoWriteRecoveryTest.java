@@ -19,8 +19,11 @@ class CanonicalGameplayRegionNoWriteRecoveryTest {
         mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
     var proof = mock(CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof.class);
     UUID operation = UUID.randomUUID();
+    UUID transition = UUID.randomUUID();
+    when(preparation.operationId()).thenReturn(operation);
+    when(preparation.transitionId()).thenReturn(transition);
     var first = owner.reserveNoWriteRecovery(operation);
-    first.proof = proof;
+    owner.retainNoWriteProof(preparation, first, proof);
     assertThatThrownBy(() -> owner.reserveNoWriteRecovery(operation))
         .isInstanceOf(IllegalStateException.class);
     doThrow(new IllegalStateException("controlled cleanup refusal"))
@@ -33,9 +36,9 @@ class CanonicalGameplayRegionNoWriteRecoveryTest {
     var retry = owner.reserveNoWriteRecovery(operation);
     assertThat(retry).isSameAs(first);
     assertThat(retry.proof).isSameAs(proof);
-    owner.recoverNoWrite(preparation, retry);
-    assertThat(retry.proof).isNull();
     owner.releaseNoWriteRecovery(operation, retry);
+    owner.recoverRetainedNoWriteForTransition(transition);
+    assertThat(retry.proof).isNull();
     assertThat(owner.reserveNoWriteRecovery(operation)).isNotSameAs(first);
     verify(repository, times(2)).releaseInitialTimelineNoWrite(eq(preparation), same(proof), any());
   }

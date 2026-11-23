@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
@@ -66,7 +67,7 @@ public final class AccountTenantCapacityGrpcService
           Failure.ENTITLEMENT_UNAVAILABLE.toStatusException(Status.Code.FAILED_PRECONDITION));
       return;
     }
-    final net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request;
+    final Request request;
     try {
       request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
     } catch (IllegalArgumentException | ArithmeticException invalid) {
@@ -93,6 +94,69 @@ public final class AccountTenantCapacityGrpcService
         observer.onError(Status.INTERNAL.asRuntimeException());
         return;
       }
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | org.springframework.transaction.TransactionException unavailable) {
+      observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
+      return;
+    } catch (RuntimeException internal) {
+      observer.onError(Status.INTERNAL.asRuntimeException());
+      return;
+    }
+    try {
+      observer.onNext(result);
+      observer.onCompleted();
+    } catch (RuntimeException callback) {
+      observer.onError(Status.INTERNAL.asRuntimeException());
+    }
+  }
+
+  @Override
+  public void readTenantCapacityQuotaDenial(
+      CommitTenantCapacityAdmissionRequest wire,
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+    Objects.requireNonNull(observer);
+    final String peer;
+    try {
+      peer = guard.requireQuotaDenialReader();
+    } catch (StatusRuntimeException denied) {
+      observer.onError(Failure.AUTH_UNAVAILABLE.toStatusException());
+      return;
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
+      return;
+    }
+    final Request request;
+    try {
+      request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+    } catch (IllegalArgumentException | ArithmeticException invalid) {
+      observer.onError(Failure.INVALID_ARGUMENT.toStatusException());
+      return;
+    }
+    if (!request.evidence().callerWorkload().equals(peer)) {
+      observer.onError(Failure.PERMISSION_DENIED.toStatusException());
+      return;
+    }
+    final CommitTenantCapacityAdmissionResponse result;
+    try {
+      var denialId = owner.readRetainedQuotaDenial(request, peer);
+      if (denialId == null) {
+        observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
+        return;
+      }
+      result =
+          TenantCapacityAdmissionGrpcCodec.toRefusal(
+              request, Failure.CAPACITY_QUOTA_EXCEEDED, denialId);
+    } catch (CapacityException denied) {
+      Failure code =
+          switch (denied.code()) {
+            case INVALID_ARGUMENT, PERMISSION_DENIED -> denied.code();
+            default -> Failure.ENTITLEMENT_UNAVAILABLE;
+          };
+      observer.onError(code.toStatusException());
+      return;
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException
         | org.springframework.transaction.TransactionException unavailable) {
