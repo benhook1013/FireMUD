@@ -1,4 +1,5 @@
 const {execFileSync} = require('node:child_process');
+const {createHash, randomBytes} = require('node:crypto');
 const {resolve} = require('node:path');
 
 module.exports = async function admitPrRuntimeRefresh({
@@ -13,6 +14,9 @@ module.exports = async function admitPrRuntimeRefresh({
   const shaPattern = /^[0-9a-f]{40}$/;
   const activeStatuses = new Set(['queued', 'waiting', 'requested', 'pending', 'in_progress']);
   const inventoryEvents = ['pull_request', 'repository_dispatch'];
+  const inventoryPages = 3;
+  const pageSize = 100;
+  const inventoryLimit = inventoryPages * pageSize;
 
   const fail = message => { throw new Error(message); };
   const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -171,17 +175,17 @@ module.exports = async function admitPrRuntimeRefresh({
   let newestExact = null;
   const observedRunIds = new Set();
   const exactRuns = [];
-  const collectInventory = async (event, status, createdSince) => {
+  const collectInventory = async (event, status, createdSince, runs = exactRuns, ids = observedRunIds) => {
     let total;
     let seen = 0;
-    for (let page = 1; page <= 3; page++) {
+    for (let page = 1; page <= inventoryPages; page++) {
       const {data: inventory} = await github.rest.actions.listWorkflowRuns({
-        ...contextRepo, workflow_id: runtimeWorkflow.id, event, status, per_page: 100, page,
+        ...contextRepo, workflow_id: runtimeWorkflow.id, event, status, per_page: pageSize, page,
         ...(createdSince ? {created: `${createdSince}..*`} : {}),
       });
       if (!Number.isSafeInteger(inventory?.total_count) || inventory.total_count < 0 ||
-          inventory.total_count > 300 || !Array.isArray(inventory.workflow_runs) ||
-          inventory.workflow_runs.length > 100 || (total !== undefined && inventory.total_count !== total)) {
+          inventory.total_count > inventoryLimit || !Array.isArray(inventory.workflow_runs) ||
+          inventory.workflow_runs.length > pageSize || (total !== undefined && inventory.total_count !== total)) {
         throw new Error('Incomplete runtime run inventory.');
       }
       total = inventory.total_count;
@@ -197,17 +201,17 @@ module.exports = async function admitPrRuntimeRefresh({
           throw new Error('Exact runtime run has invalid native chronology.');
         }
         const identity = `${run.event}:${run.id}:${run.run_attempt}`;
-        if (observedRunIds.has(identity)) throw new Error('Duplicate exact runtime run identity.');
-        observedRunIds.add(identity);
+        if (ids.has(identity)) throw new Error('Duplicate exact runtime run identity.');
+        ids.add(identity);
         if (activeStatuses.has(run.status)) {
           if (run.conclusion != null) throw new Error('Active runtime run has a conclusion.');
         } else if (run.status !== 'completed' || typeof run.conclusion !== 'string' || run.conclusion.length === 0) {
           throw new Error('Exact runtime run status is unclear.');
         }
-        exactRuns.push(run);
+        runs.push(run);
       }
       if (seen === total) return;
-      if (seen > total || inventory.workflow_runs.length < 100) break;
+      if (seen > total || inventory.workflow_runs.length < pageSize) break;
     }
     throw new Error('Incomplete runtime run inventory.');
   };
@@ -269,20 +273,211 @@ module.exports = async function admitPrRuntimeRefresh({
     }
   }
 
+  const tuple = Object.fromEntries(requiredFields.map(field => [field, input[field]]));
+  const sha256 = value => createHash('sha256').update(value, 'utf8').digest('hex');
+  const baseRefHash = sha256(input.base_ref);
+  const claimNamespace = `firemud-runtime-refresh-intent/v1/pr-${input.pr_number}/${input.merge_sha}/${baseRefHash}/`;
+  const refPrefix = `refs/tags/${claimNamespace}`;
+  const tagName = generation => `${claimNamespace}g${generation}`;
+  const claimMessage = (generation, witness_sha256) =>
+    `${JSON.stringify({...tuple, generation: String(generation), witness_sha256})}\n`;
+  const tagger = {name: 'FireMUD Runtime Refresh', email: 'runtime-refresh@firemud.dev'};
+  const isSha = value => typeof value === 'string' && value.length === 40 && shaPattern.test(value);
+  const isCanonicalDate = value => validChronology(value) && secondsUtc(Date.parse(value)) === value;
+  const parseGeneration = value => {
+    const generation = Number(value);
+    if (!isPositiveInteger(generation) || String(generation) !== value) fail('Invalid runtime claim generation.');
+    return generation;
+  };
+  const exactTag = (tag, generation, expectedWitnessDigest) => {
+    if (tag?.tag !== tagName(generation) || !isSha(tag.sha) || tag.object?.type !== 'commit' ||
+        tag.object.sha !== input.merge_sha || typeof tag.message !== 'string' ||
+        tag.tagger?.name !== tagger.name || tag.tagger.email !== tagger.email ||
+        !isCanonicalDate(tag.tagger.date)) return false;
+    const annotation = JSON.parse(tag.message);
+    const digest = annotation?.witness_sha256;
+    return typeof digest === 'string' && digest.length === 64 && /^[0-9a-f]{64}$/.test(digest) &&
+      (expectedWitnessDigest === undefined || digest === expectedWitnessDigest) &&
+      tag.message === claimMessage(generation, digest);
+  };
+
+  const latestClaim = async () => {
+    // Matching refs returns an array, not a count-backed paginated inventory.
+    // Do not use a response that signals pagination or exceeds the inventory budget.
+    const response = await github.rest.git.listMatchingRefs({...contextRepo, ref: `tags/${claimNamespace}`});
+    const refs = response?.data;
+    if (response?.status !== 200 || !isRecord(response.headers) ||
+        Object.keys(response.headers).some(name => name.toLowerCase() === 'link') ||
+        !Array.isArray(refs) || refs.length > inventoryLimit) fail('Incomplete runtime claim ref inventory.');
+
+    const claims = new Map();
+    const tagShas = new Set();
+    for (const ref of refs) {
+      if (typeof ref?.ref !== 'string' || !ref.ref.startsWith(`${refPrefix}g`) ||
+          ref.object?.type !== 'tag' || !isSha(ref.object.sha)) fail('Invalid runtime claim ref.');
+      const generation = parseGeneration(ref.ref.slice(refPrefix.length + 1));
+      if (claims.has(generation) || tagShas.has(ref.object.sha)) fail('Duplicate runtime claim ref.');
+      claims.set(generation, ref.object.sha);
+      tagShas.add(ref.object.sha);
+    }
+    for (let generation = 1; generation <= claims.size; generation++) {
+      if (!claims.has(generation)) fail('Gapped runtime claim ref inventory.');
+    }
+
+    if (claims.size === 0) return null;
+    const generation = claims.size;
+    const tag_sha = claims.get(generation);
+    const tag = dataOf(await github.rest.git.getTag({...contextRepo, tag_sha}));
+    if (!exactTag(tag, generation) || tag.sha !== tag_sha) fail('Invalid runtime claim annotation.');
+    return {generation, date: tag.tagger.date, tag_sha};
+  };
+
+  const receiverProvesClaim = async (run, claim) => {
+    if (!isSha(run.head_sha)) fail('Invalid terminal runtime receiver head.');
+    let total;
+    const jobIds = new Set();
+    let metadataJob;
+    for (let page = 1; page <= inventoryPages; page++) {
+      const jobs = dataOf(await github.rest.actions.listJobsForWorkflowRunAttempt({
+        ...contextRepo, run_id: run.id, attempt_number: run.run_attempt, per_page: pageSize, page,
+      }));
+      if (!Number.isSafeInteger(jobs?.total_count) || jobs.total_count < 0 || jobs.total_count > inventoryLimit ||
+          (total !== undefined && jobs.total_count !== total) || !Array.isArray(jobs.jobs) ||
+          jobs.jobs.length !== Math.min(pageSize, jobs.total_count - jobIds.size)) {
+        fail('Incomplete runtime receiver job inventory.');
+      }
+      total = jobs.total_count;
+      for (const job of jobs.jobs) {
+        if (!isPositiveInteger(job?.id) || jobIds.has(job.id) || job.run_id !== run.id ||
+            job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha || typeof job.name !== 'string') {
+          fail('Invalid runtime receiver job identity.');
+        }
+        jobIds.add(job.id);
+        if (job.name !== 'Derive Runtime Image Metadata') continue;
+        if (metadataJob) fail('Duplicate runtime receiver metadata job.');
+        metadataJob = job;
+      }
+      if (jobIds.size === total) break;
+    }
+    if (jobIds.size !== total) fail('Incomplete runtime receiver job inventory.');
+    if (!metadataJob) return false;
+    const steps = metadataJob.steps;
+    if (!Array.isArray(steps) || steps.some(step => typeof step?.name !== 'string')) {
+      fail('Invalid runtime receiver step inventory.');
+    }
+    const markerPrefix = 'Runtime refresh claim generation';
+    const markers = steps.filter(step => step.name.startsWith(markerPrefix));
+    if (markers.length === 0) return false;
+    if (markers.length !== 1) fail('Ambiguous runtime receiver claim marker.');
+    const [marker] = markers;
+    const expected = `${markerPrefix} ${claim.generation} attempt ${run.run_attempt} tag ${claim.tag_sha}`;
+    if (marker.name === expected) {
+      if (metadataJob.status !== 'completed' || marker.status !== 'completed' || marker.conclusion !== 'success') {
+        fail('Unsuccessful runtime receiver claim marker.');
+      }
+      return true;
+    }
+
+    const suffix = marker.name.slice(markerPrefix.length);
+    if (marker.status === 'completed' && marker.conclusion === 'skipped' &&
+        /^(?:[1-9][0-9]*|attempt\s+tag)?$/.test(suffix.trim())) return false;
+
+    const identity = /^ ([1-9][0-9]*) attempt ([1-9][0-9]*) tag ([0-9a-f]{40})$/.exec(suffix);
+    if (identity?.[0] !== suffix) fail('Invalid runtime receiver claim marker.');
+    const generation = parseGeneration(identity[1]);
+    const attempt = Number(identity[2]);
+    if (!isPositiveInteger(attempt) || attempt > run.run_attempt) fail('Invalid runtime receiver marker attempt.');
+    // The title omits the base ref. Even an exact native run can carry another
+    // claim's tag, or retain a marker from a prior partial rerun attempt.
+    if (identity[3] !== claim.tag_sha) return false;
+    if (generation !== claim.generation) fail('Inconsistent runtime receiver marker generation.');
+    return false;
+  };
+
+  const terminalReceiverProven = async claim => {
+    const runs = [];
+    await collectInventory('repository_dispatch', 'completed', claim.date, runs, new Set());
+    if (new Set(runs.map(run => run.id)).size !== runs.length) fail('Duplicate terminal runtime receiver run.');
+    let receiver;
+    for (const run of runs) {
+      if (!await receiverProvesClaim(run, claim)) continue;
+      if (receiver) fail('Multiple terminal runtime receivers for the same claim.');
+      receiver = run;
+    }
+    if (!receiver) return false;
+
+    const latest = dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: receiver.id}));
+    return exactNativeTuple(latest) && latest.event === 'repository_dispatch' && latest.id === receiver.id &&
+      latest.run_attempt === receiver.run_attempt && latest.head_sha === receiver.head_sha &&
+      latest.created_at === receiver.created_at && latest.status === 'completed' &&
+      latest.conclusion === receiver.conclusion;
+  };
+
+  let generation;
+  let witness;
+  try {
+    const prior = await latestClaim();
+    if (prior && !await terminalReceiverProven(prior)) {
+      core.info('Runtime refresh claim has no proven terminal receiver; no dispatch.');
+      return 'claim-held';
+    }
+    generation = (prior?.generation ?? 0) + 1;
+    const date = secondsUtc(Date.now());
+    if (!isPositiveInteger(generation) || (prior && date < prior.date)) fail('Invalid successor runtime claim.');
+    const candidateWitness = randomBytes(32).toString('hex');
+    const witnessDigest = sha256(candidateWitness);
+    const tag = await github.rest.git.createTag({
+      ...contextRepo, tag: tagName(generation), message: claimMessage(generation, witnessDigest),
+      object: input.merge_sha, type: 'commit', tagger: {...tagger, date}, request: {retries: 0},
+    });
+    if (tag?.status !== 201 || !exactTag(tag.data, generation, witnessDigest) || tag.data.tagger.date !== date) {
+      fail('Runtime claim tag creation is unproven.');
+    }
+    const ref = `refs/tags/${tagName(generation)}`;
+    const created = await github.rest.git.createRef({...contextRepo, ref, sha: tag.data.sha, request: {retries: 0}});
+    if (created?.status !== 201 || created.data?.ref !== ref ||
+        created.data.object?.type !== 'tag' || created.data.object.sha !== tag.data.sha) {
+      fail('Runtime claim ref creation is unproven.');
+    }
+    witness = candidateWitness;
+  } catch {
+    // A lost response is not ownership. Never adopt, update, delete, or retry a claim ref.
+    core.warning('Runtime refresh claim ownership or predecessor evidence is unproven; no dispatch.');
+    return 'claim-held';
+  }
+
+  try {
+    if (!await currentIdentity()) {
+      core.info('Runtime refresh tuple changed after claiming; no dispatch.');
+      return 'obsolete';
+    }
+  } catch {
+    core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
+    return 'claim-held';
+  }
+
   const dispatchCreatedSince = secondsUtc(Date.now());
   const nextDispatchSecond = Date.parse(dispatchCreatedSince) + 1000;
-  await github.rest.repos.createDispatchEvent({
-    ...contextRepo,
-    event_type: 'pr-runtime-base-refresh',
-    client_payload: {
-      pr_number: input.pr_number,
-      base_ref: input.base_ref,
-      base_sha: input.base_sha,
-      head_sha: input.head_sha,
-      merge_sha: input.merge_sha,
-      image_tag: `pr-merge-${input.merge_sha}`,
-    },
-  });
+  try {
+    const dispatched = await github.rest.repos.createDispatchEvent({
+      ...contextRepo,
+      event_type: 'pr-runtime-base-refresh',
+      client_payload: {
+        ...tuple,
+        image_tag: `pr-merge-${input.merge_sha}`,
+        runtime_refresh_claim: String(generation),
+        runtime_refresh_claim_witness: witness,
+      },
+      request: {retries: 0},
+    });
+    if (dispatched?.status !== 204) fail('Unexpected runtime refresh dispatch status.');
+  } catch {
+    core.warning('Runtime refresh dispatch acceptance is unproven; leaving the claim held without retry.');
+    return 'claim-held';
+  } finally {
+    witness = undefined;
+  }
+  core.info('Runtime refresh dispatch returned HTTP 204; terminal claim receipt is not established.');
 
   for (let observation = 0; observation < 8; observation += 1) {
     try {
@@ -300,7 +495,7 @@ module.exports = async function admitPrRuntimeRefresh({
             // Second-resolution chronology cannot confirm its attribution.
             run.event === 'repository_dispatch' && Date.parse(run.created_at) >= nextDispatchSecond &&
             !observedRunIds.has(`${run.event}:${run.id}:${run.run_attempt}`))) {
-        core.info('The dispatched runtime refresh is visible as an exact active producer.');
+        core.info('An exact active runtime producer became visible after dispatch; this is not claim receipt.');
         return 'dispatched-observed';
       }
     } catch {
@@ -309,6 +504,6 @@ module.exports = async function admitPrRuntimeRefresh({
     if (observation < 7) await sleep(2000);
   }
 
-  core.warning('Runtime refresh was dispatched but remained unconfirmed after bounded polling.');
+  core.warning('No exact active runtime producer became visible after dispatch within the bounded poll.');
   return 'dispatched-unconfirmed';
 };

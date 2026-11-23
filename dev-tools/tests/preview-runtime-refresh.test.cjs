@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const {execFileSync} = require('node:child_process');
+const {createHash} = require('node:crypto');
 const {test} = require('node:test');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
@@ -17,7 +18,7 @@ function admissionFixture() {
   const repository = 'example/FireMUD';
   const runtimePath = '.github/workflows/runtime-images.yml';
   const makeRun = (overrides = {}) => ({
-    id: 300, run_attempt: 1, workflow_id: 42, event: 'repository_dispatch', status: 'queued',
+    id: 300, run_attempt: 1, workflow_id: 42, event: 'repository_dispatch', status: 'queued', head_sha: D,
     conclusion: null, path: runtimePath, head_branch: 'develop', repository: {full_name: repository},
     head_repository: {full_name: repository}, created_at: new Date().toISOString(),
     display_title: `Build Runtime Images secure-pr-artifact pr-7 base-${B} head-${C} merge-${A} mode-required`,
@@ -26,6 +27,9 @@ function admissionFixture() {
   const sent = [];
   const warnings = [];
   const runs = [];
+  const claimRefs = new Map();
+  const claimTags = new Map();
+  const receiverJobs = new Map();
   const state = {base: B, mergeParents: [B, C], keepHidden: false, afterInventory: null,
     labels: [{name: 'preview:priority'}], nextId: 301, lookups: [], pullObservations: [],
     baseReads: 0, commitRefs: [], missingExactCommitReads: 0, waits: [], producerReads: []};
@@ -38,7 +42,29 @@ function admissionFixture() {
         ...state.pullObservations.shift()}};
     }},
     git: {
+      listMatchingRefs: async ({ref}) => ({status: 200, headers: {}, data: [...claimRefs.values()]
+        .filter(entry => entry.ref.startsWith(`refs/${ref}`))}),
+      getTag: async ({tag_sha}) => ({data: claimTags.get(tag_sha)}),
+      createTag: async ({tag, message, object, type, tagger}) => {
+        const sha = String(claimTags.size + 1).padStart(40, '0');
+        const record = {sha, tag, message, object: {type, sha: object}, tagger};
+        claimTags.set(sha, record);
+        return {status: 201, data: record};
+      },
+      createRef: async ({ref, sha}) => {
+        assert.ok(claimTags.has(sha));
+        if (claimRefs.has(ref)) throw Object.assign(new Error('ref already exists'), {status: 422});
+        const record = {ref, object: {type: 'tag', sha}};
+        claimRefs.set(ref, record);
+        state.afterClaim?.();
+        if (state.loseClaimResponse) throw new Error('response lost after ref creation');
+        return {status: 201, data: record};
+      },
       getRef: async ({ref}) => {
+        if (ref.startsWith('tags/')) {
+          if (!claimRefs.has(`refs/${ref}`)) throw Object.assign(new Error('ref not found'), {status: 404});
+          return {data: claimRefs.get(`refs/${ref}`)};
+        }
         assert.equal(ref, `heads/${input.base_ref}`);
         state.baseReads++;
         return {data: {ref: `refs/heads/${input.base_ref}`, object: {sha: state.base}}};
@@ -53,6 +79,10 @@ function admissionFixture() {
         state.producerReads.push(run_id);
         const run = runs.find(run => run.id === run_id);
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
+      },
+      listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+        const jobs = receiverJobs.get(`${run_id}:${attempt_number}`) || [];
+        return {data: {total_count: jobs.length, jobs}};
       },
       listWorkflowRuns: async ({workflow_id, status, event, per_page, page, created}) => {
         assert.equal(workflow_id, 42);
@@ -82,6 +112,8 @@ function admissionFixture() {
         // Registration becomes visible after the fixture's first two-second wait.
         state.newRun = makeRun({id: state.nextId++, created_at: state.dispatchCreatedAt ??
           new Date(Date.now() + 2000).toISOString()});
+        if (state.loseDispatchResponse) throw new Error('response lost after dispatch acceptance');
+        return {status: state.dispatchStatus ?? 204};
       },
     },
   }};
@@ -92,15 +124,21 @@ function admissionFixture() {
     state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
-  return {admission, makeRun, runs, sent, state, warnings};
+  return {admission, makeRun, runs, sent, state, warnings, claimRefs, claimTags, receiverJobs};
 }
 
 test('serialized admission waits for the first exact receiver before releasing the permit', async () => {
   const f = admissionFixture();
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  const [tag] = f.claimTags.values();
+  const {runtime_refresh_claim_witness: witness} = f.sent[0].client_payload;
+  assert.match(witness, /^[0-9a-f]{64}$/);
+  assert.equal(JSON.parse(tag.message).witness_sha256, createHash('sha256').update(witness).digest('hex'));
   assert.deepEqual(f.sent, [{owner: 'example', repo: 'FireMUD', event_type: 'pr-runtime-base-refresh',
-    client_payload: {...f.admission.input, image_tag: `pr-merge-${A}`}}]);
+    client_payload: {...f.admission.input, image_tag: `pr-merge-${A}`, runtime_refresh_claim: '1',
+      runtime_refresh_claim_witness: witness},
+    request: {retries: 0}}]);
 });
 
 test('completed producers still permit an exact repair', async () => {
@@ -182,8 +220,8 @@ test('admission rereads PR and base through pending mergeability, a stale base p
   f.state.alternateCommit = {sha: E, parents: [{sha: D}, {sha: C}]};
   f.state.missingExactCommitReads = 1;
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.deepEqual(f.state.commitRefs, [E, A, A, A]);
-  assert.equal(f.state.baseReads, 6);
+  assert.deepEqual(f.state.commitRefs, [E, A, A, A, A]);
+  assert.equal(f.state.baseReads, 7);
   assert.deepEqual(f.state.waits, [2000, 2000, 2000, 2000, 2000]);
   assert.equal(f.sent[0].client_payload.merge_sha, A);
 });
@@ -246,7 +284,7 @@ test('a stale or unavailable selected producer leaves an exact refresh eligible'
         refreshProducer(run) : run;
       assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
       assert.deepEqual(f.state.producerReads, afterFinalTuple ? [300, 300] : [300]);
-      assert.deepEqual(f.state.commitRefs, afterFinalTuple ? [A, A, A] : [A, A]);
+      assert.deepEqual(f.state.commitRefs, afterFinalTuple ? [A, A, A, A] : [A, A, A]);
       assert.equal(f.sent.length, 1);
     }
   }
@@ -259,7 +297,7 @@ test('a producer that completes while the final live tuple is pending cannot sup
   f.state.afterWait = () => { f.runs[0] = {...f.runs[0], status: 'completed', conclusion: 'failure'}; };
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.deepEqual(f.state.producerReads, [300, 300]);
-  assert.deepEqual(f.state.commitRefs, [A, A, A]);
+  assert.deepEqual(f.state.commitRefs, [A, A, A, A]);
   assert.deepEqual(f.state.waits, [2000, 2000]);
   assert.equal(f.sent.length, 1);
 });
@@ -292,6 +330,106 @@ test('indeterminate dispatch visibility does not silently consume a repair or ca
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
   assert.equal(f.sent.length, 1);
   assert.ok(f.warnings.length > 0);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+});
+
+test('a lost dispatch acknowledgement keeps the exact tuple held across callbacks', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  f.state.loseDispatchResponse = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+  f.state.loseDispatchResponse = false;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.claimRefs.size, 1);
+});
+
+test('a lost atomic claim acknowledgement does not authorize either callback to send', async () => {
+  const f = admissionFixture();
+  f.state.loseClaimResponse = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.claimRefs.size, 1);
+  f.state.loseClaimResponse = false;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.deepEqual(f.sent, []);
+});
+
+test('an unexpected dispatch response status cannot be described as accepted', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  f.state.dispatchStatus = 202;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+});
+
+test('a comparison moving during the claim is never dispatched', async () => {
+  const f = admissionFixture();
+  f.state.afterClaim = () => { f.state.base = D; };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.equal(f.claimRefs.size, 1);
+  assert.deepEqual(f.sent, []);
+});
+
+test('advancing a generation requires one exact terminal receiver with a successful claim marker', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure'};
+  f.runs.push(run);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+  const [tag] = f.claimTags.values();
+  const jobs = [{id: 1, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+    name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',
+    steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${tag.sha}`,
+      status: 'completed', conclusion: 'success'}]}];
+  const legacy = f.makeRun({id: 299, created_at: run.created_at, status: 'completed', conclusion: 'success'});
+  f.runs.push(legacy);
+  f.receiverJobs.set(`${legacy.id}:${legacy.run_attempt}`, [{...jobs[0], id: 2, run_id: legacy.id,
+    steps: [{name: 'Runtime refresh claim generation  attempt  tag ', status: 'completed', conclusion: 'skipped'}]}]);
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, jobs);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 2);
+});
+
+test('a successful marker carried from another attempt cannot advance the claim', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  const [tag] = f.claimTags.values();
+  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure', run_attempt: 2};
+  f.runs.push(run);
+  f.receiverJobs.set(`${run.id}:2`, [{id: 1, run_id: run.id, run_attempt: 2, head_sha: run.head_sha,
+    name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',
+    steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${tag.sha}`,
+      status: 'completed', conclusion: 'success'}]}]);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+});
+
+test('an equal commit on a different base ref gets an independent exact claim', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  f.admission.input.base_ref = 'feature/stack';
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  assert.equal(f.claimRefs.size, 2);
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '1']);
+});
+
+test('an annotated claim which points at a different merge can never authorize dispatch', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  const [record] = f.claimTags.values();
+  record.object.sha = D;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
 });
 
 test('unseen same-second activity is ambiguous dispatch attribution and never triggers a retry', async t => {
@@ -304,7 +442,7 @@ test('unseen same-second activity is ambiguous dispatch attribution and never tr
     assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
     assert.equal(f.sent.length, 1);
     assert.equal(f.state.waits.length, 7);
-    assert.ok(f.warnings.some(warning => warning.includes('remained unconfirmed')));
+    assert.ok(f.warnings.some(warning => warning.includes('No exact active runtime producer became visible')));
   }
 });
 

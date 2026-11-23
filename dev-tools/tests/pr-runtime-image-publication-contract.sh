@@ -597,6 +597,14 @@ case "${2:-}" in
     fi
     cat "$FIXTURE_DIR/base-ref.json"
     ;;
+  repos/benhook1013/FireMUD/git/ref/tags/firemud-runtime-refresh-intent/*)
+    [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_REF:-}" ]] || exit 2
+    cat "$FIXTURE_DIR/runtime-claim-ref.json"
+    ;;
+  repos/benhook1013/FireMUD/git/tags/*)
+    [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_TAG:-}" ]] || exit 2
+    cat "$FIXTURE_DIR/runtime-claim-tag.json"
+    ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
   *) echo "unexpected endpoint: ${2:-}" >&2; exit 2 ;;
 esac
@@ -612,6 +620,7 @@ chmod +x "$fake_bin/docker"
 # Execute the real credential-free metadata admission for a feature-base bot PR.
 # Preview admission is a separate privileged boundary; exact tuple checks remain.
 PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" python3 - "$RUNTIME_WORKFLOW" <<'PY'
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -621,7 +630,7 @@ from urllib.parse import quote
 
 fixture = Path(os.environ["FIXTURE_DIR"])
 workflow = Path(sys.argv[1]).read_text()
-section = workflow.split("      - name: Derive image tags\n", 1)[1].split("      - name: Verify successful CI push for manual publication\n", 1)[0]
+section = workflow.split("      - name: Derive image tags\n", 1)[1].split("\n      - name:", 1)[0]
 script = section.split("        run: |\n", 1)[1]
 script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
 script_template = script
@@ -656,6 +665,11 @@ def admit(current_request, current_merge, current_branch, overrides=None, event_
     calls = fixture / "runtime-meta-ref-calls"
     calls.write_text("")
     current_env = {**env, **(overrides or {})}
+    event_path = fixture / "runtime-meta-event.json"
+    event_path.write_text(json.dumps({"client_payload": {
+        "runtime_refresh_claim_witness": current_env.get("TEST_RUNTIME_CLAIM_WITNESS", ""),
+    }}))
+    current_env["GITHUB_EVENT_PATH"] = str(event_path)
     current_env.update({
         "BASE_REF_CALLS": str(calls),
         "EXPECTED_BASE_REF_ENDPOINT": "repos/benhook1013/FireMUD/git/ref/heads/" + quote(current_env["EVENT_BASE_REF"], safe="/"),
@@ -672,6 +686,42 @@ try:
     assert f"image_tag=pr-merge-{merge['sha']}\n" in output
     assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
     assert "canonical_play_transition=false\n" in output
+    assert "runtime_refresh_claim=\n" in output
+    base_ref_hash = hashlib.sha256(request["base"]["ref"].encode()).hexdigest()
+    claim = f"firemud-runtime-refresh-intent/v1/pr-{request['number']}/{merge['sha']}/{base_ref_hash}/g1"
+    claim_sha = "d" * 40
+    claim_witness = "f" * 64
+    claim_ref = {"ref": f"refs/tags/{claim}", "object": {"type": "tag", "sha": claim_sha}}
+    claim_tag = {"sha": claim_sha, "tag": claim, "object": {"type": "commit", "sha": merge["sha"]},
+                 "message": json.dumps({"pr_number": str(request["number"]), "base_ref": request["base"]["ref"],
+                                        "base_sha": branch["object"]["sha"], "head_sha": request["head"]["sha"],
+                                        "merge_sha": merge["sha"], "generation": "1",
+                                        "witness_sha256": hashlib.sha256(claim_witness.encode()).hexdigest()}) + "\n"}
+    claim_tag_file = fixture / "runtime-claim-tag.json"
+    (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
+    claim_tag_file.write_text(json.dumps(claim_tag))
+    claim_request = {
+        "EVENT_RUNTIME_REFRESH_CLAIM": "1",
+        "TEST_RUNTIME_CLAIM_WITNESS": claim_witness,
+        "EXPECTED_RUNTIME_CLAIM_REF": f"repos/benhook1013/FireMUD/git/ref/tags/{claim}",
+        "EXPECTED_RUNTIME_CLAIM_TAG": f"repos/benhook1013/FireMUD/git/tags/{claim_sha}",
+    }
+    accepted_claim = admit(request, merge, branch, claim_request)
+    assert accepted_claim.returncode == 0, accepted_claim.stderr
+    output = Path(env["GITHUB_OUTPUT"]).read_text()
+    assert "runtime_refresh_claim=1\n" in output
+    assert "runtime_refresh_claim_attempt=1\n" in output
+    assert f"runtime_refresh_claim_tag={claim_sha}\n" in output
+    assert claim_witness not in output
+    assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": "b" * 64}).returncode != 0
+    assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": ""}).returncode != 0
+    assert admit(request, merge, branch, {**claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": ""}).returncode != 0
+    claim_tag_file.write_text(json.dumps({**claim_tag, "object": {"type": "commit", "sha": "e" * 40}}))
+    assert admit(request, merge, branch, claim_request).returncode != 0
+    assert "runtime_refresh_claim=1\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
+    assert admit(request, merge, branch, {**claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": "9007199254740992"}).returncode != 0
+    assert admit(request, merge, branch, claim_request, event_name="pull_request").returncode == 0
+    assert "runtime_refresh_claim=\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     labeled_request = json.loads(json.dumps(request))
     labeled_request["labels"] = [{"name": "canonical-play-transition"}]
     assert admit(labeled_request, merge, branch).returncode == 0
