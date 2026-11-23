@@ -456,6 +456,87 @@ for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinat
   assert_no_retry
 done
 
+# The common-test-support failure carries multiple Maven Central JAR chains
+# under one test fixtures classpath root, before any fixture compilation.
+write_test_fixtures_429_cause() {
+  cat > "$CASE_DIR/cause.log" <<'LOG'
+> Task :buildSrc:compileKotlin FROM-CACHE
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of task `:common-test-support:compileTestFixturesJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'
+> Could not resolve all files for configuration ':common-test-support:testFixturesCompileClasspath'.
+   > Could not download spring-grpc-spring-boot-starter-1.0.3.jar (org.springframework.grpc:spring-grpc-spring-boot-starter:1.0.3)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/grpc/spring-grpc-spring-boot-starter/1.0.3/spring-grpc-spring-boot-starter-1.0.3.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/grpc/spring-grpc-spring-boot-starter/1.0.3/spring-grpc-spring-boot-starter-1.0.3.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download spring-boot-starter-webflux-4.1.1.jar (org.springframework.boot:spring-boot-starter-webflux:4.1.1)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-webflux/4.1.1/spring-boot-starter-webflux-4.1.1.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-webflux/4.1.1/spring-boot-starter-webflux-4.1.1.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download netty-transport-native-epoll-4.2.20.Final-linux-x86_64.jar (io.netty:netty-transport-native-epoll:4.2.20.Final)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/io/netty/netty-transport-native-epoll/4.2.20.Final/netty-transport-native-epoll-4.2.20.Final-linux-x86_64.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/io/netty/netty-transport-native-epoll/4.2.20.Final/netty-transport-native-epoll-4.2.20.Final-linux-x86_64.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download guava-33.4.8-jre.jar (com.google.guava:guava:33.4.8-android)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/com/google/guava/guava/33.4.8-jre/guava-33.4.8-jre.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/com/google/guava/guava/33.4.8-jre/guava-33.4.8-jre.jar'.
+            > Received status code 429 from server: Too Many Requests
+[Incubating] Problems report is available at: file:///tmp/firemud-gradle/build/reports/problems/problems-report.html
+* Try:
+> Run with --stacktrace option to get the stack trace.
+BUILD FAILED in 4s
+LOG
+}
+
+write_test_fixtures_429_wrapper() {
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-test-fixtures; exit 0'
+}
+
+for retry_after in absent 08; do
+  new_case "test-fixtures-maven-429-$retry_after"
+  write_test_fixtures_429_cause
+  if [[ "$retry_after" != absent ]]; then
+    sed -i "/^[*] Try:/i Retry-After: $retry_after" "$CASE_DIR/cause.log"
+  fi
+  write_test_fixtures_429_wrapper
+  run_case common-test-support 0
+  assert_call_count 2
+  assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
+  assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
+  if [[ "$retry_after" == absent ]]; then
+    assert_rate_limit_delay
+  else
+    [[ "$(cat "$CASE_DIR/sleeps")" == 8 ]] || fail "fixture HTTP 429 did not honor Retry-After"
+  fi
+  assert_output_contains "refreshed-test-fixtures"
+done
+
+for mutation in unknown wrong-module wrong-configuration extra-configuration wrong-type wrong-origin wrong-url wrong-filename \
+  truncated-chain mixed-context compile-started test-failure altered-report long-retry-after; do
+  new_case "test-fixtures-maven-429-$mutation"
+  write_test_fixtures_429_cause
+  case "$mutation" in
+    unknown) sed -i '/^[*] Try:/i > Unknown repository policy failure' "$CASE_DIR/cause.log" ;;
+    wrong-module) sed -i 's/:common-test-support:testFixturesCompileClasspath/:common-web-support:testFixturesCompileClasspath/' "$CASE_DIR/cause.log" ;;
+    wrong-configuration) sed -i 's/:testFixturesCompileClasspath/:testCompileClasspath/' "$CASE_DIR/cause.log" ;;
+    extra-configuration) sed -i "/^[*] Try:/i > Could not resolve all files for configuration ':common-test-support:testCompileClasspath'." "$CASE_DIR/cause.log" ;;
+    wrong-type) sed -i 's/org\.gradle\.api\.tasks\.compile\.JavaCompile/example.JavaCompile/' "$CASE_DIR/cause.log" ;;
+    wrong-origin) sed -i '/https:.*webflux/s/repo.maven.apache.org/repository.invalid/' "$CASE_DIR/cause.log" ;;
+    wrong-url) sed -i '/Could not GET.*webflux/s/webflux-4.1.1.jar/webflux-4.1.0.jar/' "$CASE_DIR/cause.log" ;;
+    wrong-filename) sed -i '/Could not download.*webflux/s/webflux-4\.1\.1\.jar/webflux-4.1.0.jar/' "$CASE_DIR/cause.log" ;;
+    truncated-chain) sed -i '/Could not GET.*webflux/d' "$CASE_DIR/cause.log" ;;
+    mixed-context) sed -i '/^[*] Try:/i Required by:\nproject :unrelated' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :common-test-support:compileTestFixturesJava FAILED' "$CASE_DIR/cause.log" ;;
+    test-failure) sed -i '1i > Task :common-test-support:test FAILED' "$CASE_DIR/cause.log" ;;
+    altered-report) sed -i '/^\[Incubating\]/s/$/ (additional failure)/' "$CASE_DIR/cause.log" ;;
+    long-retry-after) sed -i '/^[*] Try:/i Retry-After: 31' "$CASE_DIR/cause.log" ;;
+  esac
+  write_test_fixtures_429_wrapper
+  run_case common-test-support 1
+  assert_no_retry
+done
+
 # Mismatched ownership, configuration, or another fatal cause must not retry.
 for mutation in wrong-module wrong-configuration extra-cause compile-started; do
   new_case "protobuf-resolution-invalid-$mutation"

@@ -151,16 +151,16 @@ classify_failure_body() {
         next
       }
 
-      # A Java annotation processor resolved before compilation can fail at
-      # the Maven Central JAR download. Require its complete matching chain.
-      if (processor_download_step) {
-        if (processor_download_step == 1 && line == "> Could not get resource " quote processor_jar_url quote ".") {
-          processor_download_step = 2
-        } else if (processor_download_step == 2 && line == "> Could not GET " quote processor_jar_url quote ".") {
-          processor_download_step = 3
-        } else if (processor_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
-          processor_download_step = 0
-          processor_downloads++
+      # Require each pre-compile Maven Central JAR download to report the
+      # complete matching 429 chain, not just a coordinate or status line.
+      if (jar_download_step) {
+        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_url quote ".") {
+          jar_download_step = 2
+        } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
+          jar_download_step = 3
+        } else if (jar_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
+          jar_download_step = 0
+          jar_downloads++
           coordinates++
           repository_requests += 2
           transient++
@@ -169,21 +169,57 @@ classify_failure_body() {
         }
         next
       }
-      if (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration &&
+      if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
         sub(/\)$/, "", artifact_coordinate)
-        split(artifact_coordinate, processor, ":")
-        processor_jar = processor[2] "-" processor[3] ".jar"
-        if (line != "> Could not download " processor_jar " (" artifact_coordinate ")") {
+        split(artifact_coordinate, jar_coordinate, ":")
+        jar_name = line
+        sub(/^> Could not download /, "", jar_name)
+        sub(/ .+$/, "", jar_name)
+        jar_version = jar_coordinate[3]
+        # Gradle may report the requested Guava Android coordinate while
+        # the JVM variant resolves its matching JRE artifact and URL.
+        if (fixtures_resolver && jar_coordinate[1] == "com.google.guava" &&
+            jar_coordinate[2] == "guava" && jar_version ~ /-android$/) {
+          jre_version = jar_version
+          sub(/-android$/, "-jre", jre_version)
+          if (jar_name == "guava-" jre_version ".jar") jar_version = jre_version
+        }
+        jar_stem = jar_coordinate[2] "-" jar_version
+        # Fixture classpaths can resolve platform-specific classifier JARs.
+        classified_fixture_jar = fixtures_resolver && index(jar_name, jar_stem "-") == 1 &&
+          substr(jar_name, length(jar_stem) + 2) ~ /^[[:alnum:]][[:alnum:]_.-]*\.jar$/
+        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar) ||
+            (fixtures_resolver && (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
           invalid++
         }
-        gsub(/\./, "/", processor[1])
-        processor_jar_url = "https://repo.maven.apache.org/maven2/" processor[1] "/" processor[2] "/" processor[3] "/" processor_jar
-        processor_download_step = 1
+        gsub(/\./, "/", jar_coordinate[1])
+        jar_url = "https://repo.maven.apache.org/maven2/" jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
+        jar_download_step = 1
         next
       }
+
+      if (line == "1 problem was found storing the configuration cache.") {
+        cache_summary++
+        next
+      }
+      if (line ~ /^See the complete report at file:.*configuration-cache\//) {
+        next
+      }
+      if (line ~ /^\[Incubating\] Problems report is available at: file:.*\/build\/reports\/problems\/problems-report\.html$/ ||
+          line == ("> If the artifact you are trying to retrieve can be found in the repository but without metadata in " quote "Maven POM" quote " format, you need to adjust the " quote "metadataSources { ... }" quote " of the repository declaration.") ||
+          line == "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10." ||
+          line == "You can use \047--warning-mode all\047 to show the individual deprecation warnings and determine if they come from your own scripts or plugins." ||
+          line ~ /^For more on this, please refer to https:\/\/docs\.gradle\.org\/[0-9]+\.[0-9]+\.[0-9]+\/userguide\/command_line_interface\.html#sec:command_line_warnings in the Gradle documentation\.$/ ||
+          line ~ /^[0-9]+ actionable tasks: [0-9]+ executed, [0-9]+ from cache$/ ||
+          line ~ /^Retry-After: .+$/) {
+        next
+      }
+      # A fixture JAR failure may have only two other cause lines: its typed
+      # cache wrapper and the matching resolver root. Keep legacy parsing below.
+      other_cause_lines++
 
       # buildSrc plugin resolution may wrap a pinned dependency HTTP 429 in
       # configuration, repository-disablement and parent-POM context. These
@@ -238,10 +274,6 @@ classify_failure_body() {
         next
       }
 
-      if (line == "1 problem was found storing the configuration cache.") {
-        cache_summary++
-        next
-      }
       if (line ~ /^Configuration cache state could not be cached: field `classpath` of `org\.gradle\.process\.internal\.DefaultJavaExecSpec_Decorated` bean found in field `javaExecSpec` of task `:[^`]+:generateJooq` of type `org\.gradle\.api\.tasks\.JavaExec`: error writing value of type \047org\.gradle\.api\.internal\.file\.collections\.DefaultConfigurableFileCollection\047$/) {
         if (match(line, /task `:[^`]+:generateJooq`/)) {
           task_reference = substr(line, RSTART, RLENGTH)
@@ -292,6 +324,14 @@ classify_failure_body() {
         wrapped_resolution_causes++
         next
       }
+      # Test fixture inputs can fail during configuration-cache serialization.
+      # Only the exact typed wrapper and its same-module resolver admit JARs.
+      if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[[:alnum:]-]+:compileTestFixturesJava` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultResolvableConfiguration\047$/) {
+        module = line
+        sub(/^.* of task `/, "", module)
+        sub(/:compileTestFixturesJava`.*$/, "", module)
+        fixtures_configuration = module ":testFixturesCompileClasspath"
+      }
       if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/ ||
           line ~ /^- Task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/) {
         if (match(line, /`:[^`]+:compile[A-Za-z0-9]+`/)) {
@@ -306,20 +346,11 @@ classify_failure_body() {
         cache_cause++
         next
       }
-      if (line ~ /^See the complete report at file:.*configuration-cache\//) {
-        next
-      }
-      if (line ~ /^\[Incubating\] Problems report is available at: file:.*\/build\/reports\/problems\/problems-report\.html$/ ||
-          line == ("> If the artifact you are trying to retrieve can be found in the repository but without metadata in " quote "Maven POM" quote " format, you need to adjust the " quote "metadataSources { ... }" quote " of the repository declaration.") ||
-          line == "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10." ||
-          line == "You can use \047--warning-mode all\047 to show the individual deprecation warnings and determine if they come from your own scripts or plugins." ||
-          line ~ /^For more on this, please refer to https:\/\/docs\.gradle\.org\/[0-9]+\.[0-9]+\.[0-9]+\/userguide\/command_line_interface\.html#sec:command_line_warnings in the Gradle documentation\.$/ ||
-          line ~ /^[0-9]+ actionable tasks: [0-9]+ executed, [0-9]+ from cache$/) {
-        next
-      }
-
       if (line ~ /^> Could not resolve all (artifacts|files) for configuration .+\.$/) {
         resolver_roots++
+        if (fixtures_configuration != "" && line == "> Could not resolve all files for configuration " quote fixtures_configuration quote ".") {
+          fixtures_resolver = 1
+        }
         if (line ~ /(compileClasspath|testCompileClasspath|integrationTestCompileClasspath|crossServiceTestCompileClasspath)/) {
           compile_classpath_roots++
         }
@@ -381,7 +412,6 @@ classify_failure_body() {
           line ~ /^> Connection (reset|timed out)$/ ||
           line ~ /^> SocketTimeoutException/ ||
           line ~ /^Received status code (429|5[0-9][0-9]) from server/ ||
-          line ~ /^Retry-After: .+$/ ||
           line ~ /^(> )?There are [0-9]+ more failures with identical causes\.$/) {
         if (line ~ /^Received status code /) {
           transient++
@@ -403,10 +433,11 @@ classify_failure_body() {
       invalid++
     }
     END {
-      if (invalid || processor_download_step || resolver_roots == 0 || coordinates == 0 ||
-          (processor_downloads &&
-            (coordinates != processor_downloads || transient != processor_downloads ||
-             repository_requests != 2 * processor_downloads || searched || repository_urls)) ||
+      if (invalid || jar_download_step || resolver_roots == 0 || coordinates == 0 ||
+          (jar_downloads &&
+            (coordinates != jar_downloads || transient != jar_downloads ||
+             repository_requests != 2 * jar_downloads || searched || repository_urls ||
+             (fixtures_resolver && other_cause_lines != 2))) ||
           ((mavenrepo_disabled || protoc_connect_timeout) &&
             (mavenrepo_disabled != 1 || protoc_connect_timeout != 1 ||
              protoc_coordinates != 1 || protoc_pom_resource != 1 || protoc_pom_get != 1 ||
@@ -438,7 +469,7 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (wrapped_resolution_causes) print "before-compile"
+      if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
       exit 0
     }
   ' "$log_path"
