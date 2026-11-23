@@ -1231,6 +1231,11 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = script.match(
+  /const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "([0-9a-f]{64})";/)[1];
+assert.equal(canonicalMergeOnlyArtifactRuntimeWorkflowSha256, "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5");
+const mergeOnlyArtifactBytes = Buffer.concat([bytes, Buffer.from("\n# Merge-only artifact fixture\n")]);
+const mergeOnlyArtifactFixtureSha256 = require("node:crypto").createHash("sha256").update(mergeOnlyArtifactBytes).digest("hex");
 const preMergeRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Current default trusted refresh definition\n")]);
 const preMergeRefreshFixtureSha256 = require("node:crypto").createHash("sha256")
   .update(preMergeRefreshBytes).digest("hex");
@@ -1307,9 +1312,10 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       }}}};
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "outgoingTrustedRefreshRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    "canonicalRuntimeWorkflowSha256", "canonicalMergeOnlyArtifactRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "outgoingTrustedRefreshRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
+      mergeOnlyArtifactFixtureSha256,
       canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256,
       new Set([...outgoingTrustedRefreshRuntimeWorkflowSha256, preMergeRefreshFixtureSha256, outgoingRefreshFixtureSha256]),
@@ -1382,6 +1388,13 @@ function markerAccepted(overrides = {}) {
   return new Function("includes", `return (${expression});`)((values, value) => values.includes(value));
 }
 (async () => {
+  for (const event of ["pull_request", "repository_dispatch"]) {
+    assert.equal(await verify(data => {
+      Object.assign(data.definitions[workflowPath], {
+        content: mergeOnlyArtifactBytes.toString("base64"), size: mergeOnlyArtifactBytes.length,
+      });
+    }, event, false), true, "the previous archive format must not invalidate independent Smoke Gate proof");
+  }
   for (const event of ["pull_request", "repository_dispatch"]) {
     for (const stage of ["jobs", "proof", "malformed-jobs"]) {
       await failedLegacyProof(stage, Object.assign(new Error("unavailable"), {status: 404}), event);

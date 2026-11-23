@@ -290,6 +290,11 @@ login = workflow.index("- name: Login to GHCR")
 publish = workflow.index("- name: Publish fixed PR image tags")
 if not download < validate < login < publish:
     raise SystemExit("source/artifact validation must precede registry login and publication")
+publisher_steps = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]["publish"]["steps"]
+step_names = [step["name"] for step in publisher_steps]
+fence = step_names.index("Fence current source attempt before registry login")
+assert step_names[fence - 1:fence + 2:2] == ["Load fixed-tag images", "Login to GHCR"]
+validation_path.with_name("attempt-fence.sh").write_text(publisher_steps[fence]["run"])
 if "github.event.workflow_run.head_repository.full_name == github.repository" not in workflow:
     raise SystemExit("publisher must reject fork-owned source runs")
 validation_section = workflow[validate:login]
@@ -323,6 +328,11 @@ Path(sys.argv[6]).write_text(javascript_step(workflow, "Resolve successful exact
 runtime_workflow = runtime_workflow_path.read_text(encoding="utf-8")
 Path(sys.argv[7]).write_text(javascript_step(runtime_workflow, "Dispatch exact runtime publication source"))
 runtime_definition = yaml.load(runtime_workflow, Loader=yaml.BaseLoader)
+producer_steps = {step["name"]: step for step in runtime_definition["jobs"]["pr-local-smoke"]["steps"]}
+export_script = producer_steps["Export fixed-tag preview image artifact"]["run"]
+assert 'SOURCE_RUN_ID="${{ github.run_id }}"' in export_script
+validation_path.with_name("producer-provenance.py").write_text(export_script.split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0])
+assert producer_steps["Summarize secure PR runtime artifact"]["env"]["ARTIFACT_NAME"] == producer_steps["Upload preview image artifact"]["with"]["name"]
 image_meta = runtime_definition["jobs"]["image-meta"]
 smoke_scope = next(step for step in image_meta["steps"] if step.get("name") == "Detect PR smoke scopes")
 Path(sys.argv[8]).write_text(smoke_scope["with"]["script"], encoding="utf-8")
@@ -368,23 +378,31 @@ const refreshSelector = new AsyncFunction("github", "context", "core", `${fs.rea
 const sha = character => character.repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} head-${sha("a")} merge-${sha("c")} mode-required`;
 const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
-const source = { id: 4242, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
+const source = { id: 4242, run_attempt: 2, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
-async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs = [] } = {}) {
+const producer = run => ({id: 8, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+  name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success"});
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs } = {}) {
   let reads = 0, clock = 0;
   const output = {};
-  const github = { paginate: async () => jobs, rest: { actions: {
+  const lastRead = () => runs[Math.min(reads - 1, runs.length - 1)];
+  const github = { paginate: async (route, params) => {
+    assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    assert.deepEqual(params, {...baseContext.repo, run_id: 4242, attempt_number: lastRead().run_attempt, per_page: 100});
+    return jobs ?? [producer(lastRead())];
+  }, rest: { actions: {
     getWorkflow: async () => ({data: workflow}),
     getWorkflowRun: async request => { assert.equal(request.run_id, 4242); reads++; if (error) throw Error("API unavailable"); return {data: runs[Math.min(reads - 1, runs.length - 1)]}; },
   } } };
   await resolver(github, context, {notice: () => {}, setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
-  if (jobs.some(job => (job.steps ?? []).some(step => step.conclusion === "success"))) {
+  if (jobs?.some(job => (job.steps ?? []).some(step => step.conclusion === "success"))) {
     assert.deepEqual(output, {}, "exception attempts must expose no publication source");
     return {reads, output};
   }
   assert.equal(output.title, title);
-  assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}`);
+  assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}-attempt-${lastRead().run_attempt}`);
   assert.equal(JSON.parse(output.source).status, "completed");
+  assert.equal(JSON.parse(output.source).run_attempt, lastRead().run_attempt);
   return {reads, output};
 }
 const runtimeWorkflow = fs.readFileSync(process.argv[4], "utf8");
@@ -448,11 +466,17 @@ for (const publishable of ["false", "", undefined]) {
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
   const direct = await resolve();
-  const exceptionJob = {name: "PR Full-Stack Smoke (runtime-required=true)", steps: [{
+  const exceptionJob = {...producer(source), steps: [{
     name: "Known canonical transition PLAY failure with successful authenticated cleanup",
     status: "completed", conclusion: "success"}]};
   assert.deepEqual((await resolve({jobs: [exceptionJob]})).output, {});
   assert.equal((await resolve({jobs: [{...exceptionJob, steps: [{...exceptionJob.steps[0], conclusion: "skipped"}]}]})).output.title, title);
+  assert.equal((await resolve({jobs: [{...producer(source), name: "PR Full-Stack Smoke (runtime-required=false)"}]})).output.title, title);
+  for (const jobs of [[], [producer(source), producer(source)], [{...producer(source), run_attempt: 1}],
+      [{...producer(source), run_id: 4241}], [{...producer(source), head_sha: sha("a")}],
+      [{...producer(source), conclusion: "failure"}], [{...producer(source), status: "in_progress"}]]) {
+    await assert.rejects(resolve({jobs}), /successful runtime image job from the exact source attempt/);
+  }
   const pending = {...source, status: "in_progress", conclusion: null};
   assert.equal((await resolve({runs: [pending, source]})).reads, 2);
   const callbackContext = {...baseContext, eventName: "workflow_run", payload: {repository, workflow_run: source}};
@@ -463,6 +487,13 @@ for (const publishable of ["false", "", undefined]) {
   const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
   assert.equal((await resolve({runs: [prSource]})).output.artifact_name, direct.output.artifact_name);
   assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
+  const attemptOne = {...source, run_attempt: 1};
+  await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: attemptOne}}}), /current publication source attempt differs/);
+  await assert.rejects(resolve({runs: [{...pending, run_attempt: 1}, source]}), /current publication source attempt differs/);
+  for (const run_attempt of [undefined, "2", 0, 2.5]) {
+    await assert.rejects(resolve({runs: [{...source, run_attempt}]}), /provenance/);
+    await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: {...source, run_attempt}}}}), /callback source attempt/);
+  }
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
   const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
@@ -477,6 +508,22 @@ for (const publishable of ["false", "", undefined]) {
     .split("      - name: Summarize secure PR runtime artifact\n")[0];
   assert.ok(upload.includes("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"));
   assert.equal(upload.includes("overwrite: true"), false);
+  const uploadName = upload.match(/^          name: (.+)$/m)[1];
+  const uploaded = run_attempt => ({run_id: source.id, name: uploadName
+    .replace("${{ needs.image-meta.outputs.image_tag }}", `pr-merge-${sha("c")}`)
+    .replace("${{ github.run_attempt }}", String(run_attempt))});
+  // Model the pinned action's run-scoped exact-name match, not an attempt-aware API.
+  for (const {output} of [direct, callback, await resolve({runs: [prSource], context: prCallback})]) {
+    const select = artifacts => artifacts.filter(artifact => artifact.run_id === JSON.parse(output.source).id &&
+      artifact.name === output.artifact_name);
+    const old = uploaded(1), exact = uploaded(2);
+    const legacy = {...old, name: `pr-runtime-images-pr-merge-${sha("c")}`};
+    assert.equal(old.name, `${legacy.name}-attempt-1`);
+    assert.equal(exact.name, `${legacy.name}-attempt-2`);
+    assert.deepEqual(select([old]), [], "attempt 1 alone must not satisfy attempt 2");
+    assert.deepEqual(select([legacy]), [], "merge-name-only archive must not satisfy attempt 2");
+    assert.deepEqual(select([old, exact]), [exact]);
+  }
   fs.writeFileSync(process.argv[6], JSON.stringify({inputs, output: direct.output}));
   for (const suffix of ["refs/heads/develop", "refs/pull/42/merge", sha("b")]) {
     const suffixed = {...source, path: `${source.path}@${suffix}`};
@@ -512,6 +559,7 @@ mkdir -p "$fake_bin"
 
 repository='benhook1013/FireMUD'
 source_run_id='4242'
+source_run_attempt='2'
 workflow_id='777'
 pr_number='42'
 base_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -549,12 +597,13 @@ world-management-service
 backup-verifier
 EOF
 printf 'placeholder archive\n' > "$artifact_dir/pr-runtime-images.tar.gz"
-cat > "$artifact_dir/pr-runtime-provenance.json" <<EOF
-{"repository":"${repository}","prNumber":${pr_number},"baseSha":"${base_sha}","headSha":"${head_sha}","mergeSha":"${merge_sha}","imageTag":"pr-merge-${merge_sha}","sourceRunId":${source_run_id},"services":["account-service","automation-scripting-service","entity-management-service","game-design-service","game-logic-service","game-session-service","logging-admin-service","social-groups-service","spring-cloud-gateway","tcp-proxy-service","world-management-service","backup-verifier"]}
-EOF
+REPOSITORY="$repository" PR_NUMBER="$pr_number" BASE_SHA="$base_sha" HEAD_SHA="$head_sha" \
+  MERGE_SHA="$merge_sha" IMAGE_TAG="pr-merge-$merge_sha" SOURCE_RUN_ID="$source_run_id" \
+  GITHUB_RUN_ATTEMPT="$source_run_attempt" PROVENANCE_PATH="$artifact_dir/pr-runtime-provenance.json" \
+  python3 "$fixture_dir/producer-provenance.py"
 
 cat > "$fixture_dir/source-run.json" <<EOF
-{"id":${source_run_id},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
+{"id":${source_run_id},"run_attempt":${source_run_attempt},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
 EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
 {"number":${pr_number},"state":"open","user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
@@ -950,6 +999,7 @@ run_validation() {
   PR_RUNTIME_ARTIFACT_ROOT="$artifact_root" \
   CURRENT_REPOSITORY="$repository" \
   SOURCE_RUN_ID="$source_run_id" \
+  SOURCE_RUN_ATTEMPT="$source_run_attempt" \
   SOURCE_RUN_URL="https://example.test/runs/$source_run_id" \
   SOURCE_RUN_TITLE="$source_title" \
   SOURCE_RUN_EVENT="$source_event" \
@@ -1042,6 +1092,55 @@ run_validation
 grep -Fxq "IMAGE_TAG=pr-merge-$merge_sha" "$fixture_dir/github-env"
 grep -Fxq "PR_RUNTIME_ARTIFACT_DIR=$artifact_dir" "$fixture_dir/github-env"
 artifact_name="${artifact_dir##*/}"
+for old_name in "pr-runtime-images-pr-merge-${merge_sha}" "pr-runtime-images-pr-merge-${merge_sha}-attempt-1"; do
+  mv "$artifact_dir" "$artifact_root/$old_name"
+  if run_validation 2>"$fixture_dir/attempt-error"; then
+    echo "older artifact directory was accepted for attempt 2: $old_name" >&2
+    exit 1
+  fi
+  grep -Fq 'downloaded artifacts do not contain exactly the expected runtime image artifact' "$fixture_dir/attempt-error"
+  mv "$artifact_root/$old_name" "$artifact_dir"
+done
+
+provenance="$artifact_dir/pr-runtime-provenance.json"
+cp "$provenance" "$fixture_dir/exact-provenance.json"
+for invalid_attempt in missing 1 '"2"' 2.0 true; do
+  jq --arg value "$invalid_attempt" \
+    'if $value == "missing" then del(.sourceRunAttempt) else .sourceRunAttempt = ($value | fromjson) end' \
+    "$fixture_dir/exact-provenance.json" > "$provenance"
+  # jq can normalize 2.0 to 2; preserve the non-integer JSON token in that case.
+  if [[ "$invalid_attempt" == 2.0 ]]; then
+    sed 's/"sourceRunAttempt":2/"sourceRunAttempt":2.0/' "$fixture_dir/exact-provenance.json" > "$provenance"
+  fi
+  if run_validation 2>"$fixture_dir/attempt-error"; then
+    echo "archive with invalid attempt was accepted: $invalid_attempt" >&2
+    exit 1
+  fi
+  grep -Eq 'schema contains missing or extra keys|runtime provenance attempt differs' "$fixture_dir/attempt-error"
+done
+cp "$fixture_dir/exact-provenance.json" "$provenance"
+run_validation
+
+run_attempt_fence() {
+  PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" \
+    SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" GH_TOKEN='test-token' \
+    bash "$fixture_dir/attempt-fence.sh"
+}
+run_attempt_fence
+cp "$fixture_dir/source-run.json" "$fixture_dir/exact-source-run.json"
+jq '.run_attempt += 1' "$fixture_dir/exact-source-run.json" > "$fixture_dir/source-run.json"
+if run_validation 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an attempt superseded before artifact validation" >&2
+  exit 1
+fi
+grep -Fq 'current workflow run attempt differs from the pinned source attempt' "$fixture_dir/attempt-error"
+if run_attempt_fence 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an attempt superseded after artifact validation" >&2
+  exit 1
+fi
+grep -Fq 'The pinned source attempt is no longer a current completed success' "$fixture_dir/attempt-error"
+cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+
 mv "$artifact_dir" "$artifact_root/pr-runtime-images-pr-merge-dddddddddddddddddddddddddddddddddddddddd"
 if run_validation; then
   echo "wrong merge artifact directory was accepted" >&2
@@ -1245,6 +1344,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     "mergeSha": "cccccccccccccccccccccccccccccccccccccccc",
     "imageTag": "pr-merge-cccccccccccccccccccccccccccccccccccccccc",
     "sourceRunId": 4242,
+    "sourceRunAttempt": 2,
     "services": ["account-service", "backup-verifier"],
 }), encoding="utf-8")
 PY

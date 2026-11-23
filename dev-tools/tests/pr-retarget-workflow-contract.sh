@@ -2006,7 +2006,7 @@ require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
 assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
-require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}'
+require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}-attempt-{source_run_attempt}'
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
 require_contains "$pr_image_publisher_path" 'docker push "$image"'
 # shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
@@ -2039,6 +2039,7 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
     test_environment = {
         "GITHUB_STEP_SUMMARY": summary_file.name,
         "SOURCE_RUN_ID": "123",
+        "SOURCE_RUN_ATTEMPT": "2",
         "SOURCE_RUN_URL": "https://github.example/runs/123",
         "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
         "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
