@@ -1068,6 +1068,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       int backgroundAvailable = background.availablePermits();
       int before = retained.get();
       int available = permits.availablePermits();
+      var rollbackFailure = new AtomicReference<Throwable>();
+      var autoCommitFailure = new AtomicReference<Throwable>();
       try {
         assertThatThrownBy(() ->
                 CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
@@ -1081,12 +1083,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       scoped.acquire();
                       assertThatThrownBy(() -> scoped.release(proxy))
                           .hasMessage("Controlled uncertain pool return");
-                      assertThatThrownBy(proxy::rollback).isInstanceOf(java.sql.SQLException.class);
-                      assertThatThrownBy(() -> proxy.setAutoCommit(true))
-                          .isInstanceOf(java.sql.SQLException.class);
+                      rollbackFailure.set(org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
+                      autoCommitFailure.set(
+                          org.assertj.core.api.Assertions.catchThrowable(() -> proxy.setAutoCommit(true)));
                       return true;
                     }))
             .isInstanceOf(IllegalStateException.class);
+        assertThat(rollbackFailure.get()).isInstanceOf(java.sql.SQLException.class);
+        assertThat(autoCommitFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(
                 registry
                     .get("original_new_capacity_sql_release_failure_retained_operations")
@@ -1453,6 +1457,45 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(statement, timeout(1000)).cancel();
     } finally {
       release.countDown();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void secondQueryCannotRenewAnAlreadyConsumedAbsoluteDeadline(boolean exhaustFirstQuery)
+      throws Exception {
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    when(provider.acquire()).thenReturn(preparedConnection(statement));
+    AtomicInteger executions = new AtomicInteger();
+    AtomicLong wallMillis = new AtomicLong(CLOCK.millis());
+    Clock clock = mock();
+    when(clock.millis()).thenAnswer(ignored -> wallMillis.get());
+    long absoluteDeadline = clock.millis() + 5_000L;
+    when(statement.execute())
+        .thenAnswer(invocation -> {
+          if (executions.incrementAndGet() == 1 && exhaustFirstQuery) {
+            wallMillis.set(absoluteDeadline + 1L);
+          }
+          return true;
+        });
+    DSLContext dsl = source(provider);
+    Runnable bothQueries =
+        () -> CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+            clock,
+            absoluteDeadline,
+            budget -> {
+              var sql = budget.sql(dsl);
+              execute(sql);
+              return execute(sql);
+            });
+    if (exhaustFirstQuery) {
+      assertThatThrownBy(bothQueries::run)
+          .isInstanceOf(CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+      assertThat(executions).hasValue(1);
+    } else {
+      bothQueries.run();
+      assertThat(executions).hasValue(2);
     }
   }
 

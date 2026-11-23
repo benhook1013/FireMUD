@@ -1878,8 +1878,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "require_gs_region_fence_dispatch_completion()"),
           Map.of("game_session_region_owner_transfer_item.", List.of("CHECK (fence_dispatch_id")),
           Map.of(
-              "gs_region_fence_dispatch_execution", "execution_digest",
-              "gs_region_fence_receipt_execution", "execution_digest"));
+              "gs_region_fence_dispatch_execution",
+                  "(execution_digest) WHERE (fence_dispatch_id IS NOT NULL)",
+              "gs_region_fence_receipt_execution",
+                  "(execution_digest) WHERE (fence_readback IS NOT NULL)"));
+      assertThat(f.indexes().get("gs_region_fence_dispatch_execution"))
+          .startsWith("CREATE UNIQUE INDEX ");
     }
   }
 

@@ -66,6 +66,15 @@ class TenantCapacityAdmissionGrpcCodecTest {
     var commitment =
         TenantCapacityAdmissionGrpcCodec.toResponse(creatingRequest, result(creatingRequest));
     assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(creatingRequest, commitment)).isEmpty();
+    assertThat(TenantCapacityAdmissionGrpcCodec.requireResponse(creatingRequest, commitment))
+        .isEqualTo(result(creatingRequest));
+    var exactRefusal =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(creatingRequest, Failure.CAPACITY_QUOTA_EXCEEDED);
+    var mixed = commitment.toBuilder().addRefusal(exactRefusal.getRefusal(0)).build();
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.requireResponse(creatingRequest, mixed))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusal(creatingRequest, mixed))
+        .isInstanceOf(IllegalArgumentException.class);
     for (var code : List.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED)) {
       Request request =
           CapacityAdmissionTestFixture.playerRequest(code == Failure.CAPACITY_QUOTA_EXCEEDED);

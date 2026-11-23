@@ -433,7 +433,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
       } else {
         assertThatThrownBy(() -> first.get(6, java.util.concurrent.TimeUnit.SECONDS))
             .isInstanceOf(java.util.concurrent.ExecutionException.class)
-            .hasCauseInstanceOf(IllegalStateException.class);
+            .cause()
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity execution is indeterminate");
         assertThat(admin.type(tombstoneKey)).isEqualTo("none");
       }
       assertThat(executionReads.get()).isGreaterThanOrEqualTo(2);

@@ -77,10 +77,14 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
       BindingTarget source = retainedCapacityTarget(transaction, transitionId, true);
       requireTenantClaim(transaction, source.tenantId());
       // A retained execution cannot allocate replacement topology after loss of its mapping.
-      if (transaction.fetchOne("SELECT 1 FROM " + MAPPING + " WHERE tenant_id=?", source.tenantId())
-          == null) throw conflict("Retained capacity execution mapping is unavailable");
-      return resolveMapping(
-          transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
+      Record mapping =
+          transaction.fetchOne(
+              "SELECT allocation_version, tenant_gameplay_tag FROM "
+                  + MAPPING
+                  + " WHERE tenant_id = ? FOR UPDATE",
+              source.tenantId());
+      if (mapping == null) throw conflict("Retained capacity execution mapping is unavailable");
+      return exactMapping(source, mapping);
     });
   }
 

@@ -260,6 +260,16 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical Game Session region ownership is unavailable");
+    assertThatThrownBy(
+            () -> observeGuardedReplacementRefusal("sql-custody-successor-before-reconciliation"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
     assertThat(statusRepository.find(regionBinding.installation().source)).contains(originalOwner);
     assertThatThrownBy(() ->
             capacityOwner()
