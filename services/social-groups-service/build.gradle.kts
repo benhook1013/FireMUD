@@ -20,7 +20,7 @@ tasks.named<Test>("crossServiceTest") {
     val fixtureProperties = listOf("loggingAdminFixtureImage", "loggingAdminFixtureImageId")
     val fixtureInputs = fixtureProperties.associateWith { providers.gradleProperty(it).orNull }
     fixtureInputs.forEach { (name, value) ->
-        inputs.property(name, value)
+        inputs.property(name, value).optional(true)
         if (value != null) {
             systemProperty(name, value)
         }
