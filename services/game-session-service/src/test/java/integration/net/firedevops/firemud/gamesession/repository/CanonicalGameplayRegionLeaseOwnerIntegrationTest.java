@@ -647,6 +647,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(world.observedDeadlines).hasSizeGreaterThanOrEqualTo(4);
       assertThat(world.observedDeadlines)
           .allSatisfy(deadline -> assertThat(deadline).isSameAs(world.observedDeadlines.get(0)));
+    } finally {
+      dropSchema(testSchema.schema());
     }
   }
 
@@ -834,6 +836,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 incarnationSource);
         assertThat(retry.installForTransition(TRANSITION_ID, world.request())).isNotNull();
       }
+    } finally {
+      dropSchema(testSchema.schema());
     }
   }
 
@@ -1348,151 +1352,185 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
       try (var session =
           bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
-        Thread.sleep(mode == 1 ? 5_500 : 2_500);
-        assertThatThrownBy(() ->
-                session.initialize(
-                    permit,
-                    retained -> {
-                      proof.set(retained);
-                      if (mode == 5) {
-                        recoveryOwner.retainNoWriteProof(preparation, recoverySlot, retained);
-                        recoveryOwner.releaseNoWriteRecovery(
-                            preparation.operationId(), recoverySlot);
-                        try (var deadlines =
-                                java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
-                            var caller =
-                                io.grpc.Context.current()
-                                    .withDeadlineAfter(1500, TimeUnit.MILLISECONDS, deadlines)) {
-                          var install =
-                              CompletableFuture.runAsync(() ->
-                                  caller.run(() ->
-                                      recoveryOwner.installForTransition(
-                                          preparation.transitionId(), world.request())));
-                          assertThat(returning.await(2, TimeUnit.SECONDS)).isTrue();
-                          assertThatThrownBy(() -> install.get(3, TimeUnit.SECONDS))
-                              .hasCauseInstanceOf(IllegalStateException.class);
-                          assertThatThrownBy(() ->
-                                  recoveryOwner.recoverRetainedNoWriteForTransition(
-                                      preparation.transitionId()))
-                              .isInstanceOf(IllegalStateException.class);
-                        } catch (InterruptedException interrupted) {
-                          Thread.currentThread().interrupt();
-                          throw new IllegalStateException(interrupted);
-                        } finally {
-                          allowProviderReturn.countDown();
-                        }
-                        return;
-                      }
-                      if (mode == 4) {
-                        recoverySlot.proof = retained;
-                        try {
-                          recoveryOwner.recoverNoWrite(preparation, recoverySlot);
-                        } finally {
+        var evaluations = new java.util.concurrent.atomic.AtomicInteger();
+        var completed = new CompletableFuture<Object>();
+        var observed =
+            new CommandListener() {
+              @Override
+              public void commandStarted(CommandStartedEvent event) {
+                if (event.getCommand().getType() == CommandType.EVALSHA)
+                  evaluations.incrementAndGet();
+              }
+
+              @Override
+              public void commandSucceeded(CommandSucceededEvent event) {
+                if (event.getCommand().getType() == CommandType.EVALSHA) {
+                  completed.complete(event.getCommand().getOutput().get());
+                }
+              }
+            };
+        // PREPARE's preflight has already finished; only initialization can submit EVALSHA here.
+        if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
+        try {
+          Thread.sleep(mode == 1 ? 5_500 : 2_500);
+          assertThatThrownBy(() ->
+                  session.initialize(
+                      permit,
+                      retained -> {
+                        proof.set(retained);
+                        if (mode == 5) {
+                          recoveryOwner.retainNoWriteProof(preparation, recoverySlot, retained);
                           recoveryOwner.releaseNoWriteRecovery(
                               preparation.operationId(), recoverySlot);
+                          try (var deadlines =
+                                  java.util.concurrent.Executors
+                                      .newSingleThreadScheduledExecutor();
+                              var caller =
+                                  io.grpc.Context.current()
+                                      .withDeadlineAfter(1500, TimeUnit.MILLISECONDS, deadlines)) {
+                            var install =
+                                CompletableFuture.runAsync(() ->
+                                    caller.run(() ->
+                                        recoveryOwner.installForTransition(
+                                            preparation.transitionId(), world.request())));
+                            assertThat(returning.await(2, TimeUnit.SECONDS)).isTrue();
+                            assertThatThrownBy(() -> install.get(3, TimeUnit.SECONDS))
+                                .hasCauseInstanceOf(IllegalStateException.class);
+                            assertThatThrownBy(() ->
+                                    recoveryOwner.recoverRetainedNoWriteForTransition(
+                                        preparation.transitionId()))
+                                .isInstanceOf(IllegalStateException.class);
+                          } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(interrupted);
+                          } finally {
+                            allowProviderReturn.countDown();
+                          }
+                          return;
                         }
-                        return;
-                      }
-                      if (mode == 2) {
-                        var concurrentRelease = new AtomicReference<CompletableFuture<Void>>();
-                        var lockAttempted = new CompletableFuture<Void>();
-                        var concurrentConfiguration =
-                            testSchema
-                                .dsl()
-                                .configuration()
-                                .derive(
-                                    new org.jooq.impl.DefaultExecuteListenerProvider(
-                                        new org.jooq.impl.DefaultExecuteListener() {
-                                          @Override
-                                          public void executeStart(
-                                              org.jooq.ExecuteContext context) {
-                                            String sql = context.sql();
-                                            if (sql != null
-                                                && sql.contains("pg_advisory_xact_lock")) {
-                                              lockAttempted.complete(null);
+                        if (mode == 4) {
+                          recoverySlot.proof = retained;
+                          try {
+                            recoveryOwner.recoverNoWrite(preparation, recoverySlot);
+                          } finally {
+                            recoveryOwner.releaseNoWriteRecovery(
+                                preparation.operationId(), recoverySlot);
+                          }
+                          return;
+                        }
+                        if (mode == 2) {
+                          var concurrentRelease = new AtomicReference<CompletableFuture<Void>>();
+                          var lockAttempted = new CompletableFuture<Void>();
+                          var concurrentConfiguration =
+                              testSchema
+                                  .dsl()
+                                  .configuration()
+                                  .derive(
+                                      new org.jooq.impl.DefaultExecuteListenerProvider(
+                                          new org.jooq.impl.DefaultExecuteListener() {
+                                            @Override
+                                            public void executeStart(
+                                                org.jooq.ExecuteContext context) {
+                                              String sql = context.sql();
+                                              if (sql != null
+                                                  && sql.contains("pg_advisory_xact_lock")) {
+                                                lockAttempted.complete(null);
+                                              }
                                             }
-                                          }
-                                        }));
-                        var concurrentRepository =
-                            new CanonicalGameplayRegionRuntimeStatusRepository(
-                                DSL.using(concurrentConfiguration));
-                        var rollbackConfiguration =
-                            testSchema
-                                .dsl()
-                                .configuration()
-                                .derive(
-                                    new org.jooq.impl.DefaultExecuteListenerProvider(
-                                        new org.jooq.impl.DefaultExecuteListener() {
-                                          @Override
-                                          public void executeStart(
-                                              org.jooq.ExecuteContext context) {
-                                            String sql = context.sql();
-                                            if (sql != null
-                                                && sql.contains("SET phase = 'PREPARED'")) {
-                                              concurrentRelease.set(
-                                                  CompletableFuture.runAsync(() ->
-                                                      assertThatThrownBy(() ->
-                                                              concurrentRepository
-                                                                  .releaseInitialTimelineNoWrite(
-                                                                      preparation, retained, NOW))
-                                                          .isInstanceOf(
-                                                              IllegalStateException.class)));
-                                              // Consumed-proof reconciliation takes this same
-                                              // transaction lock. Roll back before awaiting it.
-                                              lockAttempted.orTimeout(10, TimeUnit.SECONDS).join();
-                                              assertThat(concurrentRelease.get().isDone())
-                                                  .isFalse();
-                                              throw new IllegalStateException(
-                                                  "forced SQL rollback");
+                                          }));
+                          var concurrentRepository =
+                              new CanonicalGameplayRegionRuntimeStatusRepository(
+                                  DSL.using(concurrentConfiguration));
+                          var rollbackConfiguration =
+                              testSchema
+                                  .dsl()
+                                  .configuration()
+                                  .derive(
+                                      new org.jooq.impl.DefaultExecuteListenerProvider(
+                                          new org.jooq.impl.DefaultExecuteListener() {
+                                            @Override
+                                            public void executeStart(
+                                                org.jooq.ExecuteContext context) {
+                                              String sql = context.sql();
+                                              if (sql != null
+                                                  && sql.contains("SET phase = 'PREPARED'")) {
+                                                concurrentRelease.set(
+                                                    CompletableFuture.runAsync(() ->
+                                                        assertThatThrownBy(() ->
+                                                                concurrentRepository
+                                                                    .releaseInitialTimelineNoWrite(
+                                                                        preparation, retained, NOW))
+                                                            .isInstanceOf(
+                                                                IllegalStateException.class)));
+                                                // Consumed-proof reconciliation takes this same
+                                                // transaction lock. Roll back before awaiting it.
+                                                lockAttempted
+                                                    .orTimeout(10, TimeUnit.SECONDS)
+                                                    .join();
+                                                assertThat(concurrentRelease.get().isDone())
+                                                    .isFalse();
+                                                throw new IllegalStateException(
+                                                    "forced SQL rollback");
+                                              }
                                             }
-                                          }
-                                        }));
-                        var failing =
-                            new CanonicalGameplayRegionRuntimeStatusRepository(
-                                DSL.using(rollbackConfiguration));
-                        assertThatThrownBy(() ->
-                                failing.releaseInitialTimelineNoWrite(preparation, retained, NOW))
-                            .isInstanceOf(RuntimeException.class);
-                        assertThat(concurrentRelease.get()).isNotNull();
-                        concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
-                        assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
-                            .isEqualTo(
-                                CanonicalGameplayRegionRuntimeStatusRepository
-                                    .TimelinePreparationPhase.INITIALIZING);
-                      }
-                      if (mode == 3) {
-                        recoverySlot.proof = retained;
-                        var tx = testSchema.dsl().configuration().transactionProvider();
-                        var ambiguous =
-                            new org.jooq.TransactionProvider() {
-                              @Override
-                              public void begin(org.jooq.TransactionContext context) {
-                                tx.begin(context);
-                              }
+                                          }));
+                          var failing =
+                              new CanonicalGameplayRegionRuntimeStatusRepository(
+                                  DSL.using(rollbackConfiguration));
+                          assertThatThrownBy(() ->
+                                  failing.releaseInitialTimelineNoWrite(preparation, retained, NOW))
+                              .isInstanceOf(RuntimeException.class);
+                          assertThat(concurrentRelease.get()).isNotNull();
+                          concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
+                          assertThat(
+                                  repository.findTimelinePreparation(source).orElseThrow().phase())
+                              .isEqualTo(
+                                  CanonicalGameplayRegionRuntimeStatusRepository
+                                      .TimelinePreparationPhase.INITIALIZING);
+                        }
+                        if (mode == 3) {
+                          recoverySlot.proof = retained;
+                          var tx = testSchema.dsl().configuration().transactionProvider();
+                          var ambiguous =
+                              new org.jooq.TransactionProvider() {
+                                @Override
+                                public void begin(org.jooq.TransactionContext context) {
+                                  tx.begin(context);
+                                }
 
-                              @Override
-                              public void commit(org.jooq.TransactionContext context) {
-                                tx.commit(context);
-                                throw new IllegalStateException("lost commit reply");
-                              }
+                                @Override
+                                public void commit(org.jooq.TransactionContext context) {
+                                  tx.commit(context);
+                                  throw new IllegalStateException("lost commit reply");
+                                }
 
-                              @Override
-                              public void rollback(org.jooq.TransactionContext context) {
-                                // Models a successful no-op rollback after a committed
-                                // transaction.
-                              }
-                            };
-                        var uncertain =
-                            new CanonicalGameplayRegionRuntimeStatusRepository(
-                                DSL.using(testSchema.dsl().configuration().derive(ambiguous)));
-                        assertThatThrownBy(() ->
-                                uncertain.releaseInitialTimelineNoWrite(preparation, retained, NOW))
-                            .isInstanceOf(RuntimeException.class);
-                      } else {
-                        repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
-                      }
-                    }))
-            .isInstanceOf(IllegalStateException.class);
+                                @Override
+                                public void rollback(org.jooq.TransactionContext context) {
+                                  // Models a successful no-op rollback after a committed
+                                  // transaction.
+                                }
+                              };
+                          var uncertain =
+                              new CanonicalGameplayRegionRuntimeStatusRepository(
+                                  DSL.using(testSchema.dsl().configuration().derive(ambiguous)));
+                          assertThatThrownBy(() ->
+                                  uncertain.releaseInitialTimelineNoWrite(
+                                      preparation, retained, NOW))
+                              .isInstanceOf(RuntimeException.class);
+                        } else {
+                          repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
+                        }
+                      }))
+              .isInstanceOf(IllegalStateException.class);
+          if (mode == 0) {
+            assertThat(evaluations).hasValue(1);
+            assertThat(completed.get(2, TimeUnit.SECONDS)).isEqualTo(-3L);
+          } else if (mode == 1) {
+            assertThat(evaluations).as("no INITIALIZE after local expiration").hasValue(0);
+          }
+        } finally {
+          if (mode == 0 || mode == 1) redis.ownerClient().removeListener(observed);
+        }
       }
       assertThat(proof.get()).isNotNull();
       if (mode == 3) {
@@ -1554,6 +1592,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         var grant = retry.initialize(retryPermit);
         redisOwner.verifyInitializedTimeline(grant, preparation);
       }
+    } finally {
+      dropSchema(testSchema.schema());
     }
   }
 

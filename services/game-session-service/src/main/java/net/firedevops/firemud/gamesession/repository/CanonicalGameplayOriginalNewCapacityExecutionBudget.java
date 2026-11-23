@@ -26,6 +26,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.jooq.ConnectionProvider;
@@ -68,12 +69,14 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final AtomicBoolean releaseFailureRecorded = new AtomicBoolean();
   private boolean redisCloseFailureRecorded;
   private final AtomicInteger outstandingConnections = new AtomicInteger();
+  private final AtomicLong jdbcCommitInvocations = new AtomicLong();
   private final Context caller;
   private final Clock clock;
   private final Deadline deadline;
   private final long absoluteDeadlineMillis;
   private final AtomicBoolean cancelled = new AtomicBoolean();
   private final CompletableFuture<Object> result = new CompletableFuture<>();
+  private final CompletableFuture<Void> physicallyReleased = new CompletableFuture<>();
   private final Object resources = new Object();
   private final Object lifecycle = new Object();
   private final Map<Connection, OwnedConnection> connections = new IdentityHashMap<>();
@@ -260,7 +263,19 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       @SuppressWarnings("unchecked")
       T value = (T) budget.result.get(budget.remainingNanos(), TimeUnit.NANOSECONDS);
       budget.check();
-      if (resultClaimed != null) resultClaimed.complete(true);
+      if (resultClaimed != null) {
+        // Claim the private heap result first; that allows its worker to finish. Do not let
+        // a subsequent SQL phase race this operation's physical release for the same permit.
+        resultClaimed.complete(true);
+        boolean exposed = false;
+        try {
+          budget.physicallyReleased.get(budget.remainingNanos(), TimeUnit.NANOSECONDS);
+          budget.check();
+          exposed = true;
+        } finally {
+          if (!exposed && value != null) Objects.requireNonNull(disposeAbandoned).accept(value);
+        }
+      }
       return value;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
@@ -330,6 +345,10 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
 
   void check() {
     remainingNanos();
+  }
+
+  long jdbcCommitInvocations() {
+    return jdbcCommitInvocations.get();
   }
 
   /** Releases the resource permit only after the registered Redis disposal succeeds. */
@@ -509,6 +528,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       released = true;
       OPERATIONS.release();
       if (background) BACKGROUND_OPERATIONS.release();
+      physicallyReleased.complete(null);
       if (onPhysicalRelease != null) onPhysicalRelease.run();
     }
   }
@@ -558,6 +578,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                         throw new java.sql.SQLException("Connection is no longer owned");
                       }
                     }
+                    if (method.getName().equals("commit")) jdbcCommitInvocations.incrementAndGet();
                     Object value = invoke(raw, method, args);
                     if (value instanceof Statement statement) {
                       try {

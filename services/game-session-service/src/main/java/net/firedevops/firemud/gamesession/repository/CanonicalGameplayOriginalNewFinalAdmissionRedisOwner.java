@@ -954,7 +954,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
       long wireDeadlineMillis =
           switch (action) {
-            case "FINAL", "CLOSE" -> Math.min(absoluteDeadlineMillis, operationDeadlineMillis);
+            case "FINAL", "CLOSE", "FENCE" ->
+                Math.min(absoluteDeadlineMillis, operationDeadlineMillis);
             default -> absoluteDeadlineMillis;
           };
       Long result =
@@ -1089,6 +1090,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     byte[] accountBarrierKey = ascii(keys.accountAdmissionBarrier());
     byte[] issuerBarrierKey = ascii(keys.issuerAdmissionBarrier());
     byte[] sessionBytes = null;
+    byte[] readback = null;
     Map<String, byte[]> issuerFields = null;
     Map<String, byte[]> accountFields = new HashMap<>();
     if ((accountOpen == null) != (issuerOpen == null)) throw unavailable();
@@ -1139,7 +1141,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
               > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
         throw unavailable();
       }
-      return sessionBytes.clone();
+      readback = sessionBytes.clone();
+      return readback;
     } catch (RuntimeException failure) {
       throw unavailable();
     } finally {
@@ -1153,8 +1156,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(accountBarrierKey);
       wipe(issuerBarrierKey);
       if (connection != null) {
-        scopedClose.accept(
-            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+        try {
+          scopedClose.accept(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+        } catch (RuntimeException | Error closeFailure) {
+          wipe(readback);
+          throw closeFailure;
+        }
       }
     }
   }

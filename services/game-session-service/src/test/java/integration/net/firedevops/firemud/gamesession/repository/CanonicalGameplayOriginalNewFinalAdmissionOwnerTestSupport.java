@@ -353,20 +353,31 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
   }
 
   protected net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
-      replaceRegionOwner(String successor) {
-    var original = regionBinding.installation();
-    var repository = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
-    var current = repository.find(original.source).orElseThrow();
-    // Exercise the actual serialized persistence boundary. The caller's replacement Redis grant
-    // is controlled here; this is not a proof of production handoff or external source custody.
-    return repository.installOwner(
-        original.source,
-        current.regionEpoch(),
-        current,
-        "a".repeat(64),
-        "game-session-service",
-        successor,
-        CLOCK.instant());
+      observeGuardedRegionReplacement(String successor) {
+    var source = regionBinding.installation().source;
+    return fixture
+        .dsl()
+        .transactionResult(configuration -> {
+          var tx = org.jooq.impl.DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+          tx.execute("SAVEPOINT guarded_region_replacement");
+          assertThat(
+                  tx.execute(
+                      "UPDATE game_session_region_runtime_status SET owner_instance_id=?,"
+                          + "executor_fence=nextval('game_session_region_executor_fence_seq'),"
+                          + "lease_token_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+                      successor,
+                      "a".repeat(64),
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.regionId()))
+              .isOne();
+          var observed =
+              new CanonicalGameplayRegionRuntimeStatusRepository(tx).find(source).orElseThrow();
+          // SQL guard proof only: this fixture has no replacement lease/serving authority.
+          tx.execute("ROLLBACK TO SAVEPOINT guarded_region_replacement");
+          return observed;
+        });
   }
 
   protected CanonicalGameplayOriginalNewCapacityExecutionOwner capacityOwner() {

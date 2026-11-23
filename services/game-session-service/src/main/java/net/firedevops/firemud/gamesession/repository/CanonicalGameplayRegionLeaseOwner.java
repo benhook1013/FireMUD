@@ -319,27 +319,28 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
           redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
-        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
-            readCurrentProvisionalEvidence(transitionId, bindingInventory);
-        bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
-        ResolvedBridgeSource beforeClaimWorld =
-            resolveExactBridgeSource(worldRequest, beforeClaimEvidence, operationDeadline);
-        requireSameSource(source, beforeClaimWorld.source);
-        CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
-            readCurrentIncarnation(source);
-        requireSameIncarnation(incarnation, beforeClaimIncarnation);
-        if (!statusRepository.matchesTimelinePreparation(
-            preparation,
-            beforeClaimEvidence,
-            worldRequest,
-            beforeClaimWorld.resolvedRegion,
-            source,
-            beforeClaimIncarnation)) {
-          throw unavailable();
-        }
         var retained = reserveNoWriteRecovery(preparation.operationId());
         try {
           recoverNoWrite(preparation, retained);
+          // Any recovery wait belongs before the last source/incarnation qualification.
+          CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
+              readCurrentProvisionalEvidence(transitionId, bindingInventory);
+          bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
+          ResolvedBridgeSource beforeClaimWorld =
+              resolveExactBridgeSource(worldRequest, beforeClaimEvidence, operationDeadline);
+          requireSameSource(source, beforeClaimWorld.source);
+          CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
+              readCurrentIncarnation(source);
+          requireSameIncarnation(incarnation, beforeClaimIncarnation);
+          if (!statusRepository.matchesTimelinePreparation(
+              preparation,
+              beforeClaimEvidence,
+              worldRequest,
+              beforeClaimWorld.resolvedRegion,
+              source,
+              beforeClaimIncarnation)) {
+            throw unavailable();
+          }
           var claimedPreparation = preparation;
           Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
               permit =

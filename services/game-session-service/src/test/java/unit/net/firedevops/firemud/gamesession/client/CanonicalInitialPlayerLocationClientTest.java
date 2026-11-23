@@ -211,12 +211,13 @@ class CanonicalInitialPlayerLocationClientTest {
     var stub = mockStub();
     var region = regionResponse(request);
     var deadlineApplied = new CountDownLatch(1);
+    var deadlineStub = mockStub();
     when(stub.withDeadline(any(Deadline.class)))
         .thenAnswer(invocation -> {
           deadlineApplied.countDown();
-          return stub;
+          return deadlineStub;
         });
-    when(stub.readInitialPlayerLocationRegion(request)).thenReturn(region);
+    when(deadlineStub.readInitialPlayerLocationRegion(request)).thenReturn(region);
     var client = clientWithStub(stub);
     Deadline callerDeadline = Deadline.after(100L, TimeUnit.MILLISECONDS);
 
@@ -231,6 +232,7 @@ class CanonicalInitialPlayerLocationClientTest {
       }
     }
     verify(stub).withDeadline(callerDeadline);
+    verify(deadlineStub).readInitialPlayerLocationRegion(request);
   }
 
   @Test

@@ -494,11 +494,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         case "extra-field" -> admin.hset(key, ascii("unexpected"), ascii("foreign"));
         case "missing-state" -> admin.hdel(key, ascii("state"));
         case "unknown-state" -> admin.hset(key, ascii("state"), ascii("FOREIGN"));
-        case "fenced-extra-field", "closed-extra-field" -> {
-          admin.hset(
-              key,
-              ascii("state"),
-              ascii(fault.equals("fenced-extra-field") ? "FENCED_INDETERMINATE" : "CLOSED"));
+        case "fenced-extra-field" -> {
+          assertThat(eval(action(original, "FENCE"))).isEqualTo(5L);
+          assertHash(original.keys()[6], capacityPhysicalFields(original, "FENCED_INDETERMINATE"));
+          admin.hset(key, ascii("unexpected"), ascii("foreign"));
+        }
+        case "closed-extra-field" -> {
+          admin.hset(key, ascii("state"), ascii("CLOSED"));
           admin.hset(key, ascii("unexpected"), ascii("foreign"));
         }
         case "committed-missing-fields" -> admin.hset(key, ascii("state"), ascii("COMMITTED"));

@@ -332,8 +332,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
     StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
-      connection =
-          budget == null ? redisClient.connect(ByteArrayCodec.INSTANCE) : openConnection(budget);
+      connection = openConnection(budget);
+      if (deadlineBound
+          && (connection.getOptions() == null || connection.getOptions().isAutoReconnect())) {
+        throw unavailable();
+      }
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
@@ -393,8 +396,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     StatefulRedisConnection<byte[], byte[]> connection = null;
     byte[] tokenBytes = null;
     try {
-      connection =
-          budget == null ? redisClient.connect(ByteArrayCodec.INSTANCE) : openConnection(budget);
+      connection = openConnection(budget);
       var commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       var source = preparation.source();
@@ -994,7 +996,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   private StatefulRedisConnection<byte[], byte[]> openConnection(
       CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
-    if (budget == null) return redisClient.connect(ByteArrayCodec.INSTANCE);
+    if (budget == null) {
+      return coordinationUri == null
+          ? redisClient.connect(ByteArrayCodec.INSTANCE)
+          : redisClient.connect(ByteArrayCodec.INSTANCE, coordinationUri);
+    }
     RedisURI uri = Objects.requireNonNull(coordinationUri);
     long timeout = Math.min(uri.getTimeout().toMillis(), budget.remainingMillis());
     if (timeout < 1) throw unavailable();

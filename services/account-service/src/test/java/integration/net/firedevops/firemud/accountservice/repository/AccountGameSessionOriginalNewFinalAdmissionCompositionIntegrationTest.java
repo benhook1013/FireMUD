@@ -1148,6 +1148,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     byte[] candidate = session.gs.physicalSession();
     assertThat(candidate).isNotNull();
     String before = session.capacityImage() + session.durableImage();
+    String beforeDecision = session.capacityDecisionImage();
     assertCapacityFailure(
         assertThrows(
             StatusRuntimeException.class,
@@ -1155,6 +1156,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         status,
         code);
     assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+    assertThat(session.capacityDecisionImage()).isEqualTo(beforeDecision);
     assertProvisionalUnchanged(session, candidate);
   }
 

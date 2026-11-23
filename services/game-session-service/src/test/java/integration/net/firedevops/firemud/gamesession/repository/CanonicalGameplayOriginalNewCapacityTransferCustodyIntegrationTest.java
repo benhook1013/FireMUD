@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -24,6 +23,8 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -32,8 +33,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
     extends CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupport {
-  @Test
-  void ownerInstallUsesFreshReadCommittedSnapshotAfterWaitingForAdvisoryLock() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void guardedReplacementUsesFreshReadCommittedSnapshotAfterWaitingForAdvisoryLock(
+      boolean dispatchWhileWaiting) throws Exception {
     try (var proof = new TransferSqlProof();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var blocker =
@@ -94,41 +97,51 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
             }
           };
       DSLContext repeatableReadDsl = DSL.using(repeatableReadSource, SQLDialect.POSTGRES);
-      var repeatableReadRepository =
-          new CanonicalGameplayRegionRuntimeStatusRepository(
-              DSL.using(
-                  repeatableReadDsl
-                      .configuration()
-                      .derive(new DefaultExecuteListenerProvider(installObserver))));
-      assertThat(repeatableReadRepository.find(proof.scope)).contains(proof.prior);
+      DSLContext observingDsl =
+          DSL.using(
+              repeatableReadDsl
+                  .configuration()
+                  .derive(new DefaultExecuteListenerProvider(installObserver)));
+      assertThat(new CanonicalGameplayRegionRuntimeStatusRepository(observingDsl).find(proof.scope))
+          .contains(proof.prior);
       Future<?> install =
           executor.submit(() ->
-              repeatableReadRepository.installOwner(
-                  proof.scope,
-                  1L,
-                  proof.prior,
-                  "e".repeat(64),
-                  "game-session-service",
-                  "repeatable-read-successor",
-                  Instant.parse("2026-10-26T00:00:03Z")));
+              observingDsl.transaction(configuration -> {
+                DSLContext tx = DSL.using(configuration);
+                tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+                tx.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    "game-session-region-owner-install:v1:" + tag);
+                proof.rawReplaceOwner(tx, "repeatable-read-successor", "e".repeat(64));
+              }));
 
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid);
         assertThat(installIsolation.get()).isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
-        proof.seedUndeliveredDispatch(dispatched);
+        if (dispatchWhileWaiting) proof.seedUndeliveredDispatch(dispatched);
       } finally {
         blocker.commit();
       }
 
-      assertThatThrownBy(install::get)
-          .rootCause()
-          .isInstanceOfSatisfying(
-              IllegalStateException.class,
-              failure ->
-                  assertThat(failure)
-                      .hasMessage("Canonical Game Session region ownership is unavailable"));
-      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
-      assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
+      if (dispatchWhileWaiting) {
+        assertThatThrownBy(install::get)
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains("Region owner replacement lacks exact transfer custody");
+                });
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+        assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
+      } else {
+        install.get();
+        var successor = proof.currentOwner();
+        assertThat(successor.ownerInstanceId()).isEqualTo("repeatable-read-successor");
+        assertThat(successor.executorFence()).isGreaterThan(proof.prior.executorFence());
+        assertThat(proof.executionState(dispatched)).isNull();
+      }
     }
   }
 

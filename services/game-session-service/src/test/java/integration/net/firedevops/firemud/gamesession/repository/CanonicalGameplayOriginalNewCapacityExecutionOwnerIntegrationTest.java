@@ -120,7 +120,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   }
 
   @Test
-  void missingCapacityExecutionRefusesTheCanonicalFinalPathWithoutMutation() throws Exception {
+  void nullCapacityExecutionRefusesTheCanonicalFinalPathWithoutMutation() throws Exception {
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
@@ -138,6 +138,33 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
           .isExactlyInstanceOf(NullPointerException.class)
           .hasMessage("Exact Account capacity execution is required");
     }
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
+  void missingCapacityExecutionRefusesTheCanonicalFinalPathWithoutMutation() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    byte[] key = ascii(capacityKey(tags.assignmentForTransition(fixture.transitionId())));
+    assertThat(admin.type(key)).isEqualTo("none");
+    String rows = sqlImage();
+    var physical = physicalImage();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var bound = raw.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(() ->
+              new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      ownerClient, catalog, CLOCK, tags)
+                  .finalizeOriginalNewOnce(
+                      source, bound, account, issuer, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(admin.type(key)).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
   }

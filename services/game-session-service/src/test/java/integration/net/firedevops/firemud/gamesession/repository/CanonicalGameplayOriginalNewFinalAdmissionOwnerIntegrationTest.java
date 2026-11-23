@@ -125,8 +125,15 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         ascii(
             CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
                 source.candidate().bindingIdentity().issuerId(), assignment)));
-    assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
-        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> observeGuardedRegionReplacement("successor-before-reconciliation"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
     assertThatThrownBy(() ->
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
@@ -142,8 +149,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
     assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).transitionStatus())
         .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
-    assertThatThrownBy(() -> replaceRegionOwner("successor-after-reconciliation"))
-        .isInstanceOf(IllegalStateException.class);
+    var successor = observeGuardedRegionReplacement("successor-after-reconciliation");
+    assertThat(successor.ownerInstanceId()).isEqualTo("successor-after-reconciliation");
+    assertThat(successor.executorFence())
+        .isGreaterThan(regionBinding.installation().status.executorFence());
     controlledRemoveServingKeys(source, assignment);
     assertThat(
             capacityOwner()
