@@ -111,6 +111,12 @@ assert_call_count() {
   [[ "$actual" -eq "$expected" ]] || fail "$CASE_DIR expected $expected Gradle call(s), got $actual"
 }
 
+assert_rate_limit_delay() {
+  local delay
+  delay="$(cat "$CASE_DIR/sleeps")"
+  [[ "$delay" =~ ^(1[5-9]|2[0-9]|30)$ ]] || fail "expected a single 15-30 second HTTP 429 delay, got '$delay'"
+}
+
 assert_diagnostic_count() {
   local expected="$1"
   local actual
@@ -431,7 +437,7 @@ write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exi
 run_case common-platform-core 0
 assert_call_count 2
 assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
-[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "annotation processor HTTP 429 did not use one short delay"
+assert_rate_limit_delay
 
 for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinate compile-started; do
   new_case "annotation-processor-maven-429-$mutation"
@@ -815,7 +821,7 @@ run_case logging-admin-service 0
 assert_call_count 2
 assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
 assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
-[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "buildSrc HTTP 429 did not use one short delay"
+assert_rate_limit_delay
 assert_output_contains "buildsrc-refresh-result"
 
 # Auth, policy and conflict responses remain final, including mixed failures
@@ -866,7 +872,7 @@ export BUILDSRC_REFRESH_EXIT=23
 run_case logging-admin-service 23
 unset BUILDSRC_REFRESH_EXIT
 assert_call_count 2
-[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "failed buildSrc refresh changed retry limit"
+assert_rate_limit_delay
 assert_output_contains "Received status code 429"
 assert_output_contains "buildsrc-refresh-result"
 

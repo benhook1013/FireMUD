@@ -535,7 +535,10 @@ retry_delay_seconds() {
 
   retry_after="$(failure_body "$log_path" | sed -nE 's/^.*[Rr]etry-[Aa]fter:[[:space:]]*(.*)$/\1/p')" || return 1
   if [[ -z "$retry_after" ]]; then
-    if failure_body "$log_path" | grep -Eq 'Connection reset|Connection timed out|Connect timed out|SocketTimeoutException|Remote host terminated the handshake|Received status code 429 from server|Received status code 5[0-9][0-9] from server'; then
+    if failure_body "$log_path" | grep -E 'Received status code 429 from server' >/dev/null; then
+      # Spread throttled jobs out when the repository gives no retry time.
+      printf '%d\n' "$((15 + RANDOM % 16))"
+    elif failure_body "$log_path" | grep -E 'Connection reset|Connection timed out|Connect timed out|SocketTimeoutException|Remote host terminated the handshake|Received status code 5[0-9][0-9] from server' >/dev/null; then
       printf '2\n'
     else
       printf '0\n'
