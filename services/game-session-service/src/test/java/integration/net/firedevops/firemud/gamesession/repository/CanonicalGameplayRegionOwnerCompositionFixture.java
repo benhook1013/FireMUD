@@ -2056,7 +2056,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     }
   }
 
-  private static CanonicalGameplayRegionIncarnationSource.StableEvidence
+  static CanonicalGameplayRegionIncarnationSource.StableEvidence
       controlledStableIncarnation(CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
     var deployment =
         new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(

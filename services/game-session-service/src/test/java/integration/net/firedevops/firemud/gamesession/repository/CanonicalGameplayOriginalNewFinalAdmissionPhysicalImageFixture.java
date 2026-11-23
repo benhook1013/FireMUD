@@ -28,7 +28,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture {
       """;
 
   static byte[] image(RedisCommands<byte[], byte[]> commands, byte[] key) {
-    List<Object> snapshot = commands.eval(READ_IMAGE, ScriptOutputType.MULTI, new byte[][] {key});
+    List<Object> snapshot =
+        commands.eval(READ_IMAGE, ScriptOutputType.MULTI, new byte[][] {key}, new byte[0][]);
     return encodeSnapshot(snapshot);
   }
 

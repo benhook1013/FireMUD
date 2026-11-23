@@ -48,6 +48,272 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
   }
 
   @Test
+  void explicitHandoffRetainsUndispatchedInitializationWithoutSynchronousCleanup()
+      throws Exception {
+    repairAccountMember();
+    var sql = fixture.dsl();
+    var status = org.mockito.Mockito.spy(new CanonicalGameplayRegionRuntimeStatusRepository(sql));
+    var cleanupCalls = new java.util.concurrent.atomic.AtomicInteger();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              cleanupCalls.incrementAndGet();
+              return call.callRealMethod();
+            })
+        .when(status)
+        .forBudget(org.mockito.ArgumentMatchers.any());
+    var actualRedis = new CanonicalGameplayRegionLeaseRedisOwner(ownerClient, ownerUri, catalog);
+    var redis = org.mockito.Mockito.spy(actualRedis);
+    var callback = new java.util.concurrent.atomic.AtomicBoolean();
+    var operation = new java.util.concurrent.atomic.AtomicReference<UUID>();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              var bounded =
+                  actualRedis.forHandoffDeadline(call.getArgument(0), call.getArgument(1));
+              var observed = org.mockito.Mockito.spy(bounded);
+              org.mockito.Mockito.doAnswer(
+                      preparing -> {
+                        var session =
+                            bounded.prepareTimelineInitialization(
+                                preparing.getArgument(0),
+                                preparing.getArgument(1),
+                                preparing.getArgument(2));
+                        var controlled =
+                            mock(
+                                CanonicalGameplayRegionLeaseRedisOwner
+                                    .PreparedTimelineInitialization.class,
+                                org.mockito.AdditionalAnswers.delegatesTo(session));
+                        org.mockito.Mockito.doAnswer(
+                                initializing -> {
+                                  CanonicalGameplayRegionRuntimeStatusRepository
+                                          .InitialInitializationPermit
+                                      permit = initializing.getArgument(0);
+                                  java.util.function.Consumer<
+                                          CanonicalGameplayRegionLeaseRedisOwner
+                                              .InitializationNoWriteProof>
+                                      onNoWrite = initializing.getArgument(1);
+                                  var proof =
+                                      CanonicalGameplayRegionLeaseRedisOwner
+                                          .revokeUndispatchedInitialization(permit);
+                                  operation.set(permit.operationId());
+                                  onNoWrite.accept(proof);
+                                  callback.set(true);
+                                  throw new IllegalStateException(
+                                      "Controlled definitive pre-dispatch refusal");
+                                })
+                            .when(controlled)
+                            .initialize(
+                                org.mockito.ArgumentMatchers.any(),
+                                org.mockito.ArgumentMatchers.any());
+                        return controlled;
+                      })
+                  .when(observed)
+                  .prepareTimelineInitialization(
+                      org.mockito.ArgumentMatchers.any(),
+                      org.mockito.ArgumentMatchers.any(),
+                      org.mockito.ArgumentMatchers.any());
+              return observed;
+            })
+        .when(redis)
+        .forHandoffDeadline(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+
+    var transferRepository = new CanonicalGameplayRegionOwnerTransferRepository(sql, CLOCK, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            sql,
+            CLOCK,
+            transferRepository,
+            capacityOwner(),
+            new CanonicalGameplayControlledRegionTransferObservationFixture()
+                .receiver(transferRepository, tags));
+    var owner =
+        new CanonicalGameplayRegionLeaseOwner(
+            inventory,
+            status,
+            redis,
+            CanonicalGameplayRegionOwnerCompositionFixture::controlledStableIncarnation,
+            sources.resolver,
+            deadlineTestIdentity("explicit-no-write"),
+            Duration.ofSeconds(30),
+            CLOCK);
+    assertThatThrownBy(() ->
+            owner.installForTransition(
+                null, fixture.transitionId(), sources.request, transfer, deadline()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Controlled definitive pre-dispatch refusal");
+    assertThat(callback).isTrue();
+    assertThat(operation.get()).isNotNull();
+    assertThat(cleanupCalls).hasValue(0);
+    assertThat(sql.fetchCount(org.jooq.impl.DSL.table("game_session_region_runtime_status")))
+        .isZero();
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT phase FROM game_session_region_timeline_preparation WHERE"
+                        + " initialization_operation_id = ?",
+                    operation.get())
+                .get(0, String.class))
+        .isEqualTo("INITIALIZING");
+
+    owner.recoverRetainedNoWriteForTransition(fixture.transitionId());
+    owner.recoverRetainedNoWriteForTransition(fixture.transitionId());
+    assertThat(cleanupCalls).hasValue(1);
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT phase FROM game_session_region_timeline_preparation WHERE"
+                        + " initialization_operation_id = ?",
+                    operation.get())
+                .get(0, String.class))
+        .isEqualTo("PREPARED");
+    assertThat(sql.fetchCount(org.jooq.impl.DSL.table("game_session_region_runtime_status")))
+        .isZero();
+  }
+
+  @Test
+  void emptyAdvanceCannotCommitOwnerAfterRenewedGrantDeadlineAtFinalSql() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(readback);
+    }
+    var original = regionBinding.installation();
+    var wall = new java.util.concurrent.atomic.AtomicLong(CLOCK.millis());
+    long started = wall.get();
+    long handoffDeadline = started + 5_000L;
+    Duration leaseTtl = Duration.ofSeconds(2);
+    long renewedDeadline = started + leaseTtl.toMillis();
+    java.time.Clock time = mock(java.time.Clock.class);
+    when(time.millis()).thenAnswer(ignored -> wall.get());
+    when(time.instant()).thenAnswer(ignored -> java.time.Instant.ofEpochMilli(wall.get()));
+    var insideInstall = new java.util.concurrent.atomic.AtomicBoolean();
+    var finalLockReached = new java.util.concurrent.atomic.AtomicBoolean();
+    var installBudget = new java.util.concurrent.atomic.AtomicLong();
+    var listener =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void executeEnd(org.jooq.ExecuteContext context) {
+            String statement = context.sql();
+            if (insideInstall.get()
+                && statement != null
+                && statement.contains("game_session_region_runtime_status")
+                && statement.contains("FOR UPDATE")
+                && finalLockReached.compareAndSet(false, true)) {
+              // Only this final transaction has taken its region row lock. Model elapsed lease
+              // time while the outer request still has time, without sleeping or mutating Redis.
+              wall.set(renewedDeadline);
+            }
+          }
+        };
+    var successorSql =
+        org.jooq.impl.DSL.using(fixture.dsl().configuration().deriveAppending(listener));
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(successorSql, time, tags);
+    var actualTransfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            successorSql,
+            time,
+            transferRepository,
+            capacityOwner(),
+            new CanonicalGameplayControlledRegionTransferObservationFixture(
+                    time, Duration.ofSeconds(10))
+                .receiver(transferRepository, tags));
+    var transfer = org.mockito.Mockito.spy(actualTransfer);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              long budget = call.getArgument(0);
+              java.util.function.Function<CanonicalGameplayRegionRuntimeStatusRepository, Object>
+                  action = call.getArgument(1);
+              return actualTransfer.withStatusRepository(
+                  budget,
+                  real -> {
+                    var observed = org.mockito.Mockito.spy(real);
+                    org.mockito.Mockito.doAnswer(
+                            install -> {
+                              installBudget.set(budget);
+                              insideInstall.set(true);
+                              try {
+                                return install.callRealMethod();
+                              } finally {
+                                insideInstall.set(false);
+                              }
+                            })
+                        .when(observed)
+                        .installOwner(
+                            org.mockito.ArgumentMatchers.any(),
+                            org.mockito.ArgumentMatchers.anyLong(),
+                            org.mockito.ArgumentMatchers.any(),
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.anyString(),
+                            org.mockito.ArgumentMatchers.any());
+                    return action.apply(observed);
+                  });
+            })
+        .when(transfer)
+        .withStatusRepository(
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any());
+    var owner =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            successorSql,
+            ownerClient,
+            ownerUri,
+            catalog,
+            scope -> original.incarnation,
+            sources.resolver,
+            deadlineTestIdentity("empty-advance-final-sql"),
+            leaseTtl,
+            time);
+    long originalFenceSequence =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+            .get(0, Long.class);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    assertThatThrownBy(() ->
+            owner.installForTransition(
+                null, original.transitionId, original.worldRequest, transfer, handoffDeadline))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(finalLockReached).isTrue();
+    assertThat(installBudget).hasValue(renewedDeadline);
+    assertThat(wall.get()).isLessThan(handoffDeadline);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+                .get(0, Long.class))
+        .isEqualTo(originalFenceSequence);
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(original.status);
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
+  }
+
+  private static net.firedevops.firemud.common.runtime.RuntimeIdentity deadlineTestIdentity(
+      String instance) {
+    return new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+        "game-session-service",
+        instance,
+        "localhost",
+        CLOCK.instant(),
+        "test",
+        "test",
+        "controlled-test-image");
+  }
+
+  @Test
   void lostDispatchCommitReplyBeforeRedisSendFencesUnknownAndActuallyHandsOff() throws Exception {
     repairAccountMember();
     bridge(false);
