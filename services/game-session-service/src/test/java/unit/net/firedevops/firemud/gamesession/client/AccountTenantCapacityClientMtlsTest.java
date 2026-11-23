@@ -300,6 +300,7 @@ class AccountTenantCapacityClientMtlsTest {
     var denialId = UUID.randomUUID();
     var commits = new AtomicInteger();
     var reads = new AtomicInteger();
+    var failedCommit = new AtomicReference<CommitTenantCapacityAdmissionRequest>();
     Server server =
         startServer(
             "account",
@@ -309,6 +310,7 @@ class AccountTenantCapacityClientMtlsTest {
                   CommitTenantCapacityAdmissionRequest wire,
                   StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
                 commits.incrementAndGet();
+                failedCommit.set(wire);
                 observer.onError(Status.UNAVAILABLE.asRuntimeException());
               }
 
@@ -332,6 +334,8 @@ class AccountTenantCapacityClientMtlsTest {
         assertThatThrownBy(() -> original.commit(request, deadline()))
             .isInstanceOf(StatusRuntimeException.class);
       }
+      assertThat(failedCommit.get())
+          .isEqualTo(TenantCapacityAdmissionGrpcCodec.toRequest(request));
       try (var restarted = client(server)) {
         restarted.init();
         assertThat(restarted.readRetainedQuotaDenial(request, deadline())).isEqualTo(denialId);

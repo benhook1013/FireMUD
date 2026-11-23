@@ -1334,13 +1334,14 @@ if origin_probe.get("env", {}).get("DEV_NAMESPACE_MANAGER_KUBECONFIG") != (
 if "run-dev-account-v1040-4-probe.sh" not in origin_probe.get("run", ""):
     raise SystemExit("the V1040.4 gate must call the protected probe helper")
 deploy_condition = deploy_by_name["Deploy dev-demo release"].get("if", "")
-for required_preflight in (
-    "steps.v2-migration-mode.outcome == 'success'",
-    "(steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success')",
-    "(steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-v1040-4-preflight.outcome == 'success')",
-):
-    if required_preflight not in deploy_condition:
-        raise SystemExit("Helm must require successful classification and any required migration preflight")
+expected_deploy_condition = (
+    "${{ steps.cluster-access.outputs.available == 'true' && "
+    "steps.v2-migration-mode.outcome == 'success' && "
+    "(steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success') && "
+    "(steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-v1040-4-preflight.outcome == 'success') }}"
+)
+if deploy_condition != expected_deploy_condition:
+    raise SystemExit("Helm must require cluster access, successful classification, and all applicable migration preflights")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1419,6 +1420,7 @@ if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["r
 bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
 failure_summary = deploy_by_name["Summarize dev-demo failure"]
 if failure_summary["env"] != {
+    "DEPLOY_OUTCOME": "${{ steps." + deploy_by_name["Deploy dev-demo release"]["id"] + ".outcome }}",
     "RECORD_OUTCOME": "${{ steps." + deployed_head_step["id"] + ".outcome }}",
     "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
 }:
@@ -1435,10 +1437,13 @@ for name, value in {
     )
 with tempfile.TemporaryDirectory() as directory:
     summary = Path(directory) / "summary.md"
-    for recorded, bootstrap, expected in (
-        ("skipped", "skipped", None),
-        ("success", "failure", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "before repeating readiness or smoke"),
+    for deployed, recorded, bootstrap, stage, expected in (
+        ("failure", "skipped", "skipped", "deploy", None),
+        ("skipped", "skipped", "skipped", "account-v1040-4-preflight", None),
+        ("success", "failure", "skipped", "deploy", None),
+        ("success", "skipped", "skipped", "deploy", None),
+        ("success", "success", "failure", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "success", "smoke", "before repeating readiness or smoke"),
     ):
         summary.write_text("", encoding="utf-8")
         subprocess.run(
@@ -1450,6 +1455,8 @@ with tempfile.TemporaryDirectory() as directory:
                 "GITHUB_SERVER_URL": "https://github.example.invalid",
                 "GITHUB_REPOSITORY": "example/FireMUD",
                 "GITHUB_WORKFLOW_SHA": "b" * 40,
+                "DEV_DEMO_STAGE": stage,
+                "DEPLOY_OUTCOME": deployed,
                 "RECORD_OUTCOME": recorded,
                 "BOOTSTRAP_OUTCOME": bootstrap,
             },
@@ -1457,6 +1464,22 @@ with tempfile.TemporaryDirectory() as directory:
         )
         evidence = summary.read_text(encoding="utf-8")
         guide = "/blob/" + "b" * 40 + "/design/architecture/"
+        unconfirmed_recording = deployed == "success" and recorded != "success"
+        expected_stage = "record-deployed-head" if unconfirmed_recording else stage
+        if f"Failed stage: `{expected_stage}`" not in evidence:
+            raise SystemExit("dev-demo failure summary misidentified the failed stage")
+        if unconfirmed_recording:
+            for detail in (
+                "Helm deployment succeeded, but recording the deployed head on the namespace failed or could not be confirmed",
+                "Do not retry the deployment, reset the namespace, or replay bootstrap",
+                "original Helm release and revision",
+                "owned dev namespace UID",
+                "retained Flyway version",
+            ):
+                if detail not in evidence:
+                    raise SystemExit(f"dev-demo unconfirmed recording summary lacks: {detail}")
+        elif "Helm deployment succeeded, but recording" in evidence:
+            raise SystemExit("dev-demo summary wrongly reported a successful Helm deploy with unconfirmed recording")
         if expected is None:
             if guide in evidence:
                 raise SystemExit("unrecorded target received recorded-target advice")

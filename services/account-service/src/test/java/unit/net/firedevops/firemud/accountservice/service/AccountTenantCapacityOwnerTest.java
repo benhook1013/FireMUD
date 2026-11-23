@@ -771,23 +771,24 @@ class AccountTenantCapacityOwnerTest {
     var f = new Fixture(false, qualifiedRequest(false));
     f.existing = false;
     f.retained = true;
-    qualifySources(f);
+    var scope = qualifySources(f);
+    var scopeTokenHash = verifiedScopeTokenHash(f.request);
     var now =
         new java.util.concurrent.atomic.AtomicReference<>(
             CapacityAdmissionTestFixture.NOW.plusSeconds(1));
     when(f.clock.instant()).thenAnswer(ignored -> now.get());
-    var scope = f.scopes.findCanonicalEvidenceByTokenHash("fixture");
-    org.mockito.Mockito.clearInvocations(f.scopes);
-    when(f.scopes.findCanonicalEvidenceByTokenHash(anyString()))
+    when(f.scopes.findCanonicalEvidenceByTokenHash(scopeTokenHash))
         .thenAnswer(ignored -> {
           now.set(f.request.evidence().expiresAt());
-          return scope;
+          return Optional.of(scope);
         });
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
-    verify(f.scopes).findCanonicalEvidenceByTokenHash(anyString());
+    verify(f.issuances)
+        .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
+    verify(f.scopes).findCanonicalEvidenceByTokenHash(scopeTokenHash);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
@@ -852,7 +853,14 @@ class AccountTenantCapacityOwnerTest {
         .withDigest();
   }
 
-  private static void qualifySources(Fixture f) {
+  private static String verifiedScopeTokenHash(Request request) {
+    return net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
+        .parseCanonical(request.evidence().canonicalBytes())
+        .verifiedConnectScopeTokenHash();
+  }
+
+  private static AccountConnectScopeRepository.CanonicalConnectScopeEvidence qualifySources(
+      Fixture f) {
     var player = (TenantCapacityAdmission.PlayerContext) f.request.context();
     var parsed =
         net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
@@ -878,7 +886,8 @@ class AccountTenantCapacityOwnerTest {
     when(issuance.canonicalRegistryRecordSha256())
         .thenReturn((String) source.get("callerRegistryRecordSha256"));
     when(issuance.commitProofSha256()).thenReturn((String) source.get("callerCommitProofSha256"));
-    when(f.issuances.readCurrentCommittedCandidateByJti(any(UUID.class)))
+    var delegationJti = UUID.fromString((String) source.get("callerTokenJti"));
+    when(f.issuances.readCurrentCommittedCandidateByJti(delegationJti))
         .thenReturn(Optional.of(issuance));
     var scope = mock(AccountConnectScopeRepository.CanonicalConnectScopeEvidence.class);
     when(scope.accountUuid()).thenReturn(player.accountId());
@@ -890,7 +899,9 @@ class AccountTenantCapacityOwnerTest {
     when(scope.playableStateScope()).thenReturn(player.playableStateScope());
     when(scope.connectScopeExpiresAt())
         .thenReturn(CapacityAdmissionTestFixture.NOW.plusSeconds(3600).toString());
-    when(f.scopes.findCanonicalEvidenceByTokenHash(anyString())).thenReturn(Optional.of(scope));
+    when(f.scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
+        .thenReturn(Optional.of(scope));
+    return scope;
   }
 
   private static final class Fixture {

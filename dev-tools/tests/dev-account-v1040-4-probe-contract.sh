@@ -165,18 +165,14 @@ kubectl() {
           "firemud.dev/environment-class": "dev-demo-cluster"},
           annotations: {"firemud.dev/last-dev-demo-head-sha": $base}}}'
       ;;
-    '-n dev get deployment '*)
-      [[ "$KUBECONFIG" == fixture-runtime ]]
-      printf '{"spec":{"replicas":0}}\n'
-      ;;
-    '-n dev get hpa -o json')
+    '--request-timeout=10s -n dev get hpa -o json')
       if [[ "${PROBE_SCENARIO:-}" == renewed-writer && -f "$PROBE_JOB_READ" ]]; then
         printf '{"items":[{"spec":{"scaleTargetRef":{"kind":"Deployment","name":"account-service"}}}]}\n'
       else
         printf '{"items":[]}\n'
       fi
       ;;
-    '-n dev get pods -o json')
+    '--request-timeout=10s -n dev get pods -o json')
       printf '{"kind":"PodList","items":[]}\n'
       ;;
     '--request-timeout=10s -n dev get deployment postgres -o json')
@@ -187,6 +183,10 @@ kubectl() {
       jq -n --arg kind "$kind" '{kind:$kind,metadata:{name:"postgres",namespace:"dev"},
         spec:{template:{spec:{containers:[{name:"postgres",
           image:"postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"}]}}}}'
+      ;;
+    '--request-timeout=10s -n dev get deployment '*" --ignore-not-found -o json")
+      [[ "$KUBECONFIG" == fixture-runtime ]] || return 2
+      printf '{"spec":{"replicas":0}}\n'
       ;;
     '--request-timeout=10s -n dev create -f - -o json')
       cat >"$PROBE_JOB_MANIFEST"
@@ -201,7 +201,7 @@ kubectl() {
       fi
       jq --arg uid "$observed_uid" '.metadata.uid = $uid' "$PROBE_JOB_MANIFEST"
       ;;
-    "-n dev wait --for=condition=complete --timeout=75s job/$PROBE_FIXTURE_JOB_NAME")
+    "--request-timeout=10s -n dev wait --for=condition=complete --timeout=75s job/$PROBE_FIXTURE_JOB_NAME")
       [[ "${PROBE_SCENARIO:-}" != duplicate ]]
       ;;
     "--request-timeout=10s -n dev logs job/$PROBE_FIXTURE_JOB_NAME")
@@ -213,11 +213,11 @@ kubectl() {
       printf '%s\n' 'Account V1040.4 probe found duplicate retained admission attempts. Account-owned disposition is required.'
       ;;
     "--request-timeout=10s delete --raw /apis/batch/v1/namespaces/dev/jobs/$PROBE_FIXTURE_JOB_NAME -f -")
-      jq -e '.preconditions.uid == "fixture-owned-job-uid" and .propagationPolicy == "Foreground"' >/dev/null
+      jq -e '.preconditions.uid == "fixture-owned-job-uid" and .propagationPolicy == "Foreground"' >/dev/null || return 1
       [[ "${PROBE_SCENARIO:-}" != job-replacement ]] || return 1
       touch "$PROBE_JOB_DELETED"
       ;;
-    "-n dev wait --for=delete --timeout=30s job/$PROBE_FIXTURE_JOB_NAME")
+    "--request-timeout=10s -n dev wait --for=delete --timeout=30s job/$PROBE_FIXTURE_JOB_NAME")
       [[ -f "$PROBE_JOB_DELETED" ]]
       ;;
     *)
@@ -227,6 +227,13 @@ kubectl() {
   esac
 }
 export -f kubectl
+
+if printf '%s\n' '{"preconditions":{"uid":"unexpected-job-uid"},"propagationPolicy":"Foreground"}' |
+  kubectl --request-timeout=10s delete --raw "/apis/batch/v1/namespaces/dev/jobs/$PROBE_FIXTURE_JOB_NAME" -f -; then
+  echo "Mock probe Job deletion accepted an incorrect UID precondition." >&2
+  exit 1
+fi
+[[ ! -e "$PROBE_JOB_DELETED" ]]
 
 run_protected_probe() {
   bash "$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh" \
