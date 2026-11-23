@@ -1905,8 +1905,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           Map.of(),
           Map.of(
               "game_session_region_owner_transfer_item.gs_region_fence_receipt_dispatch_incarnation",
-              "CHECK(fence_dispatch_id IS NULL OR fence_readback IS NULL"
-                  + " OR incarnation_digest = fence_dispatch_incarnation):true"),
+              List.of(
+                  "CHECK(fence_dispatch_id IS NULL OR fence_readback IS NULL"
+                      + " OR incarnation_digest = fence_dispatch_incarnation):true")),
           Map.of());
     }
   }
@@ -1963,7 +1964,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       String script,
       Map<String, List<String>> guardFragmentsByRoutine,
       Map<String, String> changedTriggers,
-      Map<String, String> addedConstraints,
+      Map<String, List<String>> addedConstraints,
       Map<String, String> addedIndexes) {
     f.populatePredecessor();
     assertThat(f.count("game_instances")).isGreaterThan(0L);
@@ -2044,17 +2045,29 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     var installedConstraints = f.constraints();
     assertThat(installedConstraints).containsAllEntriesOf(constraints);
     installedConstraints.keySet().removeAll(constraints.keySet());
-    assertThat(installedConstraints).hasSize(addedConstraints.size());
-    addedConstraints.forEach((name, definition) -> {
-      assertThat(installedConstraints).containsKey(name);
-      // PostgreSQL may render its implicit varchar-to-text comparison casts and grouping
-      // parentheses. Keep the exact name, operator, operands, and validated status.
-      assertThat(
-              installedConstraints
-                  .get(name)
-                  .replaceAll("[()\\s]+", "")
-                  .replaceAll("(incarnation_digest|fence_dispatch_incarnation)::text", "$1"))
-          .isEqualTo(definition.replaceAll("[()\\s]+", ""));
+    int addedConstraintCount = addedConstraints.values().stream().mapToInt(List::size).sum();
+    assertThat(installedConstraints).hasSize(addedConstraintCount);
+    addedConstraints.forEach((key, definitions) -> {
+      if (key.equals(
+          "game_session_region_owner_transfer_item.gs_region_fence_receipt_dispatch_incarnation")) {
+        assertThat(installedConstraints).containsKey(key);
+        // PostgreSQL may render implicit varchar-to-text casts and grouping parentheses.
+        String actual =
+            installedConstraints
+                .get(key)
+                .replaceAll("[()\\s]+", "")
+                .replaceAll("(incarnation_digest|fence_dispatch_incarnation)::text", "$1");
+        assertThat(definitions)
+            .singleElement()
+            .satisfies(
+                definition -> assertThat(actual).isEqualTo(definition.replaceAll("[()\\s]+", "")));
+      } else {
+        definitions.forEach(definition ->
+            assertThat(installedConstraints.entrySet())
+                .filteredOn(entry ->
+                    entry.getKey().startsWith(key) && entry.getValue().contains(definition))
+                .hasSize(1));
+      }
     });
     var installedIndexes = f.indexes();
     assertThat(installedIndexes).containsAllEntriesOf(indexes);
