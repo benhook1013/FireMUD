@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import tempfile
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 
 import tomllib
@@ -1677,7 +1678,7 @@ def main() -> int:
         fail("Local Velero setup must use the VMware Tanzu chart repository")
     local_helm_calls = re.findall(r"(?m)^helm upgrade[ \t]+(.+)$", local_backup.replace("\\\n", " "))
     local_helm_args = shlex.split(local_helm_calls[0]) if len(local_helm_calls) == 1 else []
-    local_helm_options = dict(zip(local_helm_args, local_helm_args[1:]))
+    local_helm_options = dict(pairwise(local_helm_args))
     if (
         local_helm_args[:3] != ["--install", "velero", "vmware-tanzu/velero"]
         or local_helm_options.get("--version") != "$VELERO_CHART_VERSION"
