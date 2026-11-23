@@ -429,6 +429,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 prior.get("fence_dispatch_id", UUID.class),
                 before.incarnationDigest(),
                 prior.get("fence_prepare_seal", UUID.class),
+                before.expiresAtEpochMillis(),
                 this);
           }
           if (exists(
@@ -447,8 +448,42 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                   item.ordinal(),
                   item.execution().digest())
               != 1) throw unavailable();
-          return new FenceDispatch(item, dispatchId, before.incarnationDigest(), null, this);
+          return new FenceDispatch(
+              item,
+              dispatchId,
+              before.incarnationDigest(),
+              null,
+              before.expiresAtEpochMillis(),
+              this);
         });
+  }
+
+  /** Looks up the original forward-dispatch seal even when a later inventory inherited it. */
+  static FenceDispatch retainedReceiptForReadback(DSLContext sql, Item item) {
+    Record issued =
+        sql.fetchOne(
+            "SELECT fence_dispatch_id, fence_dispatch_incarnation, fence_prepare_ids, "
+                + "fence_prepare_seal, fence_apply_issued FROM "
+                + ITEM
+                + " WHERE execution_digest=? AND fence_dispatch_id IS NOT NULL",
+            item.execution().digest());
+    if (issued == null || issued.get("fence_prepare_ids", UUID[].class) == null) return null;
+    UUID nonce = issued.get("fence_prepare_seal", UUID.class);
+    String incarnation = issued.get("fence_dispatch_incarnation", String.class);
+    if (nonce == null
+        || incarnation == null
+        || !Arrays.asList(issued.get("fence_prepare_ids", UUID[].class)).contains(nonce)
+        || !Boolean.TRUE.equals(issued.get("fence_apply_issued", Boolean.class))) {
+      throw unavailable();
+    }
+    // This object has no repository: it cannot issue, seal or claim a mutation.
+    return new FenceDispatch(
+        item,
+        issued.get("fence_dispatch_id", UUID.class),
+        incarnation,
+        nonce,
+        Long.MAX_VALUE,
+        null);
   }
 
   private PreparationSubmission issuePreparation(FenceDispatch dispatch) {
@@ -459,9 +494,10 @@ final class CanonicalGameplayRegionOwnerTransferRepository
           Record row = lockedDispatch(tx, dispatch);
           UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
           if (issued == null
-              || issued.length >= 16
               || row.get("fence_prepare_seal", UUID.class) != null
               || row.get("fence_readback", byte[].class) != null) throw unavailable();
+          if (clock.millis() >= dispatch.observationExpiry()) throw unavailable();
+          if (issued.length >= 16) return null;
           UUID nonce = UUID.randomUUID();
           if (tx.execute(
                   "UPDATE "
@@ -507,8 +543,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             if (!sealed.equals(receipt.nonce())) throw unavailable();
             return;
           }
-          if (receipt.applied() || row.get("fence_readback", byte[].class) != null)
-            throw unavailable();
+          if (receipt.applied()
+              || row.get("fence_readback", byte[].class) != null
+              || clock.millis() >= dispatch.observationExpiry()) throw unavailable();
           if (tx.execute(
                   "UPDATE "
                       + ITEM
@@ -530,6 +567,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
           if (!dispatch.sealedNonce().equals(row.get("fence_prepare_seal", UUID.class)))
             throw unavailable();
           if (Boolean.TRUE.equals(row.get("fence_apply_issued", Boolean.class))) return false;
+          if (clock.millis() >= dispatch.observationExpiry()) throw unavailable();
           if (tx.execute(
                   "UPDATE "
                       + ITEM
@@ -1290,11 +1328,12 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     private final UUID id;
     private final String incarnation;
     private final CanonicalGameplayRegionOwnerTransferRepository repository;
+    private final long observationExpiry;
     private UUID sealedNonce;
     private boolean submitted;
 
     private FenceDispatch(Item item, UUID id) {
-      this(item, id, null, null, null);
+      this(item, id, null, null, Long.MAX_VALUE, null);
     }
 
     private FenceDispatch(
@@ -1302,11 +1341,13 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         UUID id,
         String incarnation,
         UUID sealedNonce,
+        long observationExpiry,
         CanonicalGameplayRegionOwnerTransferRepository repository) {
       this.item = item;
       this.id = id;
       this.incarnation = incarnation;
       this.sealedNonce = sealedNonce;
+      this.observationExpiry = observationExpiry;
       this.repository = repository;
     }
 
@@ -1325,6 +1366,10 @@ final class CanonicalGameplayRegionOwnerTransferRepository
 
     String incarnationDigest() {
       return incarnation;
+    }
+
+    long observationExpiry() {
+      return observationExpiry;
     }
 
     boolean sealed() {

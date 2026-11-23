@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.region-transfer-receipt.v1",
   "resourcePath": "redis/lua/game-session-region-transfer-receipt.lua",
-  "sha256": "e5dfd05a0865fe6a6c6651e3da9ba8215f70f5eef8b39fef6686670f86914fc8",
+  "sha256": "d7ae630cf50c5ca9215f3a8a49a0c893bc3b4fd79155ef8f182448a7c2ddb47a",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",

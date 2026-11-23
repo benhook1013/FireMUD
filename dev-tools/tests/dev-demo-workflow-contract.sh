@@ -18,6 +18,7 @@ python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 bash "$ROOT_DIR/dev-tools/tests/v2-schema-migration-quiescence-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/hosted-v2-migration-activation-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/dev-account-v1040-4-probe-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
@@ -1289,6 +1290,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Verify Account V1040.4 retained history before Helm": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1316,6 +1318,29 @@ if deploy_names.index("Classify trusted V2 migration activation") > deploy_names
     raise SystemExit("migration status must be proven before any namespace mutation")
 if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
     raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
+origin_probe_name = "Verify Account V1040.4 retained history before Helm"
+origin_probe = deploy_by_name[origin_probe_name]
+if not (deploy_names.index(quiesce["name"]) < deploy_names.index(origin_probe_name) < deploy_position):
+    raise SystemExit("the Account V1040.4 probe must run between writer quiescence and Helm")
+if origin_probe.get("continue-on-error") or origin_probe.get("if") != (
+    "${{ steps.quiesce-writers.outcome == 'success' && "
+    "steps.v2-migration-mode.outputs.account_origin_probe == 'true' }}"
+):
+    raise SystemExit("the exact Account V1040.4 probe must be fail-closed and limited to affected deployments")
+if origin_probe.get("env", {}).get("DEV_NAMESPACE_MANAGER_KUBECONFIG") != (
+    "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig"
+):
+    raise SystemExit("the Account probe must use the existing namespace-manager kubeconfig for readback")
+if "run-dev-account-v1040-4-probe.sh" not in origin_probe.get("run", ""):
+    raise SystemExit("the V1040.4 gate must call the protected probe helper")
+deploy_condition = deploy_by_name["Deploy dev-demo release"].get("if", "")
+for required_preflight in (
+    "steps.v2-migration-mode.outcome == 'success'",
+    "(steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success')",
+    "(steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-v1040-4-preflight.outcome == 'success')",
+):
+    if required_preflight not in deploy_condition:
+        raise SystemExit("Helm must require successful classification and any required migration preflight")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1391,6 +1416,52 @@ if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
+bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
+failure_summary = deploy_by_name["Summarize dev-demo failure"]
+if failure_summary["env"] != {
+    "RECORD_OUTCOME": "${{ steps." + deployed_head_step["id"] + ".outcome }}",
+    "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
+}:
+    raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
+failure_summary_run = failure_summary["run"]
+for name, value in {
+    "head_sha": "a" * 40,
+    "image_tag": "contract-image",
+    "hostname": "dev.example.invalid",
+    "telnet_port": "32016",
+}.items():
+    failure_summary_run = failure_summary_run.replace(
+        "${{ needs.dev-demo-plan.outputs." + name + " }}", value
+    )
+with tempfile.TemporaryDirectory() as directory:
+    summary = Path(directory) / "summary.md"
+    for recorded, bootstrap, expected in (
+        ("skipped", "skipped", None),
+        ("success", "failure", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "before repeating readiness or smoke"),
+    ):
+        summary.write_text("", encoding="utf-8")
+        subprocess.run(
+            ["bash", "-e", "-c", failure_summary_run],
+            cwd=repository_root,
+            env={
+                **os.environ,
+                "GITHUB_STEP_SUMMARY": str(summary),
+                "GITHUB_SERVER_URL": "https://github.example.invalid",
+                "GITHUB_REPOSITORY": "example/FireMUD",
+                "GITHUB_WORKFLOW_SHA": "b" * 40,
+                "RECORD_OUTCOME": recorded,
+                "BOOTSTRAP_OUTCOME": bootstrap,
+            },
+            check=True,
+        )
+        evidence = summary.read_text(encoding="utf-8")
+        guide = "/blob/" + "b" * 40 + "/design/architecture/"
+        if expected is None:
+            if guide in evidence:
+                raise SystemExit("unrecorded target received recorded-target advice")
+        elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
+            raise SystemExit("recorded target lacks the correct verification boundary")
 runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
 target_validator_call = (
     "bash ./dev-tools/hosted/dev-demo/validate-dev-demo-target.sh \\\n"
@@ -1475,11 +1546,12 @@ quiesce_writers = deploy_by_name[
 if quiesce_writers.get("id") != "quiesce-writers":
     raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
 quiesced_writer_warning = deploy_by_name[
-    "Warn about migration writer recovery after quiesce or deploy failure"
+    "Warn about migration writer recovery after quiesce, preflight or deploy failure"
 ]
 expected_quiesced_writer_warning_condition = (
     "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
     "(steps.quiesce-writers.outcome == 'failure' || "
+    "steps.account-v1040-4-preflight.outcome == 'failure' || "
     "steps.deploy-release.outcome == 'failure') }}"
 )
 if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:

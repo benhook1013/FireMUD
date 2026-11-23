@@ -977,6 +977,28 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 .equals(text(physical.get("continuityExpiresAt")))) throw unavailable();
       }
     }
+    var receipt =
+        CanonicalGameplayRegionOwnerTransferRepository.retainedReceiptForReadback(sql(), item);
+    if (receipt != null) {
+      long applied =
+          scopedFinalOwner()
+              .observeAppliedTransferReceipt(
+                  execution,
+                  item.candidate(),
+                  item.assignment(),
+                  receipt,
+                  deadline,
+                  transferReadConnection);
+      long expected =
+          switch (state) {
+            case "FENCED_INDETERMINATE" -> CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED;
+            case "CLOSED" -> CAPACITY_EXECUTION_CLOSED_OBSERVED;
+            case "COMMITTED" -> CAPACITY_EXECUTION_COMMITTED_OBSERVED;
+            default -> throw unavailable();
+          };
+      if (applied != expected || (!terminal && !receipt.receiptId().equals(dispatchId)))
+        throw unavailable();
+    }
     var output = new java.io.ByteArrayOutputStream();
     physical.entrySet().stream()
         .sorted(Map.Entry.comparingByKey())

@@ -12,7 +12,10 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
+import net.firedevops.firemud.account.v1.AccountServiceGrpc.AccountServiceBlockingStub;
+import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -66,10 +69,55 @@ public final class AccountTenantCapacityClient
    * only replay this mutation with the exact original request when reconciliation permits it.
    */
   public Result commit(Request request, long absoluteDeadlineMillis) {
+    var response =
+        invoke(
+            request,
+            absoluteDeadlineMillis,
+            AccountServiceBlockingStub::commitTenantCapacityAdmission);
+    try {
+      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
+      if (refusal.isPresent()) throw new CapacityRefusedException(refusal.orElseThrow());
+      // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
+    } catch (IllegalArgumentException inexactResponse) {
+      throw Status.UNKNOWN
+          .withDescription("Account capacity commitment response was inexact")
+          .asRuntimeException();
+    }
+  }
+
+  /** Recovers an exact quota denial while the caller still owns the original held attempt. */
+  public UUID readRetainedQuotaDenial(Request request, long absoluteDeadlineMillis) {
+    var response =
+        invoke(
+            request,
+            absoluteDeadlineMillis,
+            AccountServiceBlockingStub::readTenantCapacityQuotaDenial);
+    try {
+      return TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response)
+          .filter(refusal ->
+              refusal.code() == TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED)
+          .map(TenantCapacityAdmissionGrpcCodec.Refusal::durableDenialId)
+          .orElseThrow(IllegalArgumentException::new);
+    } catch (IllegalArgumentException inexactResponse) {
+      throw Status.UNKNOWN
+          .withDescription("Account retained quota denial was not proven")
+          .asRuntimeException();
+    }
+  }
+
+  private CommitTenantCapacityAdmissionResponse invoke(
+      Request request,
+      long absoluteDeadlineMillis,
+      BiFunction<
+              AccountServiceBlockingStub,
+              CommitTenantCapacityAdmissionRequest,
+              CommitTenantCapacityAdmissionResponse>
+          call) {
     long maximumMillis =
         TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
     Deadline maximum = Deadline.after(maximumMillis, TimeUnit.MILLISECONDS);
-    requireNoAmbientSql("Capacity commitment requires no ambient SQL");
+    requireNoAmbientSql("Capacity request requires no ambient SQL");
     // Anchor conversion near the wall-clock sample, not at invocation entry. A pause
     // during sampling can only shorten the bound; it must never extend the caller budget.
     Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
@@ -85,32 +133,21 @@ public final class AccountTenantCapacityClient
             Context.current().getDeadline(),
             absoluteDeadlineMillis,
             sampledInstant);
-    CommitTenantCapacityAdmissionResponse response;
     try {
-      response =
-          withPublishedInitializedStub(
-              "Account capacity unavailable",
-              stub -> {
-                if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
-                return stub.withDeadline(deadline)
+      return withPublishedInitializedStub(
+          "Account capacity unavailable",
+          stub -> {
+            if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+            var bounded =
+                stub.withDeadline(deadline)
                     .withMaxOutboundMessageSize(
                         TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
                     .withMaxInboundMessageSize(
-                        TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
-                    .commitTenantCapacityAdmission(wire);
-              });
+                        TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
+            return call.apply(bounded, wire);
+          });
     } catch (StatusRuntimeException failure) {
       throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
-    }
-    try {
-      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
-      if (refusal.isPresent()) throw new CapacityRefusedException(refusal.orElseThrow());
-      // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
-      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
-    } catch (IllegalArgumentException inexactResponse) {
-      throw Status.UNKNOWN
-          .withDescription("Account capacity commitment response was inexact")
-          .asRuntimeException();
     }
   }
 

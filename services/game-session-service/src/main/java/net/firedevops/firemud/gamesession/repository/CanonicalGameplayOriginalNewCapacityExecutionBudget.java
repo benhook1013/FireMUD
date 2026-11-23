@@ -563,7 +563,23 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                             || method.getName().equals("isClosed")
                             || (method.getName().equals("setAutoCommit")
                                 && Boolean.TRUE.equals(args[0]));
-                    if (!cleanup) check();
+                    if (cleanup) {
+                      synchronized (resources) {
+                        // Even a throwing release may already have transferred ownership.
+                        // jOOQ must never roll back or reset a possibly reborrowed connection.
+                        if (releaseAttempted) {
+                          if (method.getName().equals("isClosed")) return true;
+                          throw new java.sql.SQLException("Connection is no longer owned");
+                        }
+                        return invoke(raw, method, args);
+                      }
+                    }
+                    check();
+                    synchronized (resources) {
+                      if (releaseAttempted) {
+                        throw new java.sql.SQLException("Connection is no longer owned");
+                      }
+                    }
                     Object value = invoke(raw, method, args);
                     if (value instanceof Statement statement) {
                       try {

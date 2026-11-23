@@ -47,9 +47,9 @@ class AccountRuntimeStubServerCompatibilityTest {
           "RequestEmailVerification",
           "VerifyEmail",
           "VerifyEmailLoginOtp");
-  // Private runtime mutations require their actual bounded mTLS owner, never fake authority.
+  // Private capacity RPCs require their actual bounded mTLS owner.
   private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
-      Set.of("CommitTenantCapacityAdmission");
+      Set.of("CommitTenantCapacityAdmission", "ReadTenantCapacityQuotaDenial");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
@@ -72,17 +72,21 @@ class AccountRuntimeStubServerCompatibilityTest {
   }
 
   @Test
-  void privateCapacityMutationRemainsUnimplementedOnSharedFakeRuntimeServer() throws Exception {
+  void privateCapacityRpcsRemainUnimplementedOnSharedFakeRuntimeServer() throws Exception {
     assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
-        .doesNotContain("CommitTenantCapacityAdmission");
+        .doesNotContain("CommitTenantCapacityAdmission", "ReadTenantCapacityQuotaDenial");
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
         var stub = AccountServiceGrpc.newBlockingStub(channel);
-        assertThatThrownBy(() ->
-                stub.commitTenantCapacityAdmission(
-                    CommitTenantCapacityAdmissionRequest.getDefaultInstance()))
+        var request = CommitTenantCapacityAdmissionRequest.getDefaultInstance();
+        assertThatThrownBy(() -> stub.commitTenantCapacityAdmission(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+        assertThatThrownBy(() -> stub.readTenantCapacityQuotaDenial(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

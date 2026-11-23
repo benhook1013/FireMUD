@@ -85,7 +85,9 @@ game_session_v2="services/game-session-service/src/main/resources/db/migration/V
 automation_v2="services/automation-scripting-service/src/main/resources/db/migration/V2__script_patch_readiness_single_active.sql"
 account_v25="services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
 account_migrations="services/account-service/src/main/resources/db/migration"
+account_uniqueness_migration="$account_migrations/V1040.4__unique_capacity_origin_attempt.sql"
 migration_changed=false
+probe_account_origin=false
 while IFS= read -r changed_path; do
   [[ -z "$changed_path" ]] && continue
   if [[ "$changed_path" =~ ^services/[^/]+/src/main/(java/db/migration/.+\.java|kotlin/db/migration/.+\.kt)$ ]]; then
@@ -98,7 +100,7 @@ while IFS= read -r changed_path; do
       "$account_migrations/V1040.1__account_capacity_origin_decisions.sql"|\
       "$account_migrations/V1040.2__bound_capacity_origin_refusals.sql"|\
       "$account_migrations/V1040.3__validate_only_inserted_refusal_budgets.sql"|\
-      "$account_migrations/V1040.4__unique_capacity_origin_attempt.sql"|\
+      "$account_uniqueness_migration"|\
       "$account_migrations/V1040.5__arbitrate_origin_identity_before_refusal_budget.sql"|\
       "$account_migrations/V1040.6__index_retained_capacity_refusal_slots.sql")
         # A retained-database activation is safe only for the first addition of a supported
@@ -110,6 +112,9 @@ while IFS= read -r changed_path; do
           exit 1
         fi
         migration_changed=true
+        if [[ "$changed_path" == "$account_uniqueness_migration" ]]; then
+          probe_account_origin=true
+        fi
         ;;
       *)
         echo "refusing hosted deployment: unsupported Flyway migration path in exact range: $changed_path" >&2
@@ -118,6 +123,36 @@ while IFS= read -r changed_path; do
     esac
   fi
 done <<<"$changed_paths"
+
+if [[ "$probe_account_origin" == true ]]; then
+  if ! namespace_uid="$(jq -er '.metadata.uid | select(type == "string")' <<<"$namespace_json")" ||
+    [[ ! "$namespace_uid" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
+    echo "refusing Account V1040.4 activation: the trusted dev namespace UID is missing or invalid" >&2
+    exit 1
+  fi
+  if ! git cat-file -e "$base_sha:$account_migrations/V1040__account_tenant_capacity_owner.sql"; then
+    echo "refusing Account V1040.4 activation: the deployed Git source lacks the V1040 baseline" >&2
+    exit 1
+  fi
+  origin_prefix=0
+  absent_origin_migration=false
+  for origin_file in \
+    V1040.1__account_capacity_origin_decisions.sql \
+    V1040.2__bound_capacity_origin_refusals.sql \
+    V1040.3__validate_only_inserted_refusal_budgets.sql; do
+    if git cat-file -e "$base_sha:$account_migrations/$origin_file" 2>/dev/null; then
+      if [[ "$absent_origin_migration" == true ]]; then
+        echo "refusing Account V1040.4 activation: the deployed Git source has a non-contiguous origin migration prefix" >&2
+        exit 1
+      fi
+      origin_prefix=$((origin_prefix + 1))
+    else
+      absent_origin_migration=true
+    fi
+  done
+  printf 'account_origin_probe=true\naccount_origin_prefix=%s\naccount_origin_base_sha=%s\naccount_origin_namespace_uid=%s\n' \
+    "$origin_prefix" "$base_sha" "$namespace_uid"
+fi
 
 if [[ "$migration_changed" == true ]]; then
   emit_mode true "$reason_source first adds a supported Account, Game Session, or Automation migration"

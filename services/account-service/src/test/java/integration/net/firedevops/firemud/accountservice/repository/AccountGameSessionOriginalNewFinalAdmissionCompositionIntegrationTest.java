@@ -340,6 +340,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var denied = session.retainControlledEvaluation(false, null);
       denied.requireStructurallyValid();
       String beforeDenial = session.capacityImage();
+      String beforeDenialDecision = session.capacityDecisionImage();
       byte[] candidate = session.gs.physicalSession();
       assertThatThrownBy(() ->
               session.gs.complete(
@@ -353,6 +354,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               CapacityRefusedException.class,
               failure -> assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED));
       assertThat(session.capacityImage()).isEqualTo(beforeDenial);
+      assertThat(session.capacityDecisionImage()).isEqualTo(beforeDenialDecision);
       assertProvisionalUnchanged(session, candidate);
     }
     try (Session session = session()) {
@@ -469,7 +471,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   .gs
                   .dsl()
                   .fetchSingle(
-                      "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                      "SELECT status FROM game_session_canonical_binding_transition WHERE"
+                          + " transition_id = ?",
                       session.gs.decisionId())
                   .get(0, String.class))
           .isEqualTo("PROVISIONAL");
@@ -484,6 +487,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
+      String beforeDecision = session.capacityDecisionImage();
       for (int attempt = 0; attempt < 2; attempt++) {
         CapacityRefusedException failure =
             assertThrows(
@@ -491,6 +495,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                 () -> session.capacityClient.commit(denied, CLOCK.millis() + 5_000L));
         assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED);
         assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+        assertThat(session.capacityDecisionImage()).isEqualTo(beforeDecision);
         assertProvisionalUnchanged(session, candidate);
       }
     }
@@ -613,7 +618,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               .gs
               .dsl()
               .fetchSingle(
-                  "SELECT * FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  "SELECT * FROM game_session_capacity_evidence_charge WHERE"
+                      + " admission_attempt_id=?",
                   request.admissionAttemptId());
       assertThat(charge.get("account_denial_id", UUID.class)).isEqualTo(denialId);
       assertThat(charge.get("tenant_id", UUID.class)).isEqualTo(request.identity().tenantId());
@@ -683,7 +689,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         denialId = assertExactAccountQuotaDenial(session, request, refusal);
         assertThat(
                 sql.fetchSingle(
-                        "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                        "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE"
+                            + " admission_attempt_id=?",
                         request.admissionAttemptId())
                     .get(0, UUID.class))
             .isNull();
@@ -703,7 +710,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.capacityDecisionImage()).isEqualTo(beforeRetry);
       assertThat(
               sql.fetchSingle(
-                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE"
+                          + " admission_attempt_id=?",
                       request.admissionAttemptId())
                   .get(0, UUID.class))
           .isEqualTo(denialId);
@@ -964,7 +972,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               .gs
               .dsl()
               .fetchSingle(
-                  "SELECT * FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  "SELECT * FROM game_session_capacity_evidence_charge WHERE"
+                      + " admission_attempt_id=?",
                   first.admissionAttemptId());
       assertThat(firstCharge.get("account_denial_id", UUID.class)).isEqualTo(denialId);
       assertProvisionalUnchanged(session, firstCandidate);
@@ -1263,7 +1272,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                 .gs
                 .dsl()
                 .fetchSingle(
-                    "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                    "SELECT status FROM game_session_canonical_binding_transition WHERE"
+                        + " transition_id = ?",
                     session.gs.decisionId())
                 .get(0, String.class))
         .isEqualTo("PROVISIONAL");
@@ -1403,7 +1413,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
             Files.createDirectory(
                 temporaryDirectory.resolve("actual-final-pki-" + UUID.randomUUID()));
         pki =
-            LoopbackMtlsTestPki.create(
+            LoopbackMtlsTestPki.createWithDirectSignedLeafRead(
                 pkiDirectory,
                 "Actual final composition test CA",
                 new LoopbackMtlsTestPki.IdentitySpec("account", ACCOUNT, true),
@@ -1707,7 +1717,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
             .append(table)
             .append(
                 dsl.fetch(
-                        "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin', t.xmin::text))::text AS image FROM "
+                        "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin',"
+                            + " t.xmin::text))::text AS image FROM "
                             + table
                             + " t ORDER BY 1")
                     .getValues("image", String.class));
@@ -1726,14 +1737,16 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private String durableImage() {
       return gsReceiptImage()
           + dsl.fetch(
-                  "SELECT to_jsonb(t)::text AS image FROM account_original_new_bound_gameplay_issuances t ORDER BY 1")
+                  "SELECT to_jsonb(t)::text AS image FROM"
+                      + " account_original_new_bound_gameplay_issuances t ORDER BY 1")
               .getValues("image", String.class);
     }
 
     private String gsReceiptImage() {
       return gs.dsl()
           .fetch(
-              "SELECT to_jsonb(t)::text AS image FROM game_session_canonical_binding_transition t ORDER BY 1")
+              "SELECT to_jsonb(t)::text AS image FROM game_session_canonical_binding_transition t"
+                  + " ORDER BY 1")
           .getValues("image", String.class)
           .toString();
     }
@@ -1742,14 +1755,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       dsl.execute(
           "CREATE FUNCTION "
               + FAULT_FUNCTION
-              + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
-              + "RAISE EXCEPTION 'controlled actual final confirmation SQL loss'; RETURN NEW; END; $$");
+              + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled actual"
+              + " final confirmation SQL loss'; RETURN NEW; END; $$");
       dsl.execute(
           "CREATE TRIGGER "
               + FAULT_TRIGGER
-              + " BEFORE UPDATE ON account_original_new_bound_gameplay_issuances "
-              + "FOR EACH ROW WHEN (OLD.confirmed_admission_at_ms IS NULL AND NEW.confirmed_admission_at_ms IS NOT NULL) "
-              + "EXECUTE FUNCTION "
+              + " BEFORE UPDATE ON account_original_new_bound_gameplay_issuances FOR EACH ROW WHEN"
+              + " (OLD.confirmed_admission_at_ms IS NULL AND NEW.confirmed_admission_at_ms IS NOT"
+              + " NULL) EXECUTE FUNCTION "
               + FAULT_FUNCTION
               + "()");
     }

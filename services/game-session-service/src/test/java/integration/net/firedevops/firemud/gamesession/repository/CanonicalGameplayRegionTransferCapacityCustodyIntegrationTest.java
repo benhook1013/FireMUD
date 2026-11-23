@@ -115,9 +115,31 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
             assertThat(submission.takeSubmission(item, dispatch.receiptId())).isNotNull();
             assertThatThrownBy(() -> submission.takeSubmission(item, dispatch.receiptId()))
                 .isInstanceOf(IllegalStateException.class);
-            for (int index = 1; index < 16; index++) dispatch.issuePreparation();
-            assertThatThrownBy(dispatch::issuePreparation)
-                .isInstanceOf(IllegalStateException.class);
+            for (int index = 1; index < 15; index++) {
+              assertThat(dispatch.issuePreparation()).isNotNull();
+            }
+            var finalOwner =
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    proof.redis,
+                    proof.scripts,
+                    proof.clock,
+                    proof.tags.withCapacityExecutionDsl(budget.sql(proof.sql)),
+                    () ->
+                        CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                            proof.redis, budget),
+                    budget::remainingMillis,
+                    budget::awaitAsyncClose);
+            var lastPrepared =
+                finalOwner.prepareTransferReceipt(
+                    item.execution(), item.candidate(), item.assignment(), dispatch, deadline);
+            assertThat(dispatch.issuePreparation()).isNull();
+            var recovered =
+                finalOwner.prepareTransferReceipt(
+                    item.execution(), item.candidate(), item.assignment(), dispatch, deadline);
+            assertThat(recovered.nonce()).isEqualTo(lastPrepared.nonce());
+            dispatch.seal(recovered);
+            assertThat(dispatch.sealedNonce()).isEqualTo(lastPrepared.nonce());
+            assertThat(proof.itemImage(id)).contains("\"fence_apply_issued\": false");
             return null;
           });
       assertThat(proof.physicalExecutionExists(item.execution())).isFalse();

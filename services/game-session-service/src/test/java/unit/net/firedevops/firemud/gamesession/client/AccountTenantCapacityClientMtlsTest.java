@@ -295,6 +295,55 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
+  void restartedClientRecoversTheOriginalQuotaDenialWithoutAnotherCommit() throws Exception {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var denialId = UUID.randomUUID();
+    var commits = new AtomicInteger();
+    var reads = new AtomicInteger();
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest wire,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                commits.incrementAndGet();
+                observer.onError(Status.UNAVAILABLE.asRuntimeException());
+              }
+
+              @Override
+              public void readTenantCapacityQuotaDenial(
+                  CommitTenantCapacityAdmissionRequest wire,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                reads.incrementAndGet();
+                assertThat(TenantCapacityAdmissionGrpcCodec.parseRequest(wire)).isEqualTo(request);
+                observer.onNext(
+                    TenantCapacityAdmissionGrpcCodec.toRefusal(
+                        request,
+                        TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED,
+                        denialId));
+                observer.onCompleted();
+              }
+            });
+    try {
+      try (var original = client(server)) {
+        original.init();
+        assertThatThrownBy(() -> original.commit(request, deadline()))
+            .isInstanceOf(StatusRuntimeException.class);
+      }
+      try (var restarted = client(server)) {
+        restarted.init();
+        assertThat(restarted.readRetainedQuotaDenial(request, deadline())).isEqualTo(denialId);
+      }
+      assertThat(commits).hasValue(1);
+      assertThat(reads).hasValue(1);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
   void localDenialReplayRequiresADurableDecisionId() {
     var denialId = UUID.randomUUID();
     var replay = AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(denialId);

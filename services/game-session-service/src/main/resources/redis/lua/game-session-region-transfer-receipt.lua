@@ -1,50 +1,4 @@
 -- Registered forward-only transfer receipt. Historical UUID-only dispatch is not upgraded.
--- Final original-NEW controller boundary. All seven keys share the persisted tenant slot.
--- FINAL checks both OPEN barriers and replaces only the exact non-admitting session candidate
--- and capacity outcome. FENCE denies future execution without asserting historical non-execution;
--- it writes only the capacity outcome. All three installed tenant indexes remain exact.
-local admissionPlaceholder = '__ORIGINAL_NEW_ADMISSION_AT_MS__'
-local continuityPlaceholder = '__ORIGINAL_NEW_CONTINUITY_EXPIRES_AT_MS__'
-local accountNames = {'schema', 'accountId', 'tenantId', 'playableStateNamespaceId',
-  'tenantGameplayTag', 'ownerOperationId', 'ownerFenceEpoch', 'incarnationDigest', 'state'}
-local issuerNames = {'schema', 'issuerId', 'tenantId', 'playableStateNamespaceId',
-  'tenantGameplayTag', 'state', 'admissionEpoch', 'ownerOperationId', 'initializerOperationId',
-  'initializerEpoch', 'initializerDigest', 'payloadDigest', 'payload'}
-local issuerMetadataNames = {'schema', 'issuerId', 'tenantId', 'playableStateNamespaceId',
-  'tenantGameplayTag', 'state', 'admissionEpoch', 'ownerOperationId', 'initializerOperationId',
-  'initializerEpoch', 'initializerDigest', 'payloadDigest'}
-local sessionNames = {'schemaVersion', 'admissionState', 'originalCandidate', 'bindingGeneration',
-  'accountIndexState', 'issuerIndexState', 'regionBridgeState', 'admissionAt', 'authTokenHash',
-  'authTokenIssuedAt', 'authTokenExpiresAt', 'tokenGeneration', 'issuanceFence', 'rebindHandle',
-  'continuityBindingExpiresAt', 'membershipBaseline', 'authorityTuple', 'outboxCheckpoints',
-  'canonicalSessionDurationMillis', 'capacityExecutionDigest'}
--- Runtime IDs are opaque Unicode text, not ASCII identifiers. Count valid scalar values.
-local function ownerIdentity(value)
-  if type(value) ~= 'string' or #value == 0 or #value > 480
-      or string.byte(value, 1) <= 32 or string.byte(value, #value) <= 32 then return false end
-  local i, count = 1, 0
-  while i <= #value do
-    local first = string.byte(value, i)
-    local width, cp
-    if first < 128 then width, cp = 1, first
-    elseif first >= 194 and first <= 223 then width, cp = 2, first - 192
-    elseif first >= 224 and first <= 239 then width, cp = 3, first - 224
-    elseif first >= 240 and first <= 244 then width, cp = 4, first - 240
-    else return false end
-    if i + width - 1 > #value then return false end
-    for offset = 1, width - 1 do
-      local byte = string.byte(value, i + offset)
-      if byte < 128 or byte > 191 then return false end
-      cp = cp * 64 + byte - 128
-    end
-    if cp == 0 or (width == 3 and cp < 2048) or (width == 4 and cp < 65536)
-        or (cp >= 55296 and cp <= 57343) or cp > 1114111 then return false end
-    count = count + 1
-    if count > 120 then return false end
-    i = i + width
-  end
-  return true
-end
 local function uuid(value)
   return type(value) == 'string' and #value == 36 and value == string.lower(value)
     and value ~= '00000000-0000-0000-0000-000000000000'
@@ -59,30 +13,6 @@ local function exactNumber(value)
   local number = tonumber(value)
   if not number or number > 9007199254740991 or string.format('%.0f', number) ~= value then return nil end
   return number
-end
-local function objectWithFields(value, fields)
-  if type(value) ~= 'table' then return false end
-  local count = 0
-  for key, item in pairs(value) do
-    count = count + 1
-    local found = false
-    for _, name in ipairs(fields) do if key == name then found = true end end
-    if not found or item == cjson.null then return false end
-  end
-  if count ~= #fields then return false end
-  for _, name in ipairs(fields) do if value[name] == nil then return false end end
-  return true
-end
-local function equal(left, right, depth)
-  if depth > 64 or type(left) ~= type(right) then return false end
-  if type(left) ~= 'table' then return left == right end
-  local countLeft, countRight = 0, 0
-  for key, value in pairs(left) do
-    countLeft = countLeft + 1
-    if not equal(value, right[key], depth + 1) then return false end
-  end
-  for _ in pairs(right) do countRight = countRight + 1 end
-  return countLeft == countRight
 end
 local function decode(bytes, maximum)
   if type(bytes) ~= 'string' or #bytes == 0 or #bytes > maximum then return nil end
@@ -129,6 +59,10 @@ local winner=redis.call('HGET',KEYS[2],'nonce')
 if not uuid(winner) or (state~='PREPARED' and state~='APPLIED') then return {-1,'',''} end
 if action=='PREPARE' then
  if now>=mutateUntil then return {-1,'',''} end
+ return {1,winner,state}
+end
+if action=='READ_PREPARED' then
+ if state~='PREPARED' then return {-1,'',''} end
  return {1,winner,state}
 end
 if winner~=nonce then return {-1,'',''} end

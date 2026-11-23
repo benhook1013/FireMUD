@@ -1196,6 +1196,44 @@ public final class CanonicalGameplayBindingInventoryRepository {
     return Optional.of(current);
   }
 
+  /** Reads the exact immutable candidate for an already-aborted first NEW before first freeze. */
+  Optional<CanonicalGameplayOriginalNewCandidate> readRegionTransferAbortedCandidate(
+      UUID transitionId) {
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      Record row = readTransition(transaction, transitionId);
+      if (row == null) throw conflict("Region transfer original transition is missing");
+      if (!"ABORTED".equals(row.get("status", String.class))) return Optional.empty();
+      byte[] bytes = row.get("original_new_candidate_bytes", byte[].class);
+      try {
+        if (bytes == null
+            || bytes.length == 0
+            || bytes.length > CanonicalGameplayOriginalNewCandidateCodec.MAX_CANDIDATE_BYTES
+            || !CanonicalGameplayIssuerMemberV2Codec.sha256(bytes)
+                .equals(row.get("original_new_candidate_digest", String.class))) {
+          throw conflict("Region transfer abort has no exact retained original candidate");
+        }
+        CanonicalGameplayOriginalNewCandidate candidate;
+        try {
+          candidate = CanonicalGameplayOriginalNewCandidate.parseCanonical(bytes);
+        } catch (RuntimeException malformed) {
+          throw conflict("Region transfer abort candidate bytes are not canonical");
+        }
+        var aborted = loadFirstNewAdmissionAbortSource(transaction, transitionId, false, true);
+        if (!candidate.bindingDecisionId().equals(transitionId)
+            || !aborted.isAccountAborted()
+            || !sameRegionTransferCandidate(candidate, aborted)) {
+          throw conflict("Region transfer abort differs from its exact retained original");
+        }
+        return Optional.of(candidate);
+      } finally {
+        if (bytes != null) Arrays.fill(bytes, (byte) 0);
+      }
+    });
+  }
+
   /**
    * Revalidates an exact retained first-NEW Account abort for transfer topology only. The abort
    * remains terminal and this method never constructs provisional or final-admission evidence.
