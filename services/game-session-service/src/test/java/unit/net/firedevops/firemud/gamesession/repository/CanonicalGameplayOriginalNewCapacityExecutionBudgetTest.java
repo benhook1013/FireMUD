@@ -1069,7 +1069,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       captured.set(budget);
                       var scoped =
                           budget.sql(source(provider)).configuration().connectionProvider();
-                      Connection proxy = scoped.acquire();
+                      Connection proxy = java.util.Objects.requireNonNull(scoped.acquire());
                       scoped.acquire();
                       assertThatThrownBy(() -> scoped.release(proxy))
                           .hasMessage("Controlled uncertain pool return");

@@ -985,16 +985,21 @@ jobs:
       - name: Summarize dev-demo failure
         if: ${{ always() && failure() && steps.cluster-access.outputs.available == 'true' }}
         env:
+          DEPLOY_OUTCOME: ${{ steps.deploy-release.outcome }}
           RECORD_OUTCOME: ${{ steps.record-deployed-head.outcome }}
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap-smoke.outcome }}
         run: |
+          failure_stage="${DEV_DEMO_STAGE:-unknown}"
+          if [[ "$DEPLOY_OUTCOME" == success && "$RECORD_OUTCOME" != success ]]; then
+            failure_stage=record-deployed-head
+          fi
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             failure \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
-            "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+            "$failure_stage" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$RECORD_OUTCOME" == success ]]; then
             guide="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_WORKFLOW_SHA}/design/architecture/system-architecture-database-migrations.md#verification-after-the-dev-demo-target-is-recorded"
             {
@@ -1005,6 +1010,12 @@ jobs:
                 echo "The target was recorded but the original smoke bootstrap did not complete successfully in this attempt. Use the [verification procedure]($guide) to inspect the existing release and refer bootstrap recovery to the affected owners."
               fi
               echo "Keep the recorded target and existing namespace. Do not replay Helm or bootstrap to verify this release."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$DEPLOY_OUTCOME" == success ]]; then
+            {
+              echo ""
+              echo "Helm deployment succeeded, but recording the deployed head on the namespace failed or could not be confirmed. Runtime qualification is incomplete."
+              echo "Do not retry the deployment, reset the namespace, or replay bootstrap. Before any recovery, the deployment owner must verify the original Helm release and revision, the owned dev namespace UID, and the retained Flyway version for each affected schema."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
