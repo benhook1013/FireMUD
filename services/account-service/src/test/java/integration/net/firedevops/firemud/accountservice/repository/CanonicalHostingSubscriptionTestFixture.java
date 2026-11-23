@@ -538,7 +538,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       return transport.confirmations;
     }
 
-    int providerReads() {
+    public int providerReads() {
       return transport.reads();
     }
 
