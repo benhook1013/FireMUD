@@ -770,7 +770,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void callerDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit() throws Exception {
+  void detachedRecoveryRetainsOwnershipUntilSqlExitsAfterCallerCancellation() throws Exception {
     assertDeadlineDoesNotReleaseRetainedRecoveryBeforeActualSqlWorkerExit(false);
   }
 
@@ -847,13 +847,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var retained = owner.reserveNoWriteRecovery(preparation.operationId());
       owner.retainNoWriteProof(preparation, retained, proof);
       owner.releaseNoWriteRecovery(preparation.operationId(), retained);
-      var scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
       Thread caller = null;
-      try (var context =
-          viaInstallation
-              ? io.grpc.Context.ROOT.withCancellation()
-              : io.grpc.Context.current()
-                  .withDeadlineAfter(500, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler)) {
+      try (var context = io.grpc.Context.ROOT.withCancellation()) {
         var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
         var installWatchdog = new java.util.concurrent.CompletableFuture<Long>();
         var failureNanos = new java.util.concurrent.atomic.AtomicLong();
@@ -875,35 +870,38 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         } else {
                           owner.recoverRetainedNoWriteForTransition(TRANSITION_ID);
                         }
-                        outcome.complete(new AssertionError("caller ignored deadline"));
+                        outcome.complete(null);
                       } catch (Throwable failure) {
                         failureNanos.set(System.nanoTime());
                         outcome.complete(failure);
                       }
                     }));
         assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-        Throwable failure;
         if (viaInstallation) {
           long stop = installWatchdog.get(1, java.util.concurrent.TimeUnit.SECONDS);
-          failure =
+          Throwable failure =
               outcome.get(
                   Math.max(0L, stop - System.nanoTime()),
                   java.util.concurrent.TimeUnit.NANOSECONDS);
+          assertThat(failure).isInstanceOf(IllegalStateException.class);
           assertThat(failureNanos.get() - stop)
               .as("caller error before absolute watchdog")
               .isNegative();
+          caller.join(2_000);
+          assertThat(caller.isAlive()).isFalse();
+          org.mockito.Mockito.verifyNoInteractions(inventory);
         } else {
-          failure = outcome.get(2, java.util.concurrent.TimeUnit.SECONDS);
+          context.cancel(null);
+          assertThat(outcome.isDone()).isFalse();
         }
-        assertThat(failure).isInstanceOf(IllegalStateException.class);
-        caller.join(2000);
-        assertThat(caller.isAlive()).isFalse();
-        if (viaInstallation) org.mockito.Mockito.verifyNoInteractions(inventory);
         assertThat(exited.getCount()).isEqualTo(1L);
         assertThatThrownBy(() -> owner.reserveNoWriteRecovery(preparation.operationId()))
             .isInstanceOf(IllegalStateException.class);
         release.countDown();
         assertThat(exited.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        if (!viaInstallation) {
+          assertThat(outcome.get(5, java.util.concurrent.TimeUnit.SECONDS)).isNull();
+        }
         org.awaitility.Awaitility.await()
             .atMost(java.time.Duration.ofSeconds(5))
             .untilAsserted(() -> {
@@ -920,7 +918,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             .isEqualTo("PREPARED");
       } finally {
         release.countDown();
-        scheduler.shutdownNow();
         if (caller != null) {
           caller.join(5_000);
           assertThat(caller.isAlive()).as("caller must exit before fixture teardown").isFalse();
@@ -1576,8 +1573,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
       WorldFixture world = WorldFixture.open();
       var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
-      when(inventory.readProvisionalCasEvidence(TRANSITION_ID))
-          .thenReturn(provisionalEvidence(world.request()));
+      var evidence = provisionalEvidence(world.request());
+      when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
       when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
       org.mockito.Mockito.doAnswer(
               invocation -> {
