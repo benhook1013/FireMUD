@@ -298,7 +298,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
     when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
     when(f.observer.observe(fence.binding())).thenReturn(observed);
-    when(f.hosting.readCurrent(fence, observed)).thenReturn(f.receipt(Status.ACTIVE));
+    var receipt = f.receipt(Status.ACTIVE);
+    when(f.hosting.readCurrent(fence, observed)).thenReturn(receipt);
     f.time.set(NOW.plusSeconds(12));
     f.databaseTime.set(NOW);
 
@@ -325,8 +326,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
     when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
     when(f.observer.observe(fence.binding())).thenReturn(observed);
-    when(f.hosting.readCurrent(fence, observed))
-        .thenReturn(f.receipt(Status.ACTIVE, NOW.plusSeconds(5)));
+    var receipt = f.receipt(Status.ACTIVE, NOW.plusSeconds(5));
+    when(f.hosting.readCurrent(fence, observed)).thenReturn(receipt);
     var dbReads = new java.util.concurrent.atomic.AtomicInteger();
     var stamp = mock(org.jooq.Record.class);
     when(stamp.get("observed_at", java.time.OffsetDateTime.class))
