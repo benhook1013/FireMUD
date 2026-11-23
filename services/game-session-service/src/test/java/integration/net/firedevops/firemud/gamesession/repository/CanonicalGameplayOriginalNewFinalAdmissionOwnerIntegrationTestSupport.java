@@ -375,23 +375,25 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
 
   void observeGuardedReplacementRefusal(String successor) {
     var source = regionBinding.installation().source;
-    fixture.dsl().transaction(configuration -> {
-      var tx = org.jooq.impl.DSL.using(configuration);
-      tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-      tx.execute("SAVEPOINT guarded_region_replacement");
-      tx.execute(
-          "UPDATE game_session_region_runtime_status SET owner_instance_id=?,"
-              + "executor_fence=nextval('game_session_region_executor_fence_seq'),"
-              + "lease_token_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
-          successor,
-          "a".repeat(64),
-          source.tenantId(),
-          source.gameInstanceId(),
-          source.regionId());
-      // The refusal assertion is outside this transaction. Even a broken guard cannot persist
-      // this deliberately synthetic successor.
-      tx.execute("ROLLBACK TO SAVEPOINT guarded_region_replacement");
-    });
+    fixture
+        .dsl()
+        .transaction(configuration -> {
+          var tx = org.jooq.impl.DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+          tx.execute("SAVEPOINT guarded_region_replacement");
+          tx.execute(
+              "UPDATE game_session_region_runtime_status SET owner_instance_id=?,"
+                  + "executor_fence=nextval('game_session_region_executor_fence_seq'),"
+                  + "lease_token_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+              successor,
+              "a".repeat(64),
+              source.tenantId(),
+              source.gameInstanceId(),
+              source.regionId());
+          // The refusal assertion is outside this transaction. Even a broken guard cannot persist
+          // this deliberately synthetic successor.
+          tx.execute("ROLLBACK TO SAVEPOINT guarded_region_replacement");
+        });
   }
 
   CanonicalGameplayOriginalNewCapacityExecutionOwner capacityOwner() {
