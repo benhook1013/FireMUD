@@ -410,7 +410,12 @@ if refresh_needs != "preview-plan" and refresh_needs != ["preview-plan"]:
 if checkouts(refresh_job):
     raise AssertionError("preview runtime base refresh must not check out PR-controlled source")
 refresh_if = str(refresh_job.get("if", ""))
-for required in ("base_refresh_required == 'true'", "action == 'deploy'"):
+for required in (
+    "eligible == 'true'",
+    "base_refresh_required == 'true'",
+    "action == 'deploy'",
+    "image_tag != needs.preview-plan.outputs.base_sha",
+):
     if required not in refresh_if:
         raise AssertionError(f"preview runtime base refresh lost its {required} gate")
 refresh_scripts = [
@@ -421,11 +426,23 @@ refresh_scripts = [
     and re.fullmatch(r"actions/github-script@[0-9a-f]{40}", step["uses"])
 ]
 if len(refresh_scripts) != 1:
-    raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub dispatcher")
-if 'event_type: "pr-runtime-base-refresh"' not in refresh_scripts[0]:
-    raise AssertionError("preview runtime base refresh lost its typed dispatch")
-if "base_sha" not in refresh_scripts[0] or "head_sha" not in refresh_scripts[0] or "merge_sha" not in refresh_scripts[0]:
-    raise AssertionError("preview runtime base refresh dispatch lost its exact merge tuple")
+    raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub Script step")
+refresh_script = refresh_scripts[0]
+if re.search(r"['\"]pr-runtime-base-refresh['\"]", refresh_script):
+    raise AssertionError("preview must not start the runtime producer directly")
+request = re.search(
+    r'event_type: "pr-runtime-base-refresh-request",\s*client_payload: \{([^}]+)\}',
+    refresh_script,
+)
+if request is None or [line.strip() for line in request[1].strip().splitlines()] != [
+    "pr_number: process.env.PR_NUMBER,",
+    "base_ref: baseRef,",
+    "base_sha: process.env.BASE_SHA,",
+    "head_sha: process.env.HEAD_SHA,",
+    "merge_sha: process.env.MERGE_SHA,",
+    "preview_only: true,",
+]:
+    raise AssertionError("preview must request durable admission for the exact preview-only runtime tuple")
 
 # Keep the permission boundary regression-tested independently of the live
 # workflow. A render write grant is always forbidden; the trusted dispatcher
