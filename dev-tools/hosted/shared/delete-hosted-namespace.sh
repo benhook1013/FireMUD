@@ -88,7 +88,7 @@ delete_resource_version=""
 
 if [[ -n "$expected_pr_number" ]]; then
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib
+  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
   source "$script_dir/../preview/preview-proof-retry-record.shlib"
   if ! legacy_retry="$(legacy_preview_retry_entry "$namespace_json" "$namespace")"; then
     echo "unable to read legacy proof-retry evidence for $namespace; refusing deletion" >&2

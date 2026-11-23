@@ -436,7 +436,7 @@ if (( runtime_deletion_failures > 0 || retirement_failures > 0 )); then
 fi
 
 if [[ "$retire_proof_retries" == true ]]; then
-  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib
+  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
   source "$script_dir/preview-proof-retry-record.shlib"
   if ! retire_merged_preview_retry_entries; then
     echo "Unable to retire verified merged preview proof-retry records." >&2

@@ -56,7 +56,7 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
                   "spring.datasource.hikari.data-source-properties",
                   Bindable.mapOf(String.class, String.class))
               .orElse(Map.of());
-      if (!dataSourceProperties.isEmpty()) {
+      if (dataSourceProperties == null || !dataSourceProperties.isEmpty()) {
         throw new IllegalStateException("Recovery datasource driver overrides are unsupported");
       }
       // Flyway must use the very same datasource, not create an independent connection endpoint.

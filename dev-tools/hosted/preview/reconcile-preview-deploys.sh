@@ -4,7 +4,7 @@ preview_workflow_name="PR Preview Environment"
 eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
 max_active="${PREVIEW_MAX_ACTIVE:-2}"
 preview_handoff_window_seconds=600
-# shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib
+# shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
 source ./dev-tools/hosted/preview/preview-proof-retry-record.shlib
 
 parse_namespace_tuple() {
