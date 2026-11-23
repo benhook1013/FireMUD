@@ -450,7 +450,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     var provider = dsl.configuration().transactionProvider();
     var guardedProvider =
         new org.jooq.TransactionProvider() {
-          private boolean commitAttempted;
+          private volatile boolean commitAttempted;
 
           @Override
           public void begin(org.jooq.TransactionContext context) {

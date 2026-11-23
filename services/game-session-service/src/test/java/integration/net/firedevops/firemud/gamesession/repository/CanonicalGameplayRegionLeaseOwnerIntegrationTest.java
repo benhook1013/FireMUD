@@ -1840,19 +1840,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             }
           };
       var controlledRepository = org.mockito.Mockito.spy(statusRepository);
-      var scopedRepositoryCalls = new java.util.concurrent.atomic.AtomicInteger();
+      var requireFirstPhysicalExpiry = new java.util.concurrent.atomic.AtomicBoolean(true);
+      var refusedCleanup = new java.util.concurrent.atomic.AtomicBoolean();
       org.mockito.Mockito.doAnswer(
               invocation -> {
-                int call = scopedRepositoryCalls.incrementAndGet();
-                // The first scope installs. Its definitive Redis refusal asks for a second,
-                // independent SQL cleanup scope. Refuse only that controlled cleanup attempt.
-                if (refuseFirstCleanup && call == 2) {
-                  throw new IllegalStateException("controlled first cleanup refusal");
-                }
                 var budget =
                     invocation.<CanonicalGameplayOriginalNewCapacityExecutionBudget>getArgument(0);
                 var scoped = statusRepository.forBudget(budget);
-                if (call != 1) return scoped;
                 var claimBoundary = org.mockito.Mockito.spy(scoped);
                 org.mockito.Mockito.doAnswer(
                         claimInvocation -> {
@@ -1865,6 +1859,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                       getArgument(0);
                           assertThat(target.operationId()).isEqualTo(preparation.operationId());
                           var permit = (java.util.Optional<?>) claimInvocation.callRealMethod();
+                          if (!requireFirstPhysicalExpiry.compareAndSet(true, false)) return permit;
                           assertThat(permit).as("acknowledged real first-region claim").isPresent();
                           assertThat(
                                   testSchema
@@ -1884,6 +1879,20 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                             CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation
                                 .class),
                         org.mockito.ArgumentMatchers.any(Instant.class),
+                        org.mockito.ArgumentMatchers.any());
+                org.mockito.Mockito.doAnswer(
+                        cleanupInvocation -> {
+                          // The retained claim itself also opens a scoped repository. Refuse the
+                          // first actual cleanup call, never a numbered forBudget acquisition.
+                          if (refuseFirstCleanup && refusedCleanup.compareAndSet(false, true)) {
+                            throw new IllegalStateException("controlled first cleanup refusal");
+                          }
+                          return cleanupInvocation.callRealMethod();
+                        })
+                    .when(claimBoundary)
+                    .releaseInitialTimelineNoWrite(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.any());
                 return claimBoundary;
               })
@@ -1961,7 +1970,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         redis.ownerClient().removeListener(observedOwnerCommand);
       }
       if (refuseFirstCleanup) {
-        assertThat(scopedRepositoryCalls).hasValue(2);
+        assertThat(refusedCleanup).isTrue();
         assertThat(
                 testSchema
                     .dsl()
@@ -2522,33 +2531,46 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId())
               : null;
       CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
-      try (var session =
-          bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+      var observeInitialization = new java.util.concurrent.atomic.AtomicBoolean();
+      var initializationCommand = new AtomicReference<RedisCommand<Object, Object, Object>>();
+      var evaluations = new java.util.concurrent.atomic.AtomicInteger();
+      var completed = new CompletableFuture<Object>();
+      var observed =
+          new CommandListener() {
+            @Override
+            public void commandStarted(CommandStartedEvent event) {
+              if (observeInitialization.get()
+                  && event.getCommand().getType() == CommandType.EVALSHA) {
+                evaluations.incrementAndGet();
+                initializationCommand.compareAndSet(null, event.getCommand());
+              }
+            }
+
+            @Override
+            public void commandSucceeded(CommandSucceededEvent event) {
+              if (event.getCommand() == initializationCommand.get()) {
+                completed.complete(event.getCommand().getOutput().get());
+              }
+            }
+          };
+      // Lettuce installs and snapshots command listeners as it opens the connection.
+      // Attach before the real PROBE, but arm only after the committed SQL claim.
+      if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
+      AutoCloseable removeObserver =
+          () -> {
+            if (mode == 0 || mode == 1) redis.ownerClient().removeListener(observed);
+          };
+      try (removeObserver;
+          var session =
+              bounded.prepareTimelineInitialization(
+                  preparation, Duration.ofSeconds(30), identity)) {
         // Real PROBE completed on the pinned connection before the durable SQL claim.
         permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
         assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
             .isEqualTo(
                 CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
                     .INITIALIZING);
-        var evaluations = new java.util.concurrent.atomic.AtomicInteger();
-        var completed = new CompletableFuture<Object>();
-        var observed =
-            new CommandListener() {
-              @Override
-              public void commandStarted(CommandStartedEvent event) {
-                if (event.getCommand().getType() == CommandType.EVALSHA)
-                  evaluations.incrementAndGet();
-              }
-
-              @Override
-              public void commandSucceeded(CommandSucceededEvent event) {
-                if (event.getCommand().getType() == CommandType.EVALSHA) {
-                  completed.complete(event.getCommand().getOutput().get());
-                }
-              }
-            };
-        // PREPARE's preflight has already finished; only initialization can submit EVALSHA here.
-        if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
+        observeInitialization.set(true);
         try {
           if (mode == 1) {
             // This control intentionally exhausts the local monotonic deadline before dispatch.
@@ -2714,7 +2736,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             assertThat(evaluations).as("no INITIALIZE after local expiration").hasValue(0);
           }
         } finally {
-          if (mode == 0 || mode == 1) redis.ownerClient().removeListener(observed);
+          observeInitialization.set(false);
         }
       }
       assertThat(proof.get()).isNotNull();
