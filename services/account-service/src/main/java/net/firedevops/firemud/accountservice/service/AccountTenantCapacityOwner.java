@@ -156,17 +156,19 @@ public final class AccountTenantCapacityOwner {
           capacity.requireRetained(request.evidence());
           // Acquire the usage lock before qualifying the remaining lifetime.
           Record usage = capacity.usage(request);
-          current(request);
+          var authority = current(request);
           requireSupportedShape(request);
           if (!request.evidence().permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
           var reservation =
               capacity.createIfQuotaAvailable(request, usage, request.evidence().expiresAt());
           if (reservation.isPresent()) {
+            authority.requireCurrent(clock.instant());
             return new CommitDecision(reservation.orElseThrow(), null);
           }
           UUID denialId = originDecisions.refuseQuota(request);
           capacity.requireFresh(request.evidence());
+          authority.requireCurrent(clock.instant());
           return new CommitDecision(null, denialId);
         });
     // Throw only after the transaction has committed the exact denial.
@@ -205,7 +207,7 @@ public final class AccountTenantCapacityOwner {
       if (!"RESERVED".equals(row.get("state", String.class))
           || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
           || row.get("owner_readback", byte[].class) == null) throw conflict();
-      current(next);
+      var authority = current(next);
       requireSupportedShape(next);
       // Match the fresh reservation/refusal path before arbitrating the attempt UUID.
       capacity.usage(next);
@@ -213,6 +215,7 @@ public final class AccountTenantCapacityOwner {
       originDecisions.accept(next);
       requireClaim(row, recoveryOwner, claimFence, clock.instant());
       capacity.requireFresh(next.evidence());
+      authority.requireCurrent(clock.instant());
       int history =
           dsl.execute(
               "INSERT INTO account_tenant_capacity_attempt_history "
@@ -248,11 +251,13 @@ public final class AccountTenantCapacityOwner {
               claimFence);
       if (changed != 1) throw conflict();
       // Reservation identity and both usage columns are deliberately untouched.
-      return capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
+      var result = capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
+      authority.requireCurrent(clock.instant());
+      return result;
     });
   }
 
-  private void current(Request request) {
+  private AppAuthorityWindow current(Request request) {
     var evidence = request.evidence();
     capacity.requireRetained(evidence);
     Instant now = clock.instant();
@@ -308,9 +313,25 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
-    // Source reads can consume the remaining evaluation lifetime. Retained replays
-    // return before current(), but a fresh refusal must still be current after qualification.
+    // PostgreSQL owns evaluation freshness; the original caller and scope retain
+    // their independent application-clock cutoffs. Neither clock can extend the other.
     capacity.requireFresh(evidence);
+    var authority =
+        new AppAuthorityWindow(
+            issuance.identity().notBeforeEpochSecond(),
+            issuance.identity().expiresAtEpochSecond(),
+            Instant.parse(scope.connectScopeExpiresAt()));
+    authority.requireCurrent(clock.instant());
+    return authority;
+  }
+
+  private record AppAuthorityWindow(
+      long notBeforeEpochSecond, long expiresEpochSecond, Instant scopeExpiry) {
+    private void requireCurrent(Instant now) {
+      if (now.getEpochSecond() < notBeforeEpochSecond
+          || now.getEpochSecond() >= expiresEpochSecond
+          || !now.isBefore(scopeExpiry)) throw unavailable();
+    }
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

@@ -208,11 +208,24 @@ class AccountRecentReauthenticationReplayTest {
   @Test
   void newBillingEvidenceRequiresTypedContextAndTypedReplayCannotChangeIt() {
     var unbound = new Fixture(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
-    when(unbound.repository.findByRequest(unbound.requestId)).thenReturn(Optional.empty());
-    assertThatThrownBy(() -> unbound.service.reauthenticate(unbound.request(unbound.operation)))
+    var unboundActors = mock(AccountControlUiActorService.class);
+    @SuppressWarnings("unchecked")
+    Consumer<AccountRecentReauthenticationEvidence> unboundBind = mock(Consumer.class);
+    assertThatThrownBy(() ->
+            unbound.service.reauthenticateAndBindBilling(
+                unbound.request(unbound.operation),
+                unboundActors,
+                "controlled-bearer",
+                unboundBind))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
-    verify(unbound.repository, never()).insert(any(), any(), any());
-    verifyNoInteractions(unbound.primary, unbound.accounts, unbound.generations, unbound.crypto);
+    verifyNoInteractions(
+        unbound.repository,
+        unbound.primary,
+        unbound.accounts,
+        unbound.generations,
+        unbound.crypto,
+        unboundActors,
+        unboundBind);
 
     var bound = new Fixture(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
     Instant expiry = Instant.parse("2026-11-02T01:02:03.123400Z");

@@ -274,13 +274,11 @@ public final class AccountHostingFirstInvoicePaymentService {
     if (retainedConflict != null) {
       return new Completion("OPERATOR_RECONCILIATION_REQUIRED", retainedConflict);
     }
-    var candidate = transaction.execute(status -> payments.candidateForSignedEvent(event));
+    var classification =
+        Objects.requireNonNull(transaction.execute(status -> payments.classifySignedEvent(event)));
+    var candidate = classification.candidate();
     if (candidate == null) {
-      boolean needsReconciliation =
-          Boolean.TRUE.equals(
-              transaction.execute(
-                  status -> payments.requiresUnconsentedLatePaymentReconciliation(event)));
-      return new Completion(needsReconciliation ? "RECONCILING" : "IGNORED", null);
+      return new Completion(classification.reconciliationOnly() ? "RECONCILING" : "IGNORED", null);
     }
     boolean alreadyCompleted =
         Boolean.TRUE.equals(

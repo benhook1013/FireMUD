@@ -815,48 +815,44 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     if (!now().isBefore(invoice.expiresAt())) throw refused();
   }
 
-  public ConfirmationDispatch candidateForSignedEvent(VerifiedEvent verified) {
+  /** Reads the immutable captured invoice and its original consent in one SQL statement. */
+  public SignedClassification classifySignedEvent(VerifiedEvent verified) {
     transaction();
-    if (!"payment_intent.succeeded".equals(verified.eventType())) return null;
+    if (!"payment_intent.succeeded".equals(verified.eventType()))
+      return new SignedClassification(null, false);
     String intent =
         JSON.readTree(verified.rawPayload()).path("data").path("object").path("id").asText();
     Record row =
         dsl.fetchOne(
-            "SELECT c.* FROM subscription_first_invoice_confirmations c "
-                + "JOIN subscription_first_invoices i USING (subscription_id) WHERE i.payment_intent_id = ?",
+            "SELECT c.*, i.subscription_id AS original_subscription_id, i.captured_at, "
+                + "(s.status = 'canceled' OR "
+                + "(s.status = 'provisioning' AND EXISTS (SELECT 1 FROM subscription_provisioning_work w "
+                + "WHERE w.subscription_id = i.subscription_id AND w.request_id = i.creation_request_id "
+                + "AND w.phase = 'AWAITING_PAYMENT'))) AS original_checkout_held "
+                + "FROM subscription_first_invoices i JOIN subscription s USING (subscription_id) "
+                + "LEFT JOIN subscription_first_invoice_confirmations c USING (subscription_id) "
+                + "WHERE i.payment_intent_id = ?",
             intent);
-    if (row == null) return null;
-    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
-    requireSignedTuple(verified, row, invoice);
-    return dispatch(row, invoice, false, false);
+    if (row == null) return new SignedClassification(null, false);
+    var invoice = Objects.requireNonNull(find(row.get("original_subscription_id", UUID.class)));
+    var consent = row.get("consented_at", java.time.OffsetDateTime.class);
+    if (consent != null
+        && verified.eventCreatedAtEpochSeconds() >= consent.toInstant().getEpochSecond()) {
+      requireSignedTuple(verified, row, invoice);
+      return new SignedClassification(dispatch(row, invoice, false, false), false);
+    }
+    if (!Boolean.TRUE.equals(row.get("original_checkout_held", Boolean.class)))
+      return new SignedClassification(null, false);
+    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
+    return new SignedClassification(null, true);
   }
+
+  public record SignedClassification(ConfirmationDispatch candidate, boolean reconciliationOnly) {}
 
   public UUID retainedSignedConflictRequestId(VerifiedEvent verified) {
     transaction();
     return new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
         .retainedConflictRequestId(verified);
-  }
-
-  /** Selects an exact signed payment without consent for held or canceled original checkout. */
-  public boolean requiresUnconsentedLatePaymentReconciliation(VerifiedEvent verified) {
-    transaction();
-    if (!"payment_intent.succeeded".equals(verified.eventType())) return false;
-    var object = JSON.readTree(verified.rawPayload()).path("data").path("object");
-    Record row =
-        dsl.fetchOne(
-            "SELECT i.subscription_id, i.captured_at FROM subscription_first_invoices i "
-                + "JOIN subscription s USING (subscription_id) "
-                + "WHERE i.payment_intent_id = ? AND (s.status = 'canceled' OR "
-                + "(s.status = 'provisioning' AND EXISTS (SELECT 1 FROM subscription_provisioning_work w "
-                + "WHERE w.subscription_id = i.subscription_id AND w.request_id = i.creation_request_id "
-                + "AND w.phase = 'AWAITING_PAYMENT'))) "
-                + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_confirmations c "
-                + "WHERE c.subscription_id = i.subscription_id)",
-            object.path("id").asText());
-    if (row == null) return false;
-    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
-    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
-    return true;
   }
 
   public boolean completed(UUID subscriptionId, UUID lifecycleRequestId) {

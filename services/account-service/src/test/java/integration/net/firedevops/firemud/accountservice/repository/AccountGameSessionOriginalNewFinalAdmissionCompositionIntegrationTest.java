@@ -826,10 +826,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
   @Test
   void accountGeneratedUnavailableKeepsExactGameSessionReserveUnsettled() throws Exception {
-    // Only Account's capacity owner sees the advanced clock. The Game Session request,
-    // lease and credential remain current, so the real coordinator reaches Account after precharge.
-    try (Session session = session(Clock.offset(CLOCK, Duration.ofSeconds(60)));
-        OriginalNewCredential credential = session.issue()) {
+    try (Session session = session();
+        OriginalNewCredential credential = session.issue();
+        var worker = Executors.newSingleThreadExecutor();
+        var lock = session.account.dataSource.getConnection()) {
       var request = session.capacityRequest;
       assertThat(request.evidence().permitsCreation()).isTrue();
       byte[] candidate = session.gs.physicalSession();
@@ -840,8 +840,26 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?";
       assertThat(session.gs.dsl().fetchOne(chargeLookup, request.admissionAttemptId())).isNull();
 
-      var uncertain = assertThrows(IllegalStateException.class, () -> session.complete(request));
-      assertThat(uncertain).isNotInstanceOf(CapacityRefusedException.class);
+      int blocker = lockGameSessionUsage(lock, request.identity().tenantId());
+      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(3));
+      var result = worker.submit(() -> session.complete(request));
+      try {
+        requireUsageWaitBeforeExpiry(session.dsl, blocker, request.evidence().expiresAt());
+        // The actual Account owner is waiting on the held row, after Game Session precharges.
+        assertThat(session.gs.dsl().fetchOne(chargeLookup, request.admissionAttemptId()))
+            .isNotNull();
+        waitForDatabaseTime(session.dsl, request.evidence().expiresAt());
+      } finally {
+        lock.rollback();
+      }
+      var uncertain =
+          assertThrows(
+                  java.util.concurrent.ExecutionException.class,
+                  () -> result.get(3, TimeUnit.SECONDS))
+              .getCause();
+      assertThat(uncertain)
+          .isInstanceOf(IllegalStateException.class)
+          .isNotInstanceOf(CapacityRefusedException.class);
       assertThat(uncertain.getCause()).isInstanceOf(StatusRuntimeException.class);
       assertCapacityFailure(
           (StatusRuntimeException) uncertain.getCause(),
@@ -1177,51 +1195,16 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         var worker = Executors.newSingleThreadExecutor();
         var lock = session.account.dataSource.getConnection()) {
       var request = session.retainControlledEvaluation(true, null);
-      // Wait outside the owner transaction so the actual lock wait fits its five-second budget.
-      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(2));
-      lock.setAutoCommit(false);
-      int blocker;
-      try (var statement = lock.createStatement();
-          var pid = statement.executeQuery("SELECT pg_backend_pid()")) {
-        assertThat(pid.next()).isTrue();
-        blocker = pid.getInt(1);
-      }
-      try (var statement =
-          lock.prepareStatement(
-              "SELECT * FROM account_tenant_capacity_usage WHERE tenant_uuid = ? "
-                  + "AND owner_service = 'game-session-service' FOR UPDATE")) {
-        statement.setObject(1, request.identity().tenantId());
-        try (var usage = statement.executeQuery()) {
-          assertThat(usage.next()).isTrue();
-        }
-      }
+      int blocker = lockGameSessionUsage(lock, request.identity().tenantId());
       String before = session.capacityImage();
       var owner =
           session.account.capacityOwner(
               Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC));
+      // Complete the fixture setup before charging any of the remaining worker window.
+      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(3));
       var result = worker.submit(() -> owner.commit(request, GS));
       try {
-        long waitUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        java.time.OffsetDateTime observedWaitingAt;
-        do {
-          observedWaitingAt =
-              session
-                  .dsl
-                  .fetchSingle(
-                      "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
-                          + "? = ANY(pg_blocking_pids(pid)) "
-                          + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%') "
-                          + "THEN clock_timestamp() END",
-                      blocker)
-                  .get(0, java.time.OffsetDateTime.class);
-          if (observedWaitingAt == null) Thread.sleep(10);
-        } while (observedWaitingAt == null && System.nanoTime() < waitUntil);
-        assertThat(observedWaitingAt)
-            .as("the actual owner must wait on the held usage row")
-            .isNotNull();
-        assertThat(observedWaitingAt.toInstant())
-            .as("PostgreSQL observed the blocked owner before the evidence expired")
-            .isBefore(request.evidence().expiresAt());
+        requireUsageWaitBeforeExpiry(session.dsl, blocker, request.evidence().expiresAt());
         waitForDatabaseTime(session.dsl, request.evidence().expiresAt());
       } finally {
         lock.rollback();
@@ -1233,6 +1216,50 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations")))
           .isZero();
     }
+  }
+
+  private static int lockGameSessionUsage(java.sql.Connection lock, UUID tenantId)
+      throws java.sql.SQLException {
+    lock.setAutoCommit(false);
+    int blocker;
+    try (var statement = lock.createStatement();
+        var pid = statement.executeQuery("SELECT pg_backend_pid()")) {
+      assertThat(pid.next()).isTrue();
+      blocker = pid.getInt(1);
+    }
+    try (var statement =
+        lock.prepareStatement(
+            "SELECT * FROM account_tenant_capacity_usage WHERE tenant_uuid = ? "
+                + "AND owner_service = 'game-session-service' FOR UPDATE")) {
+      statement.setObject(1, tenantId);
+      try (var usage = statement.executeQuery()) {
+        assertThat(usage.next()).isTrue();
+      }
+    }
+    return blocker;
+  }
+
+  private static void requireUsageWaitBeforeExpiry(DSLContext dsl, int blocker, Instant expiry)
+      throws InterruptedException {
+    long waitUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    java.time.OffsetDateTime observedWaitingAt;
+    do {
+      observedWaitingAt =
+          dsl.fetchSingle(
+                  "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
+                      + "? = ANY(pg_blocking_pids(pid)) "
+                      + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%') "
+                      + "THEN clock_timestamp() END",
+                  blocker)
+              .get(0, java.time.OffsetDateTime.class);
+      if (observedWaitingAt == null) Thread.sleep(10);
+    } while (observedWaitingAt == null && System.nanoTime() < waitUntil);
+    assertThat(observedWaitingAt)
+        .as("the actual owner must wait on the held usage row")
+        .isNotNull();
+    assertThat(observedWaitingAt.toInstant())
+        .as("PostgreSQL observed the blocked owner before the evidence expired")
+        .isBefore(expiry);
   }
 
   private static void waitForDatabaseTime(DSLContext dsl, Instant target) {

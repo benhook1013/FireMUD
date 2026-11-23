@@ -236,8 +236,8 @@ public final class StripeHostingFirstInvoicePaymentClient {
         dispatch.invoice().paymentIntentId().equals(intent.getId())
             && Long.valueOf(dispatch.invoice().amount()).equals(intent.getAmount())
             && dispatch.invoice().currency().equals(intent.getCurrency()));
-    if ("requires_confirmation".equals(intent.getStatus())
-        || "requires_payment_method".equals(intent.getStatus())) {
+    if (preConfirmation(intent.getStatus())) {
+      require(preConfirmation(read.observation().status()));
       if (!dispatch.takeInitialCommandPermission())
         return new Handoff("AUTHORIZED_NOT_CONFIRMED", null);
       require(clock.instant().plus(exchangeBudget).isBefore(dispatch.validUntil()));
@@ -386,6 +386,10 @@ public final class StripeHostingFirstInvoicePaymentClient {
         intent.getPaymentMethod() == null);
   }
 
+  private static boolean preConfirmation(String status) {
+    return "requires_confirmation".equals(status) || "requires_payment_method".equals(status);
+  }
+
   private record InvoiceRead(Observation observation, boolean unassigned) {}
 
   private static void validateIntent(
@@ -434,8 +438,17 @@ public final class StripeHostingFirstInvoicePaymentClient {
     if (!valid) throw refused();
   }
 
-  private static IllegalStateException refused() {
-    return new IllegalStateException("Exact existing first-invoice provider binding refused");
+  private static ProviderEvidenceRefused refused() {
+    return new ProviderEvidenceRefused();
+  }
+
+  /** The provider returned a supported response shape that cannot establish the retained tuple. */
+  public static final class ProviderEvidenceRefused extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    public ProviderEvidenceRefused() {
+      super("Exact existing first-invoice provider binding refused");
+    }
   }
 
   /** The winning committed claim was consumed locally, before entry to the Stripe confirm call. */

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -81,6 +82,41 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     verify(provider).provision(dispatch);
     verify(firstInvoiceProvider).capture(dispatch, "sub_original");
     verify(firstInvoices, times(2)).findAwaitingPayment(claim);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void onlyExpectedProviderCaptureRefusalDefersTheOriginalClaim(boolean evidenceRefused)
+      throws Exception {
+    var dispatch = mock(ProviderDispatch.class);
+    when(dispatch.claim()).thenReturn(claim);
+    when(repository.prepareProviderDispatch(any(), any())).thenReturn(dispatch);
+    when(repository.readProviderDispatch(dispatch)).thenReturn(dispatch);
+    var located = mock(StripeHostingSubscriptionProvisioner.Located.class);
+    when(located.providerSubscriptionId()).thenReturn("sub_original");
+    when(provider.provision(dispatch)).thenReturn(located);
+    var refusal =
+        evidenceRefused
+            ? new StripeHostingFirstInvoicePaymentClient.ProviderEvidenceRefused()
+            : new IllegalStateException("unexpected programming error");
+    when(firstInvoiceProvider.capture(dispatch, "sub_original")).thenThrow(refusal);
+    if (evidenceRefused) {
+      when(repository.deferUnresolved(claim)).thenReturn(Disposition.WAITING);
+      assertThat(service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+          .isEqualTo(
+              new AccountHostingSubscriptionProvisioningService.Pending(
+                  Disposition.WAITING,
+                  new StripeHostingSubscriptionProvisioner.Pending(
+                      "FIRST_INVOICE_UNRESOLVED", null)));
+      verify(repository).deferUnresolved(claim);
+    } else {
+      assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+          .isSameAs(refusal);
+      verify(repository, never()).deferUnresolved(any());
+    }
+    verify(provider).provision(dispatch);
+    verify(firstInvoiceProvider).capture(dispatch, "sub_original");
+    verify(firstInvoices, never()).retainAwaitingPayment(any(), any(), any());
   }
 
   @Test

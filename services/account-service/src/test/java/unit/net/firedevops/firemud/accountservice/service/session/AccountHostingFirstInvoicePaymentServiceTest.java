@@ -71,7 +71,9 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     when(candidate.validUntil()).thenReturn(Instant.EPOCH);
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     when(verifier.verify("signed", "header")).thenReturn(event);
-    when(payments.candidateForSignedEvent(event)).thenReturn(candidate);
+    when(payments.classifySignedEvent(event))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedClassification(candidate, false));
     when(payments.completed(invoice.subscriptionId(), lifecycleRequestId))
         .thenReturn(false, true, true, true);
     var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
@@ -116,7 +118,9 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
     when(verifier.verify("signed", "header")).thenReturn(event);
-    when(payments.candidateForSignedEvent(event)).thenReturn(candidate);
+    when(payments.classifySignedEvent(event))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedClassification(candidate, false));
     when(provider.observe(invoice)).thenReturn(observed);
     when(payments.retainSignedOutcome(event, observed))
         .thenReturn(
@@ -158,19 +162,25 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     when(verifier.verify("signed", "header")).thenReturn(event);
 
+    when(payments.classifySignedEvent(event))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedClassification(null, false));
+
     assertThat(service.completeSigned("signed", "header"))
         .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("IGNORED", null));
 
     verify(inbox).retainOrReplay(event);
-    verify(payments).candidateForSignedEvent(event);
+    verify(payments).classifySignedEvent(event);
     verifyNoInteractions(provider, lifecycle, actors, reauthentication);
   }
 
   @Test
-  void latePaymentWithoutConsentRemainsPendingWithoutProviderOrFulfillment() throws Exception {
+  void exactPreConsentPaymentRemainsPendingWithoutProviderOrFulfillment() throws Exception {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     when(verifier.verify("signed", "header")).thenReturn(event);
-    when(payments.requiresUnconsentedLatePaymentReconciliation(event)).thenReturn(true);
+    when(payments.classifySignedEvent(event))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedClassification(null, true));
 
     assertThat(service.completeSigned("signed", "header"))
         .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("RECONCILING", null));
@@ -187,7 +197,9 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     UUID lifecycleRequestId = candidate.lifecycleRequestId();
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     when(verifier.verify("signed", "header")).thenReturn(event);
-    when(payments.candidateForSignedEvent(event)).thenReturn(candidate);
+    when(payments.classifySignedEvent(event))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedClassification(candidate, false));
     when(payments.completed(invoice.subscriptionId(), lifecycleRequestId)).thenReturn(true);
     assertThat(service.completeSigned("signed", "header").state()).isEqualTo("COMMITTED");
     verifyNoInteractions(provider, lifecycle, actors, reauthentication);

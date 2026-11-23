@@ -47,16 +47,29 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
                 + " conflict.event_payload_digest) AS event_payload_digest, inbox.raw_payload,"
                 + " inbox.payload_sha256, inbox.event_type,"
                 + " inbox.provider_created_at_epoch_seconds, inbox.provider_api_version,"
-                + " inbox.livemode FROM stripe_event_inbox inbox LEFT JOIN"
+                + " inbox.livemode, replay.provider_event_id IS NOT NULL AS linked_replay,"
+                + " confirmation.consented_at FROM stripe_event_inbox inbox LEFT JOIN"
                 + " subscription_first_invoice_late_paid_event_replays replay USING"
                 + " (provider_event_id) JOIN "
                 + TABLE
                 + " conflict ON conflict.provider_event_id = inbox.provider_event_id "
                 + "OR conflict.subscription_id = replay.subscription_id "
+                + "JOIN subscription_first_invoice_confirmations confirmation "
+                + "ON confirmation.request_id = conflict.request_id "
+                + "AND confirmation.subscription_id = conflict.subscription_id "
                 + "WHERE inbox.provider_event_id = ?",
             verified.providerEventId());
     if (row == null) return null;
     requireExactEvent(verified, row);
+    if (Boolean.TRUE.equals(row.get("linked_replay", Boolean.class))
+        && verified.eventCreatedAtEpochSeconds()
+            < Objects.requireNonNull(row.get("consented_at", OffsetDateTime.class))
+                .toInstant()
+                .getEpochSecond()) {
+      // A historical link is not consent. Let the signed classifier retain this as read-only
+      // reconciliation without provider I/O or fulfillment.
+      return null;
+    }
     return row.get("request_id", UUID.class);
   }
 

@@ -538,6 +538,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
       return transport.confirmations;
     }
 
+    int providerReads() {
+      return transport.reads();
+    }
+
     public void loseNextConfirmationResponse() {
       transport.loseNextConfirmationResponse = true;
     }

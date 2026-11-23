@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -333,6 +334,42 @@ class StripeHostingFirstInvoicePaymentClientTest {
             client(transport)
                 .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
         .isInstanceOf(IllegalStateException.class);
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"requires_action", "processing", "succeeded"})
+  void advancedExpandedIntentCannotClaimAnInitialCommandFromAnOlderDirectRead(String status) {
+    var transport = new Transport(invoice(status), intent("requires_confirmation"));
+    var dispatch = dispatch();
+
+    assertThatThrownBy(() ->
+            client(transport)
+                .confirm(
+                    dispatch,
+                    () -> {
+                      throw new AssertionError(
+                          "Contradictory reads must not reach the command claim");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    verify(dispatch, never()).takeInitialCommandPermission();
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
+  void directProcessingReadCanRecoverWithoutClaimAfterAnEligibleExpandedRead() throws Exception {
+    var transport = new Transport(invoice("requires_confirmation"), intent("processing"));
+    var dispatch = dispatch();
+    var handoff =
+        client(transport)
+            .confirm(
+                dispatch,
+                () -> {
+                  throw new AssertionError(
+                      "Read-only provider recovery must not reach the command claim");
+                });
+    assertThat(handoff.status()).isEqualTo("processing");
+    verify(dispatch, never()).takeInitialCommandPermission();
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
   }
 

@@ -828,6 +828,58 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
+  @Test
+  void scopeExpiryDuringSourceQualificationRefusesBeforeFreshCapacityDecision() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    var scope = qualifySources(f);
+    var expiresAt = CapacityAdmissionTestFixture.NOW.plusSeconds(2);
+    var applicationTime = new AtomicReference<>(expiresAt.minusSeconds(1));
+    when(f.clock.instant()).thenAnswer(ignored -> applicationTime.get());
+    when(scope.connectScopeExpiresAt()).thenReturn(expiresAt.toString());
+    var scopeTokenHash = verifiedScopeTokenHash(f.request);
+    when(f.scopes.findCanonicalEvidenceByTokenHash(scopeTokenHash))
+        .thenAnswer(ignored -> {
+          applicationTime.set(expiresAt);
+          return Optional.of(scope);
+        });
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
+    verify(f.scopes).findCanonicalEvidenceByTokenHash(scopeTokenHash);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void scopeExpiryWhileRetainingQuotaDenialRollsBackEvenIfPostgresClockStillAllowsIt()
+      throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    var scope = qualifySources(f);
+    var expiresAt = CapacityAdmissionTestFixture.NOW.plusSeconds(2);
+    var applicationTime = new AtomicReference<>(expiresAt.minusSeconds(1));
+    when(f.clock.instant()).thenAnswer(ignored -> applicationTime.get());
+    when(scope.connectScopeExpiresAt()).thenReturn(expiresAt.toString());
+    var usage = mock(Record.class);
+    when(usage.get("held_units", Long.class)).thenReturn(f.request.evidence().quota());
+    when(usage.get("used_units", Long.class)).thenReturn(0L);
+    org.mockito.Mockito.doReturn(usage)
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    retainOriginThenAdvanceClock(f, f.request, "NO_ACCEPT", () -> applicationTime.set(expiresAt));
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
+    assertThat(f.originDecision).isNull();
+    assertThat(f.pendingOriginDecision).isNull();
+  }
+
   @SuppressWarnings("unchecked")
   private static Request qualifiedRequest(boolean creating) {
     var original = CapacityAdmissionTestFixture.playerRequest();

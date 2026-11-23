@@ -83,7 +83,12 @@ public final class AccountHostingSubscriptionProvisioningService {
     }
     // DEFAULT_INCOMPLETE only locates an existing invoice. Provisioning never confirms or grants.
     try {
-      var observed = firstInvoiceProvider.capture(dispatch, actual.providerSubscriptionId());
+      StripeHostingFirstInvoicePaymentClient.Observation observed;
+      try {
+        observed = firstInvoiceProvider.capture(dispatch, actual.providerSubscriptionId());
+      } catch (StripeHostingFirstInvoicePaymentClient.ProviderEvidenceRefused unresolved) {
+        return deferFirstInvoice(dispatch, null);
+      }
       var retained =
           Objects.requireNonNull(
               transaction.execute(status ->
@@ -102,11 +107,17 @@ public final class AccountHostingSubscriptionProvisioningService {
       if (winner != null) return new AwaitingPayment(winner);
       throw refused;
     } catch (com.stripe.exception.StripeException unresolved) {
-      return new Pending(
-          Objects.requireNonNull(
-              transaction.execute(status -> repository.deferUnresolved(dispatch.claim()))),
-          new StripeHostingSubscriptionProvisioner.Pending("FIRST_INVOICE_UNRESOLVED", unresolved));
+      return deferFirstInvoice(dispatch, unresolved);
     }
+  }
+
+  private Pending deferFirstInvoice(
+      ProviderDispatch dispatch, com.stripe.exception.StripeException providerFailure) {
+    return new Pending(
+        Objects.requireNonNull(
+            transaction.execute(status -> repository.deferUnresolved(dispatch.claim()))),
+        new StripeHostingSubscriptionProvisioner.Pending(
+            "FIRST_INVOICE_UNRESOLVED", providerFailure));
   }
 
   private static void requireUuid(UUID value) {
