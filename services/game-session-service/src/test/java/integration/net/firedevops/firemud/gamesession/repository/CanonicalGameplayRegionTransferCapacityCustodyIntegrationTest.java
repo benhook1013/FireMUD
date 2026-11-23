@@ -842,7 +842,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                   + "}:"
                   + proof.execution.request().admissionAttemptId());
       try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
-        assertThat(connection.sync().del(receiptKey)).isEqualTo(1L);
+        assertThat(connection.sync().pexpire(receiptKey, 0)).isTrue();
         proof.recreateTransferOwners();
         if (installedBeforeLoss) {
           assertThatThrownBy(() ->
@@ -855,7 +855,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         } else {
           assertThatThrownBy(() -> proof.install(id)).isInstanceOf(IllegalStateException.class);
         }
-        assertThat(connection.sync().exists(receiptKey)).isZero();
+        assertThat(connection.sync().type(receiptKey)).isEqualTo("none");
       }
       assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
       assertThat(proof.currentOwner()).isEqualTo(expectedOwner);
