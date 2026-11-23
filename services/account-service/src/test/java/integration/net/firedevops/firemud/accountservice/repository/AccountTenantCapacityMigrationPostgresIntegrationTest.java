@@ -350,8 +350,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           """;
       UUID decision = UUID.randomUUID();
       Object[] original = {
-        tenant.canonicalTenantId(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-        "a".repeat(64), new byte[] {1}, decision
+        tenant.canonicalTenantId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "a".repeat(64),
+        new byte[] {1},
+        decision
       };
       assertThat(dsl.execute(insert, original)).isOne();
       Object[] retry = original.clone();
@@ -359,13 +364,20 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(dsl.execute(insert, retry)).isZero();
       assertThatThrownBy(() ->
               dsl.execute(
-                  insert, tenant.canonicalTenantId(), UUID.randomUUID(), UUID.randomUUID(),
-                  UUID.randomUUID(), "b".repeat(64), new byte[] {2}, UUID.randomUUID()))
+                  insert,
+                  tenant.canonicalTenantId(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  "b".repeat(64),
+                  new byte[] {2},
+                  UUID.randomUUID()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
-      assertThat(dsl.fetch("SELECT decision_id FROM account_capacity_origin_decisions")
-              .getValues("decision_id", UUID.class))
+      assertThat(
+              dsl.fetch("SELECT decision_id FROM account_capacity_origin_decisions")
+                  .getValues("decision_id", UUID.class))
           .containsExactly(decision);
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
