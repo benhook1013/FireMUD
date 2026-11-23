@@ -10,6 +10,8 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.event.command.CommandListener;
+import io.lettuce.core.event.command.CommandSucceededEvent;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.io.IOException;
@@ -183,7 +185,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
   }
 
   @Test
-  void handoffDeadlineFencesLateAcquireAndRenewOnRedisTime() {
+  void handoffDeadlineFencesLateAcquireAndRenewOnRedisTime() throws Exception {
     try (RedisFixture redis = RedisFixture.open()) {
       var owner =
           new CanonicalGameplayRegionLeaseRedisOwner(
@@ -211,8 +213,25 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       timely.renew(grant, Duration.ofSeconds(30));
       byte[] token = redis.admin().get(leaseKey);
       long ttl = redis.admin().pttl(leaseKey);
-      assertThatThrownBy(() -> late.renew(grant, Duration.ofMinutes(2)))
-          .isInstanceOf(IllegalStateException.class);
+      var lateRenewal = owner.forHandoffDeadline(behindRedis, behindRedis.millis() + 4_000);
+      var renewed = new CompletableFuture<Object>();
+      CommandListener renewalObservation =
+          new CommandListener() {
+            @Override
+            public void commandSucceeded(CommandSucceededEvent event) {
+              if (event.getCommand().getType() == CommandType.EVALSHA) {
+                renewed.complete(event.getCommand().getOutput().get());
+              }
+            }
+          };
+      redis.ownerClient().addListener(renewalObservation);
+      try {
+        assertThatThrownBy(() -> lateRenewal.renew(grant, Duration.ofMinutes(2)))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(renewed.get(2, TimeUnit.SECONDS)).isEqualTo(0L);
+      } finally {
+        redis.ownerClient().removeListener(renewalObservation);
+      }
       assertThat(redis.admin().get(leaseKey)).containsExactly(token);
       assertThat(redis.admin().pttl(leaseKey)).isPositive().isLessThanOrEqualTo(ttl);
     }

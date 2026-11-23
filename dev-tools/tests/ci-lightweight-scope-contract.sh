@@ -599,7 +599,7 @@ for job_id, (output, module) in groups.items():
     job = ci["jobs"][job_id]
     name_module = module or "${{ matrix.module }}"
     require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
-    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 30 || 20 }}"
+    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 35 || 20 }}"
     require_equal(job, ("timeout-minutes",), timeout, job_id)
     require_equal(job, ("needs",), ["changes"], job_id)
     require_equal(job, ("strategy", "fail-fast"), "false", job_id)
@@ -627,9 +627,19 @@ module_checks_step = find_step(
 )
 require_equal(
     module_checks_step,
+    ("env",),
+    {"MODULE": "${{ matrix.module }}", "PARTITION": "${{ matrix.partition }}"},
+    "ci workflow",
+)
+require_equal(
+    module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}' '${{ matrix.partition }}'\n"
+    "check_command=(bash ./.github/scripts/run-gradle-module-checks.sh \"$MODULE\" \"$PARTITION\")\n"
+    "if [[ \"$MODULE\" == game-design-service ]]; then\n"
+    "  check_command=(timeout --kill-after=10s 30m \"${check_command[@]}\")\n"
+    "fi\n"
+    "\"${check_command[@]}\"\n"
     "echo \"::endgroup::\"\n",
     "ci workflow",
 )
@@ -1412,13 +1422,46 @@ require_equal(
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
 root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
-spotbugs_xml_report = re.search(
-    r'tasks\.withType<SpotBugsTask>\(\)\.configureEach\s*\{\s*'
-    r'enabled = fullCheck\s*reports\.create\("xml"\)\s*\{\s*'
-    r'required\.set\(true\)\s*\}',
-    re.sub(r"//[^\n]*", "", subproject_configuration),
-)
-if spotbugs_xml_report is None:
+def strip_kotlin_comments(source):
+    # Kotlin block comments can nest. Keep quoted strings (including URL literals)
+    # intact and preserve a separating space where an active comment used to be.
+    token = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|//[^\n]*|/\*')
+    cursor = 0
+    output = []
+    while (match := token.search(source, cursor)) is not None:
+        output.append(source[cursor:match.start()])
+        cursor = match.end()
+        if match.group() == "/*":
+            depth = 1
+            while depth:
+                marker = re.search(r"/\*|\*/", source[cursor:])
+                if marker is None:
+                    raise AssertionError("Unterminated Kotlin block comment")
+                cursor += marker.end()
+                depth += 1 if marker.group() == "/*" else -1
+            output.append(" ")
+        elif match.group().startswith("//"):
+            output.append(" ")
+        else:
+            output.append(match.group())
+    output.append(source[cursor:])
+    return "".join(output)
+
+
+def has_spotbugs_xml_report(source):
+    return re.search(
+        r'tasks\.withType<SpotBugsTask>\(\)\.configureEach\s*\{\s*'
+        r'enabled = fullCheck\s*reports\.create\("xml"\)\s*\{\s*'
+        r'required\.set\(true\)\s*\}',
+        strip_kotlin_comments(source),
+    ) is not None
+
+
+spotbugs_fixture = 'tasks.withType<SpotBugsTask>().configureEach { enabled = fullCheck %s }'
+xml_fixture = 'reports.create("xml") { required.set(true) }'
+assert has_spotbugs_xml_report(spotbugs_fixture % xml_fixture)
+assert not has_spotbugs_xml_report(spotbugs_fixture % ("/* nested /* fixture */ " + xml_fixture + " */"))
+if not has_spotbugs_xml_report(subproject_configuration):
     raise SystemExit("Module SpotBugs tasks must emit XML reports for failed CI diagnostics")
 game_session_build = (
     Path(sys.argv[6]).resolve().parent / "services/game-session-service/build.gradle.kts"

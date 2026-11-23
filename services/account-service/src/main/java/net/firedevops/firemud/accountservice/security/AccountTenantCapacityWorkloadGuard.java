@@ -18,14 +18,18 @@ import net.firedevops.firemud.common.security.SessionContext;
 /** Sole producer of the receiver's private exact-method TLS caller assertion. */
 public final class AccountTenantCapacityWorkloadGuard implements ServerInterceptor {
   private final Context.Key<String> caller = Context.key("tenant-capacity-authenticated-peer");
+  private final Context.Key<String> quotaDenialReader =
+      Context.key("tenant-capacity-denial-reader");
+  private final String gameSession;
   private final Set<String> allowed;
 
   public AccountTenantCapacityWorkloadGuard(String namespace) {
     if (!GrpcPeerIdentity.isValidNamespace(namespace))
       throw new IllegalArgumentException("Namespace required");
+    gameSession = TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION);
     allowed =
         Set.of(
-            TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION),
+            gameSession,
             TenantCapacityAdmission.expectedWorkload(namespace, Owner.WORLD_MANAGEMENT));
   }
 
@@ -36,20 +40,36 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
     return value;
   }
 
+  public String requireQuotaDenialReader() {
+    String value = quotaDenialReader.get();
+    if (!gameSession.equals(value) || ambient()) throw Status.UNAUTHENTICATED.asRuntimeException();
+    return value;
+  }
+
   @Override
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     var peer =
         GrpcPeerIdentity.fromSslSession(call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION));
     if (peer.isEmpty()) return deny(call, Status.UNAUTHENTICATED);
-    if (ambient()
-        || !allowed.contains(peer.orElseThrow().uri())
-        || !AccountServiceGrpc.getCommitTenantCapacityAdmissionMethod()
+    if (ambient()) return deny(call, Status.PERMISSION_DENIED);
+    String method = call.getMethodDescriptor().getFullMethodName();
+    String workload = peer.orElseThrow().uri();
+    if (AccountServiceGrpc.getCommitTenantCapacityAdmissionMethod()
             .getFullMethodName()
-            .equals(call.getMethodDescriptor().getFullMethodName()))
-      return deny(call, Status.PERMISSION_DENIED);
-    return Contexts.interceptCall(
-        Context.current().withValue(caller, peer.orElseThrow().uri()), call, headers, next);
+            .equals(method)
+        && allowed.contains(workload)) {
+      return Contexts.interceptCall(
+          Context.current().withValue(caller, workload), call, headers, next);
+    }
+    if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
+            .getFullMethodName()
+            .equals(method)
+        && gameSession.equals(workload)) {
+      return Contexts.interceptCall(
+          Context.current().withValue(quotaDenialReader, workload), call, headers, next);
+    }
+    return deny(call, Status.PERMISSION_DENIED);
   }
 
   private static boolean ambient() {

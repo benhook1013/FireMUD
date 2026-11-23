@@ -102,6 +102,9 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
           });
       byte[] templateBytes = template.finalCasTemplateBytes();
       String templateJson = new String(templateBytes, StandardCharsets.UTF_8);
+      String executionDigest = execution(fixture).digest();
+      assertThat(JSON.readTree(templateBytes).path("capacityExecutionDigest").asText())
+          .isEqualTo(executionDigest);
       assertThat(templateJson)
           .contains("__ORIGINAL_NEW_ADMISSION_AT_MS__")
           .contains("__ORIGINAL_NEW_CONTINUITY_EXPIRES_AT_MS__")
@@ -115,6 +118,18 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
 
       long admissionAt = CLOCK.millis() + 100L;
       byte[] finalBytes = finalizeTemplate(templateBytes, admissionAt, SESSION_DURATION_MILLIS);
+      String wrongDigest =
+          "sha256:" + (executionDigest.charAt(7) == '0' ? "1" : "0") + executionDigest.substring(8);
+      byte[] differentExecution =
+          new String(finalBytes, StandardCharsets.UTF_8)
+              .replace(executionDigest, wrongDigest)
+              .getBytes(StandardCharsets.UTF_8);
+      try {
+        assertThatThrownBy(() -> template.requireFinalizedReadback(differentExecution))
+            .isInstanceOf(IllegalArgumentException.class);
+      } finally {
+        Arrays.fill(differentExecution, (byte) 0);
+      }
       try (var finalized = template.requireFinalizedReadback(finalBytes)) {
         assertThat(finalized.originalCandidate().bindingDecisionId())
             .isEqualTo(BINDING_DECISION_ID);
@@ -350,8 +365,8 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
         .hasMessage("Original NEW bound credential is invalid");
   }
 
-  private static CanonicalGameplayOriginalNewAuthenticatedSession.Template template(
-      Fixture fixture) {
+  private static net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+      execution(Fixture fixture) {
     var request = fixture.capacityRequest;
     var reservation =
         new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
@@ -365,16 +380,20 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
             net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.RESERVED,
             request.evidence().snapshotIdentity(),
             request.evidence().evaluationIdentity());
-    var execution =
-        new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
-            request,
-            reservation,
-            fixture.candidate.bindingDecisionId(),
-            "sha256:"
-                + net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
-                    .sha256(fixture.candidate.canonicalBytes()),
-            "controlled-owner",
-            1);
+    return new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+        request,
+        reservation,
+        fixture.candidate.bindingDecisionId(),
+        "sha256:"
+            + net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+                fixture.candidate.canonicalBytes()),
+        "controlled-owner",
+        1);
+  }
+
+  private static CanonicalGameplayOriginalNewAuthenticatedSession.Template template(
+      Fixture fixture) {
+    var execution = execution(fixture);
     try (var raw =
         CanonicalGameplayOriginalNewAuthenticatedSession.template(
             fixture.candidate, fixture.credential, fixture.verifier, SESSION_DURATION_MILLIS)) {

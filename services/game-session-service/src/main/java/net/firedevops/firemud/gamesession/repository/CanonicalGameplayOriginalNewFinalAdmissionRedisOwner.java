@@ -475,6 +475,20 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     return result.code();
   }
 
+  long observeAppliedTransferReceipt(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
+      long deadline,
+      StatefulRedisConnection<byte[], byte[]> retainedConnection) {
+    ReceiptResult result =
+        receiptAction(
+            "OBSERVE", execution, candidate, assignment, dispatch, deadline, retainedConnection);
+    if (!result.applied()) throw unavailable();
+    return result.code();
+  }
+
   private ReceiptResult receiptAction(
       String action,
       OriginalNewCapacityExecution execution,
@@ -482,12 +496,31 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
       CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
       long deadline) {
+    return receiptAction(action, execution, candidate, assignment, dispatch, deadline, null);
+  }
+
+  private ReceiptResult receiptAction(
+      String action,
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
+      long deadline,
+      StatefulRedisConnection<byte[], byte[]> retainedConnection) {
     requireNoAmbientTransaction();
+    if (retainedConnection != null && !"OBSERVE".equals(action)) throw unavailable();
     if (scopedConnection == null)
       return withinConnectionBudget(
           deadline,
           owner ->
-              owner.receiptAction(action, execution, candidate, assignment, dispatch, deadline));
+              owner.receiptAction(
+                  action,
+                  execution,
+                  candidate,
+                  assignment,
+                  dispatch,
+                  deadline,
+                  retainedConnection));
     requireAssignment(assignment, candidate);
     requireExecutionBinding(candidate, execution);
     RedisScriptDescriptor descriptor = catalog.require("game-session.region-transfer-receipt.v1");
@@ -518,7 +551,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
       commandWaitMillis();
-      connection = scopedConnection.get();
+      connection = retainedConnection != null ? retainedConnection : scopedConnection.get();
       var commands = requireCommands(connection);
       requirePrincipal(awaitCommand(commands::aclWhoami));
       String sha = awaitCommand(() -> commands.scriptLoad(script));
@@ -531,12 +564,22 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       UUID nonce;
       if ("PREPARE".equals(action)) {
         var submission = dispatch.issuePreparation();
-        nonce = submission.takeSubmission(dispatch.receiptItem(), dispatch.receiptId());
+        if (submission == null) {
+          // SQL issued all available nonces. Inspect only an existing prepared winner.
+          nonce = dispatch.receiptId();
+          actualAction = "READ_PREPARED";
+        } else {
+          nonce = submission.takeSubmission(dispatch.receiptItem(), dispatch.receiptId());
+        }
       } else {
         nonce = dispatch.sealedNonce();
-        actualAction = dispatch.claimApply() ? "APPLY" : "OBSERVE";
+        if ("APPLY_ONCE".equals(action)) actualAction = dispatch.claimApply() ? "APPLY" : "OBSERVE";
       }
       final String submittedAction = actualAction;
+      long mutationDeadline = Math.min(deadline, operationDeadlineMillis);
+      if ("PREPARE".equals(submittedAction) || "APPLY".equals(submittedAction))
+        mutationDeadline = Math.min(mutationDeadline, dispatch.observationExpiry());
+      final long submittedDeadline = mutationDeadline;
       Object result =
           awaitCommand(() ->
               commands.evalsha(
@@ -552,7 +595,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
                   ascii(dispatch.receiptId().toString()),
                   ascii(dispatch.incarnationDigest()),
                   ascii(nonce.toString()),
-                  ascii(Long.toString(Math.min(deadline, operationDeadlineMillis))),
+                  ascii(Long.toString(submittedDeadline)),
                   ascii(assignment.tenantGameplayTag()),
                   ascii(assignment.tenantId().toString())));
       if (!(result instanceof List<?> values)
@@ -574,7 +617,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       return new ReceiptResult(code, winner, "APPLIED".equals(state));
     } finally {
       wipe(script);
-      if (connection != null)
+      if (connection != null && retainedConnection == null)
         scopedClose.accept(
             CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }

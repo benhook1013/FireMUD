@@ -29,6 +29,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRep
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Owner;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
@@ -65,6 +66,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountTenantCapacityRepository capacity;
   private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
+  private final TransactionTemplate denialReadTransaction;
   private final Clock clock;
   private final String namespace;
 
@@ -92,6 +94,43 @@ public final class AccountTenantCapacityOwner {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
+    denialReadTransaction = new TransactionTemplate(transactions);
+    denialReadTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    denialReadTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    denialReadTransaction.setReadOnly(true);
+    denialReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
+  }
+
+  /** Reads only an exact historical quota refusal; absence does not resolve an unknown commit. */
+  public UUID readRetainedQuotaDenial(Request request, String authenticatedCaller) {
+    requireCaller(request, authenticatedCaller);
+    if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
+        .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
+    request.requireStructurallyValid();
+    requireSupportedShape(request);
+    if (request.capacityRearmFence() != 1 || !request.evidence().permitsCreation())
+      throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || Context.current().isCancelled()) throw unavailable();
+    try {
+      UUID denialId =
+          denialReadTransaction.execute(status -> {
+            if (Context.current().isCancelled()) throw unavailable();
+            dsl.connection(connection -> {
+              if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
+            });
+            return originDecisions.readRetainedQuotaDenial(request);
+          });
+      if (denialId == null) throw unavailable();
+      return TenantCapacityAdmission.uuid(denialId);
+    } catch (CapacityException failure) {
+      // A different original or decision is not settlement evidence on this read.
+      if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
+      throw failure;
+    } catch (IllegalArgumentException invalidEvidence) {
+      throw unavailable();
+    }
   }
 
   public Result commit(Request request, String authenticatedCaller) {

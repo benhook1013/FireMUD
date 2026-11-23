@@ -338,12 +338,14 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
         .contains(durable);
 
+    byte[] replacementToken = ascii(UUID.randomUUID().toString());
     assertThat(
-            admin.set(
-                leaseKey,
-                ascii(UUID.randomUUID().toString()),
-                io.lettuce.core.SetArgs.Builder.nx().px(30_000)))
+            admin.set(leaseKey, replacementToken, io.lettuce.core.SetArgs.Builder.nx().px(30_000)))
         .isEqualTo("OK");
+    assertThatThrownBy(() -> successor.resumeCompletedTransfer(failure, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(admin.get(leaseKey)).isEqualTo(replacementToken);
+    assertThat(sqlImage()).isEqualTo(completedSql);
     assertThatThrownBy(() ->
             restarted.installForTransition(
                 null, original.transitionId, original.worldRequest, transfer, deadline()))
@@ -472,7 +474,35 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
   }
 
   @Test
-  void committedOriginalStartsHandoffWithoutAnExistingTransfer() throws Exception {
+  void retainedAccountAbortStartsNormalHandoffBeforeFirstFreeze() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
+    admin.pexpire(ascii(original.grant.key()), 0);
+
+    var successor = actualTransferHandoff();
+
+    assertThat(successor.evidence).isNull();
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state FROM game_session_region_owner_transfer")
+                .get(0, String.class))
+        .isEqualTo("COMPLETED");
+    assertThatThrownBy(() -> inventory.readProvisionalCasEvidence(original.transitionId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not a retryable provisional operation");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedOriginalStartsHandoffWithoutAnExistingTransfer(boolean lostConfirmation)
+      throws Exception {
     repairAccountMember();
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
@@ -501,7 +531,7 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     byte[] session = admin.get(ascii(installation.sessionKey()));
 
     admin.pexpire(ascii(original.grant.key()), 0);
-    var successor = actualTransferHandoff();
+    var successor = lostConfirmation ? recoverEmptyTransfer(original) : actualTransferHandoff();
 
     assertThat(successor.evidence).isNull();
     assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
@@ -513,6 +543,60 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation())
                 .canonicalReadback())
         .containsExactly(terminal.canonicalReadback());
+  }
+
+  private CanonicalGameplayRegionLeaseOwner.Installation recoverEmptyTransfer(
+      CanonicalGameplayRegionLeaseOwner.Installation original) throws Exception {
+    var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
+    var failedOnce = new java.util.concurrent.atomic.AtomicBoolean();
+    CanonicalGameplayRegionIncarnationSource incarnation =
+        scope -> {
+          var current = statusRepository.find(original.source).orElseThrow();
+          if (current.executorFence().compareTo(original.status.executorFence()) > 0
+              && failedOnce.compareAndSet(false, true)) {
+            throw new IllegalStateException("Controlled post-install verification unavailable");
+          }
+          return original.incarnation;
+        };
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    var owner =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            incarnation,
+            sources.resolver,
+            new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+                "game-session-service",
+                "empty-transfer-successor",
+                "localhost",
+                CLOCK.instant(),
+                "test",
+                "test",
+                "controlled-test-image"),
+            Duration.ofSeconds(30),
+            CLOCK);
+    var interrupted =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
+            () ->
+                owner.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()));
+    assertThat(failedOnce).isTrue();
+    var installed = statusRepository.find(original.source).orElseThrow();
+    var successor = owner.resumeCompletedTransfer(interrupted, deadline());
+    assertThat(successor.status).isEqualTo(installed);
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
+    return successor;
   }
 
   @Test
