@@ -18,6 +18,7 @@ python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 bash "$ROOT_DIR/dev-tools/tests/v2-schema-migration-quiescence-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/hosted-v2-migration-activation-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/dev-account-v1040-4-probe-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
@@ -1289,6 +1290,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Verify Account V1040.4 retained history before Helm": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1316,6 +1318,29 @@ if deploy_names.index("Classify trusted V2 migration activation") > deploy_names
     raise SystemExit("migration status must be proven before any namespace mutation")
 if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
     raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
+origin_probe_name = "Verify Account V1040.4 retained history before Helm"
+origin_probe = deploy_by_name[origin_probe_name]
+if not (deploy_names.index(quiesce["name"]) < deploy_names.index(origin_probe_name) < deploy_position):
+    raise SystemExit("the Account V1040.4 probe must run between writer quiescence and Helm")
+if origin_probe.get("continue-on-error") or origin_probe.get("if") != (
+    "${{ steps.quiesce-writers.outcome == 'success' && "
+    "steps.v2-migration-mode.outputs.account_origin_probe == 'true' }}"
+):
+    raise SystemExit("the exact Account V1040.4 probe must be fail-closed and limited to affected deployments")
+if origin_probe.get("env", {}).get("DEV_NAMESPACE_MANAGER_KUBECONFIG") != (
+    "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig"
+):
+    raise SystemExit("the Account probe must use the existing namespace-manager kubeconfig for readback")
+if "run-dev-account-v1040-4-probe.sh" not in origin_probe.get("run", ""):
+    raise SystemExit("the V1040.4 gate must call the protected probe helper")
+deploy_condition = deploy_by_name["Deploy dev-demo release"].get("if", "")
+for required_preflight in (
+    "steps.v2-migration-mode.outcome == 'success'",
+    "(steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success')",
+    "(steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-v1040-4-preflight.outcome == 'success')",
+):
+    if required_preflight not in deploy_condition:
+        raise SystemExit("Helm must require successful classification and any required migration preflight")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1475,11 +1500,12 @@ quiesce_writers = deploy_by_name[
 if quiesce_writers.get("id") != "quiesce-writers":
     raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
 quiesced_writer_warning = deploy_by_name[
-    "Warn about migration writer recovery after quiesce or deploy failure"
+    "Warn about migration writer recovery after quiesce, preflight or deploy failure"
 ]
 expected_quiesced_writer_warning_condition = (
     "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
     "(steps.quiesce-writers.outcome == 'failure' || "
+    "steps.account-v1040-4-preflight.outcome == 'failure' || "
     "steps.deploy-release.outcome == 'failure') }}"
 )
 if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:
