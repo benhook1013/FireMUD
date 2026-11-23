@@ -151,6 +151,40 @@ classify_failure_body() {
         next
       }
 
+      # A Java annotation processor resolved before compilation can fail at
+      # the Maven Central JAR download. Require its complete matching chain.
+      if (processor_download_step) {
+        if (processor_download_step == 1 && line == "> Could not get resource " quote processor_jar_url quote ".") {
+          processor_download_step = 2
+        } else if (processor_download_step == 2 && line == "> Could not GET " quote processor_jar_url quote ".") {
+          processor_download_step = 3
+        } else if (processor_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
+          processor_download_step = 0
+          processor_downloads++
+          coordinates++
+          repository_requests += 2
+          transient++
+        } else {
+          invalid++
+        }
+        next
+      }
+      if (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration &&
+          line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
+        artifact_coordinate = line
+        sub(/^.*\(/, "", artifact_coordinate)
+        sub(/\)$/, "", artifact_coordinate)
+        split(artifact_coordinate, processor, ":")
+        processor_jar = processor[2] "-" processor[3] ".jar"
+        if (line != "> Could not download " processor_jar " (" artifact_coordinate ")") {
+          invalid++
+        }
+        gsub(/\./, "/", processor[1])
+        processor_jar_url = "https://repo.maven.apache.org/maven2/" processor[1] "/" processor[2] "/" processor[3] "/" processor_jar
+        processor_download_step = 1
+        next
+      }
+
       # buildSrc plugin resolution may wrap a pinned dependency HTTP 429 in
       # configuration, repository-disablement and parent-POM context. These
       # lines are admitted only together with that narrow boundary below.
@@ -369,7 +403,10 @@ classify_failure_body() {
       invalid++
     }
     END {
-      if (invalid || resolver_roots == 0 || coordinates == 0 ||
+      if (invalid || processor_download_step || resolver_roots == 0 || coordinates == 0 ||
+          (processor_downloads &&
+            (coordinates != processor_downloads || transient != processor_downloads ||
+             repository_requests != 2 * processor_downloads || searched || repository_urls)) ||
           ((mavenrepo_disabled || protoc_connect_timeout) &&
             (mavenrepo_disabled != 1 || protoc_connect_timeout != 1 ||
              protoc_coordinates != 1 || protoc_pom_resource != 1 || protoc_pom_get != 1 ||
