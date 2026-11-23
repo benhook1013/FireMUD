@@ -167,7 +167,7 @@ kube create secret generic velero-minio-creds -n velero \
   --dry-run=client -o yaml | kube apply -f - >/dev/null
 
 # Install or upgrade Velero
-helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts >/dev/null
+helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts --force-update >/dev/null
 helm upgrade --install velero vmware-tanzu/velero --version "$VELERO_CHART_VERSION" \
   -n velero --create-namespace -f "$VALUES_FILE" --timeout 5m
 
