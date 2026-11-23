@@ -575,6 +575,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             operation == null
                 ? expectedVersion
                 : operation.get("reserved_row_version", Long.class));
+    if (!unpaidCancellation && "canceled".equals(current.status())) {
+      requireOrdinaryRenewalNotReplacingUnpaidCancellation(current.subscriptionId());
+    }
     Instant now = now();
     if (now.isBefore(original.createdAt())) {
       throw new FenceRejectedException("Lifecycle clock predates its durable creation operation");
@@ -776,6 +779,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       requireObservedBinding(binding, observed);
     }
     Record oldReceipt = receiptForCurrent(links(current.subscriptionId()));
+    if (!unpaidCancellation && "canceled".equals(current.status())) {
+      requireOrdinaryRenewalNotReplacingUnpaidCancellation(current.subscriptionId());
+    }
     Instant origin = retainedPastDueOrigin(oldReceipt);
     // A provider read cannot establish when an uninterrupted payment-failure episode began.
     // Missing retained history must remain unresolved rather than restarting warning/grace.
@@ -1201,6 +1207,32 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             "SELECT lifecycle_inflight_request_id, current_receipt_request_id "
                 + "FROM subscription WHERE subscription_id = ?",
             subscriptionId));
+  }
+
+  // Caller holds the current subscription row lock. In particular, refuse before reserving a
+  // lifecycle version: the original terminal receipt must still match the current row version.
+  private void requireOrdinaryRenewalNotReplacingUnpaidCancellation(UUID subscriptionId) {
+    boolean retainedUnpaidCancellation =
+        Boolean.TRUE.equals(
+            dsl.fetchSingle(
+                    "SELECT EXISTS (SELECT 1 FROM subscription s"
+                        + " JOIN subscription_lifecycle_receipts r ON r.request_id = s.current_receipt_request_id"
+                        + " AND r.subscription_id = s.subscription_id AND r.tenant_id = s.tenant_id"
+                        + " JOIN subscription_lifecycle_operations o ON o.request_id = r.request_id"
+                        + " AND o.subscription_id = s.subscription_id AND o.tenant_id = s.tenant_id"
+                        + " AND o.creation_request_id = s.creation_request_id"
+                        + " WHERE s.subscription_id = ? AND s.status = 'canceled'"
+                        + " AND r.status = 'canceled' AND o.state = 'COMMITTED'"
+                        + " AND o.request_digest = r.request_digest"
+                        + " AND o.request_digest = 'sha256:' || encode(sha256(o.request_payload), 'hex')"
+                        + " AND convert_from(o.request_payload, 'UTF8')::jsonb->>'schemaVersion'"
+                        + " = 'account-hosting-unpaid-first-invoice-cancellation/v1')",
+                    subscriptionId)
+                .get(0, Boolean.class));
+    if (retainedUnpaidCancellation) {
+      throw new FenceRejectedException(
+          "Ordinary lifecycle cannot replace the retained unpaid first-invoice cancellation");
+    }
   }
 
   private Record receiptForCurrent(Record links) {

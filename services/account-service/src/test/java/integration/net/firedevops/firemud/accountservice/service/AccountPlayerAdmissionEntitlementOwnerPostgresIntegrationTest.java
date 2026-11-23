@@ -383,6 +383,31 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void paidDeadlinePreservesOnlyTheEarlierBoundAgainstActualPostgresTime() {
+    Fixture f = fixture(false);
+    f.transaction.executeWithoutResult(status -> {
+      Instant stamp = databaseNow(f.dsl);
+      Instant cutoff = stamp.plusSeconds(20);
+      assertThat(
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  cutoff, stamp, stamp.plusSeconds(5)))
+          .isEqualTo(stamp.plusSeconds(15));
+      assertThat(
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  cutoff, stamp, stamp.minusSeconds(5)))
+          .isEqualTo(cutoff);
+      assertThatThrownBy(() ->
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  cutoff, stamp, cutoff))
+          .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+      assertThatThrownBy(() ->
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  stamp, stamp, stamp.minusSeconds(5)))
+          .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+    });
+  }
+
+  @Test
   void capacityEvaluationUsesDatabaseTimeWhenApplicationClockLeadsDatabaseTime() {
     MutableClock aheadOfDatabase = new MutableClock(Instant.EPOCH, ZoneOffset.UTC);
     Fixture f = fixture(false, aheadOfDatabase);

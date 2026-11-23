@@ -289,6 +289,62 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .containsExactly("begin", "commit", "begin", "commit", "begin", "rollback");
   }
 
+  @Test
+  void paidEvidenceRetainsOnlyRemainingAppLifetimeWhenDatabaseTrails() throws Exception {
+    Fixture f = new Fixture(true);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(f.sources.readCurrentSourceSelection(TENANT))
+        .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
+    when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
+    when(f.observer.observe(fence.binding())).thenReturn(observed);
+    when(f.hosting.readCurrent(fence, observed)).thenReturn(f.receipt(Status.ACTIVE));
+    f.time.set(NOW.plusSeconds(12));
+    f.databaseTime.set(NOW);
+
+    var value = f.owner.evaluate(f.request, "controlled-token");
+
+    var sources = (Map<?, ?>) value.fields().get("sourceReferences");
+    assertThat(sources.get("paidReceiptValidUntil")).isEqualTo(NOW.plusSeconds(48).toString());
+    assertThat(value.evaluatedAt()).isEqualTo(NOW);
+    assertThat(
+            f.retainedCapacity
+                .get(value.fields().get("evaluationIdentity"))
+                .get("canonical_evidence", byte[].class))
+        .containsExactly(value.canonicalBytes());
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 2})
+  void paidCaptureFailsWhenOriginalAppReceiptExpiresDuringDatabaseRead(int expiringRead)
+      throws Exception {
+    Fixture f = new Fixture(true);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(f.sources.readCurrentSourceSelection(TENANT))
+        .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
+    when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
+    when(f.observer.observe(fence.binding())).thenReturn(observed);
+    when(f.hosting.readCurrent(fence, observed))
+        .thenReturn(f.receipt(Status.ACTIVE, NOW.plusSeconds(5)));
+    var dbReads = new java.util.concurrent.atomic.AtomicInteger();
+    var stamp = mock(org.jooq.Record.class);
+    when(stamp.get("observed_at", java.time.OffsetDateTime.class))
+        .thenReturn(AccountTenantCapacityRepository.at(NOW));
+    when(f.dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"))
+        .thenAnswer(invocation -> {
+          if (dbReads.incrementAndGet() == expiringRead) f.time.set(NOW.plusSeconds(5));
+          return stamp;
+        });
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+    assertThat(dbReads).hasValue(expiringRead);
+    if (expiringRead == 1) {
+      assertThat(f.retainedCapacity).isEmpty();
+    }
+  }
+
   @ParameterizedTest
   @EnumSource(Status.class)
   void paidReadRunsProviderOutsideSqlThenCapturesCurrentReceiptAndPlayerInFinalTransaction(
@@ -1288,6 +1344,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     }
 
     private AccountHostingSubscriptionCurrentReceipt receipt(Status status) {
+      return receipt(status, NOW.plusSeconds(60));
+    }
+
+    private AccountHostingSubscriptionCurrentReceipt receipt(Status status, Instant validUntil) {
       var current = mock(AccountSubscriptionCurrentRecord.class);
       when(current.tenantId()).thenReturn(TENANT);
       when(current.subscriptionId()).thenReturn(UUID.randomUUID());
@@ -1314,7 +1374,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
           null,
           null,
           NOW,
-          NOW.plusSeconds(60));
+          validUntil);
     }
 
     private Snapshot snapshot(boolean exists) {

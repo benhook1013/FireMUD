@@ -1880,6 +1880,30 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
     List<String> canceledImage = firstInvoiceImage(c);
+    int providerReads = f.transport().reads;
+    long canceledVersion =
+        c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().rowVersion();
+    assertThatThrownBy(() ->
+            f.service()
+                .reconcile(
+                    UUID.randomUUID(),
+                    f.creation().requestId(),
+                    canceledVersion,
+                    f.providerId(),
+                    null))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage(
+            "Ordinary lifecycle cannot replace the retained unpaid first-invoice cancellation");
+    assertThat(f.transport().reads).isEqualTo(providerReads);
+    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, f.creation().requestId(), expectedRowVersion, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.COMMITTED);
+    assertThat(f.transport().reads).isEqualTo(providerReads);
+    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
     f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
     checkout.status("succeeded");

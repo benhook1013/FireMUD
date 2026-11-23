@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.StatusRuntimeException;
 import java.sql.Connection;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
@@ -134,11 +135,12 @@ public final class AccountPlayerAdmissionEntitlementOwner {
           return new Prepared(player, sources.readCurrentSourceSelection(request.tenantId()));
         });
     requireCurrentTimes(prepared.player(), now());
-    RuntimePlayerAdmissionEntitlementEvidence evidence =
+    Captured captured =
         switch (prepared.selection().kind()) {
           case PAID_HOSTING -> capturePaidSources(request, caller, prepared);
-          case NON_PAID_DEMO -> captureDemoSources(request, caller, prepared);
+          case NON_PAID_DEMO -> new Captured(captureDemoSources(request, caller, prepared), null);
         };
+    RuntimePlayerAdmissionEntitlementEvidence evidence = captured.evidence();
     // Preserve the live caller-scope deadline after the final source transaction commits. This
     // check uses Account's application clock; the evidence timestamp comparison below uses the
     // same PostgreSQL clock that stamped the retained bundle.
@@ -150,12 +152,16 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       // This final post-commit check only rejects an expired or future source observation.
       throw unavailable();
     }
-    requireCurrentTimes(prepared.player(), now());
+    Instant completedAt = now();
+    requireCurrentTimes(prepared.player(), completedAt);
+    if (captured.originalPaidDeadline() != null
+        && !completedAt.isBefore(captured.originalPaidDeadline())) {
+      throw unavailable();
+    }
     return evidence;
   }
 
-  private RuntimePlayerAdmissionEntitlementEvidence capturePaidSources(
-      Request request, VerifiedCaller caller, Prepared prepared) {
+  private Captured capturePaidSources(Request request, VerifiedCaller caller, Prepared prepared) {
     var fence =
         inSourceTransaction(() -> {
           try {
@@ -199,32 +205,34 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       }
       requireCurrentTimes(player, evaluatedAt);
       var quote = receipt.current().planQuote();
-      return capture(
-          request,
-          player,
-          target,
-          facts(
-              "PAID_HOSTING",
-              receipt.subscriptionStatus().storageValue(),
-              receipt.gameplayAvailable(),
-              receipt.allowPublicJoin(),
-              receipt.allowNewGameplayBindings(),
-              receipt.allowNewInstanceStarts(),
-              quote.maxActiveSessions(),
-              quote.maxConcurrentGameInstances(),
-              quote.maxStorageBytes(),
-              receipt.entitlementVersion(),
-              receipt.tenantBillingSequence(),
-              event.tenantAuthorityGeneration()),
-          RuntimePlayerAdmissionEntitlementEvidence.digest(
-              Map.of(
-                  "receiptRequestId", receipt.receiptRequestId().toString(),
-                  "subscriptionId", receipt.current().subscriptionId().toString(),
-                  "subscriptionRowVersion", Long.toString(receipt.current().rowVersion()),
-                  "billingEventId", receipt.billingEventId().toString(),
-                  "billingEventDigest", receipt.billingEventDigest(),
-                  "tenantAuthorityEventDigest", event.eventDigest())),
-          receipt.validUntil());
+      var evidence =
+          capture(
+              request,
+              player,
+              target,
+              facts(
+                  "PAID_HOSTING",
+                  receipt.subscriptionStatus().storageValue(),
+                  receipt.gameplayAvailable(),
+                  receipt.allowPublicJoin(),
+                  receipt.allowNewGameplayBindings(),
+                  receipt.allowNewInstanceStarts(),
+                  quote.maxActiveSessions(),
+                  quote.maxConcurrentGameInstances(),
+                  quote.maxStorageBytes(),
+                  receipt.entitlementVersion(),
+                  receipt.tenantBillingSequence(),
+                  event.tenantAuthorityGeneration()),
+              RuntimePlayerAdmissionEntitlementEvidence.digest(
+                  Map.of(
+                      "receiptRequestId", receipt.receiptRequestId().toString(),
+                      "subscriptionId", receipt.current().subscriptionId().toString(),
+                      "subscriptionRowVersion", Long.toString(receipt.current().rowVersion()),
+                      "billingEventId", receipt.billingEventId().toString(),
+                      "billingEventDigest", receipt.billingEventDigest(),
+                      "tenantAuthorityEventDigest", event.eventDigest())),
+              receipt.validUntil());
+      return new Captured(evidence, receipt.validUntil());
     });
   }
 
@@ -607,9 +615,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     sources.put(
         "callerTokenExpiresAt",
         Instant.ofEpochSecond(caller.identity().expiresAtEpochSecond()).toString());
-    sources.put(
-        "paidReceiptValidUntil",
-        paidReceiptValidUntil == null ? null : paidReceiptValidUntil.toString());
     sources.put("callerTokenSha256", caller.tokenSha256());
     sources.put("callerRegistryRecordSha256", caller.canonicalRegistryRecordSha256());
     sources.put("callerCommitProofSha256", caller.commitProofSha256());
@@ -630,13 +635,15 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
     sources.put("worldCaptureId", world.captureId().toString());
     sources.put("worldRowVersion", Long.toString(world.rowVersion()));
-    // The capacity bundle and its live caller/receipt deadlines must agree with the PostgreSQL
-    // clock that stamps the evidence, so application/database skew cannot future-date the bundle.
     Instant capacityEvaluatedAt = AccountTenantCapacityRepository.databaseNow(dsl);
     requireCurrentTimes(player, capacityEvaluatedAt);
-    if (paidReceiptValidUntil != null && !capacityEvaluatedAt.isBefore(paidReceiptValidUntil)) {
-      throw unavailable();
-    }
+    Instant retainedPaidDeadline =
+        paidReceiptValidUntil == null
+            ? null
+            : conservativePaidReceiptDeadline(paidReceiptValidUntil, capacityEvaluatedAt, now());
+    sources.put(
+        "paidReceiptValidUntil",
+        retainedPaidDeadline == null ? null : retainedPaidDeadline.toString());
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             request.requestId(),
@@ -656,6 +663,20 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       throw retentionFailure;
     }
     return evidence;
+  }
+
+  /**
+   * Bounds a provider receipt in the database clock domain without extending its original cutoff.
+   * The database stamp must be sampled before the application clock.
+   */
+  static Instant conservativePaidReceiptDeadline(
+      Instant originalPaidDeadline, Instant databaseStamp, Instant applicationStamp) {
+    if (!applicationStamp.isBefore(originalPaidDeadline)
+        || !databaseStamp.isBefore(originalPaidDeadline)) {
+      throw unavailable();
+    }
+    if (!databaseStamp.isBefore(applicationStamp)) return originalPaidDeadline;
+    return databaseStamp.plus(Duration.between(applicationStamp, originalPaidDeadline));
   }
 
   private static Map<String, Object> facts(
@@ -695,6 +716,9 @@ public final class AccountPlayerAdmissionEntitlementOwner {
   }
 
   private record Prepared(CurrentPlayer player, SourceSelection selection) {}
+
+  private record Captured(
+      RuntimePlayerAdmissionEntitlementEvidence evidence, Instant originalPaidDeadline) {}
 
   private record CurrentPlayer(
       Snapshot snapshot,
