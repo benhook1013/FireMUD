@@ -141,10 +141,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(disposed.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(disposalCount.get()).isEqualTo(1);
     }
-    assertThat(
-            CanonicalGameplayOriginalNewCapacityExecutionBudget.runOwned(
-                CLOCK, Long.MAX_VALUE, budget -> value, ignored -> disposalCount.incrementAndGet()))
-        .isSameAs(value);
+    Object returned =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.runOwned(
+            CLOCK, Long.MAX_VALUE, budget -> value, ignored -> disposalCount.incrementAndGet());
+    assertThat(returned).isSameAs(value);
     assertThat(disposalCount.get()).isEqualTo(1);
   }
 
