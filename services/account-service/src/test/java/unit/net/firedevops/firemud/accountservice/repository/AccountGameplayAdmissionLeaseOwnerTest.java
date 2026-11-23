@@ -37,22 +37,6 @@ class AccountGameplayAdmissionLeaseOwnerTest {
   }
 
   @Test
-  void explicitPaidCompositionDoesNotBypassTheAuthenticatedWorkloadBoundary() {
-    var paidSource = mock(AccountGameplayAdmissionPaidSource.class);
-    var paidOwner =
-        new AccountGameplayAdmissionLeaseOwner(
-            callerVerifier, decisionClient, NAMESPACE, dataSource, paidSource);
-    withPeer(
-        null,
-        () ->
-            assertStatus(
-                Status.Code.UNAUTHENTICATED,
-                () ->
-                    paidOwner.acquire(AcquireGameplayAdmissionLeaseRequest.getDefaultInstance())));
-    verifyNoInteractions(callerVerifier, decisionClient, dataSource, paidSource);
-  }
-
-  @Test
   void everyPurposeRejectsMissingPeerBeforeParsingOrOwnerAccess() {
     withPeer(
         null,

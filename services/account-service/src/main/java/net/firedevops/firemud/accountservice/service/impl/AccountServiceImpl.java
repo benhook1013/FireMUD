@@ -601,8 +601,6 @@ public class AccountServiceImpl implements AccountService {
     });
     return Objects.requireNonNull(
         joinTransactionTemplate.execute(status -> {
-          // Lock the caller and distinct payer before source selection or a hosting read.
-          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
           lockCanonicalScopeAccount(scope);
           CanonicalJoinOperationEvidence operation =
               accountJoinOperationRepository
@@ -636,8 +634,6 @@ public class AccountServiceImpl implements AccountService {
       StripeHostingSubscriptionObserver.Result observation) {
     return Objects.requireNonNull(
         joinTransactionTemplate.execute(status -> {
-          // The provider observation was outside SQL; reacquire the same Account lock order.
-          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
           lockCanonicalScopeAccount(scope);
           requireCanonicalScopeFresh(consumers, scope);
           CanonicalJoinOperationEvidence lockedOperation =

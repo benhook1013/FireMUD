@@ -54,16 +54,6 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
       UUID decisionId,
       String configuredNamespace,
       CommittedCandidateVerificationData authenticatedCandidate) {
-    return executeWithCurrentSources(
-        evidence, decisionId, configuredNamespace, authenticatedCandidate, null);
-  }
-
-  OriginalCommitAcknowledgement executeWithCurrentSources(
-      AccountGameplayAdmissionLeaseEvidence evidence,
-      UUID decisionId,
-      String configuredNamespace,
-      CommittedCandidateVerificationData authenticatedCandidate,
-      AccountGameplayAdmissionCurrentSources.Observed observed) {
     Objects.requireNonNull(evidence);
     if (evidence.leaseKind() != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING
         || evidence.carrier().containsKey("expectedOldBindingGeneration")) {
@@ -74,8 +64,7 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
         decisionId,
         new CurrentSourceScope(
             Objects.requireNonNull(configuredNamespace),
-            Objects.requireNonNull(authenticatedCandidate),
-            observed));
+            Objects.requireNonNull(authenticatedCandidate)));
   }
 
   private OriginalCommitAcknowledgement execute(
@@ -112,8 +101,7 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
                 .readCurrentPublicProductionNew(
                     UUID.fromString((String) scope.get("tenantId")),
                     UUID.fromString((String) token.get("tokenJti")),
-                    currentSources.authenticatedCandidate(),
-                    currentSources.observed());
+                    currentSources.authenticatedCandidate());
         current.requireMatchesOriginalLease(evidence);
       }
       var repository = new AccountGameplayAdmissionLeaseRepository(exactDsl);
@@ -178,9 +166,7 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
   }
 
   private record CurrentSourceScope(
-      String configuredNamespace,
-      CommittedCandidateVerificationData authenticatedCandidate,
-      AccountGameplayAdmissionCurrentSources.Observed observed) {}
+      String configuredNamespace, CommittedCandidateVerificationData authenticatedCandidate) {}
 
   private record OriginalBinding(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId, String finalizationXid) {}
