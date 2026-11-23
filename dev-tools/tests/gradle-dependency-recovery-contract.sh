@@ -111,6 +111,12 @@ assert_call_count() {
   [[ "$actual" -eq "$expected" ]] || fail "$CASE_DIR expected $expected Gradle call(s), got $actual"
 }
 
+assert_rate_limit_delay() {
+  local delay
+  delay="$(cat "$CASE_DIR/sleeps")"
+  [[ "$delay" =~ ^(1[5-9]|2[0-9]|30)$ ]] || fail "expected a single 15-30 second HTTP 429 delay, got '$delay'"
+}
+
 assert_diagnostic_count() {
   local expected="$1"
   local actual
@@ -407,6 +413,48 @@ assert_call_count 2
 assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
 assert_output_contains "field \`annotationProcessorPath\`"
 assert_output_contains "refreshed-annotation-processors"
+
+write_annotation_processor_429_cause() {
+  sed '/^> Could not resolve all files/q' "$TEMP_DIR/annotation-processor-path-resolution/cause.log" > "$CASE_DIR/cause.log"
+  cat >> "$CASE_DIR/cause.log" <<'LOG'
+   > Could not download lombok-1.18.48.jar (org.projectlombok:lombok:1.18.48)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download spring-boot-configuration-processor-4.2.0.jar (org.springframework.boot:spring-boot-configuration-processor:4.2.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-configuration-processor/4.2.0/spring-boot-configuration-processor-4.2.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-configuration-processor/4.2.0/spring-boot-configuration-processor-4.2.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case annotation-processor-maven-429
+write_annotation_processor_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
+run_case common-platform-core 0
+assert_call_count 2
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
+assert_rate_limit_delay
+
+for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinate compile-started; do
+  new_case "annotation-processor-maven-429-$mutation"
+  write_annotation_processor_429_cause
+  case "$mutation" in
+    auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-origin) sed -i 's/repo.maven.apache.org/repository.invalid/g' "$CASE_DIR/cause.log" ;;
+    wrong-artifact) sed -i '/Could not GET/s/lombok-1.18.48.jar/lombok-1.18.46.jar/' "$CASE_DIR/cause.log" ;;
+    truncated-chain) sed -i '0,/> Could not GET/{/> Could not GET/d;}' "$CASE_DIR/cause.log" ;;
+    extra-coordinate) sed -i '/^[*] Try:/i > Could not resolve com.example:other-processor:1.0.' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :common-platform-core:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case common-platform-core 1
+  assert_no_retry
+done
 
 # Mismatched ownership, configuration, or another fatal cause must not retry.
 for mutation in wrong-module wrong-configuration extra-cause compile-started; do
@@ -773,7 +821,7 @@ run_case logging-admin-service 0
 assert_call_count 2
 assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
 assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
-[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "buildSrc HTTP 429 did not use one short delay"
+assert_rate_limit_delay
 assert_output_contains "buildsrc-refresh-result"
 
 # Auth, policy and conflict responses remain final, including mixed failures
@@ -824,7 +872,7 @@ export BUILDSRC_REFRESH_EXIT=23
 run_case logging-admin-service 23
 unset BUILDSRC_REFRESH_EXIT
 assert_call_count 2
-[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "failed buildSrc refresh changed retry limit"
+assert_rate_limit_delay
 assert_output_contains "Received status code 429"
 assert_output_contains "buildsrc-refresh-result"
 
