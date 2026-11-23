@@ -172,10 +172,12 @@ class SocialGroupsCrossServiceIntegrationTest {
   }
 
   private static void bindLoopback(CreateContainerCmd command, int port) {
-    command
-        .getHostConfig()
-        .withPortBindings(
-            new PortBinding(Ports.Binding.bindIp("127.0.0.1"), ExposedPort.tcp(port)));
+    var hostConfig = command.getHostConfig();
+    if (hostConfig == null) {
+      throw new IllegalStateException("The fixture requires Docker host configuration.");
+    }
+    hostConfig.withPortBindings(
+        new PortBinding(Ports.Binding.bindIp("127.0.0.1"), ExposedPort.tcp(port)));
   }
 
   private static IdentitySpec workloadIdentity(String alias, String service, boolean server) {
