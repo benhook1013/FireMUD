@@ -1416,6 +1416,52 @@ if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
+bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
+failure_summary = deploy_by_name["Summarize dev-demo failure"]
+if failure_summary["env"] != {
+    "RECORD_OUTCOME": "${{ steps." + deployed_head_step["id"] + ".outcome }}",
+    "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
+}:
+    raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
+failure_summary_run = failure_summary["run"]
+for name, value in {
+    "head_sha": "a" * 40,
+    "image_tag": "contract-image",
+    "hostname": "dev.example.invalid",
+    "telnet_port": "32016",
+}.items():
+    failure_summary_run = failure_summary_run.replace(
+        "${{ needs.dev-demo-plan.outputs." + name + " }}", value
+    )
+with tempfile.TemporaryDirectory() as directory:
+    summary = Path(directory) / "summary.md"
+    for recorded, bootstrap, expected in (
+        ("skipped", "skipped", None),
+        ("success", "failure", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "before repeating readiness or smoke"),
+    ):
+        summary.write_text("", encoding="utf-8")
+        subprocess.run(
+            ["bash", "-e", "-c", failure_summary_run],
+            cwd=repository_root,
+            env={
+                **os.environ,
+                "GITHUB_STEP_SUMMARY": str(summary),
+                "GITHUB_SERVER_URL": "https://github.example.invalid",
+                "GITHUB_REPOSITORY": "example/FireMUD",
+                "GITHUB_WORKFLOW_SHA": "b" * 40,
+                "RECORD_OUTCOME": recorded,
+                "BOOTSTRAP_OUTCOME": bootstrap,
+            },
+            check=True,
+        )
+        evidence = summary.read_text(encoding="utf-8")
+        guide = "/blob/" + "b" * 40 + "/design/architecture/"
+        if expected is None:
+            if guide in evidence:
+                raise SystemExit("unrecorded target received recorded-target advice")
+        elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
+            raise SystemExit("recorded target lacks the correct verification boundary")
 runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
 target_validator_call = (
     "bash ./dev-tools/hosted/dev-demo/validate-dev-demo-target.sh \\\n"

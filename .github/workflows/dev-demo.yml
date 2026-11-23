@@ -445,6 +445,7 @@ jobs:
           /tmp/dev-demo-values.yaml
 
       - name: Record exact deployed dev-demo head
+        id: record-deployed-head
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
@@ -546,6 +547,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Create dev-demo smoke account
+        id: bootstrap-smoke
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
@@ -982,6 +984,9 @@ jobs:
 
       - name: Summarize dev-demo failure
         if: ${{ always() && failure() && steps.cluster-access.outputs.available == 'true' }}
+        env:
+          RECORD_OUTCOME: ${{ steps.record-deployed-head.outcome }}
+          BOOTSTRAP_OUTCOME: ${{ steps.bootstrap-smoke.outcome }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             failure \
@@ -990,6 +995,18 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$RECORD_OUTCOME" == success ]]; then
+            guide="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_WORKFLOW_SHA}/design/architecture/system-architecture-database-migrations.md#verification-after-the-dev-demo-target-is-recorded"
+            {
+              echo ""
+              if [[ "$BOOTSTRAP_OUTCOME" == success ]]; then
+                echo "The target was recorded and the original smoke bootstrap completed in this attempt. Use the [verification procedure]($guide) to check the existing release and migration state before repeating readiness or smoke."
+              else
+                echo "The target was recorded but the original smoke bootstrap did not complete successfully in this attempt. Use the [verification procedure]($guide) to inspect the existing release and refer bootstrap recovery to the affected owners."
+              fi
+              echo "Keep the recorded target and existing namespace. Do not replay Helm or bootstrap to verify this release."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Warn about migration writer recovery after quiesce, preflight or deploy failure
         if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && (steps.quiesce-writers.outcome == 'failure' || steps.account-v1040-4-preflight.outcome == 'failure' || steps.deploy-release.outcome == 'failure') }}
