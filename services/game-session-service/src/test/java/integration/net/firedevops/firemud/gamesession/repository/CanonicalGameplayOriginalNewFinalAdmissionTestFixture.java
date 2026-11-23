@@ -139,10 +139,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
       controlledCapacity(
           CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
           Clock clock) {
+    return controlledCapacityForOrigin(
+        source,
+        clock,
+        UUID.fromString((String) source.candidate().leaseEvidence().carrier().get("requestId")));
+  }
+
+  /** Controlled alternate origin for SQL custody/budget proofs, never a new lease credential. */
+  static net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+      controlledCapacityForOrigin(
+          CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+          Clock clock,
+          UUID requestId) {
     var candidate = source.candidate();
     var b = candidate.bindingIdentity();
     var t = candidate.targetEvidence();
-    UUID requestId = UUID.fromString((String) candidate.leaseEvidence().carrier().get("requestId"));
     var player =
         new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext(
             b.accountId(),

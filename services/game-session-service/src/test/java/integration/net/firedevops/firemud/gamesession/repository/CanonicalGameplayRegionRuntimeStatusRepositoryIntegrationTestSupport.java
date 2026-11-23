@@ -422,6 +422,18 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       var controlled =
           CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacity(
               admission, clock);
+      return withSelectedOwner(controlled);
+    }
+
+    /** A separate controlled Account origin in the same real tenant/region budget. */
+    OriginalNewCapacityExecution newIndependentControlledOriginExecution() {
+      return withSelectedOwner(
+          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacityForOrigin(
+              admission, clock, UUID.randomUUID()));
+    }
+
+    private OriginalNewCapacityExecution withSelectedOwner(
+        OriginalNewCapacityExecution controlled) {
       return new OriginalNewCapacityExecution(
           controlled.request(),
           controlled.reservation(),

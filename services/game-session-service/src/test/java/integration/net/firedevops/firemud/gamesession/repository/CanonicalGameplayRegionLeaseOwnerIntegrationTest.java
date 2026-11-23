@@ -845,6 +845,23 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     }
   }
 
+  private static void awaitRedisTimelineCutoff(
+      io.lettuce.core.api.sync.RedisCommands<byte[], byte[]> admin, long cutoff) {
+    assertThat(cutoff).as("actual install budget cutoff").isPositive();
+    long stopWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+    long observed = redisTimeMillis(admin);
+    try {
+      while (observed < cutoff && System.nanoTime() < stopWaiting) {
+        Thread.sleep(10);
+        observed = redisTimeMillis(admin);
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interrupted);
+    }
+    assertThat(observed).as("physical Redis TIME at INITIALIZE").isGreaterThanOrEqualTo(cutoff);
+  }
+
   private static long redisTimeMillis(
       io.lettuce.core.api.sync.RedisCommands<byte[], byte[]> admin) {
     var time = admin.time();
@@ -1300,10 +1317,14 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               "controlled-test",
               "controlled-sha",
               "controlled-image");
-      // Redis and the local monotonic timer are real. A lagging caller clock lets Redis return
-      // the definitive deadline refusal while the caller still has time to observe that result.
-      Clock laggingClock = Clock.fixed(Instant.now().minusMillis(3_000), ZoneOffset.UTC);
-      var bounded = redisOwner.forHandoffDeadline(laggingClock, Long.MAX_VALUE);
+      // Freeze the server cutoff from Redis TIME; leave the real local five-second budget in
+      // place so a definitive Redis refusal can be observed after an acknowledged claim.
+      long redisCutoff = redisTimeMillis(redis.admin()) + 3_000L;
+      long localBudgetMillis =
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+      Clock laggingClock =
+          Clock.fixed(Instant.ofEpochMilli(redisCutoff - localBudgetMillis), ZoneOffset.UTC);
+      var bounded = redisOwner.forHandoffDeadline(laggingClock, redisCutoff);
       var proof =
           new AtomicReference<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>();
       var recoveryRepository = org.mockito.Mockito.spy(repository);
@@ -1353,9 +1374,15 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           (mode == 3 || mode == 4 || mode == 5)
               ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId())
               : null;
-      var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
+      CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
       try (var session =
           bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+        // Real PROBE completed on the pinned connection before the durable SQL claim.
+        permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
+        assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+            .isEqualTo(
+                CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                    .INITIALIZING);
         var evaluations = new java.util.concurrent.atomic.AtomicInteger();
         var completed = new CompletableFuture<Object>();
         var observed =
@@ -1376,7 +1403,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         // PREPARE's preflight has already finished; only initialization can submit EVALSHA here.
         if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
         try {
-          Thread.sleep(mode == 1 ? 5_500 : 2_500);
+          if (mode == 1) {
+            // This control intentionally exhausts the local monotonic deadline before dispatch.
+            Thread.sleep(localBudgetMillis + 500L);
+          } else {
+            awaitRedisTimelineCutoff(redis.admin(), redisCutoff);
+          }
           assertThatThrownBy(() ->
                   session.initialize(
                       permit,
