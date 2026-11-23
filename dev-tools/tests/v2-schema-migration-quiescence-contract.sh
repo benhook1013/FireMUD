@@ -18,6 +18,12 @@ cat >"$fake_bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$QUIESCE_CALLS"
+if [[ "${1:-}" == --request-timeout=10s && "${4:-}" == get ]]; then
+  shift
+elif [[ "${3:-}" == get ]]; then
+  echo "kubectl read lacks the expected request timeout: $*" >&2
+  exit 2
+fi
 pod_list_kind='List'
 endpoint_slice_list_kind='List'
 if [[ "${QUIESCE_MODE:-}" == typed-lists ]]; then
@@ -150,9 +156,9 @@ last_close_line="$(grep -nF -- 'firemud-v2-migration-quiesced' "$calls" | grep '
 last_endpoint_line="$(grep -nF -- 'get endpointslices.discovery.k8s.io' "$calls" | tail -n1 | cut -d: -f1)"
 first_scale_line="$(grep -nF -- ' scale deployment/' "$calls" | head -n1 | cut -d: -f1)"
 last_scale_line="$(grep -nF -- ' scale deployment/' "$calls" | tail -n1 | cut -d: -f1)"
-initial_pod_check_line="$(grep -nFx -- '-n contract get pods -o json' "$calls" | sed -n '1p' | cut -d: -f1)"
-first_pod_check_line="$(grep -nFx -- '-n contract get pods -o json' "$calls" | sed -n '2p' | cut -d: -f1)"
-last_pod_check_line="$(grep -nFx -- '-n contract get pods -o json' "$calls" | tail -n1 | cut -d: -f1)"
+initial_pod_check_line="$(grep -nFx -- '--request-timeout=10s -n contract get pods -o json' "$calls" | sed -n '1p' | cut -d: -f1)"
+first_pod_check_line="$(grep -nFx -- '--request-timeout=10s -n contract get pods -o json' "$calls" | sed -n '2p' | cut -d: -f1)"
+last_pod_check_line="$(grep -nFx -- '--request-timeout=10s -n contract get pods -o json' "$calls" | tail -n1 | cut -d: -f1)"
 first_restore_line="$(grep -nF -- 'patch service account-service --type=merge --patch {"spec":{"selector":{"app":"account-service"}}}' "$calls" | head -n1 | cut -d: -f1)"
 [[ "$initial_pod_check_line" -lt "$last_close_line" && "$last_close_line" -lt "$first_endpoint_line" && "$last_endpoint_line" -lt "$first_scale_line" && "$last_scale_line" -lt "$first_pod_check_line" && "$last_pod_check_line" -lt "$first_restore_line" ]] || {
   echo "Services must close before empty EndpointSlices are proved, all writers scale before pod checks, and selectors restore last" >&2

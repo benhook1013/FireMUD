@@ -1586,6 +1586,11 @@ run_validation() {
   python3 "$validation_script"
 }
 
+set_source_run_attempt() {
+  jq --argjson attempt "$1" '.run_attempt = $attempt' "$fixture_dir/source-run.json" > "$fixture_dir/source-run-next.json"
+  mv "$fixture_dir/source-run-next.json" "$fixture_dir/source-run.json"
+}
+
 set_source_run_path() {
   python3 - "$fixture_dir/source-run.json" "$1" <<'PY'
 import json
@@ -1605,6 +1610,14 @@ if SOURCE_RUN_ATTEMPT=2 run_validation >/dev/null 2>"$fixture_dir/attempt-error"
   exit 1
 fi
 grep -Fq 'source workflow attempt changed before artifact validation' "$fixture_dir/attempt-error"
+set_source_run_attempt 2
+if run_validation >/dev/null 2>"$fixture_dir/newer-attempt-error"; then
+  echo "publisher accepted an older resolution after a newer source attempt" >&2
+  exit 1
+fi
+grep -Fq 'source workflow attempt changed before artifact validation' "$fixture_dir/newer-attempt-error"
+SOURCE_RUN_ATTEMPT=2 run_validation
+set_source_run_attempt 1
 if run_validation pull_request feature/ci "$head_sha" repository_dispatch 2>"$fixture_dir/typed-source-error"; then
   echo "typed publication accepted a pull-request producer" >&2
   exit 1

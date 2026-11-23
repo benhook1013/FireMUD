@@ -806,7 +806,8 @@ jobs:
             // The older PLAY diagnostic can leave the source run red. Only a
             // complete native attempt with its marker explicitly skipped can
             // prove that a failed producer did not supply that exception.
-            const provesOrdinaryTypedFailure = async (run, workflowName) => {
+            const provesOrdinaryTypedOutcome = async (run, workflowName) => {
+              const successful = run.conclusion === "success";
               const repository = `${context.repo.owner}/${context.repo.repo}`;
               const matchesSelected = candidate => candidate &&
                 ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "head_branch", "head_sha", "status", "conclusion"]
@@ -816,17 +817,23 @@ jobs:
               const {data: attempt} = await github.rest.actions.getWorkflowRunAttempt(fanoutOptions({
                 ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
               }));
-              if (!matchesSelected(attempt)) return false;
+              if (!matchesSelected(attempt) || successful && attempt.created_at !== run.created_at) {
+                if (successful) throw new Error(`Successful typed runtime producer ${run.id} has inconsistent exact attempt identity`);
+                return false;
+              }
               const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
                 ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100, page: 1,
               }));
-              if (!Array.isArray(data?.jobs) || data.jobs.length > 100 || data.total_count !== data.jobs.length) return false;
+              if (!Array.isArray(data?.jobs) || data.jobs.length > 100 || data.total_count !== data.jobs.length) {
+                if (successful) throw new Error(`Successful typed runtime producer ${run.id} has incomplete exact attempt jobs`);
+                return false;
+              }
               const producers = data.jobs.filter(job => job?.name === "PR Full-Stack Smoke (runtime-required=true)");
               const job = producers[0];
               if (producers.length !== 1 || !Number.isSafeInteger(job.id) || job.id <= 0 ||
                   job.run_id !== run.id || job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
                   ![workflowName, run.display_title].includes(job.workflow_name) ||
-                  job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
+                  job.status !== "completed" || job.conclusion !== run.conclusion || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
               if (markers.length !== 1 || markers[0].status !== "completed" || markers[0].conclusion !== "skipped") return false;
               const timestamp = value => {
@@ -847,7 +854,20 @@ jobs:
                 if (!Number.isFinite(markerStart) || !Number.isFinite(markerEnd) ||
                     markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
               }
+              if (successful) {
+                // A green run or job alone can be a no-op or the diagnostic exception.
+                // Require affirmative ordinary smoke and authenticated cleanup in this attempt.
+                for (const name of ["Run credential-free full-stack smoke", "Stop smoke stack",
+                  "Require successful runtime smoke and authenticated cleanup"]) {
+                  const steps = job.steps.filter(step => step?.name === name);
+                  if (steps.length !== 1 || steps[0].status !== "completed" || steps[0].conclusion !== "success") return false;
+                }
+                if (job.steps.some(step => step?.status !== "completed" || !["success", "skipped"].includes(step.conclusion))) return false;
+              }
               const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: run.id}));
+              if (successful && (!matchesSelected(latest) || latest.created_at !== run.created_at)) {
+                throw new Error(`Successful typed runtime producer ${run.id} changed during exact attempt proof`);
+              }
               return matchesSelected(latest);
             };
             // Bind both admission reads to the same terminal attempt; never cache native proof.
@@ -900,7 +920,7 @@ jobs:
                   return [newest];
                 }
                 if (newest.status === "completed") {
-                  if (newest.event === "repository_dispatch" && ["cancelled", "timed_out", "failure"].includes(newest.conclusion)) {
+                  if (newest.event === "repository_dispatch" && ["cancelled", "timed_out", "failure", "success"].includes(newest.conclusion)) {
                     const repository = `${context.repo.owner}/${context.repo.repo}`;
                     const defaultBranch = context.payload.repository?.default_branch;
                     const attemptBinding = JSON.stringify([
@@ -932,16 +952,26 @@ jobs:
                         latest.conclusion !== newest.conclusion) {
                       throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
                     }
-                    if (newest.conclusion === "failure" && !await provesOrdinaryTypedFailure(latest, workflow.name)) {
-                      return [newest];
+                    if (["success", "failure"].includes(newest.conclusion)) {
+                      const ordinary = await provesOrdinaryTypedOutcome(latest, workflow.name);
+                      if (newest.conclusion === "success" ? ordinary : !ordinary) return [newest];
+                    }
+                    // A recent success can be a validated transition diagnostic or
+                    // awaiting downstream evidence. Preserve its existing hold.
+                    if (newest.conclusion === "success") {
+                      const ciCompleted = Date.parse(workflowRun.updated_at || "");
+                      if (!Number.isFinite(ciCompleted) ||
+                          Math.floor(Date.parse(newest.created_at) / 1000) >= Math.floor(ciCompleted / 1000)) {
+                        return [newest];
+                      }
                     }
                     disregardedTypedAttempts.set(newest.id, attemptBinding);
                     // Discarding an unusable replacement does not establish
                     // absence: an earlier exact producer may still be running.
                     continue;
                   }
-                  // Same-second or incomparable completion evidence is ambiguous and
-                  // suppresses a duplicate; only a valid, strictly older producer may recover.
+                  // Keep the existing chronological hold for other dispositions. A
+                  // successful exact typed attempt is classified by proof, not creation time.
                   const ciCompleted = Date.parse(workflowRun.updated_at || "");
                   if (newest.event === "repository_dispatch" &&
                       (!Number.isFinite(ciCompleted) ||

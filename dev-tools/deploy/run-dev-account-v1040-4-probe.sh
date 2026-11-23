@@ -73,7 +73,7 @@ remove_probe_job() {
   jq -n --arg uid "$uid" \
     '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' |
     kubectl --request-timeout=10s delete --raw "/apis/batch/v1/namespaces/$namespace/jobs/$job_name" -f - >/dev/null &&
-    kubectl -n "$namespace" wait --for=delete --timeout=30s "job/$job_name" >/dev/null
+    kubectl --request-timeout=10s -n "$namespace" wait --for=delete --timeout=30s "job/$job_name" >/dev/null
 }
 
 cleanup() {
@@ -125,7 +125,7 @@ if ! created_job="$(jq -n \
 fi
 job_uid="$(read_owned_job_uid <<<"$created_job")" || fail "Kubernetes did not return the owned probe Job UID"
 
-if ! kubectl -n "$namespace" wait --for=condition=complete --timeout=75s "job/$job_name" >/dev/null; then
+if ! kubectl --request-timeout=10s -n "$namespace" wait --for=condition=complete --timeout=75s "job/$job_name" >/dev/null; then
   probe_error="$(kubectl --request-timeout=10s -n "$namespace" logs "job/$job_name" --tail=1 2>/dev/null || true)"
   case "$probe_error" in
     'Account V1040.4 probe found duplicate retained admission attempts. Account-owned disposition is required.'|\

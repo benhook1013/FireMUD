@@ -34,6 +34,7 @@ public final class CapacityAdmissionTestFixture {
   public static final UUID CHARACTER = UUID.fromString("88888888-8888-4888-8888-888888888888");
   public static final UUID SESSION = UUID.fromString("99999999-9999-4999-8999-999999999999");
   public static final UUID REALM = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  public static final UUID DELEGATION_JTI = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   public static final String PEER = "spiffe://firemud/ns/prod/sa/game-session-service";
   public static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
   private static final String HASH = "a".repeat(64);
@@ -86,6 +87,9 @@ public final class CapacityAdmissionTestFixture {
       Map<String, Object> target,
       Instant at) {
     Map<String, Object> source = new LinkedHashMap<>(sources());
+    source.put("callerTokenJti", DELEGATION_JTI.toString());
+    source.put("callerContextId", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    source.put("callerOperationId", "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
     source.put("callerTokenExpiresAt", at.plusSeconds(90).toString());
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
