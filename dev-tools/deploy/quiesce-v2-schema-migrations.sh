@@ -62,7 +62,7 @@ trap leave_admission_closed_on_failure EXIT
 service_json() {
   local service="$1"
   local result
-  if ! result="$(kubectl -n "$namespace" get service "$service" --ignore-not-found -o json)"; then
+  if ! result="$(kubectl --request-timeout=10s -n "$namespace" get service "$service" --ignore-not-found -o json)"; then
     fail "cannot inspect Service/$service in namespace $namespace"
   fi
   [[ -n "$result" ]] || fail "Service/$service is absent in namespace $namespace"
@@ -79,7 +79,7 @@ patch_service_selector() {
 read_endpoint_slices() {
   local service="$1"
   local result
-  if ! result="$(kubectl -n "$namespace" get endpointslices.discovery.k8s.io \
+  if ! result="$(kubectl --request-timeout=10s -n "$namespace" get endpointslices.discovery.k8s.io \
     --selector "kubernetes.io/service-name=$service" -o json)"; then
     fail "cannot inspect EndpointSlices for Service/$service"
   fi
@@ -91,7 +91,7 @@ verify_writer_quiescence() {
   local service deployment_json replicas pods_json pod_count
   for service in "${services[@]}"; do
     while :; do
-      if ! deployment_json="$(kubectl -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
+      if ! deployment_json="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
         fail "cannot verify Deployment/$service after quiesce"
       fi
       if [[ -n "$deployment_json" ]]; then
@@ -101,7 +101,7 @@ verify_writer_quiescence() {
           fail "Deployment/$service did not remain at zero replicas"
       fi
 
-      if ! pods_json="$(kubectl -n "$namespace" get pods -o json)"; then
+      if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
         fail "cannot verify pods for Deployment/$service"
       fi
       if ! pod_count="$(jq -er --arg service "$service" '
@@ -140,7 +140,7 @@ verify_writer_autoscaling_absent() {
   local hpa_json matching_hpas
   # An HPA can undo the scale-to-zero maintenance boundary. Do not proceed if
   # another controller can re-admit a writer while the migration is applying.
-  if ! hpa_json="$(kubectl -n "$namespace" get hpa -o json)"; then
+  if ! hpa_json="$(kubectl --request-timeout=10s -n "$namespace" get hpa -o json)"; then
     fail "cannot inspect namespace HPAs"
   fi
   if ! matching_hpas="$(jq -er '[.items[]? | select(.spec.scaleTargetRef.kind == "Deployment" and (.spec.scaleTargetRef.name == "account-service" or .spec.scaleTargetRef.name == "game-session-service" or .spec.scaleTargetRef.name == "automation-scripting-service"))] | length' <<<"$hpa_json")"; then
@@ -168,7 +168,7 @@ done
 
 verify_writer_autoscaling_absent
 
-if ! pods_json="$(kubectl -n "$namespace" get pods -o json)"; then
+if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
   fail "cannot inspect namespace Pods before closing Service selectors"
 fi
 if ! sentinel_pod_count="$(jq -er --arg selector "$closed_selector" '
@@ -232,7 +232,7 @@ done
 # owners before checking any Deployment or Pod so no writer can overlap apply.
 deadline=$((SECONDS + 300))
 for service in "${services[@]}"; do
-  if ! deployment_name="$(kubectl -n "$namespace" get deployment "$service" --ignore-not-found -o name)"; then
+  if ! deployment_name="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o name)"; then
     fail "cannot inspect Deployment/$service"
   fi
   if [[ -n "$deployment_name" ]]; then

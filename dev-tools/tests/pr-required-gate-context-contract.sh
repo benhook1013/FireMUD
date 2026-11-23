@@ -668,6 +668,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     updated_at: status === "completed" ? "2026-09-01T00:30:02Z" : "2026-09-01T00:05:00Z",
     pull_requests: [],
   });
+  const failedTyped = {...refreshSource(1, "completed", "failure"), id: 43, created_at: "2026-09-01T00:00:00Z"};
   const smokeJob = (runId, runAttempt, smokeConclusion) => {
     const jobConclusion = runId === 44 ? "success" : smokeConclusion;
     const jobId = runId === 44 ? 144 : runId * 100 + 1;
@@ -745,7 +746,17 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
+      listJobsForWorkflowRunAttempt: async input => {
+        assert.equal(input.run_id, failedTyped.id);
+        assert.equal(input.attempt_number, failedTyped.run_attempt);
+        const job = {...smokeJob(44, 1, "failure"), run_id: failedTyped.id, conclusion: "failure"};
+        if (selectionCase === "recoverable-ambiguous-failure") {
+          job.steps.find(step => step.name.startsWith("Known canonical transition")).conclusion = null;
+        }
+        return {data: {total_count: 1, jobs: [job]}};
+      },
       getWorkflowRun: async ({run_id}) => {
+        if (run_id === failedTyped.id && selectionCase.startsWith("recoverable-")) return {data: failedTyped};
         if (run_id === 44) {
           typedCurrentChecks++;
           const rerunning = selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks === 1;
@@ -761,6 +772,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
       } },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
+      if (input.run_id === failedTyped.id && selectionCase.startsWith("recoverable-")) return {data: failedTyped};
       if (input.run_id === 44) {
         const attempt = selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks > 0 ? 2 : 1;
         assert.equal(input.attempt_number, attempt);
@@ -792,6 +804,10 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     assert.equal(method, listRuns);
     assert.equal(input.workflow_id, "runtime-images.yml");
     if (input.event === "repository_dispatch") {
+      if (["recoverable-failed-typed", "recoverable-ambiguous-failure"].includes(selectionCase)) {
+        yield {data: now - start >= 6 * 60 * 1000 ? [refreshSource(1), failedTyped] : [failedTyped]};
+        return;
+      }
       const originalRerun = selectionCase === "recoverable-original-rerun";
       const replacementRerun = selectionCase === "recoverable-replacement-rerun";
       const ready = originalRerun || replacementRerun || selectionCase === "recoverable-delayed" && now - start >= 6 * 60 * 1000;
@@ -862,7 +878,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
       complete ? "completed" : "in_progress", complete ? outcome : null)] };
   };
   const core = { info: () => {}, warning: () => {}, setFailed: message => failures.push(message) };
-  const clock = { now: () => now, parse: Date.parse };
+  const clock = class extends Date { static now() { return now; } };
   const sleep = (callback, duration) => { now += duration; queueMicrotask(callback); };
   await execute(github, context, core, clock, sleep);
   return { failures, minutes: (now - start) / 60000, typedJobAttempts };
@@ -909,6 +925,13 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
   const delayedRecovery = await scenario("cancelled", 0, "recoverable-delayed");
   assert.deepEqual(delayedRecovery.failures, []);
   assert.equal(delayedRecovery.minutes, 6, "Validation may dispatch an exact replacement after five minutes");
+  const delayedAfterTypedFailure = await scenario("cancelled", 0, "recoverable-failed-typed");
+  assert.deepEqual(delayedAfterTypedFailure.failures, []);
+  assert.equal(delayedAfterTypedFailure.minutes, 6, "an authenticated ordinary typed failure waits beyond snapshot convergence for its replacement");
+  assert.deepEqual(delayedAfterTypedFailure.typedJobAttempts, [1, 1], "the newer run still needs exact terminal smoke proof");
+  const ambiguousTypedFailure = await scenario("cancelled", 0, "recoverable-ambiguous-failure");
+  assert.equal(ambiguousTypedFailure.failures.length, 1);
+  assert.ok(ambiguousTypedFailure.minutes < 6, "an ambiguous failure does not get the replacement allowance");
   const originalRerun = await scenario("success", 1, "recoverable-original-rerun");
   assert.deepEqual(originalRerun.failures, [], "a queued then failed same-tuple replacement cannot hide the successful original rerun");
   assert.equal(originalRerun.minutes, 1);
@@ -1072,6 +1095,10 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     },
     actions: {
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
+      listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+        assert.equal(run_id, source.id); assert.equal(attempt_number, source.run_attempt);
+        return {data: {total_count: 1, jobs: [job]}};
+      },
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
       getWorkflowRun: async () => {
         if (refs.length) qualifiedAttemptReads++;
@@ -4099,7 +4126,7 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
   }
   const execute = new Function("repositoryName", "prNumber", "positiveInteger", "findMatchingRuntimeImagesRun",
     "withTransientGitHubRetry", "github", "owner", "repo", "canonicalSmokeJobName", "verifyKnownPlayFailure",
-    "verifyCanonicalSmokeProducer", "context", "isReplaceableTypedProducer",
+    "verifyCanonicalSmokeProducer", "context", "isReplaceableTypedProducer", "provesOrdinaryTypedFailure",
     `${refreshFunction}; return verifyFailedPullCanonicalRefresh;`);
   const recover = execute(options.repository || repositoryName, "3390", value => Number.isSafeInteger(value) && value > 0,
     async (event, title, selected) => {
@@ -4125,7 +4152,8 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
       verifyReplacement(selected, job, proofIdentity, true, allowIncompleteSteps, allowOrdinary),
     (selected, job, proofIdentity, requireTerminalSmokeProof) =>
       verifyReplacement(selected, job, proofIdentity, false, requireTerminalSmokeProof),
-    {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}}, isReplaceableTypedProducer);
+    {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}}, isReplaceableTypedProducer,
+    async () => false);
   const proof = await recover(original, selectedIdentity);
   return {accepted: raw ? proof : proof?.status === "verified" ? true
     : proof?.status === "snapshot-pending" ? "snapshot-pending" : proof, verified, queries};
@@ -5815,7 +5843,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   return shared.posts;
 }
 (async () => {
-  assert.equal(await run("valid"), 1);
+  const valid = {visible: false, posts: 0};
+  assert.equal(await run("valid", valid), 1);
+  assert.equal(valid.failure, undefined, "a completed exact handoff must not report workflow failure");
   const sameSecondHandoff = {visible: false, posts: 0};
   assert.equal(await run("same-second", sameSecondHandoff), 1);
   assert.equal(sameSecondHandoff.observations, 1, "a unique new exact run is visible in the POST's own timestamp second");

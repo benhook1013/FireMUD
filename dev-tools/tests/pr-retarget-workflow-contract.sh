@@ -989,6 +989,11 @@ async function runDispatcher({
     fakeNow += apiRequestMillis;
     return options.request.signal;
   };
+  const inventoriedRuntimeRuns = () => [
+    ...Object.values(inventories).flatMap(inventory => Array.isArray(inventory)
+      ? inventory : [...(inventory.initial ?? inventory.runs ?? []), ...(inventory.refined ?? [])]),
+    ...lateProducers, ...postedRuns,
+  ];
   const github = {
     rest: {
       git: {
@@ -1101,10 +1106,7 @@ async function runDispatcher({
           if (request.run_id !== ciRun.id) {
             runtimeRunReads.push(request.run_id);
             const reads = runtimeRunReads.filter(id => id === request.run_id).length;
-            const runs = [...Object.values(inventories).flatMap(inventory => Array.isArray(inventory)
-              ? inventory : [...(inventory.initial ?? inventory.runs ?? []), ...(inventory.refined ?? [])]),
-              ...lateProducers, ...postedRuns];
-            const run = runs.find(run => run?.id === request.run_id);
+            const run = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
             assert(run, "native runtime lookup must target an inventoried producer");
             const override = runtimeRunOverrides[request.run_id];
             return {data: {...run, ...(typeof override === "function" ? override(reads, run) : override ?? {})}};
@@ -1116,8 +1118,7 @@ async function runDispatcher({
           recordApiRequest("actions.getWorkflowRunAttempt", request);
           const {request: requestOptions, ...normal} = request;
           assert.deepEqual(normal, {owner: "owner", repo: "repo", run_id: request.run_id, attempt_number: request.attempt_number});
-          const runs = Object.values(inventories).flatMap(inventory => Array.isArray(inventory) ? inventory : inventory.runs ?? []);
-          const run = runs.find(run => run?.id === request.run_id);
+          const run = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
           assert(run, "native exact attempt must address an inventoried runtime producer");
           assert.equal(request.attempt_number, run.run_attempt);
           const attempt = Object.hasOwn(runtimeNativeAttempts, run.id) ? runtimeNativeAttempts[run.id] : run;
@@ -1126,7 +1127,12 @@ async function runDispatcher({
         },
         listJobsForWorkflowRunAttempt: async (request) => {
           recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
-          if (request.run_id !== ciRun.id) return {data: runtimeAttemptJobs[request.run_id] ?? {total_count: 0, jobs: []}};
+          if (request.run_id !== ciRun.id) {
+            const producer = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
+            assert(producer, "native job listing must address an inventoried producer");
+            assert.equal(request.attempt_number, producer.run_attempt, "native jobs must be read from the selected attempt");
+            return {data: runtimeAttemptJobs[request.run_id] ?? {total_count: 0, jobs: []}};
+          }
           ciJobRequests.push(request);
           const jobs = ciEvidence.jobs ?? [ciGate];
           return {data: ciEvidence.jobPage ? ciEvidence.jobPage(request, jobs) : {
@@ -1852,7 +1858,17 @@ async function runDispatcher({
   const unrelatedInflight = producer(sibling, "pull_request", "in_progress", null, {created_at: "2026-01-02T00:00:00Z"});
   const completedRefresh = producer(tuple, "repository_dispatch", "completed", "success", {
     created_at: "2026-01-01T12:00:00Z",
+    run_started_at: "2026-01-01T12:01:00Z", updated_at: "2026-01-01T12:10:00Z",
   });
+  const successfulJob = {id: 73, name: "PR Full-Stack Smoke (runtime-required=true)",
+    workflow_name: completedRefresh.display_title, run_id: completedRefresh.id, run_attempt: completedRefresh.run_attempt,
+    head_sha: completedRefresh.head_sha, status: "completed", conclusion: "success",
+    started_at: "2026-01-01T12:02:00Z", completed_at: "2026-01-01T12:09:00Z", steps: [
+      ...["Run credential-free full-stack smoke", "Stop smoke stack", "Require successful runtime smoke and authenticated cleanup"]
+        .map(name => ({name, status: "completed", conclusion: "success"})),
+      {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed", conclusion: "skipped"},
+    ]};
+  const successfulJobs = {[completedRefresh.id]: {total_count: 1, jobs: [successfulJob]}};
   const refinedCompleted = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
     inventories: {
@@ -1860,6 +1876,7 @@ async function runDispatcher({
         refined: [unrelatedInflight], refinedTotalCount: 1},
       repository_dispatch: [completedRefresh],
     },
+    runtimeAttemptJobs: successfulJobs,
   });
   assert.deepEqual(numbers(refinedCompleted), [], "refinement must retain completed refresh between CI completion and sampled inflight floor");
   assert(refinedCompleted.inventoryCalls.some(request => request.created === "2026-01-01T06:00:00Z..*"));
@@ -1904,15 +1921,40 @@ async function runDispatcher({
       "unknown inventory must be an explicit error, not apparent success");
   }
 
-  for (const [signalAt, expected] of [["2026-01-02T00:00:00Z", 0], ["2026-01-03T00:00:00.200Z", 0], ["2026-01-04T00:00:00Z", 1]]) {
+  for (const signalAt of ["2026-01-01T06:00:00Z", "2026-01-01T12:00:00.200Z", "2026-01-04T00:00:00Z"]) {
     const result = await runDispatcher({
       tuples: [tuple], callback: { updated_at: signalAt },
-      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "completed", "success", {
-        created_at: "2026-01-03T00:00:00Z",
-      })] },
+      inventories: {repository_dispatch: [completedRefresh]}, runtimeAttemptJobs: successfulJobs,
     });
-    assert.equal(numbers(result).length, expected, "completed refresh suppresses an earlier or same-second signal");
+    assert.deepEqual(numbers(result), [], "a usable exact completed refresh suppresses a duplicate even if it completed before Validation");
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.runtimeRunReads, [completedRefresh.id, completedRefresh.id], "reuse requires a final current-attempt read");
   }
+  for (const job of [
+    {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)"},
+    {...successfulJob, steps: successfulJob.steps.filter(step => step.name !== "Stop smoke stack")},
+    {...successfulJob, steps: [...successfulJob.steps, successfulJob.steps[0]]},
+    {...successfulJob, started_at: "2026-01-01T12:00:59Z"},
+  ]) {
+    const result = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+      inventories: {repository_dispatch: [completedRefresh]}, runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [job]}}});
+    assert.deepEqual(numbers(result), ["101"], "a green but unusable exact attempt must not suppress the refresh");
+    assert.deepEqual(result.errors, []);
+  }
+  const recentTransition = await runDispatcher({
+    tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
+    inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [{...successfulJob,
+      steps: successfulJob.steps.map(step => ({...step, conclusion:
+        step.name.startsWith("Known canonical transition") ? "success" : "skipped"})),
+    }]}},
+  });
+  assert.deepEqual(numbers(recentTransition), [], "a recent successful PLAY diagnostic keeps its existing dispatch hold");
+  assert.deepEqual(recentTransition.errors, []);
+  const staleSuccess = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: successfulJobs, runtimeRunOverrides: {[completedRefresh.id]: reads => reads > 1 ? {run_attempt: 2} : {}}});
+  assert.deepEqual(numbers(staleSuccess), [], "a concurrent rerun leaves inventory uncertain, not duplicate suppression or dispatch authority");
+  assert(staleSuccess.errors.some(message => message.includes("changed during exact attempt proof")));
   const terminalTyped = conclusion => producer(tuple, "repository_dispatch", "completed", conclusion, {
     created_at: "2026-01-03T00:00:00Z",
   });
@@ -1937,12 +1979,12 @@ async function runDispatcher({
     assert(unresolved.errors.some(message => message.includes("attempted but visibility is unknown")),
       "the old terminal run cannot confirm receipt of its replacement");
   }
-  for (const conclusion of ["failure", "success", null]) {
+  for (const conclusion of ["failure", null]) {
     const held = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
       inventories: {repository_dispatch: [terminalTyped(conclusion)]},
     });
     assert.deepEqual(numbers(held), [],
-      "legacy failure/PLAY, success and unknown dispositions keep the existing typed refresh hold");
+      "legacy failure/PLAY and unknown dispositions keep the existing typed refresh hold");
     if (conclusion !== "failure") assert.deepEqual(held.runtimeRunReads, [], "unrelated conclusions need no native classification");
     assert.deepEqual(held.errors, []);
   }
@@ -3767,8 +3809,8 @@ const github = {
         id: 881,
         name: typed ? "PR Full-Stack Smoke (runtime-required=true)" : "PR Full-Stack Smoke",
         check_run_url: "https://api.github.com/repos/owner/repo/check-runs/881",
-        run_id: input.run_id,
-        run_attempt: input.attempt_number,
+        run_id: run?.id,
+        run_attempt: run?.run_attempt,
         head_sha: run?.head_sha,
         status: "completed",
         conclusion: "success",
