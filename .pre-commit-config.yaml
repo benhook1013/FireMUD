@@ -12,6 +12,7 @@ repos:
         entry: ./gradlew lintMarkdownFix
         language: system
         files: \.md$
+        pass_filenames: false
 
       - id: hadolint
         name: Dockerfile Lint
