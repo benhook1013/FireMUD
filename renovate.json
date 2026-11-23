@@ -195,6 +195,33 @@
     },
     {
       "customType": "regex",
+      "description": "Update the exact Velero chart used by local backup setup",
+      "managerFilePatterns": [
+        "/^dev-tools/backups/setup-local-backup\\.sh$/"
+      ],
+      "matchStrings": [
+        "(?m)^VELERO_CHART_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)$"
+      ],
+      "depNameTemplate": "velero",
+      "datasourceTemplate": "helm",
+      "registryUrlTemplate": "https://vmware-tanzu.github.io/helm-charts",
+      "versioningTemplate": "helm"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the digest-pinned Velero server and AWS plugin in local MinIO values",
+      "managerFilePatterns": [
+        "/^k8s/velero/values-minio\\.yaml$/"
+      ],
+      "matchStrings": [
+        "(?m)^image:\\n  repository: (?<depName>velero/velero)\\n  tag: (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\\n  digest: (?<currentDigest>sha256:[0-9a-f]{64})$",
+        "(?m)^    image: (?<depName>velero/velero-plugin-for-aws):(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[0-9a-f]{64})$"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
       "managerFilePatterns": [
         "/^config/workflow-tool-versions\\.env$/"
       ],
@@ -506,6 +533,24 @@
       "groupName": "Velero runtime and chart",
       "pinDigests": true,
       "automerge": false
+    },
+    {
+      "description": "Group the local AWS plugin with the Velero runtime and chart",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "velero/velero-plugin-for-aws"
+      ],
+      "matchFileNames": [
+        "k8s/velero/values-minio.yaml"
+      ],
+      "groupName": "Velero runtime and chart",
+      "pinDigests": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "Verify upstream AWS plugin compatibility with the selected Velero server minor and prove backup and restore against isolated MinIO before using the update."
+      ]
     },
     {
       "description": "Repository-built images are updated by build and promotion workflows",
