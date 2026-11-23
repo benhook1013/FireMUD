@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -2056,8 +2057,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     }
   }
 
-  static CanonicalGameplayRegionIncarnationSource.StableEvidence
-      controlledStableIncarnation(CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
+  static CanonicalGameplayRegionIncarnationSource.StableEvidence controlledStableIncarnation(
+      CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
     var deployment =
         new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
             "controlled-region-deployment",
@@ -2350,8 +2351,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .withTimeout(Duration.ofSeconds(5))
               .withAuthentication(REDIS_PRINCIPAL, REDIS_PASSWORD)
               .build();
-      return new RegionRedis(
-          administrator, RedisClient.create(ownerUri), ownerUri, adminConnection, admin);
+      RedisClient owner = RedisClient.create(ownerUri);
+      owner.setOptions(ClientOptions.builder().autoReconnect(false).build());
+      return new RegionRedis(administrator, owner, ownerUri, adminConnection, admin);
     }
 
     RedisClient ownerClient() {

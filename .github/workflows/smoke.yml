@@ -1814,11 +1814,22 @@ jobs:
                 if (positiveInteger(replacement.run_attempt) && (!cancelledReplacement ||
                     replacement.id !== cancelledReplacement.id ||
                     replacement.run_attempt !== cancelledReplacement.run_attempt)) {
-                  cancelledReplacement = {id: replacement.id, run_attempt: replacement.run_attempt, terminalObservedAt: null};
+                  cancelledReplacement = {id: replacement.id, run_attempt: replacement.run_attempt, terminalObservedAt: null, sparseStatusObservedAt: null};
                 }
                 const cancelledOrTimedOut = replacement.status === "completed" &&
                   ["cancelled", "timed_out"].includes(replacement.conclusion);
-                if (cancelledOrTimedOut || await provesOrdinaryTypedFailure(replacement, currentIdentity)) {
+                let ordinaryTypedFailure = false;
+                if (!cancelledOrTimedOut) {
+                  try {
+                    ordinaryTypedFailure = await provesOrdinaryTypedFailure(replacement, currentIdentity);
+                  } catch (error) {
+                    if (!isTransientGitHubFailure(error)) throw error;
+                    core.warning(`Exact typed failure proof temporarily unavailable: ${error.message ?? String(error)}`);
+                    await new Promise((resolve) => setTimeout(resolve, snapshotSleepMs));
+                    continue smokeGatePolling;
+                  }
+                }
+                if (cancelledOrTimedOut || ordinaryTypedFailure) {
                   if (cancelledOrTimedOut && !isReplaceableTypedProducer(replacement, currentIdentity)) {
                     core.setFailed("Cancelled or timed-out typed runtime producer has an invalid source identity.");
                     return;
@@ -1835,9 +1846,17 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
-                if (cancelledReplacement?.id === replacement.id &&
-                    (replacement.status === "completed" || replacement.status == null)) {
-                  cancelledReplacement.terminalObservedAt ??= Date.now();
+                if (cancelledReplacement?.id === replacement.id) {
+                  if (replacement.status == null) {
+                    cancelledReplacement.sparseStatusObservedAt ??= Date.now();
+                    if (Date.now() - cancelledReplacement.sparseStatusObservedAt >= completedSnapshotTimeoutMs) {
+                      core.setFailed("Cancelled runtime replacement did not expose exact status within the snapshot convergence allowance.");
+                      return;
+                    }
+                  } else {
+                    cancelledReplacement.sparseStatusObservedAt = null;
+                    if (replacement.status === "completed") cancelledReplacement.terminalObservedAt ??= Date.now();
+                  }
                 }
                 // Discovery bounds absence, not execution of an identified replacement.
                 // Its completion still shares the unchanged overall Smoke deadline.
@@ -1847,7 +1866,7 @@ jobs:
                   (cancelledReplacement?.id === replacement.id ? cancelledReplacement.run_attempt : "missing");
                 const replacementProofKey =
                   `same-tuple-replacement:${identityKey(currentIdentity)}:${replacement.id}:${snapshotAttempt}`;
-                if ((replacement.status === "completed" || replacement.status == null) &&
+                if (replacement.status === "completed" &&
                     incompleteRefreshKey !== replacementProofKey) {
                   incompleteRefreshKey = replacementProofKey;
                   incompleteRefreshObservedAt = Date.now();
@@ -2010,7 +2029,18 @@ jobs:
                 }
                 const cancelledOrTimedOut = matching.event === "repository_dispatch" && matching.status === "completed" &&
                   ["cancelled", "timed_out"].includes(matching.conclusion);
-                if (cancelledOrTimedOut || await provesOrdinaryTypedFailure(matching, currentIdentity)) {
+                let ordinaryTypedFailure = false;
+                if (!cancelledOrTimedOut) {
+                  try {
+                    ordinaryTypedFailure = await provesOrdinaryTypedFailure(matching, currentIdentity);
+                  } catch (error) {
+                    if (!isTransientGitHubFailure(error)) throw error;
+                    core.warning(`Exact typed failure proof temporarily unavailable: ${error.message ?? String(error)}`);
+                    await new Promise((resolve) => setTimeout(resolve, snapshotSleepMs));
+                    continue smokeGatePolling;
+                  }
+                }
+                if (cancelledOrTimedOut || ordinaryTypedFailure) {
                   if (cancelledOrTimedOut && !isReplaceableTypedProducer(matching, currentIdentity)) {
                     core.setFailed("Cancelled or timed-out typed runtime producer has an invalid source identity.");
                     return;

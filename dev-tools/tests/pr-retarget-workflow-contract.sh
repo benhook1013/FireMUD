@@ -1352,6 +1352,26 @@ async function runDispatcher({
     name === "pulls.listFiles" && String(options.pull_number) === source.prNumber).map(({options}) => options),
   {pull_number: Number(source.prNumber)});
   assertRequestContracts(pagedFanout);
+  // Model both windows independently of AbortSignal.timeout and of one another.
+  const fanoutStart = Date.parse("2026-01-08T00:00:00Z");
+  const lastPost = pagedFanout.apiRequestRecords.findLastIndex(({name}) => name === "repos.createDispatchEvent");
+  assert(lastPost >= 0 && lastPost < pagedFanout.apiRequestRecords.length - 1,
+    "exercise both fan-out and post-dispatch visibility requests");
+  const visibilityStart = pagedFanout.apiRequestRecords[lastPost].issuedAt + 25;
+  for (const [index, {name, options, issuedAt}] of pagedFanout.apiRequestRecords.entries()) {
+    const phaseDeadline = index <= lastPost ? fanoutStart + 12 * 60 * 1000 : visibilityStart + 120000;
+    assert.equal(options.request.signal.timeoutMs, phaseDeadline - issuedAt,
+      `${name} must use the remaining budget of its independently modeled phase`);
+  }
+  const samePageBoundary = await runDispatcher({
+    tuples: [tuple, tupleFor(102, "d", "e")],
+    pullListResponse: (request, pulls) => request.page === 1
+      ? [...Array.from({length: 99}, () => ({state: "closed"})), pulls[0]]
+      : pulls,
+  });
+  assert.deepEqual(runtimeDispatches(samePageBoundary).map(item => item.client_payload.pr_number).sort(),
+    ["101", "102"], "a duplicated page boundary must not dispatch one exact tuple twice");
+  assert.deepEqual(samePageBoundary.errors, []);
   for (const jobPage of [
     () => ({total_count: 1, jobs: []}),
     () => ({total_count: 1, jobs: {}}),
@@ -1942,14 +1962,14 @@ async function runDispatcher({
     assert.deepEqual(result.errors, []);
   }
   const recentTransition = await runDispatcher({
-    tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
+    tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
     inventories: {repository_dispatch: [completedRefresh]},
     runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [{...successfulJob,
       steps: successfulJob.steps.map(step => ({...step, conclusion:
         step.name.startsWith("Known canonical transition") ? "success" : "skipped"})),
     }]}},
   });
-  assert.deepEqual(numbers(recentTransition), [], "a recent successful PLAY diagnostic keeps its existing dispatch hold");
+  assert.deepEqual(numbers(recentTransition), [], "an exact successful PLAY diagnostic retains its hold after later Validation");
   assert.deepEqual(recentTransition.errors, []);
   const staleSuccess = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [completedRefresh]},
     runtimeAttemptJobs: successfulJobs, runtimeRunOverrides: {[completedRefresh.id]: reads => reads > 1 ? {run_attempt: 2} : {}}});

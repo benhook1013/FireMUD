@@ -507,14 +507,24 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                         net.firedevops.firemud.worldmanagement.v1
                             .ReadWorldCanonicalInstanceLifecycleResponse>
                     response) {
-              var requested = WorldCanonicalInstanceLifecycleGrpcCodec.fromRequest(incoming);
+              if (!isPeer(caller)) {
+                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+                return;
+              }
+              final WorldCanonicalInstanceLifecycleEvidence.Request requested;
+              try {
+                requested = WorldCanonicalInstanceLifecycleGrpcCodec.fromRequest(incoming);
+              } catch (IllegalArgumentException invalid) {
+                response.onError(io.grpc.Status.INVALID_ARGUMENT.asRuntimeException());
+                return;
+              }
               var evidence =
                   placements.values().stream()
                       .map(Placement::lifecycle)
                       .filter(capture -> capture.request().equals(requested))
                       .findFirst()
                       .orElse(null);
-              if (!isPeer(caller) || evidence == null) {
+              if (evidence == null) {
                 response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
                 return;
               }

@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
@@ -81,12 +82,14 @@ class AccountRuntimeStubServerCompatibilityTest {
       try {
         var stub = AccountServiceGrpc.newBlockingStub(channel);
         var request = CommitTenantCapacityAdmissionRequest.getDefaultInstance();
-        assertThatThrownBy(() -> stub.commitTenantCapacityAdmission(request))
+        assertThatThrownBy(() ->
+                stub.withDeadlineAfter(2, TimeUnit.SECONDS).commitTenantCapacityAdmission(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->
                     assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
-        assertThatThrownBy(() -> stub.readTenantCapacityQuotaDenial(request))
+        assertThatThrownBy(() ->
+                stub.withDeadlineAfter(2, TimeUnit.SECONDS).readTenantCapacityQuotaDenial(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

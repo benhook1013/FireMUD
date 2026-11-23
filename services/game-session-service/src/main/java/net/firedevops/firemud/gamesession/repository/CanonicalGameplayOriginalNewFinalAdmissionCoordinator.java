@@ -1,10 +1,12 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import io.grpc.Deadline;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
@@ -125,7 +127,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         requireDeadline(absoluteDeadlineMillis);
         capacityExecution.requireCommittedRequest(source, capacityRequest, absoluteDeadlineMillis);
         recoveredConfirmation =
-            accountClient.confirmOriginalNewGameplayAdmission(originalLoginJwt, originalLeaseBytes);
+            accountClient.confirmOriginalNewGameplayAdmission(
+                originalLoginJwt, originalLeaseBytes, confirmationDeadline(absoluteDeadlineMillis));
+        requireDeadline(absoluteDeadlineMillis);
         requireConfirmation(source, recoveredConfirmation, null, originalDecision);
         Currentness afterRecovery = currentness(source, privateRegionInstallation);
         requireSameCurrentness(beforeEffects, afterRecovery);
@@ -247,7 +251,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
               requireDeadline(absoluteDeadlineMillis);
               OriginalFinalAdmissionConfirmation confirmation =
                   accountClient.confirmOriginalNewGameplayAdmission(
-                      originalLoginJwt, originalLeaseBytes);
+                      originalLoginJwt,
+                      originalLeaseBytes,
+                      confirmationDeadline(absoluteDeadlineMillis));
+              requireDeadline(absoluteDeadlineMillis);
               requireConfirmation(source, confirmation, credential, originalDecision);
 
               CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
@@ -260,6 +267,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                   && !sameConfirmation(recoveredConfirmation, confirmation)) {
                 throw unavailable();
               }
+              requireDeadline(absoluteDeadlineMillis);
               return new FinalAdmissionResult(
                   source.candidate().bindingDecisionId(),
                   finalReadback.admissionAtMillis(),
@@ -600,6 +608,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     if (now < accountOpen.issuedAtEpochMillis() || now >= accountOpen.expiresAtEpochMillis()) {
       throw unavailable();
     }
+  }
+
+  private Deadline confirmationDeadline(long absoluteDeadlineMillis) {
+    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
+    if (remainingMillis <= 0L) throw unavailable();
+    return Deadline.after(remainingMillis, TimeUnit.MILLISECONDS);
   }
 
   private void requireDeadline(long absoluteDeadlineMillis) {

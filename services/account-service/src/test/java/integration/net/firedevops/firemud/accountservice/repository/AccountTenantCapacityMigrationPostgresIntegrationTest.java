@@ -330,6 +330,66 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   @Test
+  void v1040_5AllowsTheFinalRefusalAndAnExactRetryWithoutSpendingAnotherSlot() {
+    String schema = "capacity_v1040_5_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      var flyway = capacityMigrations(data, schema).target("1040.5").load();
+      flyway.migrate();
+      assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("1040.5");
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var tenant = source();
+      transaction.executeWithoutResult(status -> {
+        new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+        new AccountCapacityRefusalBudgetRepository(dsl).provision(tenant.canonicalTenantId(), 1);
+      });
+      String insert =
+          """
+          INSERT INTO account_capacity_origin_decisions
+          (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id,
+           mutation_digest, canonical_payload, decision, decision_id, refusal_code)
+          VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?, 'CAPACITY_QUOTA_EXCEEDED')
+          ON CONFLICT DO NOTHING
+          """;
+      UUID decision = UUID.randomUUID();
+      Object[] original = {
+        tenant.canonicalTenantId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "a".repeat(64),
+        new byte[] {1},
+        decision
+      };
+      assertThat(dsl.execute(insert, original)).isOne();
+      Object[] retry = original.clone();
+      retry[retry.length - 1] = UUID.randomUUID();
+      assertThat(dsl.execute(insert, retry)).isZero();
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  insert,
+                  tenant.canonicalTenantId(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  "b".repeat(64),
+                  new byte[] {2},
+                  UUID.randomUUID()))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
+      assertThat(
+              dsl.fetch("SELECT decision_id FROM account_capacity_origin_decisions")
+                  .getValues("decision_id", UUID.class))
+          .containsExactly(decision);
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  @Test
   void refusalBudgetRunsAfterIdentityArbitrationAndCountsTheInsertedLastSlot() throws Exception {
     String schema = "capacity_arbitration_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);

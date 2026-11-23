@@ -1331,8 +1331,21 @@ if origin_probe.get("env", {}).get("DEV_NAMESPACE_MANAGER_KUBECONFIG") != (
     "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig"
 ):
     raise SystemExit("the Account probe must use the existing namespace-manager kubeconfig for readback")
-if "run-dev-account-v1040-4-probe.sh" not in origin_probe.get("run", ""):
-    raise SystemExit("the V1040.4 gate must call the protected probe helper")
+origin_probe_bindings = {
+    "RUNTIME_NAMESPACE": "${{ needs.dev-demo-plan.outputs.namespace }}",
+    "NAMESPACE_UID": "${{ steps.v2-migration-mode.outputs.account_origin_namespace_uid }}",
+    "DEPLOYED_SHA": "${{ steps.v2-migration-mode.outputs.account_origin_base_sha }}",
+    "HEAD_SHA": "${{ needs.dev-demo-plan.outputs.head_sha }}",
+    "ORIGIN_PREFIX": "${{ steps.v2-migration-mode.outputs.account_origin_prefix }}",
+}
+if any(origin_probe.get("env", {}).get(key) != value for key, value in origin_probe_bindings.items()):
+    raise SystemExit("the V1040.4 gate must bind exact classifier comparison outputs")
+origin_probe_command = [
+    "bash ./dev-tools/deploy/run-dev-account-v1040-4-probe.sh " + chr(92),
+    '"$RUNTIME_NAMESPACE" "$NAMESPACE_UID" "$DEPLOYED_SHA" "$HEAD_SHA" "$ORIGIN_PREFIX"',
+]
+if [line.strip() for line in origin_probe.get("run", "").splitlines()[-2:]] != origin_probe_command:
+    raise SystemExit("the V1040.4 gate must call the probe with the exact ordered comparison")
 deploy_condition = deploy_by_name["Deploy dev-demo release"].get("if", "")
 expected_deploy_condition = (
     "${{ steps.cluster-access.outputs.available == 'true' && "

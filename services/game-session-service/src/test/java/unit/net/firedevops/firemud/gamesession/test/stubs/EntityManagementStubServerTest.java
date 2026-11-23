@@ -19,12 +19,19 @@ import org.junit.jupiter.api.Test;
 
 class EntityManagementStubServerTest {
 
+  private static AutoCloseable verifyChannelShutdown(ManagedChannel channel) {
+    return () -> {
+      channel.shutdownNow();
+      assertThat(channel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    };
+  }
+
   @Test
   void returnsPongToPingOverLoopbackGrpc() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (var shutdown = verifyChannelShutdown(channel)) {
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
@@ -32,8 +39,6 @@ class EntityManagementStubServerTest {
 
         assertThat(response.getMessage()).isEqualTo("pong");
         assertThat(response.hasError()).isFalse();
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -43,7 +48,7 @@ class EntityManagementStubServerTest {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (var shutdown = verifyChannelShutdown(channel)) {
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
@@ -59,8 +64,6 @@ class EntityManagementStubServerTest {
           assertThat(response.hasError()).isFalse();
           assertThat(response.getCharactersList()).containsExactly(sharedCharacter(fixture.name()));
         }
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -71,7 +74,7 @@ class EntityManagementStubServerTest {
       server.setCharacters(List.of());
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (var shutdown = verifyChannelShutdown(channel)) {
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
@@ -88,8 +91,6 @@ class EntityManagementStubServerTest {
                 stub, "1", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
         assertThat(resetResponse.hasError()).isFalse();
         assertThat(resetResponse.getCharactersList()).containsExactly(sharedCharacter("Emberline"));
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -115,7 +116,7 @@ class EntityManagementStubServerTest {
       server.setCharacters(List.of(firstPlayer, secondPlayer));
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (var shutdown = verifyChannelShutdown(channel)) {
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
@@ -143,8 +144,6 @@ class EntityManagementStubServerTest {
                         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -154,7 +153,7 @@ class EntityManagementStubServerTest {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (var shutdown = verifyChannelShutdown(channel)) {
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
@@ -171,8 +170,6 @@ class EntityManagementStubServerTest {
                         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .getCharactersList())
             .isEmpty();
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
@@ -182,7 +179,7 @@ class EntityManagementStubServerTest {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (var shutdown = verifyChannelShutdown(channel)) {
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
             EntityManagementServiceGrpc.newBlockingStub(channel);
 
@@ -202,8 +199,6 @@ class EntityManagementStubServerTest {
                         PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                     .getCharactersList())
             .isEmpty();
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }

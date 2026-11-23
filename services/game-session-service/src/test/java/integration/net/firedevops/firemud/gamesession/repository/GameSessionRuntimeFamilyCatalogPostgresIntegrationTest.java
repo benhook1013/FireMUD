@@ -1878,8 +1878,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "require_gs_region_fence_dispatch_completion()"),
           Map.of("game_session_region_owner_transfer_item.", List.of("CHECK (fence_dispatch_id")),
           Map.of(
-              "gs_region_fence_dispatch_execution", "execution_digest",
-              "gs_region_fence_receipt_execution", "execution_digest"));
+              "gs_region_fence_dispatch_execution",
+                  "(execution_digest) WHERE (fence_dispatch_id IS NOT NULL)",
+              "gs_region_fence_receipt_execution",
+                  "(execution_digest) WHERE (fence_readback IS NOT NULL)"));
+      assertThat(f.indexes().get("gs_region_fence_dispatch_execution"))
+          .startsWith("CREATE UNIQUE INDEX ");
     }
   }
 
@@ -1927,6 +1931,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           null,
           List.of(
               "OLD.status='AUTHORIZED' AND NEW.status='CLOSED'",
+              "t.transition_id=OLD.transition_id",
               "t.original_new_capacity_execution_digest=OLD.execution_digest",
               "Original NEW execution cannot close after retained final receipt"));
     }
@@ -1944,7 +1949,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           Map.of(),
           Map.of(
               "game_session_region_owner_transfer_item.gs_region_fence_receipt_dispatch_incarnation",
-              List.of("fence_dispatch_incarnation")),
+              List.of(
+                  "fence_dispatch_id IS NULL OR fence_readback IS NULL OR incarnation_digest = fence_dispatch_incarnation")),
           Map.of());
     }
   }

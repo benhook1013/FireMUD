@@ -401,6 +401,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             ConnectionFuture.from(
                 new InetSocketAddress("localhost", 6379),
                 CompletableFuture.completedFuture(connection)));
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
     when(connection.async()).thenReturn(commands);
     when(commands.aclWhoami()).thenReturn(principal);
     when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
@@ -522,6 +523,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             ConnectionFuture.from(
                 new InetSocketAddress("localhost", 6379),
                 CompletableFuture.completedFuture(connection)));
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
     when(connection.async()).thenReturn(commands);
     when(commands.aclWhoami()).thenReturn(principal);
     when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
@@ -769,11 +771,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     long started = System.nanoTime();
     try {
-      assertThatThrownBy(() ->
-              Context.current()
-                  .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
-                  .call(() -> owner.readExact(request, reservation)))
-          .isInstanceOf(IllegalStateException.class);
+      var result =
+          CompletableFuture.runAsync(() ->
+              assertThatThrownBy(() ->
+                      Context.current()
+                          .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
+                          .call(() -> owner.readExact(request, reservation)))
+                  .isInstanceOf(IllegalStateException.class));
+      result.get(3500, TimeUnit.MILLISECONDS);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
       Semaphore background =
@@ -1005,10 +1010,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     DSLContext dsl = source(provider);
     long started = System.nanoTime();
     try {
-      assertThatThrownBy(() ->
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                  CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
-          .isInstanceOf(IllegalStateException.class);
+      var result =
+          CompletableFuture.runAsync(() ->
+              assertThatThrownBy(() ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                          CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
+                  .isInstanceOf(IllegalStateException.class));
+      result.get(3500, TimeUnit.MILLISECONDS);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(executing.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(cancelling.await(1, TimeUnit.SECONDS)).isTrue();
@@ -1060,6 +1068,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       int backgroundAvailable = background.availablePermits();
       int before = retained.get();
       int available = permits.availablePermits();
+      var rollbackFailure = new AtomicReference<Throwable>();
+      var autoCommitFailure = new AtomicReference<Throwable>();
       try {
         assertThatThrownBy(() ->
                 CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
@@ -1073,12 +1083,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       scoped.acquire();
                       assertThatThrownBy(() -> scoped.release(proxy))
                           .hasMessage("Controlled uncertain pool return");
-                      assertThatThrownBy(proxy::rollback).isInstanceOf(java.sql.SQLException.class);
-                      assertThatThrownBy(() -> proxy.setAutoCommit(true))
-                          .isInstanceOf(java.sql.SQLException.class);
+                      rollbackFailure.set(
+                          org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
+                      autoCommitFailure.set(
+                          org.assertj.core.api.Assertions.catchThrowable(
+                              () -> proxy.setAutoCommit(true)));
                       return true;
                     }))
             .isInstanceOf(IllegalStateException.class);
+        assertThat(rollbackFailure.get()).isInstanceOf(java.sql.SQLException.class);
+        assertThat(autoCommitFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(
                 registry
                     .get("original_new_capacity_sql_release_failure_retained_operations")
@@ -1399,36 +1413,93 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     PreparedStatement statement = mock();
     Connection connection = preparedConnection(statement);
     when(provider.acquire()).thenReturn(connection);
-    AtomicInteger executions = new AtomicInteger();
+    AtomicInteger executions = new AtomicInteger(), queryTimeout = new AtomicInteger();
+    AtomicInteger secondTimeout = new AtomicInteger();
+    AtomicLong wallMillis = new AtomicLong(CLOCK.millis());
+    Clock clock = mock();
+    when(clock.millis()).thenAnswer(ignored -> wallMillis.get());
     CountDownLatch second = new CountDownLatch(1), release = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              queryTimeout.set(invocation.getArgument(0));
+              return null;
+            })
+        .when(statement)
+        .setQueryTimeout(anyInt());
     when(statement.execute())
         .thenAnswer(invocation -> {
-          if (executions.incrementAndGet() == 1)
-            assertThat(new CountDownLatch(1).await(80, TimeUnit.MILLISECONDS)).isFalse();
-          else {
+          if (executions.incrementAndGet() == 1) {
+            wallMillis.addAndGet(1500L);
+          } else {
+            secondTimeout.set(queryTimeout.get());
             second.countDown();
             awaitUninterruptibly(release);
           }
           return true;
         });
     DSLContext dsl = source(provider);
-    long started = System.nanoTime();
     try {
-      assertThatThrownBy(() ->
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                  CLOCK,
-                  CLOCK.millis() + 250,
-                  budget -> {
-                    var sql = budget.sql(dsl);
-                    execute(sql);
-                    return execute(sql);
-                  }))
-          .isInstanceOf(IllegalStateException.class);
+      var outcome =
+          CompletableFuture.runAsync(() ->
+              assertThatThrownBy(() ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                          clock,
+                          clock.millis() + 2000,
+                          budget -> {
+                            var sql = budget.sql(dsl);
+                            execute(sql);
+                            return execute(sql);
+                          }))
+                  .isInstanceOf(IllegalStateException.class));
+      outcome.get(3500, TimeUnit.MILLISECONDS);
       assertThat(second.await(1, TimeUnit.SECONDS)).isTrue();
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(1500);
+      assertThat(secondTimeout)
+          .as("second query receives at most the remaining 500 ms")
+          .hasValue(1);
       verify(statement, timeout(1000)).cancel();
     } finally {
       release.countDown();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void secondQueryCannotRenewAnAlreadyConsumedAbsoluteDeadline(boolean exhaustFirstQuery)
+      throws Exception {
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    when(provider.acquire()).thenReturn(preparedConnection(statement));
+    AtomicInteger executions = new AtomicInteger();
+    AtomicLong wallMillis = new AtomicLong(CLOCK.millis());
+    Clock clock = mock();
+    when(clock.millis()).thenAnswer(ignored -> wallMillis.get());
+    long absoluteDeadline = clock.millis() + 5_000L;
+    when(statement.execute())
+        .thenAnswer(invocation -> {
+          if (executions.incrementAndGet() == 1 && exhaustFirstQuery) {
+            wallMillis.set(absoluteDeadline + 1L);
+          }
+          return true;
+        });
+    DSLContext dsl = source(provider);
+    Runnable bothQueries =
+        () ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                clock,
+                absoluteDeadline,
+                budget -> {
+                  var sql = budget.sql(dsl);
+                  execute(sql);
+                  return execute(sql);
+                });
+    if (exhaustFirstQuery) {
+      assertThatThrownBy(bothQueries::run)
+          .isInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+      assertThat(executions).hasValue(1);
+    } else {
+      bothQueries.run();
+      assertThat(executions).hasValue(2);
     }
   }
 

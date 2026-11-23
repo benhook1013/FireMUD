@@ -55,7 +55,9 @@ class AccountTenantCapacityGrpcServiceTest {
     ABSENT,
     ACCEPTED,
     GENERIC_NO_ACCEPT,
-    WRONG_FINGERPRINT
+    WRONG_FINGERPRINT,
+    WRITABLE_CONNECTION,
+    AUTOCOMMIT_CONNECTION
   }
 
   @Test
@@ -212,7 +214,8 @@ class AccountTenantCapacityGrpcServiceTest {
     var decisionId = UUID.randomUUID();
     DSLContext dsl = mock();
     Connection connection = mock();
-    when(connection.isReadOnly()).thenReturn(true);
+    when(connection.isReadOnly()).thenReturn(evidence != RetainedEvidence.WRITABLE_CONNECTION);
+    when(connection.getAutoCommit()).thenReturn(evidence == RetainedEvidence.AUTOCOMMIT_CONNECTION);
     doAnswer(
             invocation -> {
               invocation.getArgument(0, ConnectionRunnable.class).run(connection);
@@ -294,7 +297,12 @@ class AccountTenantCapacityGrpcServiceTest {
     }
     verifyNoMoreInteractions(observer);
     verify(dsl).connection(any(ConnectionRunnable.class));
-    verify(dsl).fetchOne(sql, key);
+    if (evidence == RetainedEvidence.WRITABLE_CONNECTION
+        || evidence == RetainedEvidence.AUTOCOMMIT_CONNECTION) {
+      verify(dsl, never()).fetchOne(sql, key);
+    } else {
+      verify(dsl).fetchOne(sql, key);
+    }
     verifyNoMoreInteractions(dsl);
     verifyNoInteractions(accounts, memberships, issuances, scopes, clock);
   }

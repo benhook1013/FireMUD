@@ -954,7 +954,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         != 1)
       throw new IllegalStateException("Controlled owner movement did not affect the selected row");
     return new OwnerMovementFault(
-        result, () -> executionOwner.bind(source, request, result, deadline, selected));
+        result,
+        () -> executionOwner.bind(source, request, result, CLOCK.millis() + 10_000L, selected));
   }
 
   public record OwnerMovementFault(

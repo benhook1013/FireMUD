@@ -296,8 +296,17 @@ class AccountTenantCapacityClientMtlsTest {
 
   @Test
   void restartedClientRecoversTheOriginalQuotaDenialWithoutAnotherCommit() throws Exception {
+    assertOriginalQuotaDenialRecovery(true);
+  }
+
+  @Test
+  void restartedClientRefusesQuotaDenialWithoutAReceiptAndDoesNotCommitAgain() throws Exception {
+    assertOriginalQuotaDenialRecovery(false);
+  }
+
+  private void assertOriginalQuotaDenialRecovery(boolean receiptPresent) throws Exception {
     var request = CapacityAdmissionTestFixture.playerRequest();
-    var denialId = UUID.randomUUID();
+    UUID denialId = receiptPresent ? UUID.randomUUID() : null;
     var commits = new AtomicInteger();
     var reads = new AtomicInteger();
     var failedCommit = new AtomicReference<CommitTenantCapacityAdmissionRequest>();
@@ -334,11 +343,18 @@ class AccountTenantCapacityClientMtlsTest {
         assertThatThrownBy(() -> original.commit(request, deadline()))
             .isInstanceOf(StatusRuntimeException.class);
       }
-      assertThat(failedCommit.get())
-          .isEqualTo(TenantCapacityAdmissionGrpcCodec.toRequest(request));
+      assertThat(failedCommit.get()).isEqualTo(TenantCapacityAdmissionGrpcCodec.toRequest(request));
       try (var restarted = client(server)) {
         restarted.init();
-        assertThat(restarted.readRetainedQuotaDenial(request, deadline())).isEqualTo(denialId);
+        if (receiptPresent) {
+          assertThat(restarted.readRetainedQuotaDenial(request, deadline())).isEqualTo(denialId);
+        } else {
+          assertThatThrownBy(() -> restarted.readRetainedQuotaDenial(request, deadline()))
+              .isInstanceOfSatisfying(
+                  StatusRuntimeException.class,
+                  failure ->
+                      assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN));
+        }
       }
       assertThat(commits).hasValue(1);
       assertThat(reads).hasValue(1);
