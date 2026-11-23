@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
@@ -49,6 +50,9 @@ public final class RunOwnedFixtureLookEntityGrpcService
   private final Path capabilityPath;
   private final Path receiptPath;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Reads fixture ground state through the shared jOOQ context.")
   public RunOwnedFixtureLookEntityGrpcService(
       DSLContext dsl,
       @Qualifier("transactionManager") PlatformTransactionManager transactions,
