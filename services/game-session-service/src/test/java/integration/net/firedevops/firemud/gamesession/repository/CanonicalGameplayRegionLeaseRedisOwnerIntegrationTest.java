@@ -205,8 +205,24 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
                   TENANT_ID, GAME_INSTANCE_ID_A, OPERATIONAL_REGION_ID));
       Clock behindRedis = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-30));
       var late = owner.forHandoffDeadline(behindRedis, behindRedis.millis() + 4_000);
-      assertThatThrownBy(() -> late.acquire(source, 7L, Duration.ofSeconds(30), identity("late")))
-          .isInstanceOf(IllegalStateException.class);
+      var acquired = new CompletableFuture<Object>();
+      CommandListener acquireObservation =
+          new CommandListener() {
+            @Override
+            public void commandSucceeded(CommandSucceededEvent event) {
+              if (event.getCommand().getType() == CommandType.EVALSHA) {
+                acquired.complete(event.getCommand().getOutput().get());
+              }
+            }
+          };
+      redis.ownerClient().addListener(acquireObservation);
+      try {
+        assertThatThrownBy(() -> late.acquire(source, 7L, Duration.ofSeconds(30), identity("late")))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(acquired.get(2, TimeUnit.SECONDS)).isEqualTo(0L);
+      } finally {
+        redis.ownerClient().removeListener(acquireObservation);
+      }
       assertThat(redis.admin().get(leaseKey)).isNull();
 
       Clock current = Clock.systemUTC();

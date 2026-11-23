@@ -22,6 +22,17 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     lockBudget(tx, request, tag);
     var prior = exactCharge(tx, request, candidateDigest, selected, tag);
     if (prior != null) return prior.get("account_denial_id", UUID.class);
+    // The tenant budget lock serializes precharges. Retained and active charges both bind
+    // the original Account origin and rearm fence; a new attempt cannot reserve that slot.
+    if (tx.fetchOne(
+            "SELECT 1 FROM game_session_capacity_evidence_charge"
+                + " WHERE tenant_id=? AND request_id=? AND admission_id=? AND capacity_rearm_fence=?"
+                + " LIMIT 1",
+            identity.tenantId(),
+            identity.requestId(),
+            identity.admissionId(),
+            request.capacityRearmFence())
+        != null) throw unavailable();
     // Match Account's durable timestamp precision. Historical exact charges above don't use
     // current evidence, and a stale uncharged request cannot consume a new slot.
     var now = clock.instant();

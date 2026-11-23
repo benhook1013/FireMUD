@@ -532,10 +532,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
       assertThat(redis.admin().type(metaKey)).isEqualTo("none");
 
-      arguments[8] = ascii(Long.toString(System.currentTimeMillis() + 10_000L));
+      long submittedDeadline = System.currentTimeMillis() + 10_000L;
+      arguments[8] = ascii(Long.toString(submittedDeadline));
       Long initialized = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
       assertThat(initialized).isEqualTo(1L);
-      assertThat(redis.admin().pttl(leaseKey)).isBetween(1L, 10_000L);
+      assertThat(redis.admin().pttl(leaseKey)).isPositive();
+      assertThat(redis.admin().pexpiretime(leaseKey)).isPositive().isLessThanOrEqualTo(submittedDeadline);
       assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
     }
   }

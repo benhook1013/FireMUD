@@ -365,7 +365,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(fault.reservation().state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
       String committedCapacity = session.capacityImage();
       var movedGs = session.gs.capacityStateImage();
-      assertThatThrownBy(fault.bindOriginal()::run).isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(fault.bindOriginal()::run)
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW capacity execution is indeterminate");
       assertThat(session.capacityImage()).isEqualTo(committedCapacity);
       assertThat(session.gs.capacityStateImage()).isEqualTo(movedGs);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);

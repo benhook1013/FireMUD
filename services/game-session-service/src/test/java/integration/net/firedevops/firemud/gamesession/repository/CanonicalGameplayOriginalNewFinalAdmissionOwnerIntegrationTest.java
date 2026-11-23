@@ -125,6 +125,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         ascii(
             CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
                 source.candidate().bindingIdentity().issuerId(), assignment)));
+    assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> observeGuardedRegionReplacement("successor-before-reconciliation"))
         .rootCause()
         .isInstanceOfSatisfying(

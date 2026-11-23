@@ -353,6 +353,23 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
   }
 
   protected net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
+      replaceRegionOwner(String successor) {
+    var original = regionBinding.installation();
+    var repository = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
+    var current = repository.find(original.source).orElseThrow();
+    // Exercise the actual serialized persistence boundary. The caller's replacement Redis grant
+    // is controlled here; this is not a proof of production handoff or external source custody.
+    return repository.installOwner(
+        original.source,
+        current.regionEpoch(),
+        current,
+        "a".repeat(64),
+        "game-session-service",
+        successor,
+        CLOCK.instant());
+  }
+
+  protected net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
       observeGuardedRegionReplacement(String successor) {
     var source = regionBinding.installation().source;
     return fixture
@@ -520,9 +537,9 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
           fixture
               .dsl()
               .fetch(
-                  "SELECT to_jsonb(t)::text AS image FROM "
+                  "SELECT to_jsonb(t)::text || ':' || t.xmin::text AS image FROM "
                       + table
-                      + " t ORDER BY to_jsonb(t)::text")
+                      + " t ORDER BY image")
               .getValues("image", String.class));
     }
     return rows.toString();
