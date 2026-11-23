@@ -374,7 +374,10 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(proof.itemImage(id))
           .contains("\"fence_apply_issued\": true", "\"fence_readback\": null");
       proof.recreateTransferOwners();
-      var completed = new java.util.concurrent.CompletableFuture<ReceiptAction>();
+      var completed =
+          List.of(
+              new java.util.concurrent.CompletableFuture<ReceiptAction>(),
+              new java.util.concurrent.CompletableFuture<ReceiptAction>());
       var commands = new java.util.concurrent.atomic.AtomicInteger();
       var observedRedis = org.mockito.Mockito.mock(io.lettuce.core.RedisClient.class);
       org.mockito.Mockito.when(observedRedis.connect(ByteArrayCodec.INSTANCE))
@@ -404,9 +407,11 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
             proof.transfers.retainFence(item, actual, before, after);
             return null;
           });
-      assertThat(completed.get(2, java.util.concurrent.TimeUnit.SECONDS))
-          .isEqualTo(ReceiptAction.OBSERVE);
-      assertThat(commands.get()).isEqualTo(1);
+      for (var observed : completed) {
+        assertThat(observed.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            .isEqualTo(ReceiptAction.OBSERVE);
+      }
+      assertThat(commands.get()).isEqualTo(2);
       assertThat(proof.itemImage(id)).doesNotContain("\"fence_readback\": null");
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
     }
@@ -422,7 +427,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   private static io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]>
       observingReceiptConnection(
           io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]> real,
-          java.util.concurrent.CompletableFuture<ReceiptAction> completed,
+          List<java.util.concurrent.CompletableFuture<ReceiptAction>> completed,
           java.util.concurrent.atomic.AtomicInteger commands,
           long expectedCode) {
     var actual = real.async();
@@ -440,10 +445,12 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               for (var candidate : ReceiptAction.values()) {
                 if (java.util.Arrays.equals(values[0], ascii(candidate.name()))) action = candidate;
               }
-              if (action == null || commands.incrementAndGet() != 1) {
-                throw new AssertionError("Unexpected transfer receipt action or replay");
+              int index = commands.getAndIncrement();
+              if (action != ReceiptAction.OBSERVE || index >= completed.size()) {
+                throw new AssertionError(
+                    "Expected an original or post-retention read-only OBSERVE");
               }
-              ReceiptAction observedAction = action;
+              var outcome = completed.get(index);
               var result = (io.lettuce.core.RedisFuture<?>) invokeRedis(actual, method, arguments);
               result.whenComplete((value, failure) -> {
                 if (failure == null
@@ -452,9 +459,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                     && Long.valueOf(expectedCode).equals(row.get(0))
                     && row.get(2) instanceof byte[] state
                     && java.util.Arrays.equals(ascii("APPLIED"), state)) {
-                  completed.complete(observedAction);
+                  outcome.complete(ReceiptAction.OBSERVE);
                 } else {
-                  completed.completeExceptionally(
+                  outcome.completeExceptionally(
                       new AssertionError("Redis did not complete the exact terminal observation"));
                 }
               });
@@ -1021,6 +1028,92 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
     }
+  }
+
+  @Test
+  void transferReceiptWireDeadlineCannotExceedProtectedObservation() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      var observations =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(
+                  proof.clock, Duration.ofSeconds(3))
+              .receiver(proof.transfers, proof.tags);
+      UUID id = proof.begin();
+      long deadline = proof.clock.millis() + 10_000;
+      var wireDeadlines = new java.util.EnumMap<ReceiptAction, Long>(ReceiptAction.class);
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var item = proof.transfers.capture(id).getFirst();
+            var before = observations.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            assertThat(before.expiresAtEpochMillis()).isLessThan(deadline);
+            var owner =
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    proof.redis,
+                    proof.scripts,
+                    proof.clock,
+                    proof.tags.withCapacityExecutionDsl(budget.sql(proof.sql)),
+                    () ->
+                        recordingReceiptDeadline(
+                            CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                                proof.redis, budget),
+                            wireDeadlines),
+                    budget::remainingMillis,
+                    budget::awaitAsyncClose);
+            dispatch.seal(
+                owner.prepareTransferReceipt(
+                    item.execution(), item.candidate(), item.assignment(), dispatch, deadline));
+            assertThat(
+                    owner.applyTransferReceipt(
+                        item.execution(), item.candidate(), item.assignment(), dispatch, deadline))
+                .isEqualTo(
+                    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
+                        .CAPACITY_EXECUTION_FENCED_INDETERMINATE);
+            assertThat(wireDeadlines)
+                .containsOnly(
+                    org.assertj.core.api.Assertions.entry(
+                        ReceiptAction.PREPARE, before.expiresAtEpochMillis()),
+                    org.assertj.core.api.Assertions.entry(
+                        ReceiptAction.APPLY, before.expiresAtEpochMillis()));
+            return null;
+          });
+      assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]>
+      recordingReceiptDeadline(
+          io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]> real,
+          java.util.EnumMap<ReceiptAction, Long> deadlines) {
+    var actual = real.async();
+    Object observed =
+        java.lang.reflect.Proxy.newProxyInstance(
+            io.lettuce.core.api.async.RedisAsyncCommands.class.getClassLoader(),
+            new Class<?>[] {io.lettuce.core.api.async.RedisAsyncCommands.class},
+            (proxy, method, arguments) -> {
+              if ("evalsha".equals(method.getName())
+                  && arguments.length == 4
+                  && arguments[3] instanceof byte[][] values
+                  && values.length == 9) {
+                // Inspect only operation type and numeric deadline, not candidate or proof bytes.
+                var action =
+                    ReceiptAction.valueOf(new String(values[0], StandardCharsets.US_ASCII));
+                long expires = Long.parseLong(new String(values[6], StandardCharsets.US_ASCII));
+                if (deadlines.putIfAbsent(action, expires) != null) {
+                  throw new AssertionError("Transfer receipt action was submitted more than once");
+                }
+              }
+              return invokeRedis(actual, method, arguments);
+            });
+    return (io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]>)
+        java.lang.reflect.Proxy.newProxyInstance(
+            io.lettuce.core.api.StatefulRedisConnection.class.getClassLoader(),
+            new Class<?>[] {io.lettuce.core.api.StatefulRedisConnection.class},
+            (proxy, method, arguments) ->
+                "async".equals(method.getName()) ? observed : invokeRedis(real, method, arguments));
   }
 
   @Test
@@ -1651,7 +1744,10 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                 .get("fence_dispatch_id", UUID.class);
         assertThat(retainedDispatch).isNotNull();
         proof.recreateTransferOwners();
-        var completed = new java.util.concurrent.CompletableFuture<ReceiptAction>();
+        var completed =
+            List.of(
+                new java.util.concurrent.CompletableFuture<ReceiptAction>(),
+                new java.util.concurrent.CompletableFuture<ReceiptAction>());
         var commands = new java.util.concurrent.atomic.AtomicInteger();
         var observedRedis = org.mockito.Mockito.mock(io.lettuce.core.RedisClient.class);
         org.mockito.Mockito.when(observedRedis.connect(ByteArrayCodec.INSTANCE))
@@ -1682,9 +1778,11 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               proof.transfers.retainFence(item, actual, before, after);
               return null;
             });
-        assertThat(completed.get(2, java.util.concurrent.TimeUnit.SECONDS))
-            .isEqualTo(ReceiptAction.OBSERVE);
-        assertThat(commands.get()).isEqualTo(1);
+        for (var observed : completed) {
+          assertThat(observed.get(2, java.util.concurrent.TimeUnit.SECONDS))
+              .isEqualTo(ReceiptAction.OBSERVE);
+        }
+        assertThat(commands.get()).isEqualTo(2);
         assertThat(proof.itemImage(id))
             .contains(retainedDispatch.toString())
             .doesNotContain("\"fence_readback\": null");

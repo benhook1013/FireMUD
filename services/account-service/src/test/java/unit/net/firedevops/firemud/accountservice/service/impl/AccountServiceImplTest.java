@@ -981,6 +981,25 @@ class AccountServiceImplTest {
     assertEquals(9L, f.currentMembership.getMembershipVersion());
     assertEquals(4L, f.currentMembership.getMembershipAuthorityGeneration());
 
+    if ("paid".equals(sourceKind)) {
+      var order =
+          org.mockito.Mockito.inOrder(accountRepository, accountJoinOperationRepository, f.hosting);
+      order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+      order
+          .verify(accountJoinOperationRepository)
+          .insertCanonicalIntent(f.requestId, f.scope, f.binding);
+      order
+          .verify(accountRepository)
+          .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+      order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+      order.verify(f.hosting).prepareCurrentRead(f.scope.tenantId());
+      order
+          .verify(accountRepository)
+          .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+      order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+      order.verify(f.hosting).readCurrent(paidFence, null);
+    }
+
     org.mockito.Mockito.verify(f.terminal)
         .commitCanonicalJoin(
             f.scope,

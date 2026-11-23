@@ -1815,8 +1815,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               incarnation,
               redisOwner.requireTimelineAbsent(source, incarnation),
               NOW);
-      var activeClock =
-          new AtomicReference<Clock>(Clock.fixed(Instant.now().minusMillis(3_000), ZoneOffset.UTC));
+      var activeClock = new AtomicReference<Clock>(Clock.systemUTC());
       Clock clock =
           new Clock() {
             @Override
@@ -1836,6 +1835,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           };
       var controlledRepository = org.mockito.Mockito.spy(statusRepository);
       var scopedRepositoryCalls = new java.util.concurrent.atomic.AtomicInteger();
+      var installRedisCutoff = new java.util.concurrent.atomic.AtomicLong();
       org.mockito.Mockito.doAnswer(
               invocation -> {
                 int call = scopedRepositoryCalls.incrementAndGet();
@@ -1844,7 +1844,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 if (refuseFirstCleanup && call == 2) {
                   throw new IllegalStateException("controlled first cleanup refusal");
                 }
-                return statusRepository.forBudget(invocation.getArgument(0));
+                var budget =
+                    invocation.<CanonicalGameplayOriginalNewCapacityExecutionBudget>getArgument(0);
+                if (call == 1) installRedisCutoff.set(budget.absoluteDeadlineMillis());
+                return statusRepository.forBudget(budget);
               })
           .when(controlledRepository)
           .forBudget(org.mockito.ArgumentMatchers.any());
@@ -1854,9 +1857,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           2,
           () -> {
             try {
-              long redisCutoff =
-                  clock.millis()
-                      + CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+              long redisCutoff = installRedisCutoff.get();
+              assertThat(redisCutoff).as("actual install budget cutoff").isPositive();
               long stopWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
               long observed = redisTimeMillis(redis.admin());
               while (observed < redisCutoff && System.nanoTime() < stopWaiting) {
@@ -1919,9 +1921,20 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           };
       redis.ownerClient().addListener(observedOwnerCommand);
       try {
-        assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
-            .isInstanceOf(IllegalStateException.class);
-        assertThat(initialize.get()).as("INITIALIZE after the committed SQL claim").isNotNull();
+        // Anchor only after all mocks/listeners are ready. Keep half of the bounded monotonic
+        // window on each side of the physical Redis cutoff, independent of host clock skew.
+        long operationMillis =
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+        activeClock.set(
+            Clock.fixed(
+                Instant.ofEpochMilli(redisTimeMillis(redis.admin()) - operationMillis / 2),
+                ZoneOffset.UTC));
+        var failedInstall =
+            catchThrowable(() -> owner.installForTransition(TRANSITION_ID, world.request()));
+        assertThat(failedInstall).isInstanceOf(IllegalStateException.class);
+        assertThat(initialize.get())
+            .as("INITIALIZE after the committed SQL claim; install refusal: %s", failedInstall)
+            .isNotNull();
         assertThat(completed.get(2, TimeUnit.SECONDS))
             .as("physical Redis deadline refusal after dispatch, not local pre-dispatch expiry")
             .isEqualTo(-3L);

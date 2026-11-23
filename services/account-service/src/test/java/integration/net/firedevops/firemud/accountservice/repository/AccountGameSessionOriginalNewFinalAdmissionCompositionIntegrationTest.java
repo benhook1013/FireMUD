@@ -822,6 +822,51 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
   }
 
+  @Test
+  void accountGeneratedUnavailableKeepsExactGameSessionReserveUnsettled() throws Exception {
+    // Only Account's capacity owner sees the advanced clock. The Game Session request,
+    // lease and credential remain current, so the real coordinator reaches Account after precharge.
+    try (Session session = session(Clock.offset(CLOCK, Duration.ofSeconds(60)));
+        OriginalNewCredential credential = session.issue()) {
+      var request = session.capacityRequest;
+      assertThat(request.evidence().permitsCreation()).isTrue();
+      byte[] candidate = session.gs.physicalSession();
+      String accountBefore = session.capacityImage() + session.capacityDecisionImage();
+      String transitionsBefore = session.gsReceiptImage();
+      String chargeLookup =
+          "SELECT tenant_id, admission_id, mutation_digest, account_denial_id"
+              + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?";
+      assertThat(session.gs.dsl().fetchOne(chargeLookup, request.admissionAttemptId())).isNull();
+
+      var uncertain = assertThrows(IllegalStateException.class, () -> session.complete(request));
+      assertThat(uncertain).isNotInstanceOf(CapacityRefusedException.class);
+      assertThat(uncertain.getCause()).isInstanceOf(StatusRuntimeException.class);
+      assertCapacityFailure(
+          (StatusRuntimeException) uncertain.getCause(),
+          Status.Code.UNAVAILABLE,
+          "CAPACITY_ADMISSION_STALE");
+
+      var retained = session.gs.dsl().fetchSingle(chargeLookup, request.admissionAttemptId());
+      assertThat(retained.get("tenant_id", UUID.class)).isEqualTo(request.identity().tenantId());
+      assertThat(retained.get("admission_id", UUID.class))
+          .isEqualTo(request.identity().admissionId());
+      assertThat(retained.get("mutation_digest", String.class)).isEqualTo(request.mutationDigest());
+      assertThat(retained.get("account_denial_id", UUID.class)).isNull();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(session.capacityImage() + session.capacityDecisionImage())
+          .isEqualTo(accountBefore);
+      assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
+      assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
+      assertProvisionalUnchanged(session, candidate);
+    }
+  }
+
   /** Changes one completed, exact authenticated response into plain caller-facing UNAVAILABLE. */
   private static final class DropFirstQuotaResponse implements ClientInterceptor {
     private final TenantCapacityAdmission.Request exact;
