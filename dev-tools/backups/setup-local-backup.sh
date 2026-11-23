@@ -42,9 +42,12 @@ if [[ -n "${MINIO_ROOT_PASSWORD:-}" ]]; then
 fi
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-$MINIO_ROOT_USER_DEFAULT}"
 
-# Ensure the namespace and local MinIO credentials secret exist before
-# applying the manifest that references them.
-kube create namespace minio --dry-run=client -o yaml | kube apply -f - >/dev/null
+read_minio_credential() {
+  # Mark NUL bytes (which Bash cannot store) as invalid line breaks, and append
+  # a sentinel so command substitution does not silently drop trailing newlines.
+  kube get secret minio-creds -n minio -o "jsonpath={.data.$1}" | base64 -d | LC_ALL=C tr '\000' '\r' || return
+  printf '.'
+}
 
 MINIO_SECRET_EXISTS=false
 MINIO_DEPLOYMENT_EXISTS=false
@@ -52,8 +55,10 @@ EXISTING_ACCESS_KEY=""
 EXISTING_SECRET_KEY=""
 if kube get secret minio-creds -n minio >/dev/null 2>&1; then
   MINIO_SECRET_EXISTS=true
-  EXISTING_ACCESS_KEY=$(kube get secret minio-creds -n minio -o jsonpath='{.data.accesskey}' | base64 -d)
-  EXISTING_SECRET_KEY=$(kube get secret minio-creds -n minio -o jsonpath='{.data.secretkey}' | base64 -d)
+  EXISTING_ACCESS_KEY=$(read_minio_credential accesskey)
+  EXISTING_ACCESS_KEY=${EXISTING_ACCESS_KEY%.}
+  EXISTING_SECRET_KEY=$(read_minio_credential secretkey)
+  EXISTING_SECRET_KEY=${EXISTING_SECRET_KEY%.}
   if [[ "$MINIO_ROOT_USER_WAS_SET" == false ]]; then
     MINIO_ROOT_USER="$EXISTING_ACCESS_KEY"
   fi
@@ -63,7 +68,7 @@ if kube get secret minio-creds -n minio >/dev/null 2>&1; then
   fi
 fi
 
-if [[ -z "${MINIO_ROOT_PASSWORD:-}" ]]; then
+if [[ "$MINIO_SECRET_EXISTS" == false && -z "${MINIO_ROOT_PASSWORD:-}" ]]; then
   if ! command -v openssl >/dev/null 2>&1; then
     echo "MINIO_ROOT_PASSWORD is not set and openssl is unavailable for password generation." >&2
     echo "Set MINIO_ROOT_PASSWORD explicitly and rerun this script." >&2
@@ -72,6 +77,20 @@ if [[ -z "${MINIO_ROOT_PASSWORD:-}" ]]; then
   MINIO_ROOT_PASSWORD="$(openssl rand -hex 24)"
   echo "Generated local MINIO_ROOT_PASSWORD for this setup run." >&2
 fi
+
+# Velero's shared AWS credentials file uses raw, single-line INI values.
+# The parser trims edge whitespace, treats whitespace-prefixed # and ; as
+# comments, and unwraps fully quoted values. Reject rather than rewrite them.
+validate_aws_credential() {
+  case "$2" in
+    ''|*[$'\r\n']*|[[:space:]]*|*[[:space:]]|*[[:space:]][\#\;]*|\"*\"|\'*\')
+      echo "$1 cannot be represented unchanged in the shared AWS credentials file for Velero." >&2
+      exit 1
+      ;;
+  esac
+}
+validate_aws_credential MINIO_ROOT_USER "$MINIO_ROOT_USER"
+validate_aws_credential MINIO_ROOT_PASSWORD "$MINIO_ROOT_PASSWORD"
 
 if kube get deployment minio -n minio >/dev/null 2>&1; then
   MINIO_DEPLOYMENT_EXISTS=true
@@ -85,11 +104,9 @@ if [[ "$MINIO_SECRET_EXISTS" == true ]] && {
   MINIO_CREDENTIALS_CHANGED=true
 fi
 
-# The shared AWS credentials file requires one value per line.
-if [[ "$MINIO_ROOT_USER$MINIO_ROOT_PASSWORD" == *[$'\r\n']* ]]; then
-  echo "MinIO credentials must not contain line breaks." >&2
-  exit 1
-fi
+# Ensure the namespace and local MinIO credentials secret exist before
+# applying the manifest that references them.
+kube create namespace minio --dry-run=client -o yaml | kube apply -f - >/dev/null
 umask 077
 CREDENTIALS_DIR="$(mktemp -d)"
 printf '%s' "$MINIO_ROOT_USER" > "$CREDENTIALS_DIR/accesskey"
