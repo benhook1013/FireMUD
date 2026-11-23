@@ -358,7 +358,11 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       org.mockito.Mockito.when(observedRedis.connect(ByteArrayCodec.INSTANCE))
           .thenAnswer(ignored ->
               observingReceiptConnection(
-                  proof.redis.connect(ByteArrayCodec.INSTANCE), completed, commands));
+                  proof.redis.connect(ByteArrayCodec.INSTANCE),
+                  completed,
+                  commands,
+                  CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
+                      .CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED));
       var recovered =
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               proof.sql, observedRedis, proof.scripts, proof.clock, proof.tags);
@@ -397,7 +401,8 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       observingReceiptConnection(
           io.lettuce.core.api.StatefulRedisConnection<byte[], byte[]> real,
           java.util.concurrent.CompletableFuture<ReceiptAction> completed,
-          java.util.concurrent.atomic.AtomicInteger commands) {
+          java.util.concurrent.atomic.AtomicInteger commands,
+          long expectedCode) {
     var actual = real.async();
     var observed =
         java.lang.reflect.Proxy.newProxyInstance(
@@ -422,10 +427,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                 if (failure == null
                     && value instanceof List<?> row
                     && row.size() == 3
-                    && Long.valueOf(
-                            CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
-                                .CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED)
-                        .equals(row.get(0))
+                    && Long.valueOf(expectedCode).equals(row.get(0))
                     && row.get(2) instanceof byte[] state
                     && java.util.Arrays.equals(ascii("APPLIED"), state)) {
                   completed.complete(observedAction);
@@ -1415,6 +1417,146 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         assertThat(retainedDispatch).isNotNull();
         proof.recreateTransferOwners();
         proof.fence(item);
+        assertThat(proof.itemImage(id))
+            .contains(retainedDispatch.toString())
+            .doesNotContain("\"fence_readback\": null");
+        assertThat(proof.executionState(proof.execution))
+            .isEqualTo(committed ? "COMMITTED" : "CLOSED");
+        proof.verifyPage(id);
+        boolean verified =
+            proof.transfers.within(
+                transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+        assertThat(verified).isTrue();
+        assertThat(proof.install(id).executorFence()).isGreaterThan(proof.prior.executorFence());
+      }
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void interruptedForwardReceiptRecoversExactTerminalProofWithoutReapplying(boolean committed)
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), proof.clock);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      var finalOwner =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+              proof.redis, proof.scripts, proof.clock, proof.tags);
+      var assignment = proof.tags.assignmentForTransition(proof.execution.transitionId());
+      if (!committed) {
+        finalOwner.closeCapacityExecutionOnce(
+            proof.execution, proof.admission.candidate(), assignment, transferDeadline());
+      }
+      try (var physicalCommit =
+          committed
+              ? new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      proof.redis, proof.scripts, proof.clock, proof.tags)
+                  .finalizeOriginalNewOnce(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline())
+              : null) {
+        UUID id = proof.begin();
+        long deadline = transferDeadline();
+        var item =
+            proof.transfers.within(deadline, ignored -> proof.transfers.capture(id).getFirst());
+        long terminalCode =
+            committed
+                ? CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
+                    .CAPACITY_EXECUTION_COMMITTED_OBSERVED
+                : CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
+                    .CAPACITY_EXECUTION_CLOSED_OBSERVED;
+        proof.transfers.within(
+            deadline,
+            budget -> {
+              var before =
+                  proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+              var dispatch = proof.transfers.fenceDispatch(item, before);
+              var scoped =
+                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      proof.redis,
+                      proof.scripts,
+                      proof.clock,
+                      proof.tags.withCapacityExecutionDsl(budget.sql(proof.sql)),
+                      () ->
+                          CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                              proof.redis, budget),
+                      budget::remainingMillis,
+                      budget::awaitAsyncClose);
+              var prepared =
+                  scoped.prepareTransferReceipt(
+                      item.execution(), item.candidate(), item.assignment(), dispatch, deadline);
+              dispatch.seal(prepared);
+              assertThat(
+                      scoped.applyTransferReceipt(
+                          item.execution(),
+                          item.candidate(),
+                          item.assignment(),
+                          dispatch,
+                          deadline))
+                  .isEqualTo(terminalCode);
+              // End after the actual terminal receipt, before the receiving owner retains SQL.
+              return null;
+            });
+        assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
+        assertThat(proof.itemImage(id))
+            .contains("\"fence_apply_issued\": true", "\"fence_readback\": null");
+        UUID retainedDispatch =
+            proof
+                .sql
+                .fetchSingle(
+                    "SELECT fence_dispatch_id FROM game_session_region_owner_transfer_item WHERE"
+                        + " transfer_id=?",
+                    id)
+                .get("fence_dispatch_id", UUID.class);
+        assertThat(retainedDispatch).isNotNull();
+        proof.recreateTransferOwners();
+        var completed = new java.util.concurrent.CompletableFuture<ReceiptAction>();
+        var commands = new java.util.concurrent.atomic.AtomicInteger();
+        var observedRedis = org.mockito.Mockito.mock(io.lettuce.core.RedisClient.class);
+        org.mockito.Mockito.when(observedRedis.connect(ByteArrayCodec.INSTANCE))
+            .thenAnswer(ignored ->
+                observingReceiptConnection(
+                    proof.redis.connect(ByteArrayCodec.INSTANCE),
+                    completed,
+                    commands,
+                    terminalCode));
+        var recovered =
+            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                proof.sql, observedRedis, proof.scripts, proof.clock, proof.tags);
+        long recoveryDeadline = transferDeadline();
+        proof.transfers.within(
+            recoveryDeadline,
+            budget -> {
+              var before =
+                  proof.receiver.observeForRegionOwnerTransfer(
+                      id, item.ordinal(), recoveryDeadline);
+              var dispatch = proof.transfers.fenceDispatch(item, before);
+              var actual =
+                  recovered
+                      .forTransferBudget(budget)
+                      .fenceForTransfer(item, dispatch, recoveryDeadline);
+              var after =
+                  proof.receiver.observeForRegionOwnerTransfer(
+                      id, item.ordinal(), recoveryDeadline);
+              proof.transfers.retainFence(item, actual, before, after);
+              return null;
+            });
+        assertThat(completed.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            .isEqualTo(ReceiptAction.OBSERVE);
+        assertThat(commands.get()).isEqualTo(1);
         assertThat(proof.itemImage(id))
             .contains(retainedDispatch.toString())
             .doesNotContain("\"fence_readback\": null");
