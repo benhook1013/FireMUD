@@ -531,7 +531,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   void retainedDenialReleasesTheLastSlotAndCannotRaceAStoredDispatch() throws Exception {
     try (var proof = new TransferSqlProof(1, 1_048_576L, 3)) {
       var original = proof.execution;
-      var later = proof.newControlledExecution();
+      var later = proof.newIndependentControlledOriginExecution();
       assertThatThrownBy(() -> proof.precharge(later)).isInstanceOf(IllegalStateException.class);
       var denial = UUID.randomUUID();
       proof.settle(original, denial);
@@ -553,13 +553,35 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   }
 
   @Test
+  void retainedDenialDoesNotAuthorizeAReplacementAttemptForTheSameOrigin() throws Exception {
+    try (var proof = new TransferSqlProof(2, 2_097_152L, 3)) {
+      var original = proof.execution;
+      var replacement = proof.newControlledExecution();
+      assertThat(replacement.request().identity()).isEqualTo(original.request().identity());
+      assertThat(replacement.request().admissionAttemptId())
+          .isNotEqualTo(original.request().admissionAttemptId());
+      proof.settle(original, UUID.randomUUID());
+
+      assertThatThrownBy(() -> proof.precharge(replacement))
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW capacity evidence budget is unavailable");
+      assertThat(
+              proof.sql.fetchOne(
+                  "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  replacement.request().admissionAttemptId()))
+          .isNull();
+      proof.precharge(proof.newIndependentControlledOriginExecution());
+    }
+  }
+
+  @Test
   void retainedDenialHistoryRemainsBoundedIndependentlyOfActiveSlots() throws Exception {
     try (var proof = new TransferSqlProof(1, 1_048_576L, 2)) {
       proof.settle(proof.execution, UUID.randomUUID());
-      var next = proof.newControlledExecution();
+      var next = proof.newIndependentControlledOriginExecution();
       proof.precharge(next);
       proof.settle(next, UUID.randomUUID());
-      assertThatThrownBy(() -> proof.precharge(proof.newControlledExecution()))
+      assertThatThrownBy(() -> proof.precharge(proof.newIndependentControlledOriginExecution()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW capacity evidence budget is unavailable");
     }
@@ -569,8 +591,8 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   void postgresSerializesTheLastEvidenceChargeAcrossConcurrentAttempts() throws Exception {
     try (var proof = withCapacityBudget(2, 2_097_152L);
         var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-      var first = proof.newControlledExecution();
-      var second = proof.newControlledExecution();
+      var first = proof.newIndependentControlledOriginExecution();
+      var second = proof.newIndependentControlledOriginExecution();
       var ready = new java.util.concurrent.CountDownLatch(2);
       var start = new java.util.concurrent.CountDownLatch(1);
       var assignment =
@@ -696,7 +718,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       // behavior. Every candidate, bridge, mapping and owner source is retained by its real owner.
       List<OriginalNewCapacityExecution> originals = new ArrayList<>();
       for (int index = 0; index < 65; index++) {
-        var original = proof.newControlledExecution();
+        var original = proof.newIndependentControlledOriginExecution();
         originals.add(original);
         proof.seedUndeliveredDispatch(original);
       }
@@ -793,7 +815,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   void finalQualificationRechecksLostFenceBeyondTheFirstPageWithoutRecreatingIt() throws Exception {
     try (var proof = new TransferSqlProof()) {
       for (int index = 0; index < 33; index++) {
-        proof.seedUndeliveredDispatch(proof.newControlledExecution());
+        proof.seedUndeliveredDispatch(proof.newIndependentControlledOriginExecution());
       }
       UUID id = proof.begin();
       assertThat(proof.captureAndFence(id)).hasSize(32);
@@ -1119,7 +1141,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   @Test
   void installationRefusesSignedEvidenceThatExpiresWhileAcquiringTheRegionLock() throws Exception {
     try (var proof = new TransferSqlProof()) {
-      proof.seedUndeliveredDispatch(proof.newControlledExecution());
+      proof.seedUndeliveredDispatch(proof.newIndependentControlledOriginExecution());
       var wall = new AtomicLong(proof.clock.millis());
       Clock clock = org.mockito.Mockito.mock(Clock.class);
       org.mockito.Mockito.when(clock.millis()).thenAnswer(ignored -> wall.get());

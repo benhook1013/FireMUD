@@ -67,7 +67,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                 postgresContainer().getJdbcUrl(),
                 postgresContainer().getUsername(),
                 postgresContainer().getPassword())) {
-      var dispatched = proof.newControlledExecution();
+      var dispatched = proof.newIndependentControlledOriginExecution();
       String tag =
           CanonicalGameplayRegionRedisKeys.tenantRegionTag(
               proof.scope.tenantId(), proof.scope.gameInstanceId(), proof.scope.regionId());
@@ -228,7 +228,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   void expiredFreshEvidenceCannotChargeButExactRetainedDenialStillReplays() throws Exception {
     try (var proof = new TransferSqlProof()) {
       var original = proof.execution;
-      var fresh = proof.newControlledExecution();
+      var fresh = proof.newIndependentControlledOriginExecution();
       var denial = UUID.randomUUID();
       proof.settle(original, denial);
       var tag = proof.tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
@@ -405,7 +405,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution);
         var gate = new RegionRowLockGate();
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
-      var seeded = proof.newControlledExecution();
+      var seeded = proof.newIndependentControlledOriginExecution();
       proof.seedUndeliveredDispatch(seeded);
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
