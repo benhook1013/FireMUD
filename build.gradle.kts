@@ -1,4 +1,5 @@
-import com.github.gradle.node.npm.task.NpxTask
+import com.github.gradle.node.npm.task.NpmTask
+import com.github.gradle.node.task.NodeTask
 import com.github.spotbugs.snom.SpotBugsTask
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.plugins.quality.Checkstyle
@@ -489,23 +490,29 @@ subprojects {
     }
 }
 
-tasks.register<NpxTask>("lintMarkdown") {
-    dependsOn(tasks.npmInstall)
-    command.set("markdownlint-cli2")
-    args.set(listOf(
-        "--config", "config/markdownlint/.markdownlint-cli2.jsonc",
-        "**/*.md"
-    ))
+// Reuse the checked-in npm authority instead of resolving a separate npx tool version.
+val openApiToolingDir = layout.projectDirectory.dir("config/openapi")
+val installMarkdownLint = tasks.register<NpmTask>("installMarkdownLint") {
+    workingDir.set(openApiToolingDir.asFile)
+    npmCommand.set(listOf("ci", "--include=dev", "--ignore-scripts", "--no-audit", "--no-fund"))
 }
 
-tasks.register<NpxTask>("lintMarkdownFix") {
-    dependsOn(tasks.npmInstall)
-    command.set("markdownlint-cli2")
-    args.set(listOf(
-        "--config", "config/markdownlint/.markdownlint-cli2.jsonc",
-        "--fix",
-        "**/*.md"
-    ))
+// Execute the installed package's declared bin directly, with no registry fallback.
+val markdownLintScript = openApiToolingDir.file("node_modules/markdownlint-cli2/markdownlint-cli2-bin.mjs")
+val markdownLintConfigArgs = listOf("--config", "config/markdownlint/.markdownlint-cli2.jsonc")
+
+tasks.register<NodeTask>("lintMarkdown") {
+    dependsOn(installMarkdownLint)
+    workingDir.set(layout.projectDirectory)
+    script.set(markdownLintScript)
+    args.set(markdownLintConfigArgs + "**/*.md")
+}
+
+tasks.register<NodeTask>("lintMarkdownFix") {
+    dependsOn(installMarkdownLint)
+    workingDir.set(layout.projectDirectory)
+    script.set(markdownLintScript)
+    args.set(markdownLintConfigArgs + listOf("--fix", "**/*.md"))
 }
 
 tasks.register<Exec>("linkCheck") {

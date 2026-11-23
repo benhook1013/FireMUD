@@ -46,9 +46,16 @@ runs:
     - name: 🧪 Run Gradle Checks
       id: checks
       shell: bash
+      env:
+        MODULE: ${{ inputs.module }}
+        PARTITION: ${{ inputs.partition }}
       run: |
         echo "::group::Run Module Validation"
-        bash ./.github/scripts/run-gradle-module-checks.sh '${{ inputs.module }}' '${{ inputs.partition }}'
+        check_command=(bash ./.github/scripts/run-gradle-module-checks.sh "$MODULE" "$PARTITION")
+        if [[ "$MODULE" == game-design-service ]]; then
+          check_command=(timeout --kill-after=10s 30m "${check_command[@]}")
+        fi
+        "${check_command[@]}"
         echo "::endgroup::"
 
     - name: 📦 Build Runtime JAR
