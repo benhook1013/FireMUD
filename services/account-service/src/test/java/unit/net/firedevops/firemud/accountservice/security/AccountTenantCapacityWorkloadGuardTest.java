@@ -89,6 +89,22 @@ class AccountTenantCapacityWorkloadGuardTest {
     }
   }
 
+  @Test
+  void quotaDenialReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
+    var method = AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod();
+    var gameSession = tls("firemud", "game-session-service");
+    assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
+        .isNull();
+    assertThatThrownBy(guard::requireQuotaDenialReader).isInstanceOf(StatusRuntimeException.class);
+    assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+    assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(invoke(method, tls("other", "game-session-service")).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    SessionContext.setContext("caller", List.of(), Map.of());
+    assertThat(invoke(method, gameSession).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+  }
+
   private Status invoke(MethodDescriptor<?, ?> method, SSLSession ssl) {
     return invoke(method, ssl, null);
   }
@@ -105,7 +121,17 @@ class AccountTenantCapacityWorkloadGuardTest {
     AtomicInteger starts = new AtomicInteger();
     ServerCallHandler next =
         (ignored, headers) -> {
-          assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
+          if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
+              .getFullMethodName()
+              .equals(method.getFullMethodName())) {
+            assertThat(guard.requireQuotaDenialReader()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireAuthenticatedCaller)
+                .isInstanceOf(StatusRuntimeException.class);
+          } else {
+            assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireQuotaDenialReader)
+                .isInstanceOf(StatusRuntimeException.class);
+          }
           starts.incrementAndGet();
           return new ServerCall.Listener() {};
         };
