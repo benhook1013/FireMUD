@@ -346,6 +346,8 @@ for job in ["pr-local-smoke", "pr-controller-smoke"]:
     section = re.split(r"\n  [a-z][a-z-]*:", runtime_workflow.split("  " + job + ":\n", 1)[1], maxsplit=1)[0]
     if "contents: read" not in section or "contents: write" in section or "packages: write" in section:
         raise SystemExit("PR source jobs must remain read-only")
+    if not re.search(r"(?m)^    cache-mode: read$", section) or "cache-to:" in section:
+        raise SystemExit("PR source jobs must use provider-enforced read-only caches without exports")
 runtime_start = runtime_workflow.index("- name: Promote smoke-tested service digests")
 runtime_run = runtime_workflow.index("        run: |\n", runtime_start) + len("        run: |\n")
 runtime_script = runtime_workflow[runtime_run:]

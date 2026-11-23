@@ -1597,6 +1597,8 @@ jobs:
     if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # A repository dispatch runs on the default branch but builds candidate code.
+    cache-mode: read
     permissions:
       # PR-controlled source receives no registry or repository write credential.
       contents: read
@@ -1908,6 +1910,7 @@ jobs:
     if: ${{ ((github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch') && needs.image-meta.outputs.controller_smoke_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    cache-mode: read
     permissions:
       # PR-controlled source receives no registry or repository write credential.
       contents: read
@@ -1952,7 +1955,6 @@ jobs:
           load: true
           tags: ${{ env.BASE_IMAGE }}
           cache-from: type=gha,scope=pr-controller-smoke
-          cache-to: type=gha,mode=max,scope=pr-controller-smoke
 
       - name: Set up Python for Gradle recovery
         uses: ./.github/actions/setup-python

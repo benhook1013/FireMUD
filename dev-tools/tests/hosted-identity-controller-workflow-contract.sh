@@ -399,6 +399,7 @@ assert "needs.pr-local-smoke.outputs.publishable == 'true'" in (
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]
 assert controller_job["needs"] == ["image-meta"]
+assert controller_job["cache-mode"] == "read"
 assert "needs.image-meta.outputs.controller_smoke_required == 'true'" in (
     controller_job["if"]
 )
@@ -431,7 +432,6 @@ assert base_step["with"] == {
     "load": True,
     "tags": "${{ env.BASE_IMAGE }}",
     "cache-from": "type=gha,scope=pr-controller-smoke",
-    "cache-to": "type=gha,mode=max,scope=pr-controller-smoke",
 }
 assert "docker/login-action@" not in str(controller_job)
 assert "GITHUB_TOKEN" not in str(controller_job)
