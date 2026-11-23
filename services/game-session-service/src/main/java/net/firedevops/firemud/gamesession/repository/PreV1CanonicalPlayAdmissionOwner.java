@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.lettuce.core.RedisURI;
 import java.math.BigInteger;
@@ -57,6 +58,9 @@ public final class PreV1CanonicalPlayAdmissionOwner {
   private final LookTextRenderer lookRenderer;
   private final Clock clock;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "The owner shares injected jOOQ and Game Logic clients with their owners.")
   public PreV1CanonicalPlayAdmissionOwner(
       DSLContext dsl,
       PreV1CanonicalPlayStandIns standIns,
