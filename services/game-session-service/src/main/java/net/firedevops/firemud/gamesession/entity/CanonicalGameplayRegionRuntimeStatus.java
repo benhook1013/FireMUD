@@ -6,7 +6,10 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 
-/** Durable owner row for one exact canonical tenant, game-instance, and operational region. */
+/**
+ * Durable owner row for one exact canonical tenant, game-instance, and operational region. A
+ * run-owned fixture row (pre-v1 gate waiver) has neither a capture id nor a graph digest.
+ */
 public record CanonicalGameplayRegionRuntimeStatus(
     UUID tenantId,
     UUID gameInstanceId,
@@ -43,13 +46,16 @@ public record CanonicalGameplayRegionRuntimeStatus(
             + regionId.toString().replace("-", ""))) {
       throw new IllegalArgumentException("tenantRegionTag must derive from the exact owner scope");
     }
-    requireId(captureId, "captureId");
+    if ((captureId == null) != (graphSha256 == null)) {
+      throw new IllegalArgumentException("captureId and graphSha256 are both present or absent");
+    }
+    if (captureId != null) requireId(captureId, "captureId");
     Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
     if (!tenantId.equals(lifecycleRequest.canonicalTenantId())
         || !gameInstanceId.equals(lifecycleRequest.canonicalGameInstanceId())) {
       throw new IllegalArgumentException("lifecycleRequest belongs to another runtime target");
     }
-    requireDigest(graphSha256, "graphSha256");
+    if (graphSha256 != null) requireDigest(graphSha256, "graphSha256");
     requirePrefixedDigest(preparationInputDigest, "preparationInputDigest");
     requirePositive(regionEpoch, "regionEpoch");
     Objects.requireNonNull(executorFence, "executorFence");
@@ -66,6 +72,11 @@ public record CanonicalGameplayRegionRuntimeStatus(
       throw new IllegalArgumentException("lastCommittedTickId cannot precede the initial tick");
     }
     Objects.requireNonNull(updatedAt, "updatedAt");
+  }
+
+  /** True for a run-owned fixture World source, which has no capture or graph. */
+  public boolean runOwnedFixture() {
+    return captureId == null;
   }
 
   private static void requireId(UUID value, String name) {

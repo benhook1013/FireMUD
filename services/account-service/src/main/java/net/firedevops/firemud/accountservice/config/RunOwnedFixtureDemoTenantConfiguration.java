@@ -11,11 +11,14 @@ import net.firedevops.firemud.accountservice.service.FreshTenantIdentityEnrollme
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
+import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -45,6 +48,8 @@ public class RunOwnedFixtureDemoTenantConfiguration {
       FreshTenantIdentityAssociationRepository fresh,
       AccountAuthorityGenerationRepository generations,
       AccountDemoTenantEntitlementRepository demos,
+      DSLContext dsl,
+      Environment environment,
       @Qualifier("transactionManager") PlatformTransactionManager transactions,
       @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH:}") String capabilityPath,
       @Value("${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH:}") String receiptPath,
@@ -56,7 +61,8 @@ public class RunOwnedFixtureDemoTenantConfiguration {
     return new RunOwnedFixtureDemoTenantEnrollmentDriver(
         new FreshTenantIdentityEnrollmentService(gameDesign, fresh, generations, importTransaction),
         demos,
-        transactions,
+        dsl,
+        PreV1GateWaivers.from(environment).enabled(),
         Path.of(capabilityPath),
         Path.of(receiptPath),
         runId,

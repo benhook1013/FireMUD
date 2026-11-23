@@ -719,6 +719,20 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
     }
   }
 
+  /** Human capture source, or the run-owned fixture's (pre-v1 gate waiver) absent capture. */
+  private static boolean completeWorldSource(Record row) {
+    String kind = requiredText(row, "world_source_kind");
+    UUID capture = row.get("world_capture_id", UUID.class);
+    String graph = row.get("world_graph_sha256", String.class);
+    if (CanonicalGameplayRegionRuntimeStatusRepository.RUN_OWNED_FIXTURE_SOURCE_KIND.equals(kind)) {
+      return capture == null && graph == null;
+    }
+    return CanonicalGameplayRegionRuntimeStatusRepository.HUMAN_CAPTURE_SOURCE_KIND.equals(kind)
+        && capture != null
+        && graph != null
+        && SHA256.matcher(graph).matches();
+  }
+
   private static void requireRegionAcknowledgement(
       Record row, CanonicalGameplayOriginalNewCandidate candidate, Record transition) {
     if (row == null
@@ -751,9 +765,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
         || !SHA256.matcher(requiredText(row, "entity_reference_digest")).matches()
         || !SHA256.matcher(requiredText(row, "world_source_digest")).matches()
         || !PREFIXED_SHA256.matcher(requiredText(row, "world_preparation_input_digest")).matches()
-        || !SHA256.matcher(requiredText(row, "world_graph_sha256")).matches()
+        || !completeWorldSource(row)
         || requiredUuid(row, "canonical_region_id").equals(new UUID(0L, 0L))
-        || row.get("world_capture_id", UUID.class) == null
         || decimal(row, "world_lifecycle_epoch").signum() <= 0
         || decimal(row, "world_lifecycle_row_version").signum() < 0
         || decimal(row, "inventory_revision").signum() <= 0

@@ -175,17 +175,23 @@ message CanonicalPlayableTargetEvidence {
   repeated string character_creation_policy = 32;
 }
 
-// Complete current GS target, the existing full publication source, and a mandatory fresh World
-// ACTIVE capture of the same launch. Existing owner codecs independently validate both carried
-// sources. The complete 6,422,545-byte bound includes all three carriers and protobuf framing;
-// oversized complete source refuses rather than dropping evidence.
+// Complete current GS target, exactly one source (the full Human publication source or the
+// run-owned fixture's retained policy source), and a mandatory fresh World ACTIVE capture of the
+// same launch. Existing owner codecs independently validate every carried source. The complete
+// 6,422,545-byte bound includes all carriers and protobuf framing; oversized complete source
+// refuses rather than dropping evidence.
 message GetPublishedRealmAdmissionOwnerReadResponse {
   repeated uint32 schema_version = 1;
+  // Human variant only. Exactly one of published_source and run_owned_fixture_source is present.
   repeated GetCanonicalGameplayRosterOwnerReadResponse published_source = 2;
   repeated CanonicalPlayableTargetEvidence current_target = 3;
-  // Exact existing WorldCanonicalInstanceLifecycleEvidence canonical bytes. Required once;
-  // ACTIVE and complete request/launch/publication binding must match the same owner target.
+  // Required once. Human: exact WorldCanonicalInstanceLifecycleEvidence canonical bytes whose
+  // ACTIVE request/launch/publication binding matches the same owner target. Run-owned fixture:
+  // exact WorldRunOwnedFixtureLifecycleEvidence canonical bytes for the same ACTIVE launch.
   repeated bytes world_lifecycle_evidence = 4;
+  // Run-owned fixture variant only: exact CanonicalGameplayRunOwnedFixtureSourceEvidence
+  // canonical bytes (owner proof plus the catalog-retained sealed fixture policy).
+  repeated bytes run_owned_fixture_source = 5;
 }
 
 // Independently reads the original selected abandonment and actual qualified physical closure.

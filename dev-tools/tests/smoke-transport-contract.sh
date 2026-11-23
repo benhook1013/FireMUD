@@ -1211,6 +1211,21 @@ assert smoke_common.worlds_response_contains_selector(
 assert not smoke_common.worlds_response_contains_selector(
     "OK WORLDS\nWelcome to the demo world\n", "demo"
 )
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/demo\n", "demo"
+)
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/other-world\n", "DEMO/other-world"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/other-world\n", "other-world"
+)
+try:
+    smoke_common.worlds_response_contains_selector("OK WORLDS\ndemo/world\ndemo/other\n", "demo")
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ambiguously" in str(exc)
+else:
+    raise AssertionError("A canonical tenant alias must match exactly one world")
 
 
 for transient_error in (
@@ -2016,11 +2031,20 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
-telnet_steps = smoke_common.authenticated_telnet_login_steps(
-    "demo@example.com", "swordfish", "demo", "OK LOGIN"
+fixture_steps = smoke_common.canonical_fixture_play_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    startup_discovery_timeout=90,
 )
-assert [step[2] for step in telnet_steps] == ["LOGIN", "PLAY"]
-assert telnet_steps[1][:2] == ("PLAY demo", ["ERROR ADMISSION_UNAVAILABLE"])
+assert [step[2] for step in fixture_steps] == ["WORLDS", "LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY", "LOOK"]
+assert fixture_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS", 90)
+assert fixture_steps[3][:2] == ("REALMS demo", ["OK REALMS"])
+assert fixture_steps[4][:2] == ("JOIN demo", ["OK JOIN"])
+assert fixture_steps[5][:2] == ("PLAY demo", ["OK PLAY"])
+assert fixture_steps[6][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
+for run_plan in (smoke_common.run_telnet_command_plan, smoke_common.run_websocket_command_plan):
+    with patch("smoke_common.wait_for_world_discovery") as fixture_discovery:
+        run_plan(None, fixture_steps[:1], 10, discovery_selector="demo")
+    assert fixture_discovery.call_args.args[:3] == ("demo", ["OK WORLDS"], 90)
 
 
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
@@ -2075,11 +2099,10 @@ for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
   if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
-    # Authenticated Telnet WORLDS/PLAY/LOOK is deferred to the canonical admission chain.
     grep -Fq 'discovery_selector = world' "$script" ||
       { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
-    grep -Fq 'authenticated_telnet_login_steps(login_email, password, world, login_expect)' "$script" ||
-      { echo "$script baseline must use the authenticated Telnet LOGIN plan" >&2; exit 1; }
+    grep -Fq 'steps = canonical_fixture_play_steps(' "$script" ||
+      { echo "$script baseline must use the authenticated Telnet PLAY and LOOK plan" >&2; exit 1; }
   else
     grep -Fq 'discovery_selector=world' "$script" ||
       { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
@@ -2549,6 +2572,12 @@ assert_command_rejects \
   env SMOKE_MUTATION_EXTENSION=true \
   SMOKE_MUTATION_BOUNDARY=run-owned-compose \
   SMOKE_GAME_SESSION_WS_URL=ws://localhost:8085/ws \
+  bash "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
+assert_command_rejects \
+  "run-owned loopback listener" \
+  env FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true \
+  FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256=fixture-test \
+  SMOKE_GAME_SESSION_WS_URL=wss://example.test/ws/game/run-owned-fixture \
   bash "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 assert_command_rejects \
   "canonical Telnet endpoint" \

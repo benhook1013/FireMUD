@@ -20,6 +20,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
@@ -260,54 +261,121 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
         return;
       }
       var launchBefore = readCurrentLaunch(before);
-      var sourceBefore = publishedReader.readCurrent(parsed.selector());
-      var association = launchBefore.association();
-      var descriptor = association.launchBindingEvidence().descriptor();
-      var lifecycleRequest =
-          new WorldCanonicalInstanceLifecycleEvidence.Request(
-              1,
-              parsed.selector().requestUuid(),
-              workloadNamespace,
-              before.canonicalTenantId(),
-              before.worldSlug(),
-              before.canonicalGameInstanceId(),
-              before.playableStateNamespaceId(),
-              before.playableStateScope(),
-              true,
-              association.controlPlaneRequestId(),
-              before.canonicalVersionId(),
-              descriptor.requestDigest(),
-              descriptor.resultDigest(),
-              association.launchBindingEvidence().releaseAttestation().evidenceDigest());
-      requireOutsideSourceSql();
-      var lifecycle = readWorld(lifecycleRequest);
-      if (lifecycle == null
-          || !lifecycleRequest.equals(lifecycle.request())
-          || !"ACTIVE".equals(lifecycle.lifecycleStatus())
-          || lifecycle.lifecycleEpoch() != before.activeWorldEpoch()
-          || !association.launchBindingEvidence().equals(lifecycle.launchBinding())) {
-        fail(observer, Status.FAILED_PRECONDITION);
-        return;
+      if (launchBefore.association().isRunOwnedFixture()) {
+        var fixtureResponse = readRunOwnedFixtureOwner(parsed, before, launchBefore);
+        if (fixtureResponse == null) {
+          fail(observer, Status.FAILED_PRECONDITION);
+          return;
+        }
+        response = fixtureResponse;
+      } else {
+        var sourceBefore = publishedReader.readCurrent(parsed.selector());
+        var association = launchBefore.association();
+        var descriptor = association.launchBindingEvidence().descriptor();
+        var lifecycleRequest =
+            new WorldCanonicalInstanceLifecycleEvidence.Request(
+                1,
+                parsed.selector().requestUuid(),
+                workloadNamespace,
+                before.canonicalTenantId(),
+                before.worldSlug(),
+                before.canonicalGameInstanceId(),
+                before.playableStateNamespaceId(),
+                before.playableStateScope(),
+                true,
+                association.controlPlaneRequestId(),
+                before.canonicalVersionId(),
+                descriptor.requestDigest(),
+                descriptor.resultDigest(),
+                association.launchBindingEvidence().releaseAttestation().evidenceDigest());
+        requireOutsideSourceSql();
+        var lifecycle = readWorld(lifecycleRequest);
+        if (lifecycle == null
+            || !lifecycleRequest.equals(lifecycle.request())
+            || !"ACTIVE".equals(lifecycle.lifecycleStatus())
+            || lifecycle.lifecycleEpoch() != before.activeWorldEpoch()
+            || !association.launchBindingEvidence().equals(lifecycle.launchBinding())) {
+          fail(observer, Status.FAILED_PRECONDITION);
+          return;
+        }
+        var sourceAfter = publishedReader.readCurrent(parsed.selector());
+        var after = routeReader.readCurrentTarget(parsed.selector().canonicalTenantUuid());
+        if (!before.equals(after)) {
+          fail(observer, Status.FAILED_PRECONDITION);
+          return;
+        }
+        var launchAfter = readCurrentLaunch(after);
+        if (!launchBefore.equals(launchAfter) || !sourceBefore.equals(sourceAfter)) {
+          fail(observer, Status.FAILED_PRECONDITION);
+          return;
+        }
+        response =
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+                parsed, sourceAfter, toTarget(after), lifecycle);
       }
-      var sourceAfter = publishedReader.readCurrent(parsed.selector());
-      var after = routeReader.readCurrentTarget(parsed.selector().canonicalTenantUuid());
-      if (!before.equals(after)) {
-        fail(observer, Status.FAILED_PRECONDITION);
-        return;
-      }
-      var launchAfter = readCurrentLaunch(after);
-      if (!launchBefore.equals(launchAfter) || !sourceBefore.equals(sourceAfter)) {
-        fail(observer, Status.FAILED_PRECONDITION);
-        return;
-      }
-      response =
-          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-              parsed, sourceAfter, toTarget(after), lifecycle);
     } catch (RuntimeException failure) {
       failSource(observer, failure);
       return;
     }
     sendSource(observer, response);
+  }
+
+  /**
+   * Run-owned fixture variant of the strict owner read: the catalog-retained sealed fixture policy
+   * replaces the Game Design source and World's fixture lifecycle replaces the Human lifecycle. The
+   * same complete route, launch and source reread brackets the World read. Returns null for a stale
+   * or non-ACTIVE observation.
+   */
+  private GetPublishedRealmAdmissionOwnerReadResponse readRunOwnedFixtureOwner(
+      CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmRequest parsed,
+      CanonicalPlayableTarget before,
+      CanonicalInitialAdmissionLaunchTarget launchBefore) {
+    var sourceBefore = publishedReader.readCurrentAdmissionSource(parsed.selector());
+    var association = launchBefore.association();
+    if (!sourceBefore.isRunOwnedFixture()) {
+      return null;
+    }
+    var descriptor = association.descriptor();
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            parsed.selector().requestUuid(),
+            workloadNamespace,
+            before.canonicalTenantId(),
+            before.worldSlug(),
+            before.canonicalGameInstanceId(),
+            before.playableStateNamespaceId(),
+            before.playableStateScope(),
+            true,
+            association.controlPlaneRequestId(),
+            before.canonicalVersionId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            association.attestationDigest());
+    requireOutsideSourceSql();
+    var lifecycle = readWorldFixture(lifecycleRequest);
+    if (lifecycle == null
+        || !lifecycleRequest.equals(lifecycle.request())
+        || !"ACTIVE".equals(lifecycle.lifecycleStatus())
+        || lifecycle.lifecycleEpoch() != before.activeWorldEpoch()
+        || !association.fixtureProvenanceDigest().equals(lifecycle.fixtureProvenanceDigest())
+        || !sourceBefore
+            .runOwnedFixture()
+            .fixturePolicySealEvidenceDigest()
+            .equals(lifecycle.fixtureProvenanceDigest())) {
+      return null;
+    }
+    var sourceAfter = publishedReader.readCurrentAdmissionSource(parsed.selector());
+    var after = routeReader.readCurrentTarget(parsed.selector().canonicalTenantUuid());
+    if (!before.equals(after)) {
+      return null;
+    }
+    var launchAfter = readCurrentLaunch(after);
+    if (!launchBefore.equals(launchAfter) || !sourceBefore.equals(sourceAfter)) {
+      return null;
+    }
+    return CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmFixtureResponse(
+        parsed, sourceAfter.runOwnedFixture(), toTarget(after), lifecycle);
   }
 
   private static boolean matchesPublishedRoute(
@@ -367,6 +435,19 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       if (failure.getCause() instanceof IllegalArgumentException malformed) {
         throw new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
             "World lifecycle response is invalid", malformed);
+      }
+      throw new WorldReadUnavailableException(failure);
+    }
+  }
+
+  private WorldRunOwnedFixtureLifecycleEvidence readWorldFixture(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    try {
+      return world.readRunOwnedFixture(request, null);
+    } catch (IllegalStateException failure) {
+      if (failure.getCause() instanceof IllegalArgumentException malformed) {
+        throw new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
+            "World fixture lifecycle response is invalid", malformed);
       }
       throw new WorldReadUnavailableException(failure);
     }

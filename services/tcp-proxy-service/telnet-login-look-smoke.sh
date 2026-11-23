@@ -51,7 +51,7 @@ fi
 if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
   echo "Running Telnet baseline plus explicit item/container/equipment mutation extension against ${SMOKE_HOST}:${TCP_PORT}"
 else
-  echo "Running Telnet LOGIN + fail-closed PLAY baseline against ${SMOKE_HOST}:${TCP_PORT}"
+  echo "Running Telnet LOGIN + WORLDS + REALMS + JOIN + PLAY + LOOK baseline against ${SMOKE_HOST}:${TCP_PORT}"
 fi
 echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
@@ -68,7 +68,7 @@ repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
-    authenticated_telnet_login_steps,
+    canonical_fixture_play_steps,
     gameplay_item_container_equipment_steps,
     http_readiness_up,
     is_localhost_equivalent,
@@ -172,9 +172,11 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     discovery_selector = world
     login_wait_seconds = 0
 else:
-    # Deferred: authenticated Telnet WORLDS/PLAY/LOOK needs the canonical admission chain.
-    steps = authenticated_telnet_login_steps(login_email, password, world, login_expect)
-    discovery_selector = None
+    steps = canonical_fixture_play_steps(
+        login_email, password, world, worlds_expect, login_expect, play_expect, look_expect,
+        startup_discovery_timeout=startup_wait_seconds,
+    )
+    discovery_selector = world
     # Authenticated LOGIN answers UNAVAILABLE until the Account JWT signer is promoted, which the
     # pre-v1 stand-ins complete a few minutes after Account starts.
     login_wait_seconds = int(os.environ.get("SMOKE_TELNET_LOGIN_WAIT_SECONDS", "480"))
@@ -187,10 +189,11 @@ run_telnet_smoke_session(
     retry_interval_seconds=15,
     tls_enabled=False,
     discovery_selector=discovery_selector,
+    retry_login_unavailable=login_wait_seconds > 0,
 )
 
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment mutation extension passed.")
 else:
-    print("Telnet LOGIN + fail-closed PLAY baseline smoke test passed.")
+    print("Telnet LOGIN + WORLDS + REALMS + JOIN + PLAY + LOOK baseline smoke test passed.")
 PYTHON

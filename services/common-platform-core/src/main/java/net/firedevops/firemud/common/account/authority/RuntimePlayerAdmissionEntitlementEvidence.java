@@ -31,6 +31,12 @@ import tools.jackson.databind.json.JsonMapper;
  * Account's PUBLIC_PRODUCTION SHARED PRESEEDED PLAYER_ADMISSION variant of the existing runtime
  * evidence contract. Content validation is not source authentication or an admission grant.
  *
+ * <p>Source references take exactly one closed shape. The Human shape names the Game Design
+ * policy-set digest and the World capture lifecycle. The run-owned fixture shape (pre-v1 gate
+ * waiver) has no Human publication or capture: it names the catalog-retained fixture policy-seal
+ * evidence digest and World's fixture lifecycle digest instead, with no capture id. The target
+ * class stays PUBLIC_PRODUCTION for both.
+ *
  * <p>The owner must derive this value from its final Account transaction and protected target read.
  * Target source references name that complete read; they hold no World lock through later use.
  * Decoding validates content only and cannot promote caller-supplied data to source authority.
@@ -104,6 +110,23 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
           "worldLifecycleDigest",
           "worldCaptureId",
           "worldRowVersion");
+  private static final Set<String> FIXTURE_SOURCE_FIELDS =
+      Set.of(
+          "callerTokenJti",
+          "callerTokenExpiresAt",
+          "paidReceiptValidUntil",
+          "callerTokenSha256",
+          "callerRegistryRecordSha256",
+          "callerCommitProofSha256",
+          "callerContextId",
+          "callerOperationId",
+          "scopeDigest",
+          "entitlementSourceDigest",
+          "admissionPointerSnapshotDigest",
+          "gameSessionOwnerProofDigest",
+          "fixturePolicySealDigest",
+          "fixtureLifecycleDigest",
+          "worldRowVersion");
   private final Snapshot membership;
   private final byte[] canonicalBytes;
 
@@ -151,7 +174,8 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
       throw invalid("Verified connect scope token hash required");
     exact(target, TARGET_FIELDS);
     exact(facts, FACT_FIELDS);
-    exact(source, SOURCE_FIELDS);
+    boolean fixture = source != null && source.keySet().equals(FIXTURE_SOURCE_FIELDS);
+    exact(source, fixture ? FIXTURE_SOURCE_FIELDS : SOURCE_FIELDS);
     if (!"PUBLIC_PRODUCTION".equals(target.get("targetClass"))
         || !"PRESEEDED_ONLY".equals(target.get("characterCreationPolicy"))
         || !peer.namespace().equals(target.get("targetNamespace"))
@@ -177,7 +201,9 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
         || !evaluatedAt.isBefore(scopeExpiry)) throw invalid("Scope is not current at evaluation");
     validateFacts(facts, membership);
     for (String key :
-        List.of("callerTokenJti", "callerContextId", "callerOperationId", "worldCaptureId"))
+        fixture
+            ? List.of("callerTokenJti", "callerContextId", "callerOperationId")
+            : List.of("callerTokenJti", "callerContextId", "callerOperationId", "worldCaptureId"))
       requireUuid(text(source.get(key)));
     for (String key :
         List.of("callerTokenSha256", "callerRegistryRecordSha256", "callerCommitProofSha256"))
@@ -186,8 +212,8 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
         List.of(
             "scopeDigest",
             "entitlementSourceDigest",
-            "worldLifecycleDigest",
-            "publishedPolicySetDigest",
+            fixture ? "fixtureLifecycleDigest" : "worldLifecycleDigest",
+            fixture ? "fixturePolicySealDigest" : "publishedPolicySetDigest",
             "gameSessionOwnerProofDigest"))
       if (!text(source.get(key)).matches("sha256:[0-9a-f]{64}"))
         throw invalid("Source digest required");
@@ -579,6 +605,12 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
     Objects.requireNonNull(now);
     if (now.isBefore(evaluatedAt()) || !now.isBefore(validUntil()))
       throw invalid("Player entitlement source observation expired");
+  }
+
+  /** True when the source references take the run-owned fixture shape (pre-v1 gate waiver). */
+  public boolean isRunOwnedFixtureSource() {
+    return fields().get("sourceReferences") instanceof Map<?, ?> source
+        && source.containsKey("fixturePolicySealDigest");
   }
 
   public Snapshot membershipSource() {

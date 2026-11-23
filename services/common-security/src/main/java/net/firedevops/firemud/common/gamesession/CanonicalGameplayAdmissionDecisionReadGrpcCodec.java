@@ -25,10 +25,12 @@ import net.firedevops.firemud.common.security.AccountJwtExactValues;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
+import net.firedevops.firemud.common.world.CanonicalGameplayRunOwnedFixtureSourceEvidence;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionCandidate;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionDecisionStatus;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionOriginKind;
@@ -70,6 +72,8 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
           + framedFieldBytes(2, CanonicalGameplayRosterOwnerReadGrpcCodec.MAX_RESPONSE_BYTES)
           + framedFieldBytes(3, MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES)
           + framedFieldBytes(4, GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+  // The run-owned fixture source (field 5, at most 64 KiB) replaces the Human source (field 2),
+  // never joins it, so the Human field-2 budget above also bounds the fixture variant.
   private static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
@@ -493,12 +497,18 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
     }
   }
 
-  /** Complete current target tied to the existing validated route proof and policy-set evidence. */
+  /**
+   * Complete current target tied to the existing validated route proof and exactly one source: the
+   * Human policy-set evidence with its World lifecycle, or the run-owned fixture's sealed retained
+   * policy with its World fixture lifecycle. Human accessors refuse the fixture variant.
+   */
   public static final class PublishedRealmEvidence {
     private final CanonicalGameplayRosterOwnerReadEvidence.Request selector;
     private final CanonicalGameplayRosterOwnerReadEvidence sourceEvidence;
     private final Target currentTarget;
     private final WorldCanonicalInstanceLifecycleEvidence worldLifecycleEvidence;
+    private final CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource;
+    private final WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycleEvidence;
 
     private PublishedRealmEvidence(
         CanonicalGameplayRosterOwnerReadEvidence.Request selector,
@@ -509,13 +519,34 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
       this.sourceEvidence = sourceEvidence;
       this.currentTarget = currentTarget;
       this.worldLifecycleEvidence = worldLifecycleEvidence;
+      this.fixtureSource = null;
+      this.fixtureLifecycleEvidence = null;
+    }
+
+    private PublishedRealmEvidence(
+        CanonicalGameplayRosterOwnerReadEvidence.Request selector,
+        CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource,
+        Target currentTarget,
+        WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycleEvidence) {
+      this.selector = selector;
+      this.sourceEvidence = null;
+      this.currentTarget = currentTarget;
+      this.worldLifecycleEvidence = null;
+      this.fixtureSource = fixtureSource;
+      this.fixtureLifecycleEvidence = fixtureLifecycleEvidence;
     }
 
     public CanonicalGameplayRosterOwnerReadEvidence.Request selector() {
       return selector;
     }
 
+    public boolean isRunOwnedFixture() {
+      return fixtureSource != null;
+    }
+
+    /** Human published source; the run-owned fixture has none. */
     public CanonicalGameplayRosterOwnerReadEvidence sourceEvidence() {
+      requireHuman();
       return sourceEvidence;
     }
 
@@ -523,8 +554,33 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
       return currentTarget;
     }
 
+    /** Human World lifecycle evidence; the run-owned fixture carries its own lifecycle variant. */
     public WorldCanonicalInstanceLifecycleEvidence worldLifecycleEvidence() {
+      requireHuman();
       return worldLifecycleEvidence;
+    }
+
+    public CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource() {
+      requireFixture();
+      return fixtureSource;
+    }
+
+    public WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycleEvidence() {
+      requireFixture();
+      return fixtureLifecycleEvidence;
+    }
+
+    private void requireHuman() {
+      if (fixtureSource != null) {
+        throw new IllegalStateException(
+            "Run-owned fixture realm evidence has no Human published source or lifecycle");
+      }
+    }
+
+    private void requireFixture() {
+      if (fixtureSource == null) {
+        throw new IllegalStateException("Human published realm evidence has no fixture source");
+      }
     }
   }
 
@@ -693,6 +749,37 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
     return response;
   }
 
+  /**
+   * Produces the run-owned fixture variant: the exact sealed fixture source plus the same read's
+   * exact current route and World fixture lifecycle. It carries no Human published source.
+   */
+  public static GetPublishedRealmAdmissionOwnerReadResponse toPublishedRealmFixtureResponse(
+      PublishedRealmRequest request,
+      CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource,
+      Target currentTarget,
+      WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycleEvidence) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(fixtureSource, "fixtureSource");
+    Objects.requireNonNull(currentTarget, "currentTarget");
+    requirePublishedTargetMatchesFixtureSource(currentTarget, request.selector(), fixtureSource);
+    requirePublishedRunOwnedFixtureLifecycle(
+        request.selector(), currentTarget, fixtureSource, fixtureLifecycleEvidence);
+    GetPublishedRealmAdmissionOwnerReadResponse response =
+        GetPublishedRealmAdmissionOwnerReadResponse.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
+            .addCurrentTarget(toTargetEvidence(currentTarget))
+            .addWorldLifecycleEvidence(
+                ByteString.copyFrom(fixtureLifecycleEvidence.canonicalBytes()))
+            .addRunOwnedFixtureSource(ByteString.copyFrom(fixtureSource.canonicalBytes()))
+            .build();
+    requireWireSize(
+        response.getSerializedSize(),
+        MAX_PUBLISHED_REALM_RESPONSE_WIRE_BYTES,
+        "published realm read response");
+    fromPublishedRealmResponse(request, response);
+    return response;
+  }
+
   /** Reuses the existing full source validator and validates the complete route-to-source tuple. */
   public static PublishedRealmEvidence fromPublishedRealmResponse(
       PublishedRealmRequest request, GetPublishedRealmAdmissionOwnerReadResponse response) {
@@ -706,6 +793,12 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
         || one(response.getSchemaVersionList(), "published schemaVersion") != SCHEMA_VERSION) {
       throw invalid("Closed schema-1 published realm response required");
     }
+    if (response.getPublishedSourceCount() + response.getRunOwnedFixtureSourceCount() != 1) {
+      throw invalid("Exactly one published or run-owned fixture source is required");
+    }
+    if (response.getRunOwnedFixtureSourceCount() == 1) {
+      return fromPublishedRealmFixtureResponse(request, response);
+    }
     CanonicalGameplayRosterOwnerReadEvidence sourceEvidence =
         CanonicalGameplayRosterOwnerReadGrpcCodec.fromResponse(
             request.selector(), one(response.getPublishedSourceList(), "published source"));
@@ -718,6 +811,86 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
     requirePublishedTargetMatchesSource(currentTarget, request.selector(), sourceEvidence);
     requirePublishedWorldLifecycle(request.selector(), currentTarget, sourceEvidence, lifecycle);
     return new PublishedRealmEvidence(request.selector(), sourceEvidence, currentTarget, lifecycle);
+  }
+
+  private static PublishedRealmEvidence fromPublishedRealmFixtureResponse(
+      PublishedRealmRequest request, GetPublishedRealmAdmissionOwnerReadResponse response) {
+    final CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource;
+    final WorldRunOwnedFixtureLifecycleEvidence lifecycle;
+    try {
+      fixtureSource =
+          CanonicalGameplayRunOwnedFixtureSourceEvidence.fromStored(
+              one(response.getRunOwnedFixtureSourceList(), "run-owned fixture source")
+                  .toByteArray());
+      lifecycle =
+          WorldRunOwnedFixtureLifecycleEvidence.fromStored(
+              one(response.getWorldLifecycleEvidenceList(), "World lifecycle evidence")
+                  .toByteArray());
+    } catch (IllegalArgumentException malformed) {
+      throw invalid("Run-owned fixture source or lifecycle evidence is invalid");
+    }
+    Target currentTarget =
+        parseTargetEvidence(one(response.getCurrentTargetList(), "current target"));
+    requirePublishedTargetMatchesFixtureSource(currentTarget, request.selector(), fixtureSource);
+    requirePublishedRunOwnedFixtureLifecycle(
+        request.selector(), currentTarget, fixtureSource, lifecycle);
+    return new PublishedRealmEvidence(request.selector(), fixtureSource, currentTarget, lifecycle);
+  }
+
+  private static void requirePublishedTargetMatchesFixtureSource(
+      Target target,
+      CanonicalGameplayRosterOwnerReadEvidence.Request selector,
+      CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource) {
+    if (!fixtureSource.request().equals(selector)) {
+      throw invalid("Run-owned fixture source differs from its exact selector");
+    }
+    requirePublishedTargetMatchesSelector(
+        target, selector, fixtureSource.admissionPointerSnapshotDigest());
+    byte[] targetProof =
+        GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(
+            ownerProofFromTarget(target));
+    byte[] sourceProof =
+        GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(
+            fixtureSource.gameSessionOwnerProof());
+    if (!Arrays.equals(targetProof, sourceProof)) {
+      throw invalid("Published realm target changed the exact Game Session owner proof");
+    }
+    var capability = fixtureSource.fixturePolicy().capability();
+    if (!target.characterCreationPolicy().equals(capability.characterCreationPolicy())
+        || !target.worldSlug().equals(capability.worldSlug())
+        || !target.realmSlug().equals(capability.realmSlug())) {
+      throw invalid("Published realm target differs from the exact sealed fixture policy");
+    }
+  }
+
+  /** Fixture counterpart of the Human lifecycle check: exact request tuple, ACTIVE, epoch, seal. */
+  private static void requirePublishedRunOwnedFixtureLifecycle(
+      CanonicalGameplayRosterOwnerReadEvidence.Request selector,
+      Target target,
+      CanonicalGameplayRunOwnedFixtureSourceEvidence fixtureSource,
+      WorldRunOwnedFixtureLifecycleEvidence lifecycle) {
+    Objects.requireNonNull(lifecycle, "Fresh World fixture lifecycle evidence is required");
+    var request = lifecycle.request();
+    var bundle = fixtureSource.fixturePolicy().launchReadEvidence().publishedReleaseBundle();
+    String sealEvidenceDigest = fixtureSource.fixturePolicySealEvidenceDigest();
+    if (!selector.requestUuid().equals(request.readRequestId())
+        || !selector.targetNamespace().equals(request.targetNamespace())
+        || !selector.canonicalTenantUuid().equals(request.canonicalTenantId())
+        || !selector.worldSlug().equals(request.worldSlug())
+        || !selector.canonicalGameInstanceUuid().equals(request.canonicalGameInstanceId())
+        || !selector.playableStateNamespaceUuid().equals(request.playableStateNamespaceId())
+        || !selector.playableStateScope().equals(request.playableStateScope())
+        || !request.publicProduction()
+        || !selector.canonicalVersionUuid().equals(request.canonicalVersionId())
+        || !target.canonicalVersionId().toString().equals(bundle.getCanonicalVersionId())
+        || target.runtimeVersionId() != bundle.getVersionId()
+        || !"ACTIVE".equals(lifecycle.lifecycleStatus())
+        || lifecycle.lifecycleEpoch() != target.activeWorldEpoch()
+        || !sealEvidenceDigest.equals(request.expectedReleaseAttestationDigest())
+        || !sealEvidenceDigest.equals(lifecycle.fixtureProvenanceDigest())) {
+      throw invalid(
+          "Fresh World ACTIVE fixture lifecycle differs from the exact target and sealed policy");
+    }
   }
 
   private static void requirePublishedWorldLifecycle(
@@ -1193,6 +1366,15 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
       Target target,
       CanonicalGameplayRosterOwnerReadEvidence.Request selector,
       CanonicalGameplayRosterOwnerReadEvidence sourceEvidence) {
+    requirePublishedTargetMatchesSelector(
+        target, selector, sourceEvidence.admissionPointerSnapshotDigest());
+    requirePublishedHumanSourceProof(target, sourceEvidence);
+  }
+
+  private static void requirePublishedTargetMatchesSelector(
+      Target target,
+      CanonicalGameplayRosterOwnerReadEvidence.Request selector,
+      String admissionPointerSnapshotDigest) {
     if (!target.targetNamespace().equals(selector.targetNamespace())
         || !target.canonicalTenantId().equals(selector.canonicalTenantUuid())
         || !target.worldSlug().equals(selector.worldSlug())
@@ -1205,11 +1387,13 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
         || target.catalogRevision() != selector.expectedCatalogRevision()
         || target.pointerVersion() != selector.expectedPointerVersion()
         || target.activeWorldEpoch() != selector.expectedActiveWorldEpoch()
-        || !target
-            .admissionPointerSnapshotDigest()
-            .equals(sourceEvidence.admissionPointerSnapshotDigest())) {
+        || !target.admissionPointerSnapshotDigest().equals(admissionPointerSnapshotDigest)) {
       throw invalid("Published realm target differs from its exact source selector or pointer");
     }
+  }
+
+  private static void requirePublishedHumanSourceProof(
+      Target target, CanonicalGameplayRosterOwnerReadEvidence sourceEvidence) {
     byte[] targetProof =
         GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(
             ownerProofFromTarget(target));

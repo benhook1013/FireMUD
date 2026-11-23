@@ -49,7 +49,9 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
@@ -102,13 +104,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   /** Tenant capacity shares this AccountService registration; its receiver checks Game Session. */
   @Autowired
   void tenantCapacityReceiver(
-      ObjectProvider<net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner>
-          owner) {
+      ObjectProvider<AccountTenantCapacityOwner> owner,
+      ObjectProvider<AccountTenantCapacityWorkloadGuard> guard) {
     var available = owner.getIfAvailable();
     tenantCapacity =
         available == null
             ? null
-            : new AccountTenantCapacityGrpcService(available, workloadNamespace);
+            : new AccountTenantCapacityGrpcService(available, guard.getObject());
   }
 
   @Override

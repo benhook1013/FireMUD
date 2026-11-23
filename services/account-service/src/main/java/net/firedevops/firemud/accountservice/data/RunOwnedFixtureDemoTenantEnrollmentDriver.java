@@ -12,19 +12,19 @@ import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.service.FreshTenantIdentityEnrollmentService;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Enrolls the run-owned Compose fixture's fresh Game Design tenant into Account and provisions its
  * non-paid demo entitlement, so public REALMS and JOIN can admit players to it. The fixture receipt
  * only locates the creation; Account imports the authenticated Game Design readback. Retries until
- * Game Design has committed the fixture, and replays idempotently after a restart.
+ * Game Design has committed the fixture, and replays idempotently after a restart. Under the pre-v1
+ * gate waivers it also establishes the fresh fixture's player usage and refusal budget for PLAY.
  */
 public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
   private static final Logger LOG =
@@ -33,10 +33,12 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
   private static final int MAX_FILE_BYTES = 16 * 1024;
   private static final DemoTenantEntitlementRequest.Quotas FIXTURE_QUOTAS =
       new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L);
+  static final int PRE_V1_CAPACITY_ORIGIN_REFUSALS = 128;
 
   private final FreshTenantIdentityEnrollmentService enrollment;
   private final AccountDemoTenantEntitlementRepository demos;
-  private final TransactionTemplate transaction;
+  private final DSLContext dsl;
+  private final boolean preV1Waivers;
   private final Path capabilityPath;
   private final Path receiptPath;
   private final String runId;
@@ -46,20 +48,20 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
   public RunOwnedFixtureDemoTenantEnrollmentDriver(
       FreshTenantIdentityEnrollmentService enrollment,
       AccountDemoTenantEntitlementRepository demos,
-      PlatformTransactionManager transactions,
+      DSLContext dsl,
+      boolean preV1Waivers,
       Path capabilityPath,
       Path receiptPath,
       String runId,
       String composeProjectName) {
     this.enrollment = Objects.requireNonNull(enrollment, "enrollment");
     this.demos = Objects.requireNonNull(demos, "demos");
+    this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.preV1Waivers = preV1Waivers;
     this.capabilityPath = Objects.requireNonNull(capabilityPath, "capabilityPath");
     this.receiptPath = Objects.requireNonNull(receiptPath, "receiptPath");
     this.runId = requireText(runId, "runId");
     this.composeProjectName = requireText(composeProjectName, "composeProjectName");
-    transaction = new TransactionTemplate(Objects.requireNonNull(transactions, "transactions"));
-    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
   }
 
   @Scheduled(initialDelay = RETRY_INTERVAL_MS, fixedDelay = RETRY_INTERVAL_MS)
@@ -92,9 +94,26 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
     var receipt =
         RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(read(receiptPath), capability);
     FreshTenantCreationEvidence located = Objects.requireNonNull(receipt.creationEvidence());
-    // The receipt is an untrusted locator; the import uses Game Design's authenticated readback.
-    FreshTenantCreationEvidence creation =
-        enrollment.enroll(located.creationRequestId(), located.requestDigest());
+    // The receipt locates the source. The owner readback must match it before initialization.
+    return enrollment.enrollAndInitialize(
+        located.creationRequestId(),
+        located.requestDigest(),
+        creation -> initialize(creation, receipt));
+  }
+
+  private void initialize(FreshTenantCreationEvidence creation, SourceReceipt receipt) {
+    if (!creation.equals(receipt.creationEvidence())) {
+      throw new IllegalStateException(
+          "Authenticated tenant creation differs from the fixture receipt");
+    }
+    if (preV1Waivers) {
+      initializePlayerCapacity(creation, receipt);
+      dsl.execute(
+          "INSERT INTO account_capacity_origin_refusal_budget"
+              + " (tenant_uuid, maximum_refusals) VALUES (?, ?) ON CONFLICT DO NOTHING",
+          creation.canonicalTenantId(),
+          PRE_V1_CAPACITY_ORIGIN_REFUSALS);
+    }
     var request =
         new DemoTenantEntitlementRequest(
             UUID.nameUUIDFromBytes(
@@ -111,8 +130,50 @@ public final class RunOwnedFixtureDemoTenantEnrollmentDriver {
             true,
             true,
             FIXTURE_QUOTAS);
-    transaction.executeWithoutResult(status -> demos.provision(request, creation));
-    return creation;
+    demos.provision(request, creation);
+  }
+
+  private void initializePlayerCapacity(
+      FreshTenantCreationEvidence creation, SourceReceipt receipt) {
+    UUID tenantId = creation.canonicalTenantId();
+    UUID operationId = UUID.fromString(receipt.fixtureOperationId());
+    String policyDigest = receipt.fixturePolicySeal().evidenceDigest();
+    if (!operationId.equals(creation.creationRequestId())) {
+      throw new IllegalStateException(
+          "Fixture capacity requires the original Game Design creation request");
+    }
+    dsl.execute(
+        "INSERT INTO account_run_owned_fixture_capacity_birth"
+            + " (tenant_uuid, fixture_operation_id, run_id, compose_project, creation_evidence_digest,"
+            + " fixture_policy_evidence_digest) VALUES (?, ?, ?, ?, ?, ?)"
+            + " ON CONFLICT (tenant_uuid) DO NOTHING",
+        tenantId,
+        operationId,
+        runId,
+        composeProjectName,
+        creation.evidenceDigest(),
+        policyDigest);
+    boolean matches =
+        Boolean.TRUE.equals(
+            dsl.fetchValue(
+                "SELECT EXISTS (SELECT 1 FROM account_run_owned_fixture_capacity_birth birth"
+                    + " JOIN account_tenant_capacity_usage usage"
+                    + " ON usage.fixture_birth_tenant_uuid = birth.tenant_uuid"
+                    + " WHERE birth.tenant_uuid = ? AND birth.fixture_operation_id = ?"
+                    + " AND birth.run_id = ? AND birth.compose_project = ?"
+                    + " AND birth.creation_evidence_digest = ? AND birth.fixture_policy_evidence_digest = ?"
+                    + " AND usage.tenant_uuid = birth.tenant_uuid"
+                    + " AND usage.owner_service = 'game-session-service'"
+                    + " AND usage.creation_evidence_digest = birth.creation_evidence_digest)",
+                tenantId,
+                operationId,
+                runId,
+                composeProjectName,
+                creation.evidenceDigest(),
+                policyDigest));
+    if (!matches) {
+      throw new IllegalStateException("Run-owned fixture capacity birth did not read back exactly");
+    }
   }
 
   private static byte[] read(Path path) throws IOException {

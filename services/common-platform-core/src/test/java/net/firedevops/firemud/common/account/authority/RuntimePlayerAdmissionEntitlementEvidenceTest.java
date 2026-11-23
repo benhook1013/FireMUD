@@ -117,6 +117,44 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
   }
 
   @Test
+  void runOwnedFixtureSourceShapeRoundTripsAndStaysDistinctFromHuman() {
+    var human = capture(target(), facts(), sources(), NOW);
+    var fixture = capture(target(), facts(), fixtureSources(), NOW);
+    assertThat(human.isRunOwnedFixtureSource()).isFalse();
+    assertThat(fixture.isRunOwnedFixtureSource()).isTrue();
+    assertThat(fixture.fields().get("target")).isEqualTo(human.fields().get("target"));
+    var references = (Map<?, ?>) fixture.fields().get("sourceReferences");
+    assertThat(references.get("fixturePolicySealDigest")).isEqualTo("sha256:" + "c".repeat(64));
+    assertThat(references.containsKey("worldCaptureId")).isFalse();
+    assertThat(references.containsKey("publishedPolicySetDigest")).isFalse();
+    assertThat(references.containsKey("worldLifecycleDigest")).isFalse();
+    assertThat(fixture.fields().get("snapshotIdentity"))
+        .isNotEqualTo(human.fields().get("snapshotIdentity"));
+    assertThat(RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(fixture.canonicalBytes()))
+        .isEqualTo(fixture);
+  }
+
+  @Test
+  void runOwnedFixtureSourceShapeIsClosed() {
+    var mixed = fixtureSources();
+    mixed.put("worldCaptureId", REQUEST.toString());
+    var unprefixedSeal = fixtureSources();
+    unprefixedSeal.put("fixturePolicySealDigest", HASH);
+    var missingLifecycle = fixtureSources();
+    missingLifecycle.remove("fixtureLifecycleDigest");
+    var humanPlusSeal = sources();
+    humanPlusSeal.put("fixturePolicySealDigest", "sha256:" + HASH);
+    for (var invalid : List.of(mixed, unprefixedSeal, missingLifecycle, humanPlusSeal)) {
+      assertThatThrownBy(() -> capture(target(), facts(), invalid, NOW))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var fixtureClass = target();
+    fixtureClass.put("targetClass", "RUN_OWNED_FIXTURE");
+    assertThatThrownBy(() -> capture(fixtureClass, facts(), fixtureSources(), NOW))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void incompleteOrConflictingTargetFactsAndSourcesNeverProduceAValue() {
     for (String field : List.of("activeWorldEpoch", "canonicalVersionId", "targetClass")) {
       var target = target();
@@ -322,6 +360,16 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
             "publishedPolicySetDigest",
             "worldLifecycleDigest")) source.put(key, "sha256:" + HASH);
     source.put("worldRowVersion", "0");
+    return source;
+  }
+
+  private static Map<String, Object> fixtureSources() {
+    Map<String, Object> source = sources();
+    source.remove("worldCaptureId");
+    source.remove("publishedPolicySetDigest");
+    source.remove("worldLifecycleDigest");
+    source.put("fixturePolicySealDigest", "sha256:" + "c".repeat(64));
+    source.put("fixtureLifecycleDigest", "sha256:" + "d".repeat(64));
     return source;
   }
 

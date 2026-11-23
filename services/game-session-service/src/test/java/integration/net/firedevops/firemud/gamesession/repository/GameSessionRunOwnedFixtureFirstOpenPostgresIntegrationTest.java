@@ -259,6 +259,134 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
     assertThat(targets.get(0).realmId()).isEqualTo(catalog.realmId());
     assertThat(targets.get(0).initialAdmissionRequestId()).isEqualTo(requestId);
     assertThat(targets.get(0).activeWorldEpoch()).isEqualTo(ACTIVE_EPOCH);
+
+    long completedVersion = completion.completedRunningRowVersion();
+    String pointerSnapshotDigest = snapshot.admissionPointerSnapshotDigest();
+    assertThat(hasFixtureBindingSource(f, requestId, pointerSnapshotDigest, completedVersion, 0L))
+        .isTrue();
+    // An older candidate runtime cannot use a completion from its future. Only the supplied
+    // composite changes here; retained runtime/completion/pointer evidence is not rewritten.
+    assertThat(
+            hasFixtureBindingSource(f, requestId, pointerSnapshotDigest, completedVersion - 1, 0L))
+        .isFalse();
+    assertThat(hasFixtureBindingSource(f, requestId, pointerSnapshotDigest, completedVersion, 1L))
+        .isFalse();
+
+    // The runtime mutation guard permits a monotonic row-version advance without changing the
+    // RUNNING identity. Completion remains historical provenance, not an equality fence.
+    f.transactions.executeWithoutResult(
+        status ->
+            assertThat(
+                    f.dsl.execute(
+                        "UPDATE game_instances SET row_version = row_version + 1 "
+                            + "WHERE tenant_id = ? AND id = ? AND status = 'RUNNING' "
+                            + "AND row_version = ?",
+                        association.gameSessionTenantId(),
+                        launch.gameInstanceId(),
+                        completedVersion))
+                .isEqualTo(1));
+    assertThat(runtimeStatus(f, association.gameSessionTenantId(), launch.gameInstanceId()))
+        .isEqualTo("RUNNING");
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT row_version FROM game_instances WHERE tenant_id = ? AND id = ?",
+                    association.gameSessionTenantId(),
+                    launch.gameInstanceId())
+                .get(0, Long.class))
+        .isEqualTo(completedVersion + 1);
+    assertThat(
+            hasFixtureBindingSource(f, requestId, pointerSnapshotDigest, completedVersion + 1, 0L))
+        .isFalse();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        f.dataSource, f.schema, MIGRATION_LOCATION, "1074");
+    assertThat(replayCompletion(f, request, worldProof)).isEqualTo(completion);
+    assertThat(
+            f.admissions.readCurrentOpenSnapshotForRealm(
+                NAMESPACE, catalog.tenantId(), catalog.realmId()))
+        .isEqualTo(snapshot);
+    assertThat(
+            hasFixtureBindingSource(f, requestId, pointerSnapshotDigest, completedVersion + 1, 0L))
+        .isTrue();
+    assertThat(
+            hasFixtureBindingSource(f, requestId, pointerSnapshotDigest, completedVersion + 1, 1L))
+        .isFalse();
+  }
+
+  /**
+   * Calls the installed predicate with a complete owner-derived target, without inserting a
+   * binding.
+   */
+  private static boolean hasFixtureBindingSource(
+      Fixture f,
+      String requestId,
+      String pointerSnapshotDigest,
+      long runtimeRowVersion,
+      long pointerVersionOffset) {
+    return f.dsl
+        .fetchSingle(
+            """
+            SELECT gs_has_current_run_owned_fixture_binding_source(
+                jsonb_populate_record(NULL::game_session_canonical_binding_transition,
+                    jsonb_build_object(
+                        'admission_target_namespace', attempt.target_namespace,
+                        'admission_target_tenant_slug', catalog.tenant_slug,
+                        'admission_target_tenant_id', attempt.canonical_tenant_id,
+                        'admission_target_world_slug', attempt.world_slug,
+                        'admission_target_world_display_name', catalog.source_world_display_name,
+                        'admission_target_realm_id', attempt.realm_id,
+                        'admission_target_realm_slug', catalog.realm_slug,
+                        'admission_target_realm_display_name', catalog.realm_display_name,
+                        'admission_target_game_session_tenant_id', attempt.game_session_tenant_id,
+                        'admission_target_game_instance_id', attempt.game_instance_id,
+                        'admission_target_playable_state_namespace_id', attempt.playable_state_namespace_id,
+                        'admission_target_playable_state_scope', attempt.playable_state_scope,
+                        'admission_target_canonical_game_instance_id', attempt.canonical_game_instance_id,
+                        'admission_target_canonical_version_id', attempt.canonical_version_id,
+                        'admission_target_runtime_version_id', attempt.runtime_version_id,
+                        'admission_target_catalog_revision', attempt.expected_catalog_revision,
+                        'admission_target_pointer_version', attempt.pointer_version + CAST(? AS bigint),
+                        'admission_target_pointer_snapshot_digest', CAST(? AS text),
+                        'admission_target_active_world_epoch', attempt.active_lifecycle_epoch,
+                        'admission_target_initial_admission_request_id', attempt.initial_admission_request_id,
+                        'admission_target_initial_admission_request_digest', attempt.request_digest,
+                        'admission_target_origin_kind', attempt.origin_kind,
+                        'admission_target_expected_prior_pointer_version', attempt.expected_prior_pointer_version,
+                        'admission_target_hold_id', attempt.hold_id,
+                        'admission_target_hold_fence', attempt.hold_fence,
+                        'admission_target_hold_binding_digest', attempt.hold_binding_digest,
+                        'admission_target_audit_event_id', attempt.audit_event_id,
+                        'admission_target_owner_proof_digest', attempt.commit_proof_digest,
+                        'admission_target_owner_proof_outcome', attempt.status,
+                        'admission_target_positive_durable_abort', false,
+                        'admission_target_terminal_at', attempt.terminal_at,
+                        'admission_target_character_creation_policy', pointer.character_creation_policy)),
+                launch,
+                jsonb_populate_record(NULL::game_instances,
+                    to_jsonb(runtime) || jsonb_build_object('row_version', CAST(? AS bigint))))
+              FROM game_session_canonical_initial_admission_attempt attempt
+              JOIN game_session_run_owned_fixture_runtime_completion completion
+                ON completion.target_namespace = attempt.target_namespace
+               AND completion.initial_admission_request_id = attempt.initial_admission_request_id
+              JOIN gameplay_admission_pointer pointer ON pointer.id = attempt.pointer_id
+              JOIN game_session_canonical_instance_launch launch
+                ON launch.target_namespace = completion.target_namespace
+               AND launch.game_instance_uuid = completion.canonical_game_instance_id
+              JOIN game_instances runtime
+                ON runtime.tenant_id = completion.game_session_tenant_id
+               AND runtime.id = completion.game_instance_id
+              JOIN game_session_canonical_realm_catalog catalog
+                ON catalog.target_namespace = attempt.target_namespace
+               AND catalog.canonical_tenant_id = attempt.canonical_tenant_id
+               AND catalog.realm_id = attempt.realm_id
+             WHERE attempt.target_namespace = ? AND attempt.initial_admission_request_id = ?
+            """,
+            pointerVersionOffset,
+            pointerSnapshotDigest,
+            runtimeRowVersion,
+            NAMESPACE,
+            requestId)
+        .get(0, boolean.class);
   }
 
   private static boolean flag(Fixture f, java.util.function.Supplier<Boolean> owner) {
@@ -404,7 +532,8 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, "1073");
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
@@ -418,6 +547,8 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
         new GameSessionCanonicalAdmissionPointerRepository(
             dsl, catalogs, new GameplayAdmissionPointerEventRepository(dsl));
     return new Fixture(
+        dataSource,
+        schema,
         dsl,
         transactions,
         new GameSessionAuthoredWorldSourceRepository(dsl),
@@ -432,6 +563,8 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
   }
 
   private record Fixture(
+      DriverManagerDataSource dataSource,
+      String schema,
       DSLContext dsl,
       TransactionTemplate transactions,
       GameSessionAuthoredWorldSourceRepository sources,

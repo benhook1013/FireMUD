@@ -327,6 +327,7 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
     when(association.currentRowVersion()).thenReturn(2L);
     when(association.launchBindingEvidence()).thenReturn(completeBinding);
     when(completeBinding.descriptor()).thenReturn(descriptor);
+    when(association.descriptor()).thenReturn(descriptor);
     when(completeBinding.releaseAttestation()).thenReturn(release);
     when(descriptor.targetNamespace()).thenReturn(NAMESPACE);
     when(descriptor.canonicalTenantId()).thenReturn(TENANT);

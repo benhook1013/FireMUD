@@ -62,7 +62,7 @@ fi
 if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
   echo "Running direct WebSocket baseline plus explicit item/container/equipment mutation extension against ${SMOKE_GAME_SESSION_WS_URL}"
 elif [[ "$SMOKE_WS_FIXTURE_MODE" == true ]]; then
-  echo "Running canonical LOGIN, WORLDS, REALMS, JOIN, PLAY and LOOK over the claimed WebSocket fixture"
+  echo "Running canonical WORLDS, LOGIN, authenticated WORLDS, REALMS, JOIN, PLAY and LOOK over the claimed WebSocket fixture"
 else
   echo "Running direct WebSocket WORLDS + LOGIN + fail-closed PLAY baseline against ${SMOKE_GAME_SESSION_WS_URL}"
 fi
@@ -144,6 +144,7 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
 elif fixture_mode:
     steps = canonical_fixture_play_steps(
         login_email, password, world, worlds_expect, login_expect, play_expect, look_expect,
+        startup_discovery_timeout=startup_wait_seconds,
     )
     fixture_root = Path(os.environ["FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"])
     connection_options["sslopt"] = {

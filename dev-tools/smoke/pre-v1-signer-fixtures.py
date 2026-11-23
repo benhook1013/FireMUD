@@ -341,6 +341,8 @@ def main():
         inventory_path.unlink()
     inventory_path.write_text(json.dumps(world_inventory, separators=(",", ":")))
     os.chmod(inventory_path, 0o444)
+    # The non-root World container must traverse this read-only bind mount under any host umask.
+    os.chmod(world, 0o755)
 
     (out / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     os.chmod(out, 0o755)

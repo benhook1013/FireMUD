@@ -8,6 +8,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.Selector;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
@@ -298,7 +299,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                   finalReadback.admissionAtMillis(),
                   finalReadback.continuityExpiresAtMillis(),
                   finalReadback.canonicalSessionDurationMillis(),
-                  finalReadback.finalSessionSha256());
+                  finalReadback.finalSessionSha256(),
+                  finalReadback.finalAdmissionReadSelector());
             }
           }
         }
@@ -685,18 +687,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     private final long continuityExpiresAtMillis;
     private final long canonicalSessionDurationMillis;
     private final String finalSessionSha256;
+    private final Selector finalReadSelector;
 
     private FinalAdmissionResult(
         UUID transitionId,
         long admissionAtMillis,
         long continuityExpiresAtMillis,
         long canonicalSessionDurationMillis,
-        String finalSessionSha256) {
+        String finalSessionSha256,
+        Selector finalReadSelector) {
       this.transitionId = Objects.requireNonNull(transitionId, "transitionId");
       this.admissionAtMillis = admissionAtMillis;
       this.continuityExpiresAtMillis = continuityExpiresAtMillis;
       this.canonicalSessionDurationMillis = canonicalSessionDurationMillis;
       this.finalSessionSha256 = Objects.requireNonNull(finalSessionSha256, "finalSessionSha256");
+      this.finalReadSelector = Objects.requireNonNull(finalReadSelector, "finalReadSelector");
     }
 
     UUID transitionId() {
@@ -717,6 +722,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
     String finalSessionSha256() {
       return finalSessionSha256;
+    }
+
+    Selector finalReadSelector() {
+      return finalReadSelector;
     }
 
     @Override

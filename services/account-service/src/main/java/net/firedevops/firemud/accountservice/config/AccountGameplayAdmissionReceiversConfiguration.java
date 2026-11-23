@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.config;
 
 import io.grpc.BindableService;
+import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
 import java.time.Clock;
 import javax.sql.DataSource;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEv
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
 import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
@@ -42,6 +44,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.grpc.server.GlobalServerInterceptor;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -125,7 +128,7 @@ public class AccountGameplayAdmissionReceiversConfiguration {
   }
 
   @Bean
-  AccountPlayerAdmissionEntitlementGrpcService accountPlayerAdmissionEntitlementReceiver(
+  BindableService accountPlayerAdmissionEntitlementReceiver(
       DSLContext dsl,
       AccountRepository accounts,
       AccountGameplayAdmissionCallerVerifier verifier,
@@ -153,7 +156,19 @@ public class AccountGameplayAdmissionReceiversConfiguration {
             transactions,
             Clock.systemUTC(),
             namespace);
-    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace);
+    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace)::bindProtectedService;
+  }
+
+  @Bean
+  AccountTenantCapacityWorkloadGuard accountTenantCapacityWorkloadGuard(
+      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
+    return new AccountTenantCapacityWorkloadGuard(namespace);
+  }
+
+  @Bean
+  @GlobalServerInterceptor
+  ServerInterceptor accountTenantCapacityInterceptor(AccountTenantCapacityWorkloadGuard guard) {
+    return guard::interceptSharedServiceCall;
   }
 
   @Bean

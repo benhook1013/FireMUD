@@ -1009,7 +1009,10 @@ public class AccountServiceImpl implements AccountService {
           "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
     }
     PublishedRealmEvidence published = readCanonicalScopePublishedTarget(consumers, scope);
-    if (!"SHARED".equals(published.currentTarget().playableStateScope())
+    // Entity bootstrap discovery binds the Human published policy set; the run-owned fixture has
+    // no publication, so its bootstrap discovery stays unsupported rather than partially bound.
+    if (published.isRunOwnedFixture()
+        || !"SHARED".equals(published.currentTarget().playableStateScope())
         || !"PRESEEDED_ONLY".equals(published.currentTarget().characterCreationPolicy())) {
       throw new AuthenticationException(
           "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
@@ -1157,6 +1160,7 @@ public class AccountServiceImpl implements AccountService {
             recordFailure.getClass().getSimpleName());
       }
       if (failure instanceof AuthenticationException authentication) throw authentication;
+      logger.warn("Canonical JOIN authority failed: {}", failure.getClass().getName(), failure);
       throw new AuthenticationException(
           code, "Canonical JOIN authority is unavailable; retry the same request", failure);
     }

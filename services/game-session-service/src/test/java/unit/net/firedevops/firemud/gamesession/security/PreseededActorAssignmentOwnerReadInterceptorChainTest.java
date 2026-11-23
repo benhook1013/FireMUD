@@ -135,7 +135,10 @@ class PreseededActorAssignmentOwnerReadInterceptorChainTest {
             "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/ResolvePublishedRealmAdmissionTarget",
             "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetOriginalNewNeverAdmittedDecision",
             "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetCanonicalGameplayAdmissionDecision",
-            "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetPublishedRealmAdmissionOwnerRead")
+            "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetPublishedRealmAdmissionOwnerRead",
+            "game_session.v1.OriginalNewFinalAdmissionReadService/ReadOriginalNewFinalAdmission",
+            "game_session.v1.OriginalNewCapacityExecutionReadService/ReadOriginalNewCapacityExecution",
+            "game_session.v1.OriginalNewCapacityExecutionReadService/ReadHistoricalOriginalNewCapacityFinal")
         .doesNotContain("game_session.v1.*");
     Set<String> publicMethods = Set.copyOf(configured);
     return new AuthTokenInterceptor(

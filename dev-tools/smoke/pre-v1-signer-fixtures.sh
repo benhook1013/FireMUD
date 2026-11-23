@@ -21,6 +21,10 @@ prepare_pre_v1_signer_fixtures() {
   export FIREMUD_PRE_V1_SIGNER_FIXTURES FIREMUD_PRE_V1_NAMESPACE_UID FIREMUD_PRE_V1_CLUSTER_UID \
     FIREMUD_PRE_V1_CONFIG_MAP_UID
   unset FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256
+  if [[ "${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}" == true \
+      && "${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}" == baseline ]]; then
+    prepare_run_owned_websocket_client "$cert_root" || return 1
+  fi
 }
 
 prepare_run_owned_websocket_client() {

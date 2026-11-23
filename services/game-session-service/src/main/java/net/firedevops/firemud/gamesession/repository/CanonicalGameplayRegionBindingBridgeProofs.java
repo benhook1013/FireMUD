@@ -13,6 +13,10 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 
 /** Closed digest projections for exact bridge sources and independently observed readback. */
 final class CanonicalGameplayRegionBindingBridgeProofs {
+  private static final byte[] FIXTURE_SOURCE_KIND_BYTES =
+      CanonicalGameplayRegionRuntimeStatusRepository.RUN_OWNED_FIXTURE_SOURCE_KIND.getBytes(
+          StandardCharsets.US_ASCII);
+
   private CanonicalGameplayRegionBindingBridgeProofs() {}
 
   static String entityReferenceDigest(CanonicalGameplayRuntimeActorReference reference) {
@@ -34,8 +38,8 @@ final class CanonicalGameplayRegionBindingBridgeProofs {
         Long.toString(assignment.lifecycleRowVersion()).getBytes(StandardCharsets.US_ASCII),
         assignment.canonicalRegionId().toString().getBytes(StandardCharsets.US_ASCII),
         assignment.operationalRegionId().toString().getBytes(StandardCharsets.US_ASCII),
-        assignment.captureId().toString().getBytes(StandardCharsets.US_ASCII),
-        assignment.graphSha256().getBytes(StandardCharsets.US_ASCII),
+        captureBytes(assignment.captureId()),
+        graphBytes(assignment.graphSha256()),
         assignment.preparationInputDigest().getBytes(StandardCharsets.US_ASCII));
   }
 
@@ -70,8 +74,8 @@ final class CanonicalGameplayRegionBindingBridgeProofs {
         source.lifecycleRequest().canonicalBytes(),
         Long.toString(source.lifecycleEpoch()).getBytes(StandardCharsets.US_ASCII),
         Long.toString(source.lifecycleRowVersion()).getBytes(StandardCharsets.US_ASCII),
-        source.captureId().toString().getBytes(StandardCharsets.US_ASCII),
-        source.graphSha256().getBytes(StandardCharsets.US_ASCII),
+        captureBytes(source.captureId()),
+        graphBytes(source.graphSha256()),
         source.preparationInputDigest().getBytes(StandardCharsets.US_ASCII),
         worldDigest.getBytes(StandardCharsets.US_ASCII),
         incarnation.scopeBytes(),
@@ -92,6 +96,23 @@ final class CanonicalGameplayRegionBindingBridgeProofs {
             + sourceDigest;
     return sha256(
         tag.getBytes(StandardCharsets.US_ASCII), baseline.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  /**
+   * Human capture bytes are unchanged. A run-owned fixture source (pre-v1 gate waiver) has no
+   * capture or graph; its framed slot holds the fixture source kind, which no UUID or hex digest
+   * can equal.
+   */
+  private static byte[] captureBytes(UUID captureId) {
+    return captureId == null
+        ? FIXTURE_SOURCE_KIND_BYTES
+        : captureId.toString().getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] graphBytes(String graphSha256) {
+    return graphSha256 == null
+        ? FIXTURE_SOURCE_KIND_BYTES
+        : graphSha256.getBytes(StandardCharsets.US_ASCII);
   }
 
   private static byte[] uuid(UUID value) {
