@@ -968,11 +968,96 @@ public final class WorldCanonicalInstanceAssociationRepository {
     return stored;
   }
 
-  /** Fixture activation remains unavailable after PREPARING-only materialization. */
-  public void activateRunOwnedFixtureInOwnerTransaction(
+  /**
+   * Moves the verified fixture World row from its original PREPARING epoch to ACTIVE. The owner
+   * retains one immutable activation row per fixture instance; the storage guard admits the exact
+   * lifecycle CAS only with that row, so a bare SQL update stays refused. An exact retry after a
+   * lost response returns {@code false} without mutation.
+   */
+  public boolean activateRunOwnedFixtureInOwnerTransaction(
       WorldCanonicalInstanceAssociation association, long expectedEpoch, long expectedRowVersion) {
-    throw new IllegalStateException(
-        "RUN_OWNED_WORLD_ACTIVATION_UNAVAILABLE: fixture activation requires the later canonical lifecycle and hold composition");
+    Objects.requireNonNull(association, "association");
+    requireWritableActivationTransaction();
+    if (!association.isRunOwnedFixture()) {
+      throw new RegistrationConflictException(
+          "Run-owned fixture activation cannot adopt a Human canonical World association");
+    }
+    var fixture = association.runOwnedFixture();
+    long preparingEpoch = fixture.preparingLifecycleEpoch();
+    String bindingSha256 = fixture.preparationInputDigest().substring("sha256:".length());
+    Record row =
+        dsl.fetchOne(
+            "SELECT status, lifecycle_epoch, row_version, run_owned_fixture_binding_sha256, "
+                + "run_owned_fixture_preparing_lifecycle_epoch, canonical_game_instance_id, "
+                + "canonical_authority_kind FROM world_instance WHERE id = ? FOR UPDATE",
+            association.worldInstanceId());
+    if (row == null
+        || !"RUN_OWNED_FIXTURE".equals(row.get("canonical_authority_kind", String.class))
+        || !bindingSha256.equals(row.get("run_owned_fixture_binding_sha256", String.class))
+        || !Long.valueOf(preparingEpoch)
+            .equals(row.get("run_owned_fixture_preparing_lifecycle_epoch", Long.class))
+        || !association
+            .identity()
+            .canonicalGameInstanceId()
+            .equals(row.get("canonical_game_instance_id", UUID.class))) {
+      throw new InvalidAssociationEvidenceException(
+          "RUN_OWNED_WORLD_ACTIVATION_BINDING_MISMATCH: World row differs from the fixture association");
+    }
+    String status = row.get("status", String.class);
+    long lifecycleEpoch = row.get("lifecycle_epoch", Long.class);
+    long rowVersion = row.get("row_version", Long.class);
+    if ("ACTIVE".equals(status)) {
+      boolean retained =
+          dsl.fetchOne(
+                  "SELECT 1 FROM world_run_owned_fixture_activation WHERE world_instance_id = ? "
+                      + "AND canonical_game_instance_id = ? AND fixture_binding_sha256 = ? "
+                      + "AND expected_lifecycle_epoch = ? AND result_lifecycle_epoch = ?",
+                  association.worldInstanceId(),
+                  association.identity().canonicalGameInstanceId(),
+                  bindingSha256,
+                  preparingEpoch,
+                  preparingEpoch + 1L)
+              != null;
+      if (!retained
+          || lifecycleEpoch != preparingEpoch + 1L
+          || (expectedEpoch != preparingEpoch && expectedEpoch != lifecycleEpoch)) {
+        throw new IllegalStateException(
+            "LIFECYCLE_EPOCH_MISMATCH: fixture activation replay differs from the retained activation");
+      }
+      return false;
+    }
+    if (!"PREPARING".equals(status)
+        || lifecycleEpoch != preparingEpoch
+        || expectedEpoch != preparingEpoch
+        || rowVersion != expectedRowVersion) {
+      throw new IllegalStateException(
+          "LIFECYCLE_EPOCH_MISMATCH: fixture activation requires the original PREPARING epoch");
+    }
+    dsl.execute(
+        "INSERT INTO world_run_owned_fixture_activation (world_instance_id, "
+            + "canonical_game_instance_id, fixture_binding_sha256, expected_lifecycle_epoch, "
+            + "expected_row_version, result_lifecycle_epoch, result_row_version) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        association.worldInstanceId(),
+        association.identity().canonicalGameInstanceId(),
+        bindingSha256,
+        preparingEpoch,
+        rowVersion,
+        preparingEpoch + 1L,
+        rowVersion + 1L);
+    int updated =
+        dsl.execute(
+            "UPDATE world_instance SET status = 'ACTIVE', lifecycle_epoch = lifecycle_epoch + 1, "
+                + "row_version = row_version + 1 WHERE id = ? AND status = 'PREPARING' "
+                + "AND lifecycle_epoch = ? AND row_version = ?",
+            association.worldInstanceId(),
+            preparingEpoch,
+            rowVersion);
+    if (updated != 1) {
+      throw new IllegalStateException(
+          "LIFECYCLE_EPOCH_MISMATCH: fixture World row changed during activation");
+    }
+    return true;
   }
 
   private static void requireFixtureAssociationMatches(
@@ -1377,10 +1462,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
             row.get(INSTANCE_FIXTURE_PREPARING_EPOCH, Long.class),
             fixture.preparingLifecycleEpoch())
         || fixture.preparingLifecycleEpoch() != 1L
-        || !Objects.equals(
-            row.get(INSTANCE_LIFECYCLE_EPOCH, Long.class), fixture.preparingLifecycleEpoch())
-        || !"PREPARING".equals(row.get(INSTANCE_STATUS, String.class))
-        || !Objects.equals(row.get("row_version", Long.class), 0L)
+        || !isPreparingOrActivatedFixtureRow(row, fixture.preparingLifecycleEpoch())
         || !Objects.equals(
             row.get(INSTANCE_CONTROL_PLANE_REQUEST_ID, String.class),
             identity.controlPlaneRequestId())
@@ -1414,6 +1496,23 @@ public final class WorldCanonicalInstanceAssociationRepository {
       throw new InvalidAssociationEvidenceException(
           "Persisted run-owned fixture World row differs from its retained owner association");
     }
+  }
+
+  /**
+   * The fixture row is either still at its original PREPARING epoch or was moved once to ACTIVE by
+   * the activation owner; the storage guard admits that move only with its immutable activation
+   * row.
+   */
+  private static boolean isPreparingOrActivatedFixtureRow(Record row, long preparingEpoch) {
+    String status = row.get(INSTANCE_STATUS, String.class);
+    Long lifecycleEpoch = row.get(INSTANCE_LIFECYCLE_EPOCH, Long.class);
+    Long rowVersion = row.get("row_version", Long.class);
+    return ("PREPARING".equals(status)
+            && Objects.equals(lifecycleEpoch, preparingEpoch)
+            && Objects.equals(rowVersion, 0L))
+        || ("ACTIVE".equals(status)
+            && Objects.equals(lifecycleEpoch, preparingEpoch + 1L)
+            && Objects.equals(rowVersion, 1L));
   }
 
   private void requireInsertBornFixtureIdentity(

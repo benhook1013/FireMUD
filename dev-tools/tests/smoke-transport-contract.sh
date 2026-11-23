@@ -2114,7 +2114,7 @@ for script in \
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
   grep -q 'require_smoke_mutation_boundary' "$script"
   grep -q 'run-owned-compose' "$script"
-  [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]] || grep -q 'login_play_look_steps' "$script"
+  [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]] || grep -Eq 'login_play_look_steps|websocket_fail_closed_play_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
   if [[ "$script" == *"game-session-service/websocket-login-look-smoke.sh" ]]; then
     grep -Fq -- 'venv_directory = repo_root / ".venv-smoke"' "$script" ||

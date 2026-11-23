@@ -54,6 +54,27 @@ public final class CanonicalGameplayAdmissionAbortManualFactory {
         Objects.requireNonNull(accountClient, "Account gameplay lease client required"));
   }
 
+  /** Complete discovery and JOIN-resolution receiver for Spring registration. */
+  public static CanonicalGameplayAdmissionDecisionReadGrpcService createDecisionReadReceiver(
+      DSLContext dsl,
+      String workloadNamespace,
+      net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService routeReader,
+      net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+          publishedReader,
+      CanonicalGameInstanceLaunchAssociationRepository launchReader,
+      net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient world) {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcService(
+        new CanonicalGameplayBindingInventoryRepository(
+            Objects.requireNonNull(dsl, "Game Session SQL context required")),
+        new CanonicalGameplayAdmissionDecisionReadWorkloadGuard(workloadNamespace),
+        workloadNamespace,
+        null,
+        Objects.requireNonNull(routeReader, "Canonical route reader required"),
+        Objects.requireNonNull(publishedReader, "Published route reader required"),
+        Objects.requireNonNull(launchReader, "Launch association reader required"),
+        Objects.requireNonNull(world, "World lifecycle client required"));
+  }
+
   public static CanonicalGameplayAdmissionDecisionReadGrpcService
       createUnregisteredDecisionReadReceiver(DSLContext dsl, String workloadNamespace) {
     var repository =

@@ -135,6 +135,96 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     verify1040Upgrade(true);
   }
 
+  @Test
+  void onlyAnExactFreshFixtureBirthInitializesPlayerUsageAndConservation() {
+    String schema = "capacity_fixture_" + UUID.randomUUID().toString().replace("-", "");
+    var admin = new JdbcTemplate(POSTGRES.dataSource());
+    admin.execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      configureFlyway(data, schema, "1047").migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var fixtures = new FreshTenantIdentityAssociationRepository(dsl, "dev");
+      var retained = source("dev");
+      transaction.executeWithoutResult(status -> fixtures.importVerified(retained));
+
+      configureFlyway(data, schema, "1048").migrate();
+      var retainedReadback =
+          transaction.execute(status -> fixtures.read(retained.canonicalTenantId()));
+      assertThat(retainedReadback).contains(retained);
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        fixtures.importVerified(retained);
+                        insertFixtureBirth(dsl, retained, retained.creationRequestId());
+                      }))
+          .hasRootCauseInstanceOf(SQLException.class);
+      assertThat(dsl.fetchCount(DSL.table("account_run_owned_fixture_capacity_birth"))).isZero();
+      assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
+
+      var fresh = source("dev");
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        fixtures.importVerified(fresh);
+                        insertFixtureBirth(dsl, fresh, UUID.randomUUID());
+                      }))
+          .hasRootCauseInstanceOf(SQLException.class);
+      var rolledBack = transaction.execute(status -> fixtures.read(fresh.canonicalTenantId()));
+      assertThat(rolledBack).isEmpty();
+
+      for (int attempt = 0; attempt < 2; attempt++) {
+        transaction.executeWithoutResult(
+            status -> {
+              fixtures.importVerified(fresh);
+              insertFixtureBirth(dsl, fresh, fresh.creationRequestId());
+            });
+      }
+      assertThat(
+              dsl.fetch(
+                      "SELECT owner_service, held_units, used_units, usage_revision"
+                          + " FROM account_tenant_capacity_usage"
+                          + " WHERE fixture_birth_tenant_uuid = ?",
+                      fresh.canonicalTenantId())
+                  .map(Record::intoList))
+          .containsExactly(List.of("game-session-service", 0L, 0L, 1L));
+      assertThat(
+              dsl.fetch(
+                      "SELECT owner_service, held_units, used_units"
+                          + " FROM account_tenant_capacity_conservation WHERE tenant_uuid = ?",
+                      fresh.canonicalTenantId())
+                  .map(Record::intoList))
+          .containsExactly(List.of("game-session-service", 0L, 0L));
+      assertThat(dsl.fetchCount(DSL.table("account_run_owned_fixture_capacity_birth"))).isOne();
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE account_run_owned_fixture_capacity_birth SET run_id = run_id"))
+          .hasRootCauseInstanceOf(SQLException.class);
+    } finally {
+      admin.execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  private static void insertFixtureBirth(
+      DSLContext dsl, FreshTenantCreationEvidence source, UUID fixtureOperationId) {
+    String run = source.canonicalTenantId().toString();
+    dsl.execute(
+        "INSERT INTO account_run_owned_fixture_capacity_birth"
+            + " (tenant_uuid, fixture_operation_id, run_id, compose_project, creation_evidence_digest,"
+            + " fixture_policy_evidence_digest) VALUES (?, ?, ?, ?, ?, ?)"
+            + " ON CONFLICT (tenant_uuid) DO NOTHING",
+        source.canonicalTenantId(),
+        fixtureOperationId,
+        run,
+        "firemud-smoke-" + run,
+        source.evidenceDigest(),
+        "sha256:" + "1".repeat(64));
+  }
+
   private static void verify1040Upgrade(boolean populated) {
     String schema = "capacity_trigger_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
@@ -734,13 +824,18 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   private static FreshTenantCreationEvidence source() {
+    return source("prod");
+  }
+
+  private static FreshTenantCreationEvidence source(String namespace) {
     UUID request = UUID.randomUUID(), operation = UUID.randomUUID(), tenant = UUID.randomUUID();
     String slug = "capacity-" + UUID.randomUUID().toString().substring(0, 8);
-    String digest = GameTenantCreationDigest.requestDigest("prod", request, slug, "Capacity", null);
+    String digest =
+        GameTenantCreationDigest.requestDigest(namespace, request, slug, "Capacity", null);
     long row = Math.abs((long) tenant.hashCode()) + 1;
     return new FreshTenantCreationEvidence(
         1,
-        "prod",
+        namespace,
         request,
         operation,
         digest,
@@ -749,6 +844,6 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
         slug,
         "NEW_GAME_ROW",
         GameTenantCreationDigest.evidenceDigest(
-            "prod", request, operation, digest, tenant, row, slug, "NEW_GAME_ROW"));
+            namespace, request, operation, digest, tenant, row, slug, "NEW_GAME_ROW"));
   }
 }

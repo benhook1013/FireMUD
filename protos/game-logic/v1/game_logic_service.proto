@@ -5,9 +5,24 @@ package game_logic.v1;
 import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
+import "world-management/v1/world_management_service.proto";
 
 option java_package = "net.firedevops.firemud.gamelogic.v1";
 option java_multiple_files = true;
+
+// Protected LOOK projection for an already admitted run-owned fixture session.
+service RunOwnedFixtureLookService {
+  rpc ResolveRunOwnedFixtureLook(ResolveRunOwnedFixtureLookRequest)
+      returns (ResolveRunOwnedFixtureLookResponse);
+}
+
+message ResolveRunOwnedFixtureLookRequest {
+  world_management.v1.ReadRunOwnedFixtureLookRoomRequest room = 1;
+}
+
+message ResolveRunOwnedFixtureLookResponse {
+  LookResult look = 1;
+}
 
 service GameLogicService {
   rpc Ping(PingRequest) returns (PingResponse);

@@ -849,7 +849,7 @@ class RunOwnedCanonicalWorldLaunchEvidenceMtlsIntegrationTest {
   private static String capabilityJson(TestPki pki, String operationId, String claimDigest)
       throws Exception {
     return """
-        {"schema":"firemud.run-owned-initial-admission-fixture.v1","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":42,"gameTemplateId":17,"ownerAccountId":9,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
+        {"schema":"firemud.run-owned-initial-admission-fixture.v1","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":42,"gameTemplateId":17,"ownerAccountId":9,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"PRESEEDED_ONLY","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
         """
         .formatted(
             RUN_ID,

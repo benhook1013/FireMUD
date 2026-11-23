@@ -78,7 +78,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertThat(capability.publicProductionRealm()).isTrue();
     assertThat(capability.requiresCharacterSelection()).isFalse();
     assertThat(capability.stateScope()).isEqualTo("SHARED");
-    assertThat(capability.characterCreationPolicy()).isEqualTo("ALLOW_NEW");
+    assertThat(capability.characterCreationPolicy()).isEqualTo("PRESEEDED_ONLY");
     assertThat(capability.worldManagementUriSan())
         .isEqualTo(RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN);
     assertThat(capability.worldManagementLeafSha256()).isEqualTo(WORLD_LEAF_SHA);
@@ -842,7 +842,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "publicProductionRealm": true,%n\
           "requiresCharacterSelection": false,%n\
           "stateScope": "SHARED",%n\
-          "characterCreationPolicy": "ALLOW_NEW",%n\
+          "characterCreationPolicy": "PRESEEDED_ONLY",%n\
           "gameSessionLeafSha256": "%s",%n\
           "gameSessionUriSan": "%s",%n\
           "caCertificateSha256": "%s",%n\

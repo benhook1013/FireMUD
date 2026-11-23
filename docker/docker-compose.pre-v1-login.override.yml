@@ -117,6 +117,7 @@ services:
       FIREMUD_ACCOUNT_JWT_READINESS_VALIDATION_ENABLED: "true"
       FIREMUD_ACCOUNT_JWT_READINESS_VALIDATION_PROTECTED_BINDING_PATH: /etc/firemud/account-jwt-readiness/binding.properties
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_ENABLED: "true"
+      FIREMUD_ACCOUNT_CANONICAL_REALM_ADMISSION_ENABLED: "true"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_URI: redis://account_coord_app:pre-v1-account-coordination@redis-coord:6379/0
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_COMMAND_TIMEOUT_MILLIS: "2000"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_REQUIRED_LOCAL_AOF_COUNT: "1"
@@ -131,6 +132,13 @@ services:
       - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}:/pre-v1-fixtures:ro
       - pre-v1-jwt-secret:/var/run/secrets/firemud/jwt:ro
       - pre-v1-jwks-projection:/var/run/secrets/firemud/jwks:ro
+
+  world-management-service:
+    environment:
+      FIREMUD_WORLD_RUNTIME_INSTALLATION_INVENTORY_PATH: /etc/firemud/world-runtime-installation/inventory.json
+    volumes:
+      # Pre-v1 waiver: read-only runtime installation inventory for the run-owned fixture.
+      - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}/world-runtime-installation:/etc/firemud/world-runtime-installation:ro
 
   game-session-service:
     # Authenticated LOGIN needs a promoted Account signer; start only once it is live.
