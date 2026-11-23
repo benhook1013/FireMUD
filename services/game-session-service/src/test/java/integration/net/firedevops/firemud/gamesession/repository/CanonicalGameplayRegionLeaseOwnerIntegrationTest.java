@@ -1566,6 +1566,97 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void ordinaryInstallationBorrowsAdmissionWhenOtherBackgroundSlotIsHeld() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var status = new CanonicalGameplayRegionRuntimeStatusRepository(schema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(inventory.readProvisionalCasEvidence(TRANSITION_ID))
+          .thenReturn(provisionalEvidence(world.request()));
+      when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(1);
+                return read.apply(inventory);
+              })
+          .when(inventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class),
+              org.mockito.ArgumentMatchers.any());
+      var owner =
+          new CanonicalGameplayRegionLeaseOwner(
+              inventory,
+              status,
+              redisOwner,
+              new ControlledStableIncarnationSource(),
+              world.resolver(),
+              new RuntimeIdentity(
+                  "game-session-service",
+                  "ordinary-borrowed-admission",
+                  "localhost",
+                  NOW,
+                  "controlled-test",
+                  "controlled-sha",
+                  "controlled-image"),
+              Duration.ofSeconds(30),
+              Clock.systemUTC(),
+              true);
+      assertThat(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS)
+          .isEqualTo(2);
+      var holding = new CountDownLatch(1);
+      var release = new CountDownLatch(1);
+      var holder =
+          new java.util.concurrent.FutureTask<>(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  Clock.systemUTC(),
+                  Long.MAX_VALUE,
+                  budget -> {
+                    holding.countDown();
+                    try {
+                      if (!release.await(8, TimeUnit.SECONDS)) {
+                        throw new AssertionError("fixture did not release other background slot");
+                      }
+                    } catch (InterruptedException failure) {
+                      Thread.currentThread().interrupt();
+                      throw new AssertionError(failure);
+                    }
+                    return true;
+                  }));
+      Thread holderThread = Thread.ofVirtual().start(holder);
+      try (AutoCloseable drain =
+          () -> {
+            release.countDown();
+            try {
+              assertThat(holder.get(5, TimeUnit.SECONDS)).isTrue();
+            } finally {
+              holder.cancel(true);
+              holderThread.join(1000);
+              assertThat(holderThread.isAlive()).isFalse();
+            }
+          }) {
+        assertThat(holding.await(2, TimeUnit.SECONDS)).isTrue();
+        var installed = owner.installForTransition(TRANSITION_ID, world.request());
+        assertThat(holder.isDone()).isFalse();
+        var source = source(world.originalEvidence());
+        assertThat(status.find(source)).contains(installed.status);
+        assertThat(status.findTimelinePreparation(source).orElseThrow().phase())
+            .isEqualTo(
+                CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED);
+        assertThat(world.observedDeadlines).isNotEmpty();
+      }
+    } finally {
+      dropSchema(schema.schema());
+    }
+  }
+
+  @Test
   void installationDeadlineDuringSourceRecheckLeavesPreparedPermission() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
@@ -1993,6 +2084,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     assertKnownNoWriteRecovery(4);
   }
 
+  @Test
+  void composedOwnerKeepsCleanupExclusiveUntilPhysicalProviderReturn() throws Exception {
+    assertKnownNoWriteRecovery(5);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
   void committedClaimCompletionFailureRecoversOnlyAcknowledgedUndispatchedPermit(int mode)
@@ -2233,18 +2329,46 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .doAnswer(invocation -> repository.forBudget(invocation.getArgument(0)))
           .when(recoveryRepository)
           .forBudget(org.mockito.ArgumentMatchers.any());
+      var returning = new java.util.concurrent.CountDownLatch(1);
+      var allowProviderReturn = new java.util.concurrent.CountDownLatch(1);
+      var delegate = testSchema.dsl().configuration().connectionProvider();
+      var delayedReturn =
+          new org.jooq.ConnectionProvider() {
+            @Override
+            public Connection acquire() {
+              return delegate.acquire();
+            }
+
+            @Override
+            public void release(Connection connection) {
+              returning.countDown();
+              try {
+                if (!allowProviderReturn.await(10, TimeUnit.SECONDS))
+                  throw new IllegalStateException("Controlled provider return latch did not open");
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(interrupted);
+              } finally {
+                delegate.release(connection);
+              }
+            }
+          };
+      var physicalCleanupRepository =
+          new CanonicalGameplayRegionRuntimeStatusRepository(
+              DSL.using(testSchema.dsl().configuration().derive(delayedReturn)));
       var recoveryOwner =
           new CanonicalGameplayRegionLeaseOwner(
               org.mockito.Mockito.mock(),
-              mode == 4 ? recoveryRepository : repository,
+              mode == 4 ? recoveryRepository : mode == 5 ? physicalCleanupRepository : repository,
               redisOwner,
               incarnationSource,
               world.resolver(),
               identity,
               Duration.ofSeconds(30),
-              Clock.systemUTC());
+              Clock.systemUTC(),
+              mode == 5);
       var recoverySlot =
-          (mode == 3 || mode == 4)
+          (mode == 3 || mode == 4 || mode == 5)
               ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId())
               : null;
       var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
@@ -2256,6 +2380,35 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                     permit,
                     retained -> {
                       proof.set(retained);
+                      if (mode == 5) {
+                        recoveryOwner.retainNoWriteProof(preparation, recoverySlot, retained);
+                        recoveryOwner.releaseNoWriteRecovery(
+                            preparation.operationId(), recoverySlot);
+                        try (var deadlines =
+                                java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+                            var caller =
+                                io.grpc.Context.current()
+                                    .withDeadlineAfter(1500, TimeUnit.MILLISECONDS, deadlines)) {
+                          var install =
+                              CompletableFuture.runAsync(() ->
+                                  caller.run(() ->
+                                      recoveryOwner.installForTransition(
+                                          preparation.transitionId(), world.request())));
+                          assertThat(returning.await(2, TimeUnit.SECONDS)).isTrue();
+                          assertThatThrownBy(() -> install.get(3, TimeUnit.SECONDS))
+                              .hasCauseInstanceOf(IllegalStateException.class);
+                          assertThatThrownBy(() ->
+                                  recoveryOwner.recoverRetainedNoWriteForTransition(
+                                      preparation.transitionId()))
+                              .isInstanceOf(IllegalStateException.class);
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        } finally {
+                          allowProviderReturn.countDown();
+                        }
+                        return;
+                      }
                       if (mode == 4) {
                         recoverySlot.proof = retained;
                         try {
@@ -2392,6 +2545,22 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         assertThat(retry.proof).isSameAs(proof.get());
         recoveryOwner.recoverNoWrite(preparation, retry);
         recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
+      }
+      if (mode == 5) {
+        // The exact committed PREPARED state becomes usable only after physical cleanup completes.
+        org.awaitility.Awaitility.await()
+            .atMost(Duration.ofSeconds(3))
+            .ignoreExceptions()
+            .untilAsserted(() -> {
+              recoveryOwner.recoverRetainedNoWriteForTransition(preparation.transitionId());
+              var replacement = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
+              try {
+                assertThat(replacement).isNotSameAs(recoverySlot);
+              } finally {
+                recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), replacement);
+              }
+            });
+        assertThat(proof.get().consumedFor(preparation)).isTrue();
       }
       assertPreparedTimelineUnchanged(testSchema.dsl(), repository, redis, source, preparation);
       var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();

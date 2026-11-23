@@ -98,6 +98,112 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   @Test
+  void ownedResultDisposesExactlyOnceAfterCallerCancellation() throws Exception {
+    var started = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var disposed = new CountDownLatch(1);
+    var value = new Object();
+    var disposalCount = new AtomicInteger();
+    try (var caller = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var result =
+          CompletableFuture.supplyAsync(
+              () -> {
+                var previous = caller.attach();
+                try {
+                  return CanonicalGameplayOriginalNewCapacityExecutionBudget.runOwned(
+                      CLOCK,
+                      Long.MAX_VALUE,
+                      budget -> {
+                        started.countDown();
+                        awaitUninterruptibly(release);
+                        return value;
+                      },
+                      abandoned -> {
+                        if (abandoned == value) disposalCount.incrementAndGet();
+                        disposed.countDown();
+                      });
+                } finally {
+                  caller.detach(previous);
+                }
+              },
+              executor);
+      try {
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        caller.cancel(new IllegalStateException("controlled caller cancellation"));
+        assertThatThrownBy(() -> result.get(2, TimeUnit.SECONDS))
+            .hasCauseInstanceOf(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+        assertThat(disposalCount.get()).isZero();
+      } finally {
+        release.countDown();
+      }
+      assertThat(disposed.await(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(disposalCount.get()).isEqualTo(1);
+    }
+    assertThat(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.runOwned(
+                CLOCK, Long.MAX_VALUE, budget -> value, ignored -> disposalCount.incrementAndGet()))
+        .isSameAs(value);
+    assertThat(disposalCount.get()).isEqualTo(1);
+  }
+
+  @Test
+  void backgroundPhysicalCompletionIncludesDelayedProviderReturn() throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    when(provider.acquire()).thenReturn(connection);
+    var releaseEntered = new CountDownLatch(1);
+    var providerMayReturn = new CountDownLatch(1);
+    var physicallyReleased = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              releaseEntered.countDown();
+              awaitUninterruptibly(providerMayReturn);
+              return null;
+            })
+        .when(provider)
+        .release(connection);
+    var dsl = DSL.using(new DefaultConfiguration().set(provider).set(SQLDialect.POSTGRES));
+    try (var caller = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var outcome =
+          CompletableFuture.supplyAsync(
+              () -> {
+                var previous = caller.attach();
+                try {
+                  return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK,
+                      Long.MAX_VALUE,
+                      budget -> {
+                        var scoped = budget.sql(dsl);
+                        var scopedProvider = scoped.configuration().connectionProvider();
+                        var acquired = scopedProvider.acquire();
+                        scopedProvider.release(acquired);
+                        return true;
+                      },
+                      physicallyReleased::countDown);
+                } finally {
+                  caller.detach(previous);
+                }
+              },
+              executor);
+      try {
+        assertThat(releaseEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        caller.cancel(new IllegalStateException("controlled caller cancellation"));
+        assertThatThrownBy(() -> outcome.get(2, TimeUnit.SECONDS))
+            .hasCauseInstanceOf(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+        assertThat(physicallyReleased.getCount()).isEqualTo(1);
+      } finally {
+        providerMayReturn.countDown();
+      }
+      assertThat(physicallyReleased.await(2, TimeUnit.SECONDS)).isTrue();
+      verify(provider).release(connection);
+    }
+  }
+
+  @Test
   void retainedInitialGrantOnlyReadsSameLiveTokenAndRejectsReplacement() throws Exception {
     RedisClient client = mock(RedisClient.class);
     StatefulRedisConnection<byte[], byte[]> connection = mock();
@@ -374,8 +480,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
   }
 
-  @Test
-  void timelineInitializationUsesPreparedPermitWhileOtherBackgroundSlotIsOccupied()
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void timelineInitializationUsesPreparedPermitWhileOtherBackgroundSlotIsOccupied(boolean composed)
       throws Exception {
     RedisClient redis = mock();
     RedisURI uri = RedisURI.create("redis://localhost:6379");
@@ -476,10 +583,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     CompletableFuture<?> initialization = null;
     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       try {
-        prepared =
-            owner
-                .forHandoffDeadline(CLOCK, handoffDeadline)
-                .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity);
         otherBackground =
             CompletableFuture.supplyAsync(
                 () ->
@@ -493,11 +596,32 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                         }),
                 executor);
         assertThat(otherBackgroundStarted.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(background.availablePermits()).isZero();
-        assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);
-
-        var session = prepared;
-        initialization = CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
+        if (composed) {
+          initialization =
+              CompletableFuture.supplyAsync(
+                  () ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                          CLOCK,
+                          handoffDeadline,
+                          budget -> {
+                            try (var session =
+                                owner
+                                    .forInstallation(CLOCK, budget)
+                                    .prepareTimelineInitialization(
+                                        preparation, Duration.ofSeconds(30), identity)) {
+                              return session.initialize(permit);
+                            }
+                          }),
+                  executor);
+        } else {
+          prepared =
+              owner
+                  .forHandoffDeadline(CLOCK, handoffDeadline)
+                  .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity);
+          var session = prepared;
+          initialization =
+              CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
+        }
         verify(commands, timeout(1000).times(2))
             .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
         verify(connection, timeout(1000)).closeAsync();
