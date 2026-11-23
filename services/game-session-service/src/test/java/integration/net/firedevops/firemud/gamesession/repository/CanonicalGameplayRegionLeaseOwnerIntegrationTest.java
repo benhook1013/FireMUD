@@ -2490,17 +2490,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                       }
                       if (mode == 3) {
                         recoverySlot.proof = retained;
-                        var delegate = testSchema.dsl().configuration().transactionProvider();
+                        var tx = testSchema.dsl().configuration().transactionProvider();
                         var ambiguous =
                             new org.jooq.TransactionProvider() {
                               @Override
                               public void begin(org.jooq.TransactionContext context) {
-                                delegate.begin(context);
+                                tx.begin(context);
                               }
 
                               @Override
                               public void commit(org.jooq.TransactionContext context) {
-                                delegate.commit(context);
+                                tx.commit(context);
                                 throw new IllegalStateException("lost commit reply");
                               }
 
