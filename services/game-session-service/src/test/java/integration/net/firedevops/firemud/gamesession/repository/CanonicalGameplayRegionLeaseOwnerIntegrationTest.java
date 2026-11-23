@@ -1841,7 +1841,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           };
       var controlledRepository = org.mockito.Mockito.spy(statusRepository);
       var scopedRepositoryCalls = new java.util.concurrent.atomic.AtomicInteger();
-      var installRedisCutoff = new java.util.concurrent.atomic.AtomicLong();
       org.mockito.Mockito.doAnswer(
               invocation -> {
                 int call = scopedRepositoryCalls.incrementAndGet();
@@ -1852,31 +1851,45 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 }
                 var budget =
                     invocation.<CanonicalGameplayOriginalNewCapacityExecutionBudget>getArgument(0);
-                if (call == 1) installRedisCutoff.set(budget.absoluteDeadlineMillis());
-                return statusRepository.forBudget(budget);
+                var scoped = statusRepository.forBudget(budget);
+                if (call != 1) return scoped;
+                var claimBoundary = org.mockito.Mockito.spy(scoped);
+                org.mockito.Mockito.doAnswer(
+                        claimInvocation -> {
+                          // Successful real PROBE already preceded this call. Do not spend
+                          // local deadline waiting for Redis until the actual SQL claim commits.
+                          var target =
+                              claimInvocation
+                                  .<CanonicalGameplayRegionRuntimeStatusRepository
+                                          .TimelinePreparation>
+                                      getArgument(0);
+                          assertThat(target.operationId()).isEqualTo(preparation.operationId());
+                          var permit = (java.util.Optional<?>) claimInvocation.callRealMethod();
+                          assertThat(permit).as("acknowledged real first-region claim").isPresent();
+                          assertThat(
+                                  testSchema
+                                      .dsl()
+                                      .fetchSingle(
+                                          "SELECT phase FROM game_session_region_timeline_preparation"
+                                              + " WHERE initialization_operation_id = ?",
+                                          preparation.operationId())
+                                      .get(0, String.class))
+                              .isEqualTo("INITIALIZING");
+                          awaitRedisTimelineCutoff(redis.admin(), budget.absoluteDeadlineMillis());
+                          return permit;
+                        })
+                    .when(claimBoundary)
+                    .beginInitialTimeline(
+                        org.mockito.ArgumentMatchers.any(
+                            CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation
+                                .class),
+                        org.mockito.ArgumentMatchers.any(Instant.class),
+                        org.mockito.ArgumentMatchers.any());
+                return claimBoundary;
               })
           .when(controlledRepository)
           .forBudget(org.mockito.ArgumentMatchers.any());
       world.resetReads();
-      // The second source read occurs after Redis preflight, before the irreversible SQL claim.
-      world.setAfterRead(
-          2,
-          () -> {
-            try {
-              long redisCutoff = installRedisCutoff.get();
-              assertThat(redisCutoff).as("actual install budget cutoff").isPositive();
-              long stopWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-              long observed = redisTimeMillis(redis.admin());
-              while (observed < redisCutoff && System.nanoTime() < stopWaiting) {
-                Thread.sleep(10);
-                observed = redisTimeMillis(redis.admin());
-              }
-              assertThat(observed).isGreaterThanOrEqualTo(redisCutoff);
-            } catch (InterruptedException interrupted) {
-              Thread.currentThread().interrupt();
-              throw new IllegalStateException(interrupted);
-            }
-          });
       var owner =
           new CanonicalGameplayRegionLeaseOwner(
               inventory,
@@ -1947,7 +1960,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       } finally {
         redis.ownerClient().removeListener(observedOwnerCommand);
       }
-      world.setAfterRead(2, () -> {});
       if (refuseFirstCleanup) {
         assertThat(scopedRepositoryCalls).hasValue(2);
         assertThat(
@@ -1978,6 +1990,23 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     } finally {
       dropSchema(testSchema.schema());
     }
+  }
+
+  private static void awaitRedisTimelineCutoff(
+      io.lettuce.core.api.sync.RedisCommands<byte[], byte[]> admin, long cutoff) {
+    assertThat(cutoff).as("actual install budget cutoff").isPositive();
+    long stopWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+    long observed = redisTimeMillis(admin);
+    try {
+      while (observed < cutoff && System.nanoTime() < stopWaiting) {
+        Thread.sleep(10);
+        observed = redisTimeMillis(admin);
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interrupted);
+    }
+    assertThat(observed).as("physical Redis TIME at INITIALIZE").isGreaterThanOrEqualTo(cutoff);
   }
 
   private static long redisTimeMillis(
