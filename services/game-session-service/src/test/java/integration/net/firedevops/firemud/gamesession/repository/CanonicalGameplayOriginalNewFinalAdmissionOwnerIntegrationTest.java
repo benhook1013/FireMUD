@@ -250,8 +250,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         ascii(
             CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
                 source.candidate().bindingIdentity().issuerId(), assignment)));
+    var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
+    var originalOwner = regionBinding.installation().status;
+    UUID attemptId = controlledCapacity.request().admissionAttemptId();
+    String executionState =
+        "SELECT status FROM game_session_original_new_capacity_execution WHERE admission_attempt_id=?";
+    assertThat(fixture.dsl().fetchSingle(executionState, attemptId).get("status", String.class))
+        .isEqualTo("AUTHORIZED");
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical Game Session region ownership is unavailable");
+    assertThat(statusRepository.find(regionBinding.installation().source)).contains(originalOwner);
     assertThatThrownBy(() ->
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
@@ -267,7 +276,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
     assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).transitionStatus())
         .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    assertThat(fixture.dsl().fetchSingle(executionState, attemptId).get("status", String.class))
+        .isEqualTo("COMMITTED");
     var successor = replaceRegionOwner("successor-after-reconciliation");
+    assertThat(successor.ownerInstanceId()).isEqualTo("successor-after-reconciliation");
     assertThat(successor.executorFence().longValueExact())
         .isGreaterThan(controlledCapacity.selectedOwnerFence());
     controlledRemoveServingKeys(source, assignment);

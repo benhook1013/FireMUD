@@ -1422,9 +1422,9 @@ require_equal(
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
 root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
-def strip_kotlin_comments(source):
-    # Kotlin block comments can nest. Keep quoted strings (including URL literals)
-    # intact and preserve a separating space where an active comment used to be.
+def live_spotbugs_kotlin(source):
+    # Mask literals as non-syntax tokens, except the exact ordinary XML argument.
+    # Kotlin block comments can nest and are replaced with separating whitespace.
     token = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|//[^\n]*|/\*')
     cursor = 0
     output = []
@@ -1443,7 +1443,7 @@ def strip_kotlin_comments(source):
         elif match.group().startswith("//"):
             output.append(" ")
         else:
-            output.append(match.group())
+            output.append(match.group() if match.group() == '"xml"' else "\x00")
     output.append(source[cursor:])
     return "".join(output)
 
@@ -1453,7 +1453,7 @@ def has_spotbugs_xml_report(source):
         r'tasks\.withType<SpotBugsTask>\(\)\.configureEach\s*\{\s*'
         r'enabled = fullCheck\s*reports\.create\("xml"\)\s*\{\s*'
         r'required\.set\(true\)\s*\}',
-        strip_kotlin_comments(source),
+        live_spotbugs_kotlin(source),
     ) is not None
 
 
@@ -1461,6 +1461,8 @@ spotbugs_fixture = 'tasks.withType<SpotBugsTask>().configureEach { enabled = ful
 xml_fixture = 'reports.create("xml") { required.set(true) }'
 assert has_spotbugs_xml_report(spotbugs_fixture % xml_fixture)
 assert not has_spotbugs_xml_report(spotbugs_fixture % ("/* nested /* fixture */ " + xml_fixture + " */"))
+assert not has_spotbugs_xml_report('val example = """' + (spotbugs_fixture % xml_fixture) + '"""')
+assert not has_spotbugs_xml_report(spotbugs_fixture % ('"""' + xml_fixture + '"""'))
 if not has_spotbugs_xml_report(subproject_configuration):
     raise SystemExit("Module SpotBugs tasks must emit XML reports for failed CI diagnostics")
 game_session_build = (

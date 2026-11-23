@@ -25,6 +25,8 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -54,8 +56,10 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
     return REDIS;
   }
 
-  @Test
-  void ownerInstallUsesFreshReadCommittedSnapshotAfterWaitingForAdvisoryLock() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void ownerInstallUsesFreshReadCommittedSnapshotAfterWaitingForAdvisoryLock(
+      boolean dispatchWhileWaiting) throws Exception {
     try (var proof = new TransferSqlProof();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var blocker =
@@ -97,11 +101,18 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       repeatableReadSource.setUsername(postgresContainer().getUsername());
       repeatableReadSource.setPassword(postgresContainer().getPassword());
       AtomicInteger installIsolation = new AtomicInteger(-1);
+      AtomicInteger custodyReads = new AtomicInteger();
       var installObserver =
           new ExecuteListener() {
             @Override
             public void executeStart(ExecuteContext context) {
-              if (!"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))".equals(context.sql())) {
+              String query = context.sql();
+              if (query != null
+                  && query.contains("game_session_original_new_capacity_execution")
+                  && query.contains("game_session_canonical_binding_region_bridge_obligation")) {
+                custodyReads.incrementAndGet();
+              }
+              if (!"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))".equals(query)) {
                 return;
               }
               var statement = context.statement();
@@ -139,20 +150,30 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid);
         assertThat(installIsolation.get()).isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
-        proof.seedUndeliveredDispatch(dispatched);
+        assertThat(custodyReads.get()).isZero();
+        if (dispatchWhileWaiting) proof.seedUndeliveredDispatch(dispatched);
       } finally {
         blocker.commit();
       }
 
-      assertThatThrownBy(install::get)
-          .rootCause()
-          .isInstanceOfSatisfying(
-              IllegalStateException.class,
-              failure ->
-                  assertThat(failure)
-                      .hasMessage("Canonical Game Session region ownership is unavailable"));
-      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
-      assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
+      if (dispatchWhileWaiting) {
+        assertThatThrownBy(() -> install.get(10, TimeUnit.SECONDS))
+            .rootCause()
+            .isInstanceOfSatisfying(
+                IllegalStateException.class,
+                failure ->
+                    assertThat(failure)
+                        .hasMessage("Canonical Game Session region ownership is unavailable"));
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+        assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
+      } else {
+        install.get(10, TimeUnit.SECONDS);
+        var successor = proof.currentOwner();
+        assertThat(successor.ownerInstanceId()).isEqualTo("repeatable-read-successor");
+        assertThat(successor.executorFence()).isGreaterThan(proof.prior.executorFence());
+        assertThat(proof.executionState(dispatched)).isNull();
+      }
+      assertThat(custodyReads.get()).isPositive();
     }
   }
 

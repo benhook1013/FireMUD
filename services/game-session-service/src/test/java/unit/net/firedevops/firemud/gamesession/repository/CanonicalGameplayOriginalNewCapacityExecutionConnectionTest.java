@@ -85,14 +85,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
           return late;
         });
     var owner = owner(dsl, redis, tags);
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
-    try {
-      assertThatThrownBy(() ->
-              Context.current()
-                  .withDeadlineAfter(100, TimeUnit.MILLISECONDS, scheduler)
-                  .call(owner::connectForRead))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+    try (var cancelled = Context.current().withCancellation()) {
+      var refusal =
+          CompletableFuture.runAsync(() ->
+              assertThatThrownBy(() -> cancelled.call(owner::connectForRead))
+                  .isInstanceOf(IllegalStateException.class));
+      assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      cancelled.cancel(null);
+      refusal.get(2, TimeUnit.SECONDS);
       verifyNoInteractions(late, dsl, tags);
       release.countDown();
       verify(late, timeout(1000)).closeAsync();
@@ -108,7 +108,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     } finally {
       release.countDown();
       closeFinished.complete(null);
-      scheduler.shutdownNow();
     }
   }
 
@@ -149,7 +148,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       assertThat(connectors.getQueue()).isEmpty();
       assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + maximum);
       assertThat(permits.availablePermits()).isEqualTo(operationMaximum);
-      assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+      var refusal =
+          CompletableFuture.runAsync(() ->
+              assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class));
+      refusal.get(2, TimeUnit.SECONDS);
       verifyNoInteractions(redis);
       assertThat(connectors.getActiveCount()).isEqualTo(maximum);
       assertThat(connectors.getQueue()).isEmpty();

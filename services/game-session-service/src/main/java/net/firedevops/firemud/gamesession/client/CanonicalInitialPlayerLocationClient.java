@@ -115,26 +115,21 @@ public final class CanonicalInitialPlayerLocationClient
       throw new IllegalArgumentException(
           "Initial player location region request exceeds its bound");
     }
-    CanonicalInitialPlayerLocationRegionResponse response;
-    if (operationDeadline == null) {
-      var stub = requireInitializedStub("World initial player location client is unavailable");
-      response =
-          stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-              .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
-              .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES)
-              .readInitialPlayerLocationRegion(request);
-    } else {
-      response =
-          withPublishedInitializedStub(
-              "World initial player location client is unavailable",
-              stub ->
-                  stub.withDeadline(
+    CanonicalInitialPlayerLocationRegionResponse response =
+        withPublishedInitializedStub(
+            "World initial player location client is unavailable",
+            stub -> {
+              var bounded =
+                  operationDeadline == null
+                      ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                      : stub.withDeadline(
                           operationDeadline.minimum(
-                              Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)))
-                      .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
-                      .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES)
-                      .readInitialPlayerLocationRegion(request));
-    }
+                              Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
+              return bounded
+                  .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
+                  .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES)
+                  .readInitialPlayerLocationRegion(request);
+            });
     requireRegionResponse(request, response);
     return response;
   }

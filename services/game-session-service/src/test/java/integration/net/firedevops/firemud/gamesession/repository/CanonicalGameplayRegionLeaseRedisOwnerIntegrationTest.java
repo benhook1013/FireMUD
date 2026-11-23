@@ -113,13 +113,20 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
             RedisScriptCatalog.fromContributions(
                 java.util.List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
         Clock clock = Clock.systemUTC();
-        var owner =
-            new CanonicalGameplayRegionLeaseRedisOwner(client, uri, catalog)
-                .forHandoffDeadline(clock, clock.millis() + 1_000L);
-        assertThatThrownBy(() ->
-                owner.acquire(
-                    source(GAME_INSTANCE_ID_A), 7L, Duration.ofSeconds(30), identity("stalled")))
-            .isInstanceOf(IllegalStateException.class);
+        var refusal =
+            CompletableFuture.runAsync(() -> {
+              var owner =
+                  new CanonicalGameplayRegionLeaseRedisOwner(client, uri, catalog)
+                      .forHandoffDeadline(clock, clock.millis() + 1_000L);
+              assertThatThrownBy(() ->
+                      owner.acquire(
+                          source(GAME_INSTANCE_ID_A),
+                          7L,
+                          Duration.ofSeconds(30),
+                          identity("stalled")))
+                  .isInstanceOf(IllegalStateException.class);
+            });
+        refusal.get(1500, TimeUnit.MILLISECONDS);
         assertThat(disconnected.get(2, TimeUnit.SECONDS)).isTrue();
       }
     }
@@ -212,7 +219,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       timely.requireCurrent(grant);
       timely.renew(grant, Duration.ofSeconds(30));
       byte[] token = redis.admin().get(leaseKey);
-      long ttl = redis.admin().pttl(leaseKey);
+      long expiresAt = redis.admin().pexpiretime(leaseKey);
       var lateRenewal = owner.forHandoffDeadline(behindRedis, behindRedis.millis() + 4_000);
       var renewed = new CompletableFuture<Object>();
       CommandListener renewalObservation =
@@ -233,7 +240,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
         redis.ownerClient().removeListener(renewalObservation);
       }
       assertThat(redis.admin().get(leaseKey)).containsExactly(token);
-      assertThat(redis.admin().pttl(leaseKey)).isPositive().isLessThanOrEqualTo(ttl);
+      assertThat(redis.admin().pexpiretime(leaseKey)).isPositive().isEqualTo(expiresAt);
     }
   }
 
