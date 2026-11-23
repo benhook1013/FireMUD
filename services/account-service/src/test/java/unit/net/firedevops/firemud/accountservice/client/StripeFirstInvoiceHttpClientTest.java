@@ -5,20 +5,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.exception.ApiConnectionException;
-import com.sun.net.httpserver.HttpServer;
-import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.SocketException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -29,34 +34,43 @@ class StripeFirstInvoiceHttpClientTest {
   @Test
   void cancelsASlowlyStreamingStripeBodyWithoutAnotherRequest() throws Exception {
     var streaming = new CountDownLatch(1);
-    var closed = new CountDownLatch(1);
-    var attempts = new java.util.concurrent.atomic.AtomicInteger();
-    var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-    server.createContext(
-        "/v1/invoices/in_exact",
-        exchange -> {
-          attempts.incrementAndGet();
-          try (exchange) {
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, 0);
-            try (var body = exchange.getResponseBody()) {
-              byte[] chunk = new byte[512];
-              java.util.Arrays.fill(chunk, (byte) ' ');
-              for (int index = 0; index < 150; index++) {
-                body.write(chunk);
-                body.flush();
-                Thread.sleep(20);
+    try (var server = new ServerSocket();
+        var serverExecutor = Executors.newSingleThreadExecutor();
+        var transport = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()) {
+      server.bind(new InetSocketAddress("127.0.0.1", 0));
+      server.setSoTimeout(5_000);
+      var peerClosed =
+          serverExecutor.submit(() -> {
+            try (var peer = server.accept()) {
+              peer.setSoTimeout(5_000);
+              var inbound =
+                  new BufferedReader(
+                      new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII));
+              assertThat(inbound.readLine()).startsWith("GET /v1/invoices/in_exact HTTP/");
+              String header;
+              do {
+                header = inbound.readLine();
+                assertThat(header)
+                    .as("request headers terminate before the body fixture")
+                    .isNotNull();
+              } while (!header.isEmpty());
+              var outbound = peer.getOutputStream();
+              outbound.write(
+                  ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                          + "Transfer-Encoding: chunked\r\n\r\n"
+                          + "8\r\n{\"held\":\r\n")
+                      .getBytes(StandardCharsets.US_ASCII));
+              outbound.flush();
+              // No terminal chunk or server shutdown: only the real client can end the exchange.
+              // A socket read timeout is a test failure, not evidence of cancellation.
+              try {
+                return inbound.read() == -1;
+              } catch (SocketException resetAfterFirstChunk) {
+                return true;
               }
-            } catch (IOException canceled) {
-              closed.countDown();
-            } catch (InterruptedException interrupted) {
-              Thread.currentThread().interrupt();
             }
-          }
-        });
-    server.start();
-    try (var transport = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()) {
-      var client = new StripeFirstInvoiceHttpClient(Duration.ofSeconds(1), Duration.ofSeconds(1));
+          });
+      var client = new StripeFirstInvoiceHttpClient(Duration.ofSeconds(1), Duration.ofSeconds(2));
       var observedTransport = mock(HttpClient.class);
       when(observedTransport.sendAsync(
               any(HttpRequest.class),
@@ -71,22 +85,25 @@ class StripeFirstInvoiceHttpClientTest {
       var stripe =
           com.stripe.StripeClient.builder()
               .setApiKey("sk_test_controlled")
-              .setApiBase("http://127.0.0.1:" + server.getAddress().getPort())
+              .setApiBase("http://127.0.0.1:" + server.getLocalPort())
               .setMaxNetworkRetries(0)
               .setHttpClient(client)
               .build();
       assertTimeoutPreemptively(
-          Duration.ofMillis(2500),
+          Duration.ofSeconds(5),
           () ->
               assertThatThrownBy(() -> stripe.invoices().retrieve("in_exact"))
                   .isInstanceOf(ApiConnectionException.class)
                   .hasMessageContaining("First-invoice provider response deadline expired")
                   .hasCauseInstanceOf(TimeoutException.class));
       assertThat(streaming.getCount()).as("the client received a body chunk").isZero();
-      assertThat(closed.await(2, TimeUnit.SECONDS)).isTrue();
-      assertThat(attempts.get()).isOne();
-    } finally {
-      server.stop(0);
+      assertThat(peerClosed.get(5, TimeUnit.SECONDS))
+          .as("the real client closed the peer connection after receiving body bytes")
+          .isTrue();
+      verify(observedTransport)
+          .sendAsync(
+              any(HttpRequest.class),
+              org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any());
     }
   }
 
