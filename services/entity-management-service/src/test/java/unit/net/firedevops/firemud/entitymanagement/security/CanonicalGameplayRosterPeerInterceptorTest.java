@@ -224,7 +224,9 @@ class CanonicalGameplayRosterPeerInterceptorTest {
             .toList();
 
     assertThat(publicMethods)
-        .containsExactly("entity_management.v1.EntityManagementService/Ping")
+        .containsExactly(
+            "entity_management.v1.RunOwnedFixtureLookEntityService/ReadRunOwnedFixtureGround",
+            "entity_management.v1.EntityManagementService/Ping")
         .doesNotContain(
             CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
             CanonicalGameplayRosterPeerInterceptor.SELECTED_ASSIGNMENT_METHOD_NAME,

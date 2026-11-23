@@ -7,7 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
-import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.security.GrpcWorkloadOnlyGuard;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.ReadRunOwnedFixtureGroundRequest;
@@ -81,16 +81,10 @@ public final class RunOwnedFixtureLookEntityGrpcService
   public void readRunOwnedFixtureGround(
       ReadRunOwnedFixtureGroundRequest request,
       StreamObserver<ReadRunOwnedFixtureGroundResponse> observer) {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
-      observer.onError(Status.UNAUTHENTICATED.asRuntimeException());
-      return;
-    }
-    if (!peer.isService("game-logic-service")
-        || !peer.isInNamespace(namespace)
-        || SessionContext.hasAuthenticatedCallerContext()
-        || SessionContext.isInternalService()) {
-      observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
+    var refusal =
+        GrpcWorkloadOnlyGuard.refusal(GrpcPeerIdentity.current(), "game-logic-service", namespace);
+    if (refusal.isPresent()) {
+      observer.onError(refusal.get().asRuntimeException());
       return;
     }
     final WorldRunOwnedFixtureLifecycleEvidence world;
