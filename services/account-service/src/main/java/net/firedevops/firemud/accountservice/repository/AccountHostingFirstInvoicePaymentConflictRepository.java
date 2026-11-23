@@ -43,13 +43,17 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
     Objects.requireNonNull(verified, "verified Stripe event is required");
     Record row =
         dsl.fetchOne(
-            "SELECT conflict.request_id, conflict.event_payload_digest, inbox.raw_payload, "
-                + "inbox.payload_sha256, inbox.event_type, inbox.provider_created_at_epoch_seconds, "
-                + "inbox.provider_api_version, inbox.livemode "
-                + "FROM "
+            "SELECT conflict.request_id, COALESCE(replay.event_payload_digest,"
+                + " conflict.event_payload_digest) AS event_payload_digest, inbox.raw_payload,"
+                + " inbox.payload_sha256, inbox.event_type,"
+                + " inbox.provider_created_at_epoch_seconds, inbox.provider_api_version,"
+                + " inbox.livemode FROM stripe_event_inbox inbox LEFT JOIN"
+                + " subscription_first_invoice_late_paid_event_replays replay USING"
+                + " (provider_event_id) JOIN "
                 + TABLE
-                + " conflict JOIN stripe_event_inbox inbox USING (provider_event_id) "
-                + "WHERE conflict.provider_event_id = ?",
+                + " conflict ON conflict.provider_event_id = inbox.provider_event_id "
+                + "OR conflict.subscription_id = replay.subscription_id "
+                + "WHERE inbox.provider_event_id = ?",
             verified.providerEventId());
     if (row == null) return null;
     requireExactEvent(verified, row);
@@ -133,13 +137,19 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
             cancellation.get("cancellation_receipt_digest", String.class),
             cancellation.get("cancellation_row_version", Long.class),
             cancellation.get("cancellation_committed_transaction_id", Long.class));
-    if (inserted == 1) {
-      if (!candidate.requestId().equals(retainedConflictRequestId(verified))) throw refused();
-    } else if (inserted == 0) {
+    if (inserted == 0) {
       requireMatchingSubscriptionConflict(invoice, candidate, cancellation, verified);
-    } else {
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_late_paid_event_replays "
+              + "(provider_event_id, subscription_id, event_payload_digest) VALUES (?, ?, ?) "
+              + "ON CONFLICT (provider_event_id) DO NOTHING",
+          intake.providerEventId(),
+          invoice.subscriptionId(),
+          intake.payloadSha256());
+    } else if (inserted != 1) {
       throw refused();
     }
+    if (!candidate.requestId().equals(retainedConflictRequestId(verified))) throw refused();
     return true;
   }
 

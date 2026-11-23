@@ -1940,6 +1940,9 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
     checkout.status("requires_confirmation");
+    assertThat(owner.completeSigned(distinctSuccess.payload(), distinctSuccess.signature()))
+        .isEqualTo(conflict);
+    assertThat(count(c, "subscription_first_invoice_late_paid_event_replays")).isOne();
     assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
     assertThat(owner.completeSigned(equivalent.payload(), equivalent.signature()))
         .isEqualTo(conflict);
