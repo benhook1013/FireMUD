@@ -1194,7 +1194,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: ${{ matrix.module == 'game-design-service' && 30 || 20 }}
+    # The composite keeps Game Design checks capped at 30 minutes. Reserve
+    # time for setup and required proof after a successful check.
+    timeout-minutes: ${{ matrix.module == 'game-design-service' && 35 || 20 }}
     strategy:
       fail-fast: false
       matrix:

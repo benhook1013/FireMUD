@@ -681,7 +681,7 @@ for job_id, (output, module) in groups.items():
     job = ci["jobs"][job_id]
     name_module = module or "${{ matrix.module }}"
     require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
-    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 30 || 20 }}"
+    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 35 || 20 }}"
     require_equal(job, ("timeout-minutes",), timeout, job_id)
     require_equal(job, ("needs",), ["changes"], job_id)
     require_equal(job, ("strategy", "fail-fast"), "false", job_id)
@@ -709,9 +709,19 @@ module_checks_step = find_step(
 )
 require_equal(
     module_checks_step,
+    ("env",),
+    {"MODULE": "${{ matrix.module }}", "PARTITION": "${{ matrix.partition }}"},
+    "ci workflow",
+)
+require_equal(
+    module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}' '${{ matrix.partition }}'\n"
+    "check_command=(bash ./.github/scripts/run-gradle-module-checks.sh \"$MODULE\" \"$PARTITION\")\n"
+    "if [[ \"$MODULE\" == game-design-service ]]; then\n"
+    "  check_command=(timeout --kill-after=10s 30m \"${check_command[@]}\")\n"
+    "fi\n"
+    "\"${check_command[@]}\"\n"
     "echo \"::endgroup::\"\n",
     "ci workflow",
 )
