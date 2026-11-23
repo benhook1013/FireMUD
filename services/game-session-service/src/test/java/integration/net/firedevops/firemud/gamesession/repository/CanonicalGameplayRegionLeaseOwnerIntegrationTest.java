@@ -1375,33 +1375,46 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId())
               : null;
       CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
-      try (var session =
-          bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+      var observeInitialization = new java.util.concurrent.atomic.AtomicBoolean();
+      var initializationCommand = new AtomicReference<RedisCommand<Object, Object, Object>>();
+      var evaluations = new java.util.concurrent.atomic.AtomicInteger();
+      var completed = new CompletableFuture<Object>();
+      var observed =
+          new CommandListener() {
+            @Override
+            public void commandStarted(CommandStartedEvent event) {
+              if (observeInitialization.get()
+                  && event.getCommand().getType() == CommandType.EVALSHA) {
+                evaluations.incrementAndGet();
+                initializationCommand.compareAndSet(null, event.getCommand());
+              }
+            }
+
+            @Override
+            public void commandSucceeded(CommandSucceededEvent event) {
+              if (event.getCommand() == initializationCommand.get()) {
+                completed.complete(event.getCommand().getOutput().get());
+              }
+            }
+          };
+      // Lettuce installs and snapshots command listeners as it opens the connection.
+      // Attach before the real PROBE, but arm only after the committed SQL claim.
+      if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
+      AutoCloseable removeObserver =
+          () -> {
+            if (mode == 0 || mode == 1) redis.ownerClient().removeListener(observed);
+          };
+      try (removeObserver;
+          var session =
+              bounded.prepareTimelineInitialization(
+                  preparation, Duration.ofSeconds(30), identity)) {
         // Real PROBE completed on the pinned connection before the durable SQL claim.
         permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
         assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
             .isEqualTo(
                 CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
                     .INITIALIZING);
-        var evaluations = new java.util.concurrent.atomic.AtomicInteger();
-        var completed = new CompletableFuture<Object>();
-        var observed =
-            new CommandListener() {
-              @Override
-              public void commandStarted(CommandStartedEvent event) {
-                if (event.getCommand().getType() == CommandType.EVALSHA)
-                  evaluations.incrementAndGet();
-              }
-
-              @Override
-              public void commandSucceeded(CommandSucceededEvent event) {
-                if (event.getCommand().getType() == CommandType.EVALSHA) {
-                  completed.complete(event.getCommand().getOutput().get());
-                }
-              }
-            };
-        // PREPARE's preflight has already finished; only initialization can submit EVALSHA here.
-        if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
+        observeInitialization.set(true);
         try {
           if (mode == 1) {
             // This control intentionally exhausts the local monotonic deadline before dispatch.
@@ -1565,7 +1578,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             assertThat(evaluations).as("no INITIALIZE after local expiration").hasValue(0);
           }
         } finally {
-          if (mode == 0 || mode == 1) redis.ownerClient().removeListener(observed);
+          observeInitialization.set(false);
         }
       }
       assertThat(proof.get()).isNotNull();
