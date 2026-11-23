@@ -816,6 +816,54 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void missingAppliedReceiptCannotQualifyCurrentTransfer(boolean installedBeforeLoss)
+      throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      assertThat(proof.captureAndFence(id)).hasSize(1);
+      proof.verifyPage(id);
+      boolean verified =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(verified).isTrue();
+      var expectedOwner = installedBeforeLoss ? proof.install(id) : proof.prior;
+      String retainedTransfer = proof.transferImage(id);
+      String retainedItem = proof.itemImage(id);
+      assertThat(retainedItem).contains("\"fence_apply_issued\": true");
+      assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
+      var assignment = proof.tags.assignmentForTransition(proof.execution.transitionId());
+      byte[] receiptKey =
+          ascii(
+              "session:game:capacity-transfer-receipt:{"
+                  + assignment.tenantGameplayTag()
+                  + "}:"
+                  + proof.execution.request().admissionAttemptId());
+      try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+        assertThat(connection.sync().del(receiptKey)).isEqualTo(1L);
+        proof.recreateTransferOwners();
+        if (installedBeforeLoss) {
+          assertThatThrownBy(() ->
+                  proof.coordinator.recoverCompleted(
+                      id,
+                      expectedOwner.ownerInstanceId(),
+                      expectedOwner.leaseTokenCorrelation(),
+                      transferDeadline()))
+              .isInstanceOf(IllegalStateException.class);
+        } else {
+          assertThatThrownBy(() -> proof.install(id)).isInstanceOf(IllegalStateException.class);
+        }
+        assertThat(connection.sync().exists(receiptKey)).isZero();
+      }
+      assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
+      assertThat(proof.currentOwner()).isEqualTo(expectedOwner);
+      assertThat(proof.transferImage(id)).isEqualTo(retainedTransfer);
+      assertThat(proof.itemImage(id)).isEqualTo(retainedItem);
+    }
+  }
+
   @Test
   void terminalOnlyTransferRecoversExactCompletedSuccessorAfterOriginalFinalReceipt()
       throws Exception {
@@ -914,6 +962,64 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(proof.itemImage(id)).contains(proof.execution.digest());
       assertThat(proof.physicalExecutionExists(proof.execution, tag)).isTrue();
       assertThat(proof.originalImage()).isEqualTo(originalExecution);
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void expiredProtectedObservationCannotIssueTransferMutation(boolean prepareBeforeExpiry)
+      throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      var wall = new AtomicLong(proof.clock.millis());
+      Clock clock = org.mockito.Mockito.mock(Clock.class);
+      org.mockito.Mockito.when(clock.millis()).thenAnswer(ignored -> wall.get());
+      org.mockito.Mockito.when(clock.instant())
+          .thenAnswer(ignored -> Instant.ofEpochMilli(wall.get()));
+      var transfers =
+          new CanonicalGameplayRegionOwnerTransferRepository(proof.sql, clock, proof.tags);
+      var observations =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(
+                  clock, Duration.ofSeconds(3))
+              .receiver(transfers, proof.tags);
+      UUID id = proof.begin();
+      long deadline = proof.clock.millis() + 10_000;
+      transfers.within(
+          deadline,
+          budget -> {
+            var item = transfers.capture(id).getFirst();
+            var before = observations.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = transfers.fenceDispatch(item, before);
+            if (prepareBeforeExpiry) {
+              var owner =
+                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      proof.redis,
+                      proof.scripts,
+                      clock,
+                      proof.tags.withCapacityExecutionDsl(budget.sql(proof.sql)),
+                      () ->
+                          CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                              proof.redis, budget),
+                      budget::remainingMillis,
+                      budget::awaitAsyncClose);
+              dispatch.seal(
+                  owner.prepareTransferReceipt(
+                      item.execution(), item.candidate(), item.assignment(), dispatch, deadline));
+            }
+            String retainedItem = proof.itemImage(id);
+            wall.set(before.expiresAtEpochMillis());
+            assertThat(wall.get()).isLessThan(deadline);
+            if (prepareBeforeExpiry) {
+              assertThatThrownBy(dispatch::claimApply).isInstanceOf(IllegalStateException.class);
+            } else {
+              assertThatThrownBy(dispatch::issuePreparation)
+                  .isInstanceOf(IllegalStateException.class);
+            }
+            assertThat(proof.itemImage(id)).isEqualTo(retainedItem);
+            return null;
+          });
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
     }
   }
 
