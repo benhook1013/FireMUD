@@ -537,7 +537,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       Long initialized = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
       assertThat(initialized).isEqualTo(1L);
       assertThat(redis.admin().pttl(leaseKey)).isPositive();
-      assertThat(redis.admin().pexpiretime(leaseKey)).isPositive().isLessThanOrEqualTo(submittedDeadline);
+      assertThat(redis.admin().pexpiretime(leaseKey))
+          .isPositive()
+          .isLessThanOrEqualTo(submittedDeadline);
       assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
     }
   }

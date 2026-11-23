@@ -916,9 +916,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       scoped.acquire();
                       assertThatThrownBy(() -> scoped.release(proxy))
                           .hasMessage("Controlled uncertain pool return");
-                      rollbackFailure.set(org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
+                      rollbackFailure.set(
+                          org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
                       autoCommitFailure.set(
-                          org.assertj.core.api.Assertions.catchThrowable(() -> proxy.setAutoCommit(true)));
+                          org.assertj.core.api.Assertions.catchThrowable(
+                              () -> proxy.setAutoCommit(true)));
                       return true;
                     }))
             .isInstanceOf(IllegalStateException.class);
@@ -1314,17 +1316,19 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         });
     DSLContext dsl = source(provider);
     Runnable bothQueries =
-        () -> CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-            clock,
-            absoluteDeadline,
-            budget -> {
-              var sql = budget.sql(dsl);
-              execute(sql);
-              return execute(sql);
-            });
+        () ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                clock,
+                absoluteDeadline,
+                budget -> {
+                  var sql = budget.sql(dsl);
+                  execute(sql);
+                  return execute(sql);
+                });
     if (exhaustFirstQuery) {
       assertThatThrownBy(bothQueries::run)
-          .isInstanceOf(CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+          .isInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
       assertThat(executions).hasValue(1);
     } else {
       bothQueries.run();
