@@ -69,9 +69,11 @@ class TenantCapacityAdmissionGrpcCodecTest {
     assertThat(TenantCapacityAdmissionGrpcCodec.requireResponse(creatingRequest, commitment))
         .isEqualTo(result(creatingRequest));
     var exactRefusal =
-        TenantCapacityAdmissionGrpcCodec.toRefusal(creatingRequest, Failure.CAPACITY_QUOTA_EXCEEDED);
+        TenantCapacityAdmissionGrpcCodec.toRefusal(
+            creatingRequest, Failure.CAPACITY_QUOTA_EXCEEDED);
     var mixed = commitment.toBuilder().addRefusal(exactRefusal.getRefusal(0)).build();
-    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.requireResponse(creatingRequest, mixed))
+    assertThatThrownBy(
+            () -> TenantCapacityAdmissionGrpcCodec.requireResponse(creatingRequest, mixed))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusal(creatingRequest, mixed))
         .isInstanceOf(IllegalArgumentException.class);
