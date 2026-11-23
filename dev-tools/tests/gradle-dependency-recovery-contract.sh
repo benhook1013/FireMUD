@@ -1257,7 +1257,7 @@ esac'
   assert_call 1 ":common-saga:test -PfullCheck --dry-run --no-configuration-cache"
   assert_call 2 "--refresh-dependencies :common-saga:test -PfullCheck --dry-run --no-configuration-cache"
   [[ "$(grep -c '^--refresh-dependencies ' "$CASE_DIR/calls")" -eq 1 ]] || fail "JaCoCo repeated dependency refresh"
-  [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "JaCoCo did not use exactly one bounded recovery delay"
+  assert_rate_limit_delay
   cmp "$CASE_DIR/calls" "$CASE_DIR/locked-calls" || fail "JaCoCo bypassed the existing locked runner"
 done
 
