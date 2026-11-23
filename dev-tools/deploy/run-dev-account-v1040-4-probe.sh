@@ -43,9 +43,11 @@ verify_held_source() {
 }
 
 verify_held_source
-image="$(kubectl --request-timeout=10s -n "$namespace" get statefulset postgres -o json |
-  jq -er '.spec.template.spec.containers | map(select(.name == "postgres")) |
-    select(length == 1) | .[0].image | select(type == "string")')" ||
+image="$(kubectl --request-timeout=10s -n "$namespace" get deployment postgres -o json |
+  jq -er --arg namespace "$namespace" '
+    select(.kind == "Deployment" and .metadata.name == "postgres" and .metadata.namespace == $namespace)
+    | .spec.template.spec.containers | map(select(.name == "postgres"))
+    | select(length == 1) | .[0].image | select(type == "string")')" ||
   fail "the retained PostgreSQL image is unavailable"
 [[ "$image" =~ ^postgres:[0-9][a-zA-Z0-9._-]*@sha256:[0-9a-f]{64}$ ]] ||
   fail "the retained PostgreSQL image is not an approved digest-pinned client"

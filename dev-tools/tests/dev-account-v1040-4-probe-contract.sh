@@ -179,8 +179,14 @@ kubectl() {
     '-n dev get pods -o json')
       printf '{"kind":"PodList","items":[]}\n'
       ;;
-    '--request-timeout=10s -n dev get statefulset postgres -o json')
-      printf '{"spec":{"template":{"spec":{"containers":[{"name":"postgres","image":"postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"}]}}}}\n'
+    '--request-timeout=10s -n dev get deployment postgres -o json')
+      local kind=Deployment
+      if [[ "${PROBE_SCENARIO:-}" == wrong-postgres-kind ]]; then
+        kind=StatefulSet
+      fi
+      jq -n --arg kind "$kind" '{kind:$kind,metadata:{name:"postgres",namespace:"dev"},
+        spec:{template:{spec:{containers:[{name:"postgres",
+          image:"postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"}]}}}}'
       ;;
     '--request-timeout=10s -n dev create -f - -o json')
       cat >"$PROBE_JOB_MANIFEST"
@@ -257,5 +263,13 @@ for scenario in duplicate replaced renewed-writer ambiguous-create job-replaceme
     [[ -f "$PROBE_JOB_DELETED" ]]
   fi
 done
+
+rm -f -- "$PROBE_JOB_MANIFEST" "$PROBE_JOB_DELETED"
+if PROBE_SCENARIO=wrong-postgres-kind run_protected_probe >"$temp_dir/receipt" 2>"$temp_dir/error"; then
+  echo "Protected probe accepted the wrong PostgreSQL workload kind." >&2
+  exit 1
+fi
+grep -q 'retained PostgreSQL image is unavailable' "$temp_dir/error"
+[[ ! -e "$PROBE_JOB_MANIFEST" && ! -s "$temp_dir/receipt" ]]
 
 echo "Protected dev Account V1040.4 probe contract passed (mock Kubernetes transport)."
