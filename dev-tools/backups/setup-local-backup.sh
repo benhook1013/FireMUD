@@ -79,15 +79,20 @@ if [[ "$MINIO_SECRET_EXISTS" == false && -z "${MINIO_ROOT_PASSWORD:-}" ]]; then
 fi
 
 # Velero's shared AWS credentials file uses raw, single-line INI values.
-# The parser trims edge whitespace, treats whitespace-prefixed # and ; as
+# The parser trims edge whitespace, treats space- or tab-prefixed # and ; as
 # comments, and unwraps fully quoted values. Reject rather than rewrite them.
 validate_aws_credential() {
+  local LC_ALL=C
+  # Go's strings.TrimSpace also trims these non-ASCII UTF-8 sequences.
+  # Match the bytes explicitly so a host locale cannot change the result.
+  local unicode_space=$'(\xC2[\x85\xA0]|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80)'
+  local edge_space="^${unicode_space}|${unicode_space}$"
   case "$2" in
-    ''|*[$'\r\n']*|[[:space:]]*|*[[:space:]]|*[[:space:]][\#\;]*|\"*\"|\'*\')
-      echo "$1 cannot be represented unchanged in the shared AWS credentials file for Velero." >&2
-      exit 1
-      ;;
+    ''|*[$'\r\n']*|[[:space:]]*|*[[:space:]]|*[$' \t'][\#\;]*|\"|\'|\"*\"|\'*\') ;;
+    *) [[ "$2" =~ $edge_space ]] || return 0 ;;
   esac
+  echo "$1 cannot be represented unchanged in the shared AWS credentials file for Velero." >&2
+  exit 1
 }
 validate_aws_credential MINIO_ROOT_USER "$MINIO_ROOT_USER"
 validate_aws_credential MINIO_ROOT_PASSWORD "$MINIO_ROOT_PASSWORD"

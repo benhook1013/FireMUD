@@ -93,8 +93,11 @@ expect_success '' ''
 EXPECTED_USER='synthetic#user;v1'
 EXPECTED_PASSWORD='sample#tag;scope space=+/_-"part"'
 expect_success "$EXPECTED_USER" "$EXPECTED_PASSWORD"
+EXPECTED_PASSWORD=$'sample\xC2\xA0#interior\xE2\x80\x89space'
+expect_success "$EXPECTED_USER" "$EXPECTED_PASSWORD"
 
 cases=('sample #comment' $'sample\t;comment' ' sample' $'sample\t' '"sample"' "'sample'" $'sample\rpart' $'sample\n')
+cases+=($'\xC2\xA0sample' $'sample\xE2\x80\xA8' '"' "'")
 for i in "${!cases[@]}"; do
   expect_rejected "environment case $i" MINIO_ROOT_PASSWORD "$EXPECTED_USER" "${cases[i]}"
 done
