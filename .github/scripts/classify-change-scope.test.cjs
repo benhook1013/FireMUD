@@ -533,7 +533,18 @@ test("shared modules force every Gradle module, including common-temporal", () =
 
   assert.equal(result.runAll, true);
   assert.deepEqual(result.affectedModules, ALL_MODULES);
-  assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("hosted-environment-identity-controller"));
+  assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("recovery-controller-service", "hosted-environment-identity-controller"));
+});
+
+test("shared modules force every Gradle module, including common-redis-contracts", () => {
+  const result = classifyChangeScope([
+    "services/common-redis-contracts/src/main/java/example/RedisContract.java",
+  ]);
+
+  assert.equal(result.runAll, true);
+  assert.ok(result.affectedModules.includes("common-redis-contracts"));
+  assert.deepEqual(result.affectedModules, ALL_MODULES);
+  assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("recovery-controller-service", "hosted-environment-identity-controller"));
 });
 
 test("controller and load-testing changes receive their own module checks", () => {
@@ -598,4 +609,16 @@ test("GitHub malformed file entries fail closed to the complete path", async () 
     assert.equal(result.runAll, true, JSON.stringify(file));
     assert.deepEqual(result.affectedModules, ALL_MODULES, JSON.stringify(file));
   }
+});
+
+
+test("source-only recovery controller is validated without joining runtime services", () => {
+  const result = classifyChangeScope([
+    "services/recovery-controller-service/src/main/java/example/Controller.java",
+  ]);
+  assert.equal(result.runAll, false);
+  assert.deepEqual(result.affectedServices, []);
+  assert.deepEqual(result.affectedModules, ["recovery-controller-service"]);
+  assert.deepEqual(result.bootableModules, ["recovery-controller-service"]);
+  assert.equal(ALL_SERVICES.includes("recovery-controller-service"), false);
 });

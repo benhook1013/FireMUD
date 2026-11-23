@@ -1,0 +1,1083 @@
+package net.firedevops.firemud.recovery.journal;
+
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitOwnerAuthorizedHandoffEffect;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackState;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEffect;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.requiredDigest;
+
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
+import org.jooq.DSLContext;
+import org.jooq.JSONB;
+import org.jooq.Record;
+import org.jooq.conf.Settings;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.springframework.dao.DuplicateKeyException;
+
+/**
+ * PostgreSQL compare-and-set journal and transactional outbox for initial gameplay release only.
+ */
+public final class JooqInitialGameplayReleaseJournal implements InitialGameplayReleaseJournal {
+  private static final String TRANSITION_TABLE =
+      "recovery_control.initial_gameplay_release_transition";
+  private static final String OUTBOX_TABLE = "recovery_control.initial_gameplay_release_outbox";
+
+  private final DSLContext dsl;
+  private final InitialGameplayReleaseTupleCodec tupleCodec;
+
+  public JooqInitialGameplayReleaseJournal(
+      DSLContext dsl, InitialGameplayReleaseTupleCodec tupleCodec) {
+    Objects.requireNonNull(dsl, "dsl must not be null");
+    Settings journalSettings = (Settings) dsl.configuration().settings().clone();
+    journalSettings.setExecuteLogging(false);
+    this.dsl = DSL.using(dsl.configuration().derive(journalSettings));
+    this.tupleCodec = Objects.requireNonNull(tupleCodec, "tupleCodec must not be null");
+  }
+
+  @Override
+  public Operation create(Scope scope, UUID controllerIssuedLockIdentity) {
+    Objects.requireNonNull(scope, "scope must not be null");
+    Objects.requireNonNull(
+        controllerIssuedLockIdentity, "controllerIssuedLockIdentity must not be null");
+    String scopeDigest = tupleCodec.digest(scope);
+    JSONB scopePayload = JSONB.valueOf(tupleCodec.toJson(scope));
+    JSONB bindingPayload = JSONB.valueOf(tupleCodec.toJson(scope.peerStorageBinding()));
+    Instant now = Instant.now();
+    try {
+      return dsl.transactionResult(configuration -> {
+        DSLContext tx = DSL.using(configuration);
+        tx.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_operation (
+                operation_id, operation_kind, target_namespace, playable_state_namespace_id,
+                peer_storage_binding, scope_payload, evidence_ref, scope_digest,
+                maintenance_lock_identity, phase, revision, created_at, updated_at
+            ) VALUES (?, 'initial_gameplay_release', ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, 'collecting', 1, CAST(? AS timestamptz), CAST(? AS timestamptz))
+            ON CONFLICT (operation_id) DO NOTHING
+            """,
+            scope.operationId(),
+            scope.targetNamespace(),
+            scope.playableStateNamespaceId(),
+            bindingPayload,
+            scopePayload,
+            scope.evidenceRef(),
+            scopeDigest,
+            controllerIssuedLockIdentity,
+            toOffsetDateTime(now),
+            toOffsetDateTime(now));
+        Operation operation = selectOperation(tx, scope.operationId(), true);
+        requireSameScope(operation.scope(), scope, scopeDigest);
+        return operation;
+      });
+    } catch (DuplicateKeyException failure) {
+      // Auto-configured jOOQ may translate the same violation at the Spring boundary.
+      throw conflict("maintenance-lock identity is already bound");
+    } catch (DataAccessException failure) {
+      if ("23505".equals(failure.sqlState())) {
+        // PostgreSQL's unique-key detail contains the credential. Never retain its cause.
+        throw conflict("maintenance-lock identity is already bound");
+      }
+      throw failure;
+    }
+  }
+
+  @Override
+  public Optional<Operation> find(UUID operationId) {
+    Objects.requireNonNull(operationId, "operationId must not be null");
+    return Optional.ofNullable(selectOperationOrNull(dsl, operationId, false));
+  }
+
+  @Override
+  public Operation bindVerifiedEvidence(
+      Scope scope,
+      String scopeDigest,
+      InitialGameplayReleaseEvidence evidence,
+      String evidenceDigest,
+      Instant now) {
+    Objects.requireNonNull(scope, "scope must not be null");
+    requiredDigest(scopeDigest, "scopeDigest");
+    Objects.requireNonNull(evidence, "evidence must not be null");
+    requiredDigest(evidenceDigest, "evidenceDigest");
+    Objects.requireNonNull(now, "now must not be null");
+    evidence.validateFor(scope);
+    if (!scopeDigest.equals(tupleCodec.digest(scope))
+        || !evidenceDigest.equals(tupleCodec.digest(evidence))) {
+      throw new InitialGameplayReleaseConflictException(
+          "IDEMPOTENCY_CONFLICT: evidence tuple digest changed");
+    }
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Operation current = selectOperation(tx, scope.operationId(), true);
+      requireSameScope(current.scope(), scope, scopeDigest);
+      if (current.evidence() != null) {
+        if (evidenceDigest.equals(tupleCodec.digest(current.evidence()))
+            && evidence.evidenceIdentity().equals(current.evidence().evidenceIdentity())) {
+          return current;
+        }
+        throw conflict("owner evidence changed after it was bound");
+      }
+      if (current.phase() != Phase.COLLECTING) {
+        throw conflict("operation is not collecting owner evidence");
+      }
+      int changed =
+          tx.execute(
+              """
+              UPDATE recovery_control.initial_gameplay_release_operation
+              SET phase = ?, evidence_snapshot = CAST(? AS jsonb), evidence_identity = ?, evidence_digest = ?,
+                  revision = revision + 1, updated_at = CAST(? AS timestamptz)
+              WHERE operation_id = ? AND phase = ? AND revision = ? AND evidence_snapshot IS NULL
+              """,
+              Phase.READY_TO_REOPEN.databaseValue(),
+              JSONB.valueOf(tupleCodec.toJson(evidence)),
+              evidence.evidenceIdentity(),
+              evidenceDigest,
+              toOffsetDateTime(now),
+              scope.operationId(),
+              Phase.COLLECTING.databaseValue(),
+              current.revision());
+      if (changed != 1) {
+        throw conflict("owner evidence compare-and-set lost");
+      }
+      return selectOperation(tx, scope.operationId(), false);
+    });
+  }
+
+  @Override
+  public Operation transition(PublicTransitionTuple tuple, Instant now) {
+    Objects.requireNonNull(tuple, "tuple must not be null");
+    Objects.requireNonNull(now, "now must not be null");
+    String tupleDigest = tupleCodec.digest(tuple);
+    JSONB tuplePayload = JSONB.valueOf(tupleCodec.toJson(tuple));
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Operation current = selectOperation(tx, tuple.operationId(), true);
+      requireTransitionMatchesOperation(tuple, current);
+      Record previous =
+          tx.fetchOne(
+              "SELECT tuple_digest, tuple_payload, expected_phase, result_phase FROM "
+                  + TRANSITION_TABLE
+                  + " WHERE operation_id = ? AND verb = ?",
+              tuple.operationId(),
+              tuple.verb().wireValue());
+      if (previous != null) {
+        requireRetainedTransition(previous, tuple, tupleDigest);
+        return current;
+      }
+      if (current.phase() != tuple.expectedPhase()) {
+        throw conflict("public transition expected phase is stale");
+      }
+      tx.execute(
+          """
+          INSERT INTO recovery_control.initial_gameplay_release_transition (
+              operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase
+          ) VALUES (?, ?, ?, CAST(? AS jsonb), ?, ?)
+          """,
+          tuple.operationId(),
+          tuple.verb().wireValue(),
+          tupleDigest,
+          tuplePayload,
+          tuple.expectedPhase().databaseValue(),
+          tuple.verb().resultPhase().databaseValue());
+      int changed =
+          tx.execute(
+              """
+              UPDATE recovery_control.initial_gameplay_release_operation
+              SET phase = ?, revision = revision + 1, updated_at = CAST(? AS timestamptz)
+              WHERE operation_id = ? AND phase = ? AND revision = ?
+              """,
+              tuple.verb().resultPhase().databaseValue(),
+              toOffsetDateTime(now),
+              tuple.operationId(),
+              tuple.expectedPhase().databaseValue(),
+              current.revision());
+      if (changed != 1) {
+        throw conflict("public transition compare-and-set lost");
+      }
+      Operation transitioned = selectOperation(tx, tuple.operationId(), false);
+      if (tuple.verb() == TransitionVerb.RESUME) {
+        enqueueEffect(tx, prepareEffect(transitioned), now);
+      }
+      return transitioned;
+    });
+  }
+
+  @Override
+  public Optional<Operation> findTransition(PublicTransitionTuple tuple) {
+    Objects.requireNonNull(tuple, "tuple must not be null");
+    Record previous =
+        dsl.fetchOne(
+            "SELECT o.*, t.tuple_digest, t.tuple_payload, t.expected_phase, t.result_phase FROM recovery_control.initial_gameplay_release_operation o "
+                + "JOIN "
+                + TRANSITION_TABLE
+                + " t ON t.operation_id=o.operation_id "
+                + "WHERE o.operation_id=? AND t.verb=?",
+            tuple.operationId(),
+            tuple.verb().wireValue());
+    if (previous == null) {
+      return Optional.empty();
+    }
+    Operation operation = toOperation(previous);
+    requireTransitionMatchesOperation(tuple, operation);
+    requireRetainedTransition(previous, tuple, tupleCodec.digest(tuple));
+    return Optional.of(operation);
+  }
+
+  @Override
+  public Optional<OutboxEntry> findNextEffect(UUID operationId) {
+    Record record =
+        dsl.fetchOne(
+            """
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
+                   payload_digest, state,
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
+            FROM recovery_control.initial_gameplay_release_outbox
+            WHERE operation_id = ? AND state <> 'acknowledged'
+            ORDER BY created_at, outbox_id
+            LIMIT 1
+            """,
+            operationId);
+    return Optional.ofNullable(record).map(this::toOutboxEntry);
+  }
+
+  @Override
+  public OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now) {
+    Objects.requireNonNull(attemptId, "attemptId must not be null");
+    Objects.requireNonNull(now, "now must not be null");
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Operation operation = selectOperation(tx, operationId, true);
+      OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
+      requireEffectMatchesOperation(current.effect(), operation);
+      if (hasRetainedClosure(tx, current, attemptId, null)
+          || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
+        throw conflict("a retry must use a new effect attempt identity");
+      }
+      if (current.state() == EffectOutboxState.DISPATCHED
+          || current.state() == EffectOutboxState.AMBIGUOUS
+          || current.state() == EffectOutboxState.ACKNOWLEDGED) {
+        return current;
+      }
+      if (current.state() == EffectOutboxState.RETRYABLE
+          && hasDurableNoEffectClosure(tx, current)
+          && !hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())) {
+        throw conflict("durable owner closure has no retained attempt identity");
+      }
+      requirePhaseForEffect(operation.phase(), current.effect().kind());
+      int changed =
+          tx.execute(
+              """
+              UPDATE recovery_control.initial_gameplay_release_outbox
+              SET state = 'dispatched', attempt_count = attempt_count + 1,
+                  last_attempt_id = ?, last_dispatched_at = CAST(? AS timestamptz), last_outcome_code = NULL,
+                  readback_identity = NULL, readback_payload = NULL, readback_digest = NULL,
+                  updated_at = CAST(? AS timestamptz)
+              WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
+              """,
+              attemptId,
+              // PostgreSQL stores microseconds; truncate explicitly rather than rounding
+              // the dispatch floor upward beyond an observation of this same instant.
+              toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)),
+              toOffsetDateTime(now),
+              operationId,
+              effectId);
+      if (changed != 1) {
+        return selectOutbox(tx, operationId, effectId, false);
+      }
+      return selectOutbox(tx, operationId, effectId, false);
+    });
+  }
+
+  @Override
+  public boolean recordRetryableEffectForDispatch(
+      OutboxEntry dispatch, RetrySource source, String outcomeCode, Instant now) {
+    Objects.requireNonNull(source, "retry source must not be null");
+    return recordNonterminalEffectOutcome(
+        dispatch,
+        outcomeCode,
+        EffectOutboxState.RETRYABLE,
+        source == RetrySource.OWNER_REJECTED,
+        now);
+  }
+
+  @Override
+  public boolean recordAmbiguousEffectForDispatch(
+      OutboxEntry dispatch, String outcomeCode, Instant now) {
+    return recordNonterminalEffectOutcome(
+        dispatch, outcomeCode, EffectOutboxState.AMBIGUOUS, false, now);
+  }
+
+  private boolean recordNonterminalEffectOutcome(
+      OutboxEntry dispatch,
+      String outcomeCode,
+      EffectOutboxState resultState,
+      boolean ownerRejected,
+      Instant now) {
+    Objects.requireNonNull(dispatch, "dispatch must not be null");
+    InitialGameplayReleaseModel.requiredOutcomeCode(outcomeCode);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    UUID attemptId = dispatch.lastAttemptId();
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Operation operation = selectOperation(tx, operationId, true);
+      OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
+      requireEffectMatchesOperation(current.effect(), operation);
+      if (dispatch.state() != EffectOutboxState.DISPATCHED
+          || attemptId == null
+          || !sameEffect(dispatch, current)) {
+        throw conflict("effect dispatch tuple changed");
+      }
+      if (!Objects.equals(current.lastAttemptId(), attemptId)) {
+        if (hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())
+            || hasRetainedOwnerRejection(tx, current, attemptId, dispatch.attemptCount())) {
+          return false;
+        }
+        throw conflict("effect attempt identity changed");
+      }
+      if (dispatch.attemptCount() != current.attemptCount()) {
+        throw conflict("effect dispatch generation changed");
+      }
+      if (current.state() == EffectOutboxState.ACKNOWLEDGED
+          || (current.lastAttemptId() != null
+              && current.state() == EffectOutboxState.RETRYABLE
+              && resultState == EffectOutboxState.AMBIGUOUS)) {
+        return true;
+      }
+      if (current.state() != resultState
+          && current.state() != EffectOutboxState.DISPATCHED
+          && !(current.state() == EffectOutboxState.AMBIGUOUS
+              && resultState == EffectOutboxState.RETRYABLE)) {
+        throw conflict("effect is not in a dispatchable attempt");
+      }
+      if (ownerRejected) {
+        tx.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
+                (outbox_id, attempt_id, attempt_ordinal)
+            VALUES (?, ?, ?)
+            ON CONFLICT (outbox_id, attempt_id) DO NOTHING
+            """,
+            current.outboxId(),
+            attemptId,
+            dispatch.attemptCount());
+      }
+      if (current.state() == resultState) {
+        return true;
+      }
+      tx.execute(
+          """
+          UPDATE recovery_control.initial_gameplay_release_outbox
+          SET state = ?, last_outcome_code = ?, updated_at = CAST(? AS timestamptz)
+          WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
+              AND last_attempt_id = ?
+          """,
+          resultState.databaseValue(),
+          outcomeCode,
+          toOffsetDateTime(now),
+          operationId,
+          effectId,
+          attemptId);
+      selectOutbox(tx, operationId, effectId, false);
+      return true;
+    });
+  }
+
+  @Override
+  public Operation recordEffectReadback(
+      OutboxEntry dispatch, EffectReadback readback, Instant now) {
+    Objects.requireNonNull(dispatch, "dispatch must not be null");
+    Objects.requireNonNull(readback, "readback must not be null");
+    Objects.requireNonNull(now, "now must not be null");
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      Operation operation = selectOperation(tx, operationId, true);
+      OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
+      requireEffectMatchesOperation(current.effect(), operation);
+      if (!sameEffect(dispatch, current)
+          || (dispatch.state() != EffectOutboxState.DISPATCHED
+              && dispatch.state() != EffectOutboxState.AMBIGUOUS)) {
+        throw conflict("effect readback dispatch tuple changed");
+      }
+      if (dispatch.lastAttemptId() == null) {
+        throw conflict("effect readback belongs to another attempt");
+      }
+      if (!dispatch.lastAttemptId().equals(current.lastAttemptId())) {
+        EffectReadback retainedClosure =
+            findRetainedClosure(tx, current, dispatch.lastAttemptId(), dispatch.attemptCount());
+        if (retainedClosure == null) {
+          throw conflict("effect readback belongs to another attempt");
+        }
+        if (!readback.equals(retainedClosure) || readback.observedAt().isAfter(now)) {
+          throw conflict("effect readback changed after definitive no effect");
+        }
+        return operation;
+      }
+      String readbackDigest = tupleCodec.digest(readback);
+      if (dispatch.attemptCount() != current.attemptCount()) {
+        throw conflict("effect readback dispatch generation changed");
+      }
+      requireReadbackMatches(readback, current, operationId, effectId);
+      if (current.state() == EffectOutboxState.ACKNOWLEDGED
+          || current.state() == EffectOutboxState.RETRYABLE) {
+        Record stored =
+            tx.fetchOne(
+                "SELECT readback_digest, readback_payload, last_dispatched_at FROM "
+                    + OUTBOX_TABLE
+                    + " WHERE operation_id = ? AND effect_id = ?",
+                operationId,
+                effectId);
+        String storedDigest = stored == null ? null : stored.get("readback_digest", String.class);
+        if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
+          if (readbackDigest.equals(storedDigest)) {
+            requireSuccessfulReadbackState(readback, current.effect().kind());
+            requireValidExactStoredReadback(readback, stored, storedDigest, current);
+            requireTerminalReplayWithinAttempt(readback, stored, now);
+            return operation;
+          }
+          if (stored != null && sameRetainedOutcome(readback, stored, storedDigest)) {
+            requireSuccessfulReadbackState(readback, current.effect().kind());
+            requireTerminalReplayWithinAttempt(readback, stored, now);
+            return operation;
+          }
+          throw conflict("effect readback changed after acknowledgement");
+        }
+        if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
+            && readbackDigest.equals(storedDigest)) {
+          requireValidExactStoredReadback(readback, stored, storedDigest, current);
+          requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
+          requireTerminalReplayWithinAttempt(readback, stored, now);
+          return operation;
+        }
+        if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
+            && stored != null
+            && sameRetainedOutcome(readback, stored, storedDigest)) {
+          requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
+          requireTerminalReplayWithinAttempt(readback, stored, now);
+          return operation;
+        }
+        if (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
+            || ((storedDigest != null
+                    || (stored != null && stored.get("readback_payload", JSONB.class) != null))
+                && !hasValidatedUnknownReadback(stored, storedDigest, current))) {
+          throw conflict("effect readback changed after definitive no effect");
+        }
+        // A definitive apply rejection may precede its first durable closure receipt.
+        // Keep normal attempt and observation fences before retaining that receipt.
+      }
+      if (readback.observedAt().isAfter(now)) {
+        throw conflict("effect readback observation is in the future");
+      }
+      if (current.state() != EffectOutboxState.DISPATCHED
+          && current.state() != EffectOutboxState.AMBIGUOUS
+          && current.state() != EffectOutboxState.RETRYABLE) {
+        throw conflict("effect is not awaiting readback reconciliation");
+      }
+      Record timestamps =
+          tx.fetchOne(
+              "SELECT last_dispatched_at, readback_payload, readback_digest FROM "
+                  + OUTBOX_TABLE
+                  + " WHERE operation_id = ? AND effect_id = ?",
+              operationId,
+              effectId);
+      if (timestamps == null) {
+        throw conflict("effect dispatch timestamp is unavailable");
+      }
+      OffsetDateTime dispatchTime = timestamps.get("last_dispatched_at", OffsetDateTime.class);
+      if (dispatchTime == null) {
+        throw conflict("effect dispatch timestamp is unavailable");
+      }
+      Instant dispatchedAt = dispatchTime.toInstant();
+      if (readback.observedAt().isBefore(dispatchedAt)) {
+        throw conflict("effect readback is stale");
+      }
+      requireNonRegressingReadback(readback, timestamps, current);
+      if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+        setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
+        return operation;
+      }
+      if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT) {
+        if (hasRetainedClosure(tx, current, readback.attemptId(), null)) {
+          throw conflict("effect attempt closure already exists outside exact replay");
+        }
+        tx.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_attempt_closure
+                (outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at)
+            VALUES (?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS timestamptz), CAST(? AS timestamptz))
+            """,
+            current.outboxId(),
+            readback.attemptId(),
+            current.attemptCount(),
+            JSONB.valueOf(tupleCodec.toJson(readback)),
+            readbackDigest,
+            dispatchTime,
+            toOffsetDateTime(now));
+        setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.RETRYABLE, now);
+        return operation;
+      }
+      requireSuccessfulReadbackState(readback, current.effect().kind());
+      setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.ACKNOWLEDGED, now);
+      if (current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
+        if (operation.phase() != Phase.RESUME_AUTHORIZED) {
+          throw conflict("preparation effect is outside the authorized phase");
+        }
+        updatePhase(tx, operation, Phase.RELEASING, now, null);
+        enqueueEffect(tx, handoffEffect(operation), now);
+      } else {
+        if (operation.phase() != Phase.RELEASING) {
+          throw conflict("handoff effect is outside the releasing phase");
+        }
+        updatePhase(tx, operation, Phase.FINALIZED, now, now);
+      }
+      return selectOperation(tx, operationId, false);
+    });
+  }
+
+  private static boolean sameEffect(OutboxEntry dispatch, OutboxEntry current) {
+    return dispatch.outboxId().equals(current.outboxId())
+        && dispatch.effect().equals(current.effect())
+        && dispatch.payloadDigest().equals(current.payloadDigest());
+  }
+
+  @Override
+  public Optional<OutboxEntry> findEffect(UUID operationId, EffectKind effectKind) {
+    Record record =
+        dsl.fetchOne(
+            """
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
+                   payload_digest, state,
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
+            FROM recovery_control.initial_gameplay_release_outbox
+            WHERE operation_id = ? AND effect_kind = ?
+            """,
+            operationId,
+            effectKind.databaseValue());
+    return Optional.ofNullable(record).map(this::toOutboxEntry);
+  }
+
+  private void setReadbackState(
+      DSLContext tx,
+      OutboxEntry current,
+      EffectReadback readback,
+      String readbackDigest,
+      EffectOutboxState state,
+      Instant now) {
+    boolean acknowledged = state == EffectOutboxState.ACKNOWLEDGED;
+    tx.execute(
+        """
+        UPDATE recovery_control.initial_gameplay_release_outbox
+        SET state = ?, last_outcome_code = ?, readback_identity = ?, readback_payload = CAST(? AS jsonb),
+            readback_digest = ?, acknowledged_at = CAST(? AS timestamptz), updated_at = CAST(? AS timestamptz)
+        WHERE operation_id = ? AND effect_id = ? AND last_attempt_id = ?
+        """,
+        state.databaseValue(),
+        readback.state().name(),
+        readback.readbackIdentity(),
+        JSONB.valueOf(tupleCodec.toJson(readback)),
+        readbackDigest,
+        acknowledged ? toOffsetDateTime(now) : null,
+        toOffsetDateTime(now),
+        readback.operationId(),
+        readback.effectId(),
+        current.lastAttemptId());
+  }
+
+  private void updatePhase(
+      DSLContext tx, Operation operation, Phase result, Instant now, Instant finalizedAt) {
+    int changed =
+        tx.execute(
+            """
+            UPDATE recovery_control.initial_gameplay_release_operation
+            SET phase = ?, revision = revision + 1, updated_at = CAST(? AS timestamptz), finalized_at = CAST(? AS timestamptz)
+            WHERE operation_id = ? AND phase = ? AND revision = ?
+            """,
+            result.databaseValue(),
+            toOffsetDateTime(now),
+            toOffsetDateTime(finalizedAt),
+            operation.scope().operationId(),
+            operation.phase().databaseValue(),
+            operation.revision());
+    if (changed != 1) {
+      throw conflict("effect phase compare-and-set lost");
+    }
+  }
+
+  private void enqueueEffect(DSLContext tx, TypedEffect effect, Instant now) {
+    String payload = tupleCodec.toJson(effect);
+    String payloadDigest = tupleCodec.digest(effect);
+    tx.execute(
+        """
+        INSERT INTO recovery_control.initial_gameplay_release_outbox (
+            outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
+            payload_digest, payload, state, attempt_count, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'pending', 0, CAST(? AS timestamptz), CAST(? AS timestamptz))
+        """,
+        UUID.randomUUID(),
+        effect.operationId(),
+        effect.effectId(),
+        effect.kind().databaseValue(),
+        effect.operationTupleDigest(),
+        payloadDigest,
+        JSONB.valueOf(payload),
+        toOffsetDateTime(now),
+        toOffsetDateTime(now));
+  }
+
+  private TypedEffect prepareEffect(Operation operation) {
+    return new PreparePlayableStateFencedEffect(
+        operation.scope().operationId(),
+        UUID.randomUUID(),
+        operation.maintenanceLockIdentity(),
+        operation.scope(),
+        operationTupleDigest(operation),
+        operation.evidence().evidenceIdentity());
+  }
+
+  private TypedEffect handoffEffect(Operation operation) {
+    return new CommitOwnerAuthorizedHandoffEffect(
+        operation.scope().operationId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        operation.maintenanceLockIdentity(),
+        operation.scope(),
+        operationTupleDigest(operation),
+        operation.evidence().evidenceIdentity());
+  }
+
+  private String operationTupleDigest(Operation operation) {
+    return tupleCodec.operationTupleDigest(
+        operation.scope(), operation.maintenanceLockIdentity(), operation.evidence());
+  }
+
+  private Operation selectOperation(DSLContext context, UUID operationId, boolean forUpdate) {
+    Operation operation = selectOperationOrNull(context, operationId, forUpdate);
+    if (operation == null) {
+      throw new IllegalArgumentException("INITIAL_GAMEPLAY_RELEASE_NOT_FOUND");
+    }
+    return operation;
+  }
+
+  private Operation selectOperationOrNull(DSLContext context, UUID operationId, boolean forUpdate) {
+    Record record =
+        context.fetchOne(
+            """
+            SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
+                   peer_storage_binding, scope_payload, evidence_ref, scope_digest,
+                   maintenance_lock_identity, phase, revision, evidence_snapshot,
+                   evidence_identity, evidence_digest, created_at, updated_at, finalized_at
+            FROM recovery_control.initial_gameplay_release_operation
+            WHERE operation_id = ?
+            """
+                + (forUpdate ? " FOR UPDATE" : ""),
+            operationId);
+    return record == null ? null : toOperation(record);
+  }
+
+  private Operation toOperation(Record record) {
+    JSONB scopeJson = record.get("scope_payload", JSONB.class);
+    JSONB evidenceJson = record.get("evidence_snapshot", JSONB.class);
+    JSONB bindingJson = record.get("peer_storage_binding", JSONB.class);
+    Scope scope = tupleCodec.readScope(scopeJson.data());
+    if (!"initial_gameplay_release".equals(record.get("operation_kind", String.class))
+        || !scope.operationId().equals(record.get("operation_id", UUID.class))
+        || !scope.targetNamespace().equals(record.get("target_namespace", String.class))
+        || !scope
+            .playableStateNamespaceId()
+            .equals(record.get("playable_state_namespace_id", UUID.class))
+        || !scope.evidenceRef().equals(record.get("evidence_ref", String.class))
+        || !scope.peerStorageBinding().equals(tupleCodec.readPeerStorageBinding(bindingJson.data()))
+        || !tupleCodec.digest(scope).equals(record.get("scope_digest", String.class))) {
+      throw new IllegalStateException("Persisted initial gameplay release scope is inconsistent");
+    }
+    InitialGameplayReleaseEvidence evidence =
+        evidenceJson == null ? null : tupleCodec.readEvidence(evidenceJson.data());
+    if (evidenceJson != null && evidence == null) {
+      throw new IllegalStateException(
+          "Persisted initial gameplay release evidence is inconsistent");
+    }
+    if (evidence != null
+        && (!evidence.evidenceIdentity().equals(record.get("evidence_identity", String.class))
+            || !tupleCodec.digest(evidence).equals(record.get("evidence_digest", String.class)))) {
+      throw new IllegalStateException(
+          "Persisted initial gameplay release evidence is inconsistent");
+    }
+    return new Operation(
+        scope,
+        record.get("maintenance_lock_identity", UUID.class),
+        Phase.fromDatabaseValue(record.get("phase", String.class)),
+        record.get("revision", Long.class),
+        evidence,
+        toInstant(record.get("created_at", OffsetDateTime.class)),
+        toInstant(record.get("updated_at", OffsetDateTime.class)),
+        toInstant(record.get("finalized_at", OffsetDateTime.class)));
+  }
+
+  private OutboxEntry selectOutbox(
+      DSLContext context, UUID operationId, UUID effectId, boolean forUpdate) {
+    Record record =
+        context.fetchOne(
+            """
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
+                   payload_digest, state,
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
+            FROM recovery_control.initial_gameplay_release_outbox
+            WHERE operation_id = ? AND effect_id = ?
+            """
+                + (forUpdate ? " FOR UPDATE" : ""),
+            operationId,
+            effectId);
+    if (record == null) {
+      throw new IllegalArgumentException("INITIAL_GAMEPLAY_RELEASE_EFFECT_NOT_FOUND");
+    }
+    return toOutboxEntry(record);
+  }
+
+  private OutboxEntry toOutboxEntry(Record record) {
+    JSONB payload = record.get("payload", JSONB.class);
+    String effectKind = record.get("effect_kind", String.class);
+    Instant acknowledgedAt = toInstant(record.get("acknowledged_at", OffsetDateTime.class));
+    TypedEffect effect = tupleCodec.readEffect(effectKind, payload.data());
+    if (!effect.operationId().equals(record.get("operation_id", UUID.class))
+        || !effect.effectId().equals(record.get("effect_id", UUID.class))
+        || !tupleCodec.digest(effect).equals(record.get("payload_digest", String.class))
+        || !effect
+            .operationTupleDigest()
+            .equals(record.get("operation_tuple_digest", String.class))) {
+      throw new IllegalStateException("Persisted initial gameplay release effect is inconsistent");
+    }
+    return new OutboxEntry(
+        record.get("outbox_id", UUID.class),
+        effect,
+        record.get("payload_digest", String.class),
+        EffectOutboxState.fromDatabaseValue(record.get("state", String.class)),
+        record.get("attempt_count", Integer.class),
+        record.get("last_attempt_id", UUID.class),
+        record.get("last_outcome_code", String.class),
+        acknowledgedAt);
+  }
+
+  private void requireSameScope(Scope actual, Scope requested, String expectedDigest) {
+    if (!actual.equals(requested) || !expectedDigest.equals(tupleCodec.digest(actual))) {
+      throw conflict("operation scope tuple changed");
+    }
+  }
+
+  private void requireRetainedTransition(
+      Record row, PublicTransitionTuple requested, String digest) {
+    JSONB payload = row.get("tuple_payload", JSONB.class);
+    PublicTransitionTuple retained;
+    try {
+      retained = payload == null ? null : tupleCodec.readPublicTransition(payload.data());
+    } catch (IllegalStateException corrupted) {
+      throw conflict("retained public transition tuple changed");
+    }
+    if (retained == null
+        || !requested.equals(retained)
+        || !digest.equals(row.get("tuple_digest", String.class))
+        || !digest.equals(tupleCodec.digest(retained))
+        || !retained.expectedPhase().databaseValue().equals(row.get("expected_phase", String.class))
+        || !retained
+            .verb()
+            .resultPhase()
+            .databaseValue()
+            .equals(row.get("result_phase", String.class))) {
+      throw conflict("retained public transition tuple changed");
+    }
+  }
+
+  private void requireEffectMatchesOperation(TypedEffect effect, Operation operation) {
+    if (!effect.scope().equals(operation.scope())
+        || !effect.maintenanceLockIdentity().equals(operation.maintenanceLockIdentity())
+        || operation.evidence() == null
+        || !effect.evidenceIdentity().equals(operation.evidence().evidenceIdentity())
+        || !effect.operationTupleDigest().equals(operationTupleDigest(operation))) {
+      throw conflict("retained effect does not match the operation-owned tuple");
+    }
+  }
+
+  private void requireTransitionMatchesOperation(PublicTransitionTuple tuple, Operation operation) {
+    if (!tuple.operationId().equals(operation.scope().operationId())
+        || !tuple.scopeDigest().equals(tupleCodec.digest(operation.scope()))
+        || !tuple.maintenanceLockIdentity().equals(operation.maintenanceLockIdentity())
+        || !tuple.evidenceRef().equals(operation.scope().evidenceRef())
+        || operation.evidence() == null
+        || !tuple.evidenceIdentity().equals(operation.evidence().evidenceIdentity())
+        || !tuple.evidenceDigest().equals(tupleCodec.digest(operation.evidence()))) {
+      throw conflict("public transition tuple does not match the operation-owned tuple");
+    }
+  }
+
+  private boolean hasRetainedClosure(
+      DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
+    return findRetainedClosure(tx, current, attemptId, expectedOrdinal) != null;
+  }
+
+  private EffectReadback findRetainedClosure(
+      DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
+    Record row =
+        tx.fetchOne(
+            """
+            SELECT attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at
+            FROM recovery_control.initial_gameplay_release_attempt_closure
+            WHERE outbox_id=? AND attempt_id=?
+            """,
+            current.outboxId(),
+            attemptId);
+    if (row == null) return null;
+    Integer ordinal = row.get("attempt_ordinal", Integer.class);
+    OffsetDateTime dispatchedAt = row.get("dispatched_at", OffsetDateTime.class);
+    OffsetDateTime recordedAt = row.get("recorded_at", OffsetDateTime.class);
+    if (ordinal == null
+        || ordinal < 1
+        || ordinal > current.attemptCount()
+        || (expectedOrdinal != null && !expectedOrdinal.equals(ordinal))
+        || dispatchedAt == null
+        || recordedAt == null) {
+      throw conflict("retained effect dispatch generation changed");
+    }
+    EffectReadback retained =
+        tupleCodec.readEffectReadback(row.get("readback_payload", JSONB.class).data());
+    if (retained.state() != EffectReadbackState.PROVEN_NO_EFFECT
+        || !current.effect().operationId().equals(retained.operationId())
+        || !current.effect().effectId().equals(retained.effectId())
+        || !attemptId.equals(retained.attemptId())
+        || retained.attemptOrdinal() != ordinal
+        || current.effect().kind() != retained.effectKind()
+        || !current.effect().operationTupleDigest().equals(retained.operationTupleDigest())
+        || !current.payloadDigest().equals(retained.payloadDigest())
+        || !tupleCodec.digest(retained).equals(row.get("readback_digest", String.class))
+        || retained.observedAt().isBefore(dispatchedAt.toInstant())
+        || retained
+            .observedAt()
+            .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+            .isAfter(recordedAt.toInstant())) {
+      throw conflict("retained attempt closure does not match the exact dispatched tuple");
+    }
+    return retained;
+  }
+
+  private static boolean hasRetainedOwnerRejection(
+      DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
+    Record row =
+        tx.fetchOne(
+            """
+            SELECT attempt_ordinal FROM recovery_control.initial_gameplay_release_attempt_rejection
+            WHERE outbox_id = ? AND attempt_id = ?
+            """,
+            current.outboxId(),
+            attemptId);
+    if (row == null) {
+      return false;
+    }
+    Integer ordinal = row.get("attempt_ordinal", Integer.class);
+    if (ordinal == null
+        || ordinal < 1
+        || ordinal > current.attemptCount()
+        || (expectedOrdinal != null && !expectedOrdinal.equals(ordinal))) {
+      throw conflict("retained owner rejection dispatch generation changed");
+    }
+    return true;
+  }
+
+  private boolean hasDurableNoEffectClosure(DSLContext tx, OutboxEntry current) {
+    Record stored =
+        tx.fetchOne(
+            "SELECT readback_payload, readback_digest FROM "
+                + OUTBOX_TABLE
+                + " WHERE operation_id = ? AND effect_id = ?",
+            current.effect().operationId(),
+            current.effect().effectId());
+    if (stored == null) {
+      throw conflict("effect outbox row disappeared while checking retained readback");
+    }
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    String digest = stored.get("readback_digest", String.class);
+    if (payload == null && digest == null) {
+      return false;
+    }
+    if (payload == null || digest == null) {
+      throw conflict("retained effect readback is incomplete");
+    }
+    EffectReadback saved = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(saved))) {
+      throw conflict("retained effect readback digest does not match");
+    }
+    requireReadbackMatches(
+        saved, current, current.effect().operationId(), current.effect().effectId());
+    return saved.state() == EffectReadbackState.PROVEN_NO_EFFECT;
+  }
+
+  private void requireValidExactStoredReadback(
+      EffectReadback replay, Record stored, String digest, OutboxEntry current) {
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    if (payload == null) {
+      throw conflict("retained effect readback is incomplete");
+    }
+    EffectReadback saved = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(saved)) || !saved.equals(replay)) {
+      throw conflict("retained effect readback does not match exact replay");
+    }
+    requireReadbackMatches(
+        saved, current, current.effect().operationId(), current.effect().effectId());
+  }
+
+  private void requireRetainedClosureMatchesStoredReadback(
+      DSLContext tx, OutboxEntry current, Record stored, String storedDigest) {
+    EffectReadback retained =
+        findRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount());
+    if (retained == null) {
+      throw conflict("durable owner closure has no retained attempt identity");
+    }
+    // Compare the first durable receipt, not a replay's possibly newer observation time.
+    requireValidExactStoredReadback(retained, stored, storedDigest, current);
+  }
+
+  private void requireNonRegressingReadback(
+      EffectReadback readback, Record stored, OutboxEntry current) {
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    String digest = stored.get("readback_digest", String.class);
+    if (payload == null && digest == null) {
+      return;
+    }
+    if (payload == null || digest == null) {
+      throw conflict("retained effect readback is incomplete");
+    }
+    EffectReadback previous = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(previous))) {
+      throw conflict("retained effect readback digest does not match");
+    }
+    requireReadbackMatches(
+        previous, current, current.effect().operationId(), current.effect().effectId());
+    if (readback.observedAt().isBefore(previous.observedAt())) {
+      throw conflict("effect readback predates the retained same-attempt observation");
+    }
+    if (previous.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
+        && readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
+        && !readback.observedAt().isAfter(previous.observedAt())) {
+      throw conflict("definitive effect readback must be newer than retained partial evidence");
+    }
+  }
+
+  private boolean hasValidatedUnknownReadback(
+      Record stored, String storedDigest, OutboxEntry current) {
+    JSONB payload = stored == null ? null : stored.get("readback_payload", JSONB.class);
+    if (payload == null || storedDigest == null) {
+      return false;
+    }
+    EffectReadback previous = tupleCodec.readEffectReadback(payload.data());
+    if (!storedDigest.equals(tupleCodec.digest(previous))
+        || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+      return false;
+    }
+    requireReadbackMatches(
+        previous, current, current.effect().operationId(), current.effect().effectId());
+    return true;
+  }
+
+  private void requireTerminalReplayWithinAttempt(
+      EffectReadback readback, Record stored, Instant now) {
+    OffsetDateTime dispatchTime = stored.get("last_dispatched_at", OffsetDateTime.class);
+    if (dispatchTime == null) {
+      throw conflict("effect dispatch timestamp is unavailable");
+    }
+    if (readback.observedAt().isBefore(dispatchTime.toInstant())) {
+      throw conflict("effect readback is stale");
+    }
+    if (readback.observedAt().isAfter(now)) {
+      throw conflict("effect readback observation is in the future");
+    }
+  }
+
+  private boolean sameRetainedOutcome(EffectReadback readback, Record stored, String storedDigest) {
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    if (payload == null || storedDigest == null) {
+      return false;
+    }
+    EffectReadback acknowledged = tupleCodec.readEffectReadback(payload.data());
+    if (!storedDigest.equals(tupleCodec.digest(acknowledged))) {
+      return false;
+    }
+    // The authenticated outcome identifies the durable closure, not the read clock.
+    // A valid new observation time never replaces the first durable receipt.
+    return acknowledged.equals(
+        new EffectReadback(
+            readback.operationId(),
+            readback.effectId(),
+            readback.attemptId(),
+            readback.attemptOrdinal(),
+            readback.effectKind(),
+            readback.operationTupleDigest(),
+            readback.payloadDigest(),
+            readback.state(),
+            readback.authority(),
+            readback.readbackIdentity(),
+            acknowledged.observedAt()));
+  }
+
+  private void requireReadbackMatches(
+      EffectReadback readback, OutboxEntry outbox, UUID operationId, UUID effectId) {
+    if (readback.attemptOrdinal() != outbox.attemptCount()) {
+      throw conflict("effect readback dispatch generation changed");
+    }
+    if (!readback.operationId().equals(operationId)
+        || !readback.operationId().equals(outbox.effect().operationId())
+        || !readback.effectId().equals(effectId)
+        || !readback.attemptId().equals(outbox.lastAttemptId())
+        || readback.effectKind() != outbox.effect().kind()
+        || !readback.operationTupleDigest().equals(outbox.effect().operationTupleDigest())
+        || !readback.payloadDigest().equals(outbox.payloadDigest())) {
+      throw conflict("effect readback does not match the exact dispatched tuple");
+    }
+  }
+
+  private void requireSuccessfulReadbackState(EffectReadback readback, EffectKind effectKind) {
+    EffectReadbackState expected =
+        effectKind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+            ? EffectReadbackState.PREPARED_FENCED
+            : EffectReadbackState.OWNER_HANDOFF_APPLIED;
+    if (readback.state() != expected) {
+      throw conflict("effect readback did not prove its exact durable outcome");
+    }
+  }
+
+  private void requirePhaseForEffect(Phase phase, EffectKind effectKind) {
+    Phase expected =
+        effectKind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+            ? Phase.RESUME_AUTHORIZED
+            : Phase.RELEASING;
+    if (phase != expected) {
+      throw conflict("effect is not authorized in the current owner phase");
+    }
+  }
+
+  private static Instant toInstant(OffsetDateTime value) {
+    return value == null ? null : value.toInstant();
+  }
+
+  private static OffsetDateTime toOffsetDateTime(Instant value) {
+    return value == null ? null : value.atOffset(ZoneOffset.UTC);
+  }
+
+  private static InitialGameplayReleaseConflictException conflict(String reason) {
+    return new InitialGameplayReleaseConflictException("IDEMPOTENCY_CONFLICT: " + reason);
+  }
+}

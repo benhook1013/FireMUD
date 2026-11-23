@@ -11,8 +11,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
-MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/migration/")
+MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
+RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
+PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
@@ -43,15 +47,21 @@ def version_label(version_key: tuple[int, ...]) -> str:
 def relevant_path(path: str) -> bool:
     return bool(MIGRATION_PATH_RE.match(path)) or (
         path.startswith("services/")
-        and (path.endswith("/build.gradle.kts") or re.search(r"/src/main/resources/application[^/]*\.ya?ml$", path))
+        and (path.endswith("/build.gradle.kts")
+             or PACKAGED_CONFIG_RE.search(path))
     ) or (path.startswith("buildSrc/") and path.endswith((".kt", ".kts")))
 
 
 def current_snapshot(repo_root: Path) -> Snapshot:
     paths = [*repo_root.glob("services/*/build.gradle.kts"),
              *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
+             *repo_root.glob("services/*/src/main/resources/config/application*.y*ml"),
+             *repo_root.glob("services/*/src/main/resources/application*.properties"),
+             *repo_root.glob("services/*/src/main/resources/config/application*.properties"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
+             *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
+             *repo_root.glob("services/*/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
     return {path.relative_to(repo_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
 
@@ -139,6 +149,8 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
     migrations = discover_migration_files(snapshot)
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
+        if RECOVERY_MIGRATION_DIR in item.path and not recovery_location_configured(snapshot, item.project):
+            continue
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
     for adopter in saga_adopters(snapshot):
@@ -146,10 +158,105 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
     return grouped, migrations
 
 
+def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
+    def flatten_properties(
+        value: object,
+        prefix: tuple[str, ...],
+        properties: dict[str, object],
+        ambiguous: set[str],
+    ) -> None:
+        if not isinstance(value, dict):
+            return
+        for key, child in value.items():
+            if not isinstance(key, str):
+                continue
+            parts = tuple(re.sub(r"[-_]", "", part).lower() for part in key.split("."))
+            path = ".".join((*prefix, *parts))
+            if path in properties and properties[path] != child:
+                ambiguous.add(path)
+            properties[path] = child
+            flatten_properties(child, (*prefix, *parts), properties, ambiguous)
+
+    resource_root = f"services/{project}/src/main/resources"
+    # Properties and imported files can override the packaged YAML. This static
+    # check qualifies only the configuration sources it can evaluate completely.
+    properties_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.properties")
+    if any(properties_pattern.fullmatch(path) for path in snapshot):
+        return False
+    # Config in the packaged config/ directory takes precedence over the root.
+    # Within a location Spring Boot gives .yml precedence over .yaml.
+    base_paths = [f"{directory}/application.{extension}"
+                  for directory in (resource_root, f"{resource_root}/config")
+                  for extension in ("yaml", "yml")]
+    profile_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-[^/]+\.ya?ml")
+    profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
+    flyway = {}
+    for config_path in [*base_paths, *profile_paths]:
+        try:
+            documents = list(yaml.safe_load_all(snapshot.get(config_path, b"")))
+        except yaml.YAMLError as error:
+            raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
+
+        for document in documents:
+            if document is None:
+                continue
+            if not isinstance(document, dict):
+                return False
+            properties: dict[str, object] = {}
+            ambiguous: set[str] = set()
+            flatten_properties(document, (), properties, ambiguous)
+            if any(path == "spring.config.import" or
+                   path.startswith(("spring.config.import.", "spring.config.import["))
+                   for path in properties):
+                return False
+            enabled_path = "spring.flyway.enabled"
+            locations_path = "spring.flyway.locations"
+            guard_paths = {
+                path for path in properties
+                if path in {enabled_path, locations_path}
+                or path.startswith((enabled_path + ".", enabled_path + "[",
+                                    locations_path + ".", locations_path + "["))
+            }
+            if not guard_paths:
+                # Profile configuration with no Flyway guard properties does not
+                # affect this static qualification.
+                continue
+            if guard_paths & ambiguous or any(path not in {enabled_path, locations_path} for path in guard_paths):
+                return False
+
+            activation = properties.get("spring.config.activate")
+            legacy_profile_activation = (
+                "spring.profiles" in properties
+                and not isinstance(properties["spring.profiles"], dict)
+            )
+            if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
+                path.startswith("spring.config.activate.") for path in properties
+            ) or legacy_profile_activation:
+                # The active profile/cloud environment is unknown, so the checker
+                # cannot qualify an activation-dependent override of either guard.
+                return False
+
+            for path in guard_paths:
+                flyway[path.rsplit(".", 1)[-1]] = properties[path]
+
+    if str(flyway.get("enabled", True)).strip().lower() not in {"true", "on", "yes", "1"}:
+        return False
+    locations = flyway.get("locations", [])
+    if isinstance(locations, str):
+        locations = locations.split(",")
+    return isinstance(locations, list) and any(
+        isinstance(location, str) and location.strip() == "classpath:db/recovery-control-migration"
+        for location in locations
+    )
+
+
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
     grouped, migrations = effective_sets(current)
     parent_grouped, parent_migrations = effective_sets(parent) if parent is not None else ({}, [])
     issues = []
+    for project in sorted({item.project for item in migrations if RECOVERY_MIGRATION_DIR in item.path}):
+        if not recovery_location_configured(current, project):
+            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway and select the recovery-control location")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -261,6 +368,112 @@ def run_self_test() -> None:
     check("changed history", {**history, local + "V1__init.sql": b"-- rewritten"}, history, "content changed")
     check("removed history", {path: data for path, data in history.items() if path != local + "V1__init.sql"}, history, "removed or renamed")
     check("java/sql duplicate", {**history, "services/example-service/src/main/java/db/migration/V1__dup.java": b"// dup"}, history, "duplicate version V1")
+
+    recovery = "services/recovery-controller-service/src/main/resources/db/recovery-control-migration/"
+    recovery_config = "services/recovery-controller-service/src/main/resources/application.yml"
+    recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+    recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
+    check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("packaged property override cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config.removesuffix(".yml") + ".properties": b"spring.flyway.enabled=false\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("unchecked packaged import cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"spring.config.import: classpath:recovery-overrides.yml\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    yaml_config = recovery_config.removesuffix(".yml") + ".yaml"
+    renamed_recovery_config = {recovery + "V1__journal.sql": b"-- journal", yaml_config: recovery_settings}
+    check("equivalent application.yaml recovery history", renamed_recovery_config, recovery_history, None)
+    check("application.yml override disables recovery history", {
+        **renamed_recovery_config, recovery_config: b"spring:\n  flyway:\n    enabled: false\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    recovery_list_settings = (
+        b"spring:\n  flyway:\n    enabled: true\n    locations:\n"
+        b"      - classpath:db/recovery-control-migration\n"
+    )
+    yml_locations_override = b"spring:\n  flyway:\n    locations:\n      - classpath:db/migration\n"
+    check("application.yml replaces application.yaml locations list", {
+        recovery + "V1__journal.sql": b"-- journal",
+        yaml_config: recovery_list_settings,
+        recovery_config: yml_locations_override,
+    }, recovery_history, "historical effective migration no longer applied")
+    check("equivalent enabled list recovery history",
+          {**recovery_history, recovery_config: recovery_list_settings}, recovery_history, None)
+    dotted_recovery_settings = (
+        b"spring.flyway.enabled: true\n"
+        b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
+    )
+    check("dotted Spring Flyway recovery properties",
+          {**recovery_history, recovery_config: dotted_recovery_settings}, recovery_history, None)
+    dotted_disabled_settings = dotted_recovery_settings.replace(
+        b"spring.flyway.enabled: true", b"spring.flyway.enabled: false"
+    )
+    check("dotted Spring Flyway disable fails closed",
+          {**recovery_history, recovery_config: dotted_disabled_settings}, recovery_history,
+          "historical effective migration no longer applied")
+    harmless_second_document = recovery_settings + b"---\ncustom:\n  setting: value\n"
+    check("unrelated second YAML document",
+          {**recovery_history, recovery_config: harmless_second_document}, recovery_history, None)
+    changed_second_document = recovery_list_settings + (
+        b"---\nspring:\n  flyway:\n    locations:\n      - classpath:db/migration\n"
+    )
+    check("changed second-document Flyway location fails closed",
+          {**recovery_history, recovery_config: changed_second_document}, recovery_history,
+          "historical effective migration no longer applied")
+    conditional_second_document = recovery_settings + (
+        b"---\nspring:\n  config:\n    activate:\n      on-profile: production\n"
+        b"  flyway:\n    locations: classpath:db/migration\n"
+    )
+    check("conditional Flyway override fails closed",
+          {**recovery_history, recovery_config: conditional_second_document}, recovery_history,
+          "historical effective migration no longer applied")
+    profile_only_recovery = (
+        b"---\nspring:\n  config:\n    activate:\n      on-profile: recovery\n"
+        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+    )
+    check("recovery location requiring active profile fails closed",
+          {**recovery_history, recovery_config: profile_only_recovery}, recovery_history,
+          "historical effective migration no longer applied")
+    recovery_config_root = recovery_config.rsplit("/", 1)[0]
+    for profile_path in (
+        f"{recovery_config_root}/application-production.yml",
+        f"{recovery_config_root}/config/application-production.yaml",
+    ):
+        check("packaged profile disables recovery history",
+              {**recovery_history, profile_path: b"spring.flyway.enabled: false\n"},
+              recovery_history, "historical effective migration no longer applied")
+        check("packaged profile replaces recovery location",
+              {**recovery_history, profile_path: yml_locations_override}, recovery_history,
+              "historical effective migration no longer applied")
+        check("unrelated packaged profile leaves recovery history unchanged",
+              {**recovery_history, profile_path: b"server.port: 9000\n"}, recovery_history, None)
+        check("recovery location in a profile cannot qualify the default history",
+              {recovery + "V1__journal.sql": b"-- journal", profile_path: recovery_settings},
+              recovery_history, "historical effective migration no longer applied")
+    for disabled in (
+        recovery_settings.replace(b"    locations:", b"    enabled: false\n    locations:"),
+        recovery_list_settings.replace(b"enabled: true", b'enabled: "false"'),
+    ):
+        check("disabled recovery history", {**recovery_history, recovery_config: disabled},
+              recovery_history, "historical effective migration no longer applied")
+    check("disconnected isolated recovery history", {
+        **recovery_history, recovery_config: recovery_settings.replace(b"recovery-control-migration", b"migration"),
+    }, recovery_history, "historical effective migration no longer applied")
+    check("duplicate recovery version", {**recovery_history, recovery + "V1__duplicate.sql": b"-- duplicate"},
+          recovery_history, "duplicate version V1")
+    check("changed recovery history", {recovery + "V1__journal.sql": b"-- rewritten"},
+          recovery_history, "content changed")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / recovery).mkdir(parents=True)
+        (root / recovery / "V1__journal.sql").write_bytes(b"-- journal")
+        (root / recovery_config).write_bytes(recovery_settings)
+        profile_fixture = {**recovery_history, profile_path: b"server.port: 9000\n"}
+        (root / profile_path).parent.mkdir()
+        (root / profile_path).write_bytes(profile_fixture[profile_path])
+        if current_snapshot(root) != profile_fixture or not all(map(relevant_path, profile_fixture)):
+            raise AssertionError("isolated recovery history is not selected for both snapshots")
 
     # Exercise the actual composed convention wiring and exclude test-only dependencies.
     conventions = {
