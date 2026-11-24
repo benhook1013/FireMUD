@@ -575,11 +575,14 @@ wait_for_pr_publisher() {
     if find_completed_alternate_publication "$alternate_sources" "$publisher_deadline"; then
       return 0
     fi
-    local refreshed_source_payload refreshed_alternates new_alternates
+    local refreshed_source_payload refreshed_alternates new_alternates active_replacement
+    active_replacement="missing"
     local source_refresh_remaining=$((publisher_deadline - SECONDS))
     if (( source_refresh_remaining > 0 )) && refreshed_source_payload="$(fetch_workflow_runs \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
       "refreshing alternate runtime-image sources while waiting for publication" "$source_refresh_remaining")"; then
+      active_replacement="$(read_run_state "${source_run_id}" active-alternates <<<"${refreshed_source_payload}")" ||
+        active_replacement="missing"
       if refreshed_alternates="$(read_run_state "${source_run_id}" alternates <<<"${refreshed_source_payload}")"; then
         if [[ "${refreshed_alternates}" == "missing" ]]; then
           alternate_sources=""
@@ -621,6 +624,12 @@ wait_for_pr_publisher() {
       fi
       printf 'Waiting for trusted PR image publisher for %s after %ss.\n' \
         "${image_tag}" "${elapsed_seconds}"
+      sleep "${sleep_seconds}"
+      continue
+    fi
+
+    if [[ "${run_status}" == "completed" && "$active_replacement" == found$'\t'* ]]; then
+      printf 'Another exact runtime-images producer is still active for %s; continuing bounded publication wait.\n' "$image_tag"
       sleep "${sleep_seconds}"
       continue
     fi

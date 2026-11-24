@@ -33,7 +33,10 @@ if [[ "$*" == *"/pulls/7" ]]; then
 fi
 if [[ "$*" == *"/git/ref/heads/"* ]]; then
   case "${GH_FIXTURE:-}" in
-    branch_wrong|branch_runs|branch_unpromoted_current|branch_newer_noop|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
+    branch_newer_noop)
+      printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$base_sha"
+      ;;
+    branch_wrong|branch_runs|branch_unpromoted_current|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
       printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$head_sha"
       ;;
     branch_ref_unavailable)
@@ -156,7 +159,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -170,6 +173,9 @@ case "${GH_FIXTURE:-}" in
     fi
     source="$(printf '{"id":101,"run_attempt":1,"status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_event" "$head_sha" "$source_title")"
     publisher="$(printf '{"id":102,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_title")"
+    if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate ]]; then
+      publisher="$(jq -c '.conclusion="failure"' <<<"$publisher")"
+    fi
     case "$*" in
       "api repos/example/firemud")
         printf '%s' '{"full_name":"example/firemud","default_branch":"develop"}'
@@ -210,7 +216,15 @@ case "${GH_FIXTURE:-}" in
         printf '%s' '{"total_count":0,"workflow_runs":[]}'
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
-        printf '[{"workflow_runs":[%s]}]' "$source"
+        if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate && -e "$GH_FIXTURE_STATE" ]]; then
+          alternate="$(jq -c '.id=103 | .status="in_progress" | .conclusion=null | .created_at="2026-09-21T00:02:00Z"' <<<"$source")"
+          printf '[{"workflow_runs":[%s,%s]}]' "$source" "$alternate"
+        else
+          if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate ]]; then
+            : >"$GH_FIXTURE_STATE"
+          fi
+          printf '[{"workflow_runs":[%s]}]' "$source"
+        fi
         ;;
       *)
         echo "Unexpected runtime-image API request in $GH_FIXTURE fixture" >&2
@@ -284,6 +298,19 @@ GH_FIXTURE=success_runs \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-success.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-success.out"
+
+# A failed publisher is not terminal while a freshly observed exact source is
+# still building. This fixture never completes that source; bounded failure is
+# expected, but an immediate publisher failure is not.
+alternate_status=0
+alternate_output="$(
+  GH_FIXTURE=publisher_failed_with_active_alternate GH_FIXTURE_STATE="$TEMP_DIR/active-alternate-state" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=3 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+    timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+)" || alternate_status=$?
+test "$alternate_status" = 1
+grep -Fq 'Another exact runtime-images producer is still active' <<<"$alternate_output"
 
 # A typed native callback binds the exact source run in its title, and both
 # producer events still require one positive publication step for the attempt.

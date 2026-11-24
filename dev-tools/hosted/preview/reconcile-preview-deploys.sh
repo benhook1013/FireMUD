@@ -1235,6 +1235,7 @@ dispatch_candidates() {
       echo "GitHub rate-limited preview dispatch; stopping this cycle and waiting ${rate_limit_wait_seconds} seconds before another attempt."
       dispatch_sent=true
       sleep "${rate_limit_wait_seconds}"
+      break
     fi
   else
     dispatch_outcome_failed=true

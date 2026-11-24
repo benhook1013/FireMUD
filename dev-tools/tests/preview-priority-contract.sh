@@ -1567,6 +1567,8 @@ run_proof_retry_contract() (
 
 run_retry_retirement_cursor_contract() (
   set -euo pipefail
+  # The retry helper calls the three subshell-local test doubles below.
+  # shellcheck source=/dev/null
   source "$ROOT_DIR/dev-tools/hosted/preview/preview-proof-retry-record.shlib"
   export GITHUB_REPOSITORY=owner/fixture
   holder_file="$TEMP_DIR/c15-holder" audit="$TEMP_DIR/c15-gh" patches="$TEMP_DIR/c15-patch"
@@ -1582,11 +1584,13 @@ run_retry_retirement_cursor_contract() (
     }' >"$holder_file"
   : >"$audit"; : >"$patches"
 
+  # shellcheck disable=SC2329 # Invoked indirectly by the sourced retry helper.
   timeout() {
     [[ "$1" == 10s ]] || return 2
     shift
     "$@"
   }
+  # shellcheck disable=SC2329 # Invoked indirectly by the sourced retry helper.
   gh() {
     [[ "$1" == api && "$2" == repos/owner/fixture/pulls/* ]] || return 2
     local num="${2##*/}" merged=false repo=owner/fixture
@@ -1597,6 +1601,7 @@ run_retry_retirement_cursor_contract() (
     jq -cn --argjson n "$num" --argjson m "$merged" --arg repo "$repo" '
       {number:$n,state:"closed",merged:$m,head:{repo:{full_name:$repo}},base:{repo:{full_name:"owner/fixture"}}}'
   }
+  # shellcheck disable=SC2329 # Invoked indirectly by the sourced retry helper.
   kubectl() {
     case "$*" in
       '-n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s')
@@ -3059,6 +3064,10 @@ trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 RECONCILER_RUN="$ROOT_DIR/dev-tools/hosted/preview/reconcile-preview-deploys.sh"
+for holder_verb in get patch; do
+  grep -Fq "kubectl auth can-i $holder_verb configmaps/firemud-preview-proof-retries -n firemud-system" "$reconciler_workflow"
+done
+grep -Fq 'kubectl -n firemud-system get configmap firemud-preview-proof-retries -o json' "$reconciler_workflow"
 preview_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 preview_merge_sha=cccccccccccccccccccccccccccccccccccccccc

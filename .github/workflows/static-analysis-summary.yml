@@ -146,7 +146,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "cancelled") return "⚪";
               if (terminalFailure.has(value)) return "❌";
-              if (value === "pending" || value === "requested" || value === "in_progress" || value === "queued" || value === "unavailable") return "⏳";
+              if (value === "pending" || value === "requested" || value === "in_progress" || value === "queued" || value === "waiting" || value === "unavailable") return "⏳";
               return "⏭️";
             };
 
@@ -304,7 +304,7 @@ jobs:
               terminalFailure.has(result)
             );
             const pendingChecks = gateResults.filter(([, result]) =>
-              ["pending", "requested", "in_progress", "queued"].includes(result)
+              ["pending", "requested", "in_progress", "queued", "waiting"].includes(result)
             );
 
             const unavailableChecks = gateResults.filter(([, result]) => result === "unavailable");

@@ -95,10 +95,13 @@ elif args[:2] == ["get","namespace"]:
                 raise SystemExit(0)
             uid = env("MOCK_NAMESPACE_UID","uid-original")
             if count >= 2: uid = env("MOCK_HELPER_NAMESPACE_UID",uid)
+            version = env("MOCK_NAMESPACE_RESOURCE_VERSION","16")
+            if count >= 2: version = env("MOCK_HELPER_RESOURCE_VERSION","17")
             obj = {"metadata":{"name":name,"uid":uid,
                 "labels":{"firemud.dev/preview":env("MOCK_PREVIEW_LABEL","true"),
                           "firemud.dev/pr-number":env("MOCK_PR_LABEL","42")},
                 "annotations":{"firemud.dev/cleanup-proof":env("MOCK_PROOF_MARKER","true")}}}
+            if version: obj["metadata"]["resourceVersion"] = version
             if "-o" in args and args[args.index("-o")+1] == "json": print(json.dumps(obj))
             else: print("namespace/" + name)
     else: raise SystemExit("unexpected namespace " + repr(args))
@@ -107,11 +110,12 @@ elif args[:2] == ["version","--output=json"]:
 elif args[:2] == ["delete","--raw"]:
     payload = json.load(sys.stdin)
     (state / "delete-options").write_text(json.dumps(payload))
+    if payload.get("preconditions") != {"uid":env("MOCK_NAMESPACE_UID","uid-original"),
+                                        "resourceVersion":env("MOCK_HELPER_RESOURCE_VERSION","17")}:
+        raise SystemExit("unexpected DELETE UID/resourceVersion preconditions")
     if env("MOCK_DELETE_FAIL_GONE") == "yes":
         (state / "deleted").write_text("yes")
         raise SystemExit(1)
-    if payload.get("preconditions",{}).get("uid") != env("MOCK_NAMESPACE_UID","uid-original"):
-        raise SystemExit("unexpected DELETE UID precondition")
     (state / "deleted").write_text("yes")
 elif args[:2] == ["wait","--for=delete"]:
     pass
@@ -180,12 +184,15 @@ with tempfile.TemporaryDirectory(prefix="preview-cleanup-proof-contract-") as tm
     assert result.returncode != 0
     result,_=scenario("disappeared-before-helper-get",delete={"MOCK_HELPER_NAMESPACE_ABSENT":"yes"})
     assert result.returncode != 0, "a proof fixture absent before the helper GET was treated as deleted by this proof"
-    result,_=scenario("failed-delete-then-absent",delete={"MOCK_DELETE_FAIL_GONE":"yes"},should_delete=True)
+    result,_=scenario("missing-helper-resource-version",delete={"MOCK_HELPER_RESOURCE_VERSION":""})
+    assert result.returncode != 0 and "unable to read namespace resource version" in result.stderr
+    result,state=scenario("failed-delete-then-absent",delete={"MOCK_DELETE_FAIL_GONE":"yes"},should_delete=True)
+    assert (state/"deleted").exists(), "mock DELETE did not reach the simulated failure then disappearance"
     assert result.returncode != 0, "a failed API DELETE followed by NotFound was treated as successful proof"
     result,state=scenario("positive",runner={"MOCK_GET_SECRETS":"no"},should_delete=True)
     assert result.returncode == 0, (result.stdout,result.stderr)
     options=json.loads((state/"delete-options").read_text())
-    assert options["preconditions"]["uid"] == "uid-original"
+    assert options["preconditions"] == {"uid":"uid-original","resourceVersion":"17"}
     assert (state/"deleted").read_text() == "yes"
 
 print("Isolated preview cleanup proof workflow contract passed.")

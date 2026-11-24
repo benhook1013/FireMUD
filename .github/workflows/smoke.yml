@@ -1025,6 +1025,20 @@ jobs:
                 }
               );
               matchingRuns.sort((left, right) => right.createdAt - left.createdAt || right.run.id - left.run.id);
+              const fallback = selection.fallbackFence;
+              if (fallback) {
+                const fallbackTime = Date.parse(fallback.created_at ?? "");
+                if (!Number.isFinite(fallbackTime) || !positiveInteger(fallback.id)) return null;
+                for (const {run, createdAt} of matchingRuns) {
+                  if (createdAt < fallbackTime || (createdAt === fallbackTime && run.id <= fallback.id)) break;
+                  if (run.status !== "completed" || run.conclusion === "success") continue;
+                  if (run.conclusion === "cancelled" &&
+                      await isPreExecutionCancelledAttempt(run, expectedDisplayTitle, identity)) continue;
+                  // A still-pending newest duplicate cannot mask a terminal
+                  // result newer than the completed fallback.
+                  return null;
+                }
+              }
               let newestPreExecutionCancellation = null;
               for (const [index, candidate] of matchingRuns.entries()) {
                 const run = candidate.run;
@@ -1634,7 +1648,7 @@ jobs:
                   try {
                     freshPrimary = await findMatchingRuntimeImagesRun(
                       pending.event, expectedDisplayTitle, currentIdentity,
-                      { allowCompletedFallback: false }
+                      { allowCompletedFallback: false, fallbackFence: pending.event === matching.event ? matching : null }
                     );
                   } catch (error) {
                     if (canResumeAfterOptionalGitHubError(error, pending) && await retryExactSelection(
@@ -1672,6 +1686,30 @@ jobs:
                       "Successful fallback attempt changed during ordering; retry exact selection."
                     )) continue smokeGatePolling;
                     break smokeGatePolling;
+                  }
+                  // Direct recheck after the selected attempt closes the
+                  // latest avoidable ordering-read gap for every pending fence.
+                  for (const pending of pendingOrderingFences) {
+                    let finalPending;
+                    try {
+                      ({ data: finalPending } = await withTransientGitHubRetry(
+                        "pending attempt after final fallback proof",
+                        () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: pending.id })
+                      ));
+                    } catch (error) {
+                      if (canResumeAfterOptionalGitHubError(error, pending) && await retryExactSelection(
+                        "Pending runtime attempt is unavailable after fallback proof; retry exact selection."
+                      )) continue smokeGatePolling;
+                      throw error;
+                    }
+                    if (finalPending.id !== pending.id || finalPending.run_attempt !== pending.run_attempt ||
+                        !["requested", "queued", "waiting", "pending", "in_progress"].includes(finalPending.status) ||
+                        (finalPending.conclusion != null && finalPending.conclusion !== "")) {
+                      if (await retryExactSelection(
+                        "Pending runtime attempt changed after fallback proof; retry exact primary selection."
+                      )) continue smokeGatePolling;
+                      break smokeGatePolling;
+                    }
                   }
                 }
                 return;

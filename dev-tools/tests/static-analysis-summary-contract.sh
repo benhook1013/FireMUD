@@ -1002,22 +1002,24 @@ run(github, context, core).then(async () => {
                   }
                 }
                 github.paginate = savedPaginate;
-                github.request = async (route, input) => {
-                  const response = await savedRequest(route, input);
-                  if (input.run_id === 200) {
-                    const gate = response.data.jobs.find(job => job.name === "CodeQL Gate");
-                    gate.status = "requested";
-                    gate.conclusion = null;
+                for (const nonterminal of ["requested", "waiting"]) {
+                  github.request = async (route, input) => {
+                    const response = await savedRequest(route, input);
+                    if (input.run_id === 200) {
+                      const gate = response.data.jobs.find(job => job.name === "CodeQL Gate");
+                      gate.status = nonterminal;
+                      gate.conclusion = null;
+                    }
+                    return response;
+                  };
+                  const requestedStart = calls.updated.length;
+                  await run(github, context, core);
+                  if (!calls.updated.slice(requestedStart).some(row =>
+                      row.body.includes("Static analysis checks are still running") &&
+                      row.body.includes("⏳ CodeQL gate: `" + nonterminal + "`")) ||
+                      calls.updated.slice(requestedStart).some(row => row.body.includes("checks passed"))) {
+                    throw new Error("a " + nonterminal + " exact gate must display as pending");
                   }
-                  return response;
-                };
-                const requestedStart = calls.updated.length;
-                await run(github, context, core);
-                if (!calls.updated.slice(requestedStart).some(row =>
-                    row.body.includes("Static analysis checks are still running") &&
-                    row.body.includes("⏳ CodeQL gate: `requested`")) ||
-                    calls.updated.slice(requestedStart).some(row => row.body.includes("checks passed"))) {
-                  throw new Error("a requested exact gate must display as pending");
                 }
                 github.request = savedRequest;
                 const savedActions = github.rest.actions;

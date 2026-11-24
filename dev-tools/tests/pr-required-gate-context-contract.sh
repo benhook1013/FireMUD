@@ -222,10 +222,10 @@ assert can_reuse_required_name("${{ matrix.language }}", {"CodeQL Gate"})
 assert not can_reuse_required_name("CodeQL Analysis (${{ matrix.language }})", {"CodeQL Gate"})
 
 
-def isolates_metadata_group(group, run_scoped):
-    metadata = effective_group(group, "edited", None)
+def isolates_metadata_group(group, run_scoped, *, pr_number=42):
+    metadata = effective_group(group, "edited", None, pr_number=pr_number)
     expected_suffix = "-metadata-123" if run_scoped else "-metadata"
-    substantive = [effective_group(group, action, base_ref) for action, base_ref in (
+    substantive = [effective_group(group, action, base_ref, pr_number=pr_number) for action, base_ref in (
         ("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None),
     )]
     if len({name.casefold() for name in substantive}) != 1:
@@ -378,8 +378,9 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     suffix = "format('metadata-{0}', github.run_id) || 'required'" if run_scoped else "&& 'metadata' || 'required'"
     if "github.event.pull_request.number" not in group or META.split(" && ", 1)[1] not in group or suffix not in group:
         raise SystemExit(f"{workflow} concurrency group must keep metadata runs out of the PR's required namespace")
-    if not isolates_metadata_group(group, run_scoped):
-        raise SystemExit(f"{workflow} effective metadata and substantive groups must differ")
+    for pr_number in (42, 43, 44):
+        if not isolates_metadata_group(group, run_scoped, pr_number=pr_number):
+            raise SystemExit(f"{workflow} PR {pr_number} effective metadata and substantive groups must differ")
     # The old substring guard would accept this expression despite its bypass.
     bypassed = group.replace(META, "true && 'required' || " + META, 1)
     assert bypassed != group and META in bypassed and suffix in bypassed
@@ -895,6 +896,13 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
           if (acceptanceLookupAttempts === 4) acceptanceLookupArmed = false;
           throw Object.assign(new Error("final current-base workflow-run lookup unavailable"), {status: 503});
         }
+        if (runId === 43 && (kind.startsWith("pending-native") || kind.startsWith("duplicate-"))) {
+          const terminal = kind === "pending-native-fails-after-final-order";
+          return {data: {...exactPrimary, status: terminal ? "completed" : "queued", conclusion: terminal ? "failure" : null}};
+        }
+        if (runId === 44 && kind === "pending-native-dual-stays") {
+          return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
+        }
         currentRunReads += 1;
         if (kind === "sole-final-attempt-missing") {
           throw Object.assign(new Error("sole final attempt missing"), {status: 404});
@@ -1052,6 +1060,17 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     if (incompleteSnapshot) {
       yield {data: [{...source, run_attempt: snapshotRerunVisible ? 2 : 1}]}; return;
     }
+    if (kind === "duplicate-intermediate-fails-during-acceptance") {
+      primaryInventoryReads += 1;
+      yield {data: [
+        {...exactPrimary, status: "queued", conclusion: null},
+        {...source, id: 44, created_at: "2026-09-01T00:00:00.500Z",
+          status: primaryInventoryReads === 1 ? "in_progress" : "completed",
+          conclusion: primaryInventoryReads === 1 ? null : "failure"},
+        source,
+      ]};
+      return;
+    }
     if (kind === "duplicate-preceding-green") primaryInventoryReads += 1;
     yield {data: kind.startsWith("duplicate-") && !["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
       ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
@@ -1075,6 +1094,12 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   }
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
+  const latePendingFailure = await scenario("pending-native-fails-after-final-order", "repository_dispatch");
+  assert(latePendingFailure.warnings.some(line => line.includes("Pending runtime attempt changed after fallback proof")));
+  assert.equal(latePendingFailure.failures.length, 1, "late native failure cannot inherit older refresh proof");
+  const intermediateFailure = await scenario("duplicate-intermediate-fails-during-acceptance");
+  assert(intermediateFailure.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
+  assert.equal(intermediateFailure.failures.length, 1, "pending newest runtime cannot hide an intermediate terminal failure");
   const dualPending = await scenario("pending-native-dual-stays", "repository_dispatch");
   assert(dualPending.refreshInventoryReads >= 2, "the pending refresh must receive a distinct final inventory read");
   assert.deepEqual(dualPending.failures, [], "older proof remains usable while both newer candidates are still pending");

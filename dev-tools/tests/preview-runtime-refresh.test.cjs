@@ -855,7 +855,11 @@ for (const [name, mutate] of Object.entries({
   completed: r => {r.status = 'completed'; r.conclusion = 'success';},
   inconsistentConclusion: r => r.conclusion = 'failure',
 })) test(`unrelated/untrusted producer cannot suppress recovery: ${name}`, async () => {
-  const f = admissionFixture(); const r = producer(f); mutate(r); f.runs.push(r);
+  const f = admissionFixture();
+  const event = name === 'wrongRepo' || name === 'fork' ? 'pull_request' : 'repository_dispatch';
+  const r = producer(f, event);
+  mutate(r);
+  f.runs.push(r);
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(f.sent.length, 1);
 });

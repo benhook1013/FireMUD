@@ -53,6 +53,14 @@ jobs:
         run: |
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i list namespaces --all-namespaces
+          # Do not mutate previews before the durable proof-retry holder and its
+          # narrowly scoped manager permissions have been installed.
+          kubectl auth can-i get configmaps/firemud-preview-proof-retries -n firemud-system
+          kubectl auth can-i patch configmaps/firemud-preview-proof-retries -n firemud-system
+          kubectl -n firemud-system get configmap firemud-preview-proof-retries -o json |
+            jq -e '.data.schemaVersion == "1" and
+              (.metadata.uid | type == "string" and length > 0) and
+              (.metadata.resourceVersion | type == "string" and length > 0)' >/dev/null
           bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Ensure GitHub CLI is available
