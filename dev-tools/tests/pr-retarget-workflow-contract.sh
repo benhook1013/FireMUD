@@ -662,6 +662,7 @@ if tracker["if"] != expected_tracker_condition:
     raise SystemExit("full-stack smoke tracker must run exactly when execution and full smoke are required")
 assert failure["if"] == "${{ steps.smoke_gate_context.outputs.execute != 'true' }}"
 assert failure.get("continue-on-error") in (None, "false"), "dependency failure must fail the Smoke Gate job"
+assert tracker.get("continue-on-error") in (None, "false"), "tracker failure must fail the Smoke Gate job"
 with tempfile.TemporaryDirectory() as directory:
     output = Path(directory) / "output"
     for result, expected in (("success", "true"), ("failure", "false")):
@@ -2386,7 +2387,8 @@ PY_QUEUED
         exit 0
       fi
     fi
-    python3 - "$CONTRACT_PUBLISHER_PAYLOAD" "$*" <<'PY_PAGE'
+    local_rc=0
+    python3 - "$CONTRACT_PUBLISHER_PAYLOAD" "$*" <<'PY_PAGE' || local_rc=$?
 import json
 import re
 import sys
@@ -2395,6 +2397,9 @@ event = re.search(r"event=([^&]+)", sys.argv[2]).group(1)
 page_number = int(re.search(r"&page=([0-9]+)", sys.argv[2]).group(1))
 if isinstance(payload, dict) and "fixture_events" in payload:
     payload = payload["fixture_events"].get(event, {"total_count": 0, "workflow_runs": []})
+    if payload is None:
+        print("controlled publisher inventory API outage", file=sys.stderr)
+        sys.exit(1)
     payload["fixture_event"] = event
 pages = payload if isinstance(payload, list) else [payload]
 page = pages[min(page_number - 1, len(pages) - 1)]
@@ -2404,7 +2409,7 @@ else:
     page = {key: value for key, value in page.items() if key != "fixture_event"}
 print(json.dumps(page))
 PY_PAGE
-    exit 0
+    exit "$local_rc"
   fi
   if [[ "$*" == *event=repository_dispatch* ]]; then
     printf '%s' '{"total_count":0,"workflow_runs":[]}'
@@ -2603,16 +2608,16 @@ for name, events in {
     },
     "typed-native-with-unavailable-dispatch": {
         "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
-        "repository_dispatch": {"total_count": 1, "workflow_runs": []},
+        "repository_dispatch": None,
     },
     "typed-failed-with-unavailable-dispatch": {
         "workflow_run": {"total_count": 1, "workflow_runs": [
             {**native_typed_direct_publisher, "conclusion": "failure"},
         ]},
-        "repository_dispatch": {"total_count": 1, "workflow_runs": []},
+        "repository_dispatch": None,
     },
     "typed-explicit-with-unavailable-callback": {
-        "workflow_run": {"total_count": 1, "workflow_runs": []},
+        "workflow_run": None,
         "repository_dispatch": {"total_count": 1, "workflow_runs": [direct_typed_publisher]},
     },
 }.items():
@@ -2950,8 +2955,13 @@ BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typ
       cat "$contract_fixture_dir/cached-refresh.output" "$contract_fixture_dir/cached-refresh.error" >&2
       exit 1
     }
-require_contains "$contract_fixture_dir/cached-refresh.error" \
-  'GitHub API poll failed while refreshing alternate runtime-image sources'
+# The first source inventory seeded the cached candidates; skip a second read
+# when the targeted proof already verifies a publisher.
+if [[ "$(cat "$contract_fixture_dir/cached-refresh-state")" != 1 ]] ||
+  grep -Fq 'refreshing alternate runtime-image sources' "$contract_fixture_dir/cached-refresh.error"; then
+  echo "a proven cached publisher must not trigger an alternate inventory refresh" >&2
+  exit 1
+fi
 require_contains "$contract_fixture_dir/cached-refresh.output" \
   'Trusted PR image publisher 202 succeeded for pr-merge-'
 require_contains "$contract_fixture_dir/cached-refresh.output" 'via an alternate producer'

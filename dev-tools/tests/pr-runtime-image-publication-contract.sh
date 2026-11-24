@@ -649,6 +649,9 @@ case "${2:-}" in
     cat "$FIXTURE_DIR/base-ref.json"
     ;;
   repos/benhook1013/FireMUD/git/ref/tags/firemud-runtime-refresh-intent/*)
+    if [[ -n "${RUNTIME_CLAIM_LOOKUPS:-}" ]]; then
+      printf '%s\n' "$2" >> "$RUNTIME_CLAIM_LOOKUPS"
+    fi
     [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_REF:-}" ]] || exit 2
     cat "$FIXTURE_DIR/runtime-claim-ref.json"
     ;;
@@ -770,7 +773,24 @@ try:
     claim_tag_file.write_text(json.dumps({**claim_tag, "object": {"type": "commit", "sha": "e" * 40}}))
     assert admit(request, merge, branch, claim_request).returncode != 0
     assert "runtime_refresh_claim=1\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
-    assert admit(request, merge, branch, {**claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": "9007199254740992"}).returncode != 0
+    oversized_generation = "9007199254740992"
+    oversized_claim = claim.removesuffix("/g1") + f"/g{oversized_generation}"
+    oversized_lookup = fixture / "oversized-claim-lookup"
+    oversized_lookup.unlink(missing_ok=True)
+    (fixture / "runtime-claim-ref.json").write_text(json.dumps({**claim_ref, "ref": f"refs/tags/{oversized_claim}"}))
+    claim_body = {**json.loads(claim_tag["message"]), "generation": oversized_generation}
+    claim_tag_file.write_text(json.dumps({**claim_tag, "tag": oversized_claim,
+                                        "message": json.dumps(claim_body) + "\n"}))
+    oversized_result = admit(request, merge, branch, {
+        **claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": oversized_generation,
+        "EXPECTED_RUNTIME_CLAIM_REF": f"repos/benhook1013/FireMUD/git/ref/tags/{oversized_claim}",
+        "RUNTIME_CLAIM_LOOKUPS": str(oversized_lookup),
+    })
+    assert oversized_result.returncode != 0, oversized_result
+    assert "Runtime PR refresh claim identity is invalid." in oversized_result.stderr, oversized_result.stderr
+    assert not oversized_lookup.exists(), "invalid generation reached claim-ref lookup"
+    (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
+    claim_tag_file.write_text(json.dumps(claim_tag))
     assert admit(request, merge, branch, claim_request, event_name="pull_request").returncode == 0
     assert "runtime_refresh_claim=\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     labeled_request = json.loads(json.dumps(request))
@@ -1480,7 +1500,9 @@ cat > "$fixture_dir/gh" <<'EOF'
 set -euo pipefail
 [[ "$*" == "api repos/benhook1013/FireMUD/git/ref/heads/develop --jq .object.sha" ]] || exit 2
 current_sha="$HEAD_SHA"
-if [[ "$RUNTIME_HEAD_MODE" == advance && -s "$RUNTIME_HEAD_READ_LOG" ]]; then
+prior_reads="$(wc -l < "$RUNTIME_HEAD_READ_LOG")"
+if [[ "$RUNTIME_HEAD_MODE" == advance && "$prior_reads" -ge 1 ]] ||
+   [[ "$RUNTIME_HEAD_MODE" == advance-before-latest && "$prior_reads" -ge 2 ]]; then
   current_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   : > "$RUNTIME_HEAD_MOVED_MARKER"
 fi
@@ -1597,6 +1619,19 @@ if [[ ! -f "$fixture_dir/runtime-registry-marker" || \
   echo "runtime publisher must permit only the immutable A tag before rejecting movement, never develop/latest after it" >&2
   exit 1
 fi
+
+# A third-read movement must independently fence the latest alias.
+rm -f "$fixture_dir/runtime-registry-marker"
+movement_status=0
+run_runtime missing advance-before-latest >"$fixture_dir/runtime-head-movement.output" \
+  2>"$fixture_dir/runtime-head-movement.error" || movement_status=$?
+[[ "$movement_status" -eq 1 && -f "$fixture_dir/runtime-head-moved" ]]
+grep -Fq "Refusing canonical runtime publication: develop moved from ${head_sha} to ${base_sha}." \
+  "$fixture_dir/runtime-head-movement.error"
+[[ "$(cat "$fixture_dir/runtime-head-reads")" == "${head_sha}"$'\n'"${head_sha}"$'\n'"${base_sha}" ]]
+expected_account='ghcr.io/benhook1013/account-service'
+expected_create='buildx imagetools create --tag'
+[[ "$(cat "$fixture_dir/runtime-registry-marker")" == "$expected_create ${expected_account}:${head_sha} ${expected_account}:candidate"$'\n'"$expected_create ${expected_account}:develop ${expected_account}:candidate" ]]
 
 rm -f "$fixture_dir/runtime-registry-marker"
 run_runtime matching

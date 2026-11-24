@@ -538,10 +538,11 @@ jobs:
 
             function canResumeAfterOptionalGitHubError(error, primary) {
               // Missing optional refresh evidence permits only fresh selection of a
-              // retained pending native producer, never acceptance of missing proof.
+              // retained pending exact producer, never acceptance of missing proof.
               const status = error?.status ?? error?.response?.status;
               return isTransientOptionalGitHubError(error) ||
-                (status === 404 && primary?.event === "pull_request" && primary.status !== "completed");
+                (status === 404 && ["pull_request", "repository_dispatch"].includes(primary?.event) &&
+                  primary.status !== "completed");
             }
 
             async function withTransientGitHubRetry(label, operation) {
@@ -603,7 +604,7 @@ jobs:
               "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
               "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
-              "docker/docker-compose.yml": "cd3957cace554958f0a1077754809cb75fc9c83bbf0beca99de4a8cf9bf86929",
+              "docker/docker-compose.yml": "5a59a4d3baa8b61b7b1ab2c982a482cd648a9d044be2562205c80cb05efe8b00",
               "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
               "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
@@ -1267,9 +1268,10 @@ jobs:
               if (!isRetryPrimary(selection, matching) && currentIdentity.sourceEvent === "pull_request" &&
                   matching?.event === "pull_request" && matching.status !== "completed") {
                 let replacement;
+                const refreshSelection = { retryPrimary: selection.retryPrimary };
                 try {
                   replacement = await findMatchingRuntimeImagesRun(
-                    "repository_dispatch", expectedDisplayTitle, currentIdentity
+                    "repository_dispatch", expectedDisplayTitle, currentIdentity, refreshSelection
                   );
                 } catch (error) {
                   if (!canResumeAfterOptionalGitHubError(error, matching)) throw error;
@@ -1279,6 +1281,7 @@ jobs:
                   if (replacement && await verifyCompletedCanonicalRuntime(replacement, currentIdentity)) {
                     core.info("A completed verified exact trusted refresh supersedes the pending native wait.");
                     selection.pendingPrimary = matching;
+                    selection.pendingRefresh = refreshSelection.pendingPrimary;
                     matching = replacement;
                   }
                 } catch (error) {
@@ -1623,26 +1626,50 @@ jobs:
                     continue smokeGatePolling;
                   }
                 }
-                if (selection.pendingPrimary) {
-                  // One fresh ordering read fences the older-success fallback. A
+                const pendingOrderingFences = [selection.pendingPrimary, selection.pendingRefresh].filter(Boolean);
+                for (const pending of pendingOrderingFences) {
+                  // A fresh ordering read fences each older-success fallback. A
                   // terminal or replaced primary must qualify through its own proof.
                   let freshPrimary;
                   try {
                     freshPrimary = await findMatchingRuntimeImagesRun(
-                      selection.pendingPrimary.event, expectedDisplayTitle, currentIdentity,
+                      pending.event, expectedDisplayTitle, currentIdentity,
                       { allowCompletedFallback: false }
                     );
                   } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
+                    if (canResumeAfterOptionalGitHubError(error, pending) && await retryExactSelection(
                       "Runtime candidate ordering is unavailable; retry exact primary selection."
                     )) continue smokeGatePolling;
                     throw error;
                   }
-                  if (freshPrimary?.id !== selection.pendingPrimary.id ||
-                      freshPrimary.run_attempt !== selection.pendingPrimary.run_attempt ||
+                  if (freshPrimary?.id !== pending.id ||
+                      freshPrimary.run_attempt !== pending.run_attempt ||
                       freshPrimary.status === "completed") {
                     if (await retryExactSelection(
                       "Runtime candidate ordering changed before accepting older success; retry exact primary selection."
+                    )) continue smokeGatePolling;
+                    break smokeGatePolling;
+                  }
+                }
+                // Ordering lookups do not reread the successful older attempt.
+                // Fence proof against a rerun that started during those awaits.
+                if (pendingOrderingFences.length > 0) {
+                  let finalSelected;
+                  try {
+                    ({ data: finalSelected } = await withTransientGitHubRetry(
+                      "successful fallback attempt after final ordering",
+                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                    ));
+                  } catch (error) {
+                    if (canResumeAfterOptionalGitHubError(error, pendingOrderingFences[0]) && await retryExactSelection(
+                      "Successful fallback attempt is unavailable after ordering; retry exact selection."
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
+                  if (finalSelected.id !== matching.id || finalSelected.run_attempt !== matching.run_attempt ||
+                      finalSelected.status !== "completed" || finalSelected.conclusion !== "success") {
+                    if (await retryExactSelection(
+                      "Successful fallback attempt changed during ordering; retry exact selection."
                     )) continue smokeGatePolling;
                     break smokeGatePolling;
                   }

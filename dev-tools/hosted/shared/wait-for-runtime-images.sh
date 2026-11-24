@@ -69,7 +69,8 @@ from datetime import datetime, timezone
 
 wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:6]
 excluded_id = sys.argv[6] if len(sys.argv) > 6 else ""
-alternates = len(sys.argv) > 7 and sys.argv[7] == "alternates"
+selection = sys.argv[7] if len(sys.argv) > 7 else ""
+alternates = selection in {"alternates", "active-alternates"}
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -111,8 +112,14 @@ def is_matching_run(run):
 
 matching_runs = [run for run in workflow_runs if is_matching_run(run)]
 if excluded_id:
-    matching_runs = [run for run in matching_runs if str(run.get("id")) != excluded_id
-                     and run.get("status") == "completed" and run.get("conclusion") == "success"]
+    matching_runs = [run for run in matching_runs if str(run.get("id")) != excluded_id]
+    if selection == "active-alternates":
+        active_statuses = {"requested", "queued", "in_progress", "waiting", "pending"}
+        matching_runs = [run for run in matching_runs if run.get("status") in active_statuses
+                         and run.get("conclusion") in (None, "")]
+    else:
+        matching_runs = [run for run in matching_runs if run.get("status") == "completed"
+                         and run.get("conclusion") == "success"]
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
@@ -563,7 +570,12 @@ wait_for_pr_publisher() {
         direct_success_unproven=true
       fi
     fi
-    local refreshed_source_payload refreshed_alternates
+    # An inventory refresh can consume the rest of the deadline. Give
+    # already-known exact candidates their bounded proof reads first.
+    if find_completed_alternate_publication "$alternate_sources" "$publisher_deadline"; then
+      return 0
+    fi
+    local refreshed_source_payload refreshed_alternates new_alternates
     local source_refresh_remaining=$((publisher_deadline - SECONDS))
     if (( source_refresh_remaining > 0 )) && refreshed_source_payload="$(fetch_workflow_runs \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
@@ -572,12 +584,14 @@ wait_for_pr_publisher() {
         if [[ "${refreshed_alternates}" == "missing" ]]; then
           alternate_sources=""
         else
+          new_alternates="$(grep -Fvx -f <(printf '%s\n' "$alternate_sources") <<<"$refreshed_alternates" || true)"
           alternate_sources="${refreshed_alternates}"
+          if [[ -n "$new_alternates" ]] &&
+            find_completed_alternate_publication "$new_alternates" "$publisher_deadline"; then
+            return 0
+          fi
         fi
       fi
-    fi
-    if find_completed_alternate_publication "$alternate_sources" "$publisher_deadline"; then
-      return 0
     fi
     if [[ "${fetch_failed}" == "true" ]]; then
       coverage_unavailable=true
@@ -712,6 +726,13 @@ while (( SECONDS < deadline )); do
   fi
 
   if [[ "${run_status}" == "completed" ]]; then
+    if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]] &&
+      active_alternates="$(read_run_state "$run_id" active-alternates <<<"$workflow_payload")" &&
+      [[ "$active_alternates" == found$'\t'* ]]; then
+      printf 'Another exact runtime-images producer is still active for %s; continuing bounded wait.\n' "$image_tag"
+      sleep "${sleep_seconds}"
+      continue
+    fi
     printf 'Matching runtime-images workflow %s completed with %s for %s.\n' \
       "${run_id}" "${run_conclusion}" "${image_tag}" >&2
     if [[ -n "${run_url}" ]]; then

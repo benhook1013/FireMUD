@@ -6672,6 +6672,7 @@ for reference in develop refs/heads/develop; do
     | del(.pull_requests)' <<<"$valid_workflow_run_json")"
   FAKE_FIXTURE_WORKFLOW_RUN_JSON="$dispatch_run" FAKE_METADATA_EVENT=repository_dispatch \
     FAKE_METADATA_ACTION=deploy run_deploy_target_fixture "dispatch-${reference##*/}-${#reference}" 0 'action=deploy'
+  grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-dispatch-${reference##*/}-${#reference}.output"
 done
 foreign_dispatch_run="$(jq -c '
   .event = "repository_dispatch" | .head_branch = "develop" | .path += "@refs/heads/not-develop"

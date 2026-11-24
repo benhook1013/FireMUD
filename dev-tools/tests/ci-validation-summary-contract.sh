@@ -216,6 +216,7 @@ async function noWrites(config, reject = false) {
     assert.doesNotMatch(moduleFailure.calls.creates[0].body, /All validation checks passed/);
   }
   const metadataSplit = clone(jobs);
+  metadataSplit.find(job => job.name === 'Validation Gate').name = 'PR Metadata Edit (Validation Gate)';
   for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }
   assert.equal((await noWrites({ jobs: metadataSplit })).comments.length, 0);
   // A later native run publishes first; a delayed older callback may neither rewrite it nor delete it as a duplicate.

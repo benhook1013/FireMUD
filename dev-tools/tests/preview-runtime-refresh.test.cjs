@@ -24,6 +24,11 @@ function admissionFixture() {
     display_title: `Build Runtime Images secure-pr-artifact pr-7 base-${B} head-${C} merge-${A} mode-required`,
     ...overrides,
   });
+  const makePullRequestRun = (overrides = {}) => makeRun({
+    event: 'pull_request', head_sha: C,
+    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
+    ...overrides,
+  });
   const sent = [];
   const warnings = [];
   const runs = [];
@@ -124,12 +129,39 @@ function admissionFixture() {
     state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
-  return {admission, makeRun, runs, sent, state, warnings, claimRefs, claimTags, receiverJobs};
+  return {admission, makeRun, makePullRequestRun, runs, sent, state, warnings, claimRefs, claimTags, receiverJobs};
+}
+
+function proveFixtureDispatchBase(f, run) {
+  const {input} = f.admission;
+  const base = createHash('sha256').update(input.base_ref).digest('hex');
+  const tag = `firemud-runtime-refresh-intent/v1/pr-${input.pr_number}/${input.merge_sha}/${base}/g1`;
+  const ref = `refs/tags/${tag}`;
+  let sha = f.claimRefs.get(ref)?.object.sha;
+  if (!sha) {
+    sha = E;
+    f.claimTags.set(sha, {
+      sha, tag, message: JSON.stringify({...input, generation: '1', witness_sha256: 'a'.repeat(64)}) + '\n',
+      object: {type: 'commit', sha: input.merge_sha},
+      tagger: {name: 'FireMUD Runtime Refresh', email: 'runtime-refresh@firemud.dev',
+        date: new Date(Date.parse(run.created_at) - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')},
+    });
+    f.claimRefs.set(ref, {ref, object: {type: 'tag', sha}});
+  }
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [{
+    id: 1, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+    name: 'Derive Runtime Image Metadata', status: 'completed',
+    steps: [{
+      name: `Runtime refresh claim generation 1 attempt ${run.run_attempt} tag ${sha}`,
+      status: 'completed', conclusion: 'success',
+    }],
+  }]);
 }
 
 test('serialized admission waits for the first exact receiver before releasing the permit', async () => {
   const f = admissionFixture();
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  proveFixtureDispatchBase(f, f.runs[0]);
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
   const [tag] = f.claimTags.values();
   const {runtime_refresh_claim_witness: witness} = f.sent[0].client_payload;
@@ -139,6 +171,71 @@ test('serialized admission waits for the first exact receiver before releasing t
     client_payload: {...f.admission.input, image_tag: `pr-merge-${A}`, runtime_refresh_claim: '1',
       runtime_refresh_claim_witness: witness},
     request: {retries: 0}}]);
+});
+
+test('read-only identity retries require a fresh exact tuple', async () => {
+  for (const [group, method] of [['pulls', 'get'], ['git', 'getRef'], ['repos', 'getCommit']]) {
+    const f = admissionFixture();
+    const api = f.admission.github.rest[group];
+    const original = api[method];
+    let reads = 0;
+    api[method] = async (...args) => {
+      if (++reads === 1) throw Object.assign(new Error('unavailable'), {response: {status: 503}});
+      return original(...args);
+    };
+    f.runs.push(f.makePullRequestRun());
+    assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+    assert.deepEqual(f.state.waits, [2000]);
+    assert.equal(f.sent.length, 0);
+  }
+
+  const changed = admissionFixture();
+  const api = changed.admission.github.rest.repos;
+  api.getCommit = async () => {
+    changed.state.base = D;
+    throw Object.assign(new Error('unavailable'), {status: 503});
+  };
+  assert.equal(await admitRuntimeRefresh(changed.admission), 'obsolete');
+  assert.deepEqual(changed.state.waits, [2000]);
+  assert.equal(changed.sent.length, 0);
+});
+
+test('a newer exact failure visible during live identity lookup defeats stale active suppression', async () => {
+  const f = admissionFixture();
+  const old = f.makePullRequestRun({id: 220, created_at: '2024-01-01T00:00:00Z'});
+  const failed = f.makePullRequestRun({
+    id: 221, created_at: '2024-01-01T00:00:01Z', status: 'completed', conclusion: 'failure',
+  });
+  f.runs.push(old);
+  const api = f.admission.github.rest.pulls;
+  const readPull = api.get;
+  let identityReads = 0;
+  api.get = async (...args) => {
+    if (++identityReads === 2) {
+      assert.ok(f.state.producerReads.includes(old.id), 'old active proof must precede live tuple lookup');
+      f.runs.push(failed);
+    }
+    return readPull(...args);
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
+  assert.ok(identityReads >= 4, 'changed inventory must recheck tuple before claim and dispatch');
+});
+
+test('identity retries are bounded and do not retry authorization failure', async () => {
+  for (const [status, observations] of [[503, 6], [403, 1]]) {
+    const f = admissionFixture();
+    let reads = 0;
+    const error = Object.assign(new Error('cannot observe identity'), {status});
+    f.admission.github.rest.pulls.get = async () => {
+      reads++;
+      throw error;
+    };
+    await assert.rejects(admitRuntimeRefresh(f.admission), value => value === error);
+    assert.equal(reads, observations);
+    assert.deepEqual(f.state.waits, Array(observations - 1).fill(2000));
+    assert.equal(f.sent.length, 0);
+  }
 });
 
 test('completed producers still permit an exact repair', async () => {
@@ -163,10 +260,10 @@ test('a newer failed exact producer keeps the tuple eligible despite an older ac
 
 test('a still-active exact producer is not excluded by age or pagination', async () => {
   const f = admissionFixture();
-  f.runs.push(...Array.from({length: 100}, (_, i) => f.makeRun({
+  f.runs.push(...Array.from({length: 100}, (_, i) => f.makePullRequestRun({
     id: 400 + i, display_title: 'unrelated work',
   })));
-  f.runs.push(f.makeRun({created_at: '2024-01-01T00:00:00Z'}));
+  f.runs.push(f.makePullRequestRun({created_at: '2024-01-01T00:00:00Z'}));
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
   assert.deepEqual(f.sent, []);
   assert.ok(f.state.lookups.some(call => call.status === 'queued' && call.page === 2 && !call.created));
@@ -254,7 +351,7 @@ test('admission bounds waiting for merge computation and aborts immediately on d
 
 test('admission suppresses only when the selected active producer still proves the exact attempt', async () => {
   const f = admissionFixture();
-  f.runs.push(f.makeRun());
+  f.runs.push(f.makePullRequestRun());
   f.state.refreshProducer = run => ({...run, status: 'in_progress'});
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
   assert.deepEqual(f.state.producerReads, [300, 300]);
@@ -268,7 +365,7 @@ test('a stale or unavailable selected producer leaves an exact refresh eligible'
     run => ({...run, id: run.id + 1}),
     run => ({...run, run_attempt: run.run_attempt + 1}),
     ...[undefined, null, 0, -1, '1'].map(run_attempt => run => ({...run, run_attempt})),
-    run => ({...run, event: 'pull_request'}),
+    run => ({...run, event: 'repository_dispatch'}),
     run => ({...run, display_title: run.display_title.replace(A, E)}),
     run => ({...run, head_sha: E}),
     run => ({...run, created_at: new Date(Date.parse(run.created_at) + 1000).toISOString()}),
@@ -279,7 +376,7 @@ test('a stale or unavailable selected producer leaves an exact refresh eligible'
   for (const afterFinalTuple of [false, true]) {
     for (const refreshProducer of invalidProducers) {
       const f = admissionFixture();
-      f.runs.push(f.makeRun());
+      f.runs.push(f.makePullRequestRun());
       f.state.refreshProducer = run => !afterFinalTuple || f.state.commitRefs.length >= 2 ?
         refreshProducer(run) : run;
       assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
@@ -292,11 +389,12 @@ test('a stale or unavailable selected producer leaves an exact refresh eligible'
 
 test('a producer that completes while the final live tuple is pending cannot suppress repair', async () => {
   const f = admissionFixture();
-  f.runs.push(f.makeRun());
+  f.runs.push(f.makePullRequestRun());
   f.state.pullObservations = [{}, {mergeable: null, merge_commit_sha: null}];
   f.state.afterWait = () => { f.runs[0] = {...f.runs[0], status: 'completed', conclusion: 'failure'}; };
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.deepEqual(f.state.producerReads, [300, 300]);
+  assert.deepEqual(f.state.producerReads, [300]);
+  assert.ok(f.state.lookups.some(call => call.event === 'pull_request' && call.status === 'completed'));
   assert.deepEqual(f.state.commitRefs, [A, A, A, A]);
   assert.deepEqual(f.state.waits, [2000, 2000]);
   assert.equal(f.sent.length, 1);
@@ -305,7 +403,7 @@ test('a producer that completes while the final live tuple is pending cannot sup
 test('admission rereads the pinned comparison after the producer lookup before fallback', async () => {
   for (const afterFinalTuple of [false, true]) {
     const f = admissionFixture();
-    f.runs.push(f.makeRun());
+    f.runs.push(f.makePullRequestRun());
     f.state.refreshProducer = run => {
       if (afterFinalTuple && f.state.commitRefs.length < 2) return run;
       f.state.base = D;
@@ -390,6 +488,10 @@ test('advancing a generation requires one exact terminal receiver with a success
   f.runs.push(legacy);
   f.receiverJobs.set(`${legacy.id}:${legacy.run_attempt}`, [{...jobs[0], id: 2, run_id: legacy.id,
     steps: [{name: 'Runtime refresh claim generation  attempt  tag ', status: 'completed', conclusion: 'skipped'}]}]);
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [{...jobs[0], run_attempt: run.run_attempt + 1}]);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+  delete jobs[0].run_attempt;
   f.receiverJobs.set(`${run.id}:${run.run_attempt}`, jobs);
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
@@ -453,6 +555,38 @@ test('unseen exact activity in the next second can confirm bounded dispatch obse
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(f.sent.length, 1);
   assert.deepEqual(f.state.waits, [2000]);
+});
+
+test('active dispatch suppression proves the exact base-ref claim and current attempt', async () => {
+  const f = admissionFixture();
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  const run = f.runs[0];
+  const [ref] = f.claimRefs.values();
+  const [delivery] = f.sent;
+  const generation = delivery.client_payload.runtime_refresh_claim;
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [{
+    id: 1, name: 'Derive Runtime Image Metadata', status: 'completed',
+    run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+    steps: [{
+      name: `Runtime refresh claim generation ${generation} attempt ${run.run_attempt} tag ${ref.object.sha}`,
+      status: 'completed', conclusion: 'success',
+    }],
+  }]);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.equal(f.sent.length, 1);
+
+  f.admission.input.base_ref = 'stack/retargeted';
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 2);
+  assert.equal(f.sent[1].client_payload.base_ref, 'stack/retargeted');
+  assert.equal(f.claimRefs.size, 2);
+});
+
+test('an unmarked native producer without the exact-base claim cannot suppress claim admission', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makeRun());
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent.length, 1);
 });
 
 test('both wake inputs retain intent in one non-replacing exact tuple queue on the default branch', () => {
@@ -699,7 +833,9 @@ for (const event of ['repository_dispatch', 'pull_request']) {
   for (const status of ['queued', 'waiting', 'requested', 'pending', 'in_progress']) {
     test(`admission suppresses dispatch for an active exact ${event} ${status} producer`, async () => {
       const f = admissionFixture();
-      f.runs.push({...producer(f, event), status});
+      const run = {...producer(f, event), status};
+      f.runs.push(run);
+      if (event === 'repository_dispatch') proveFixtureDispatchBase(f, run);
       assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
       assert.deepEqual(f.sent, []);
     });
@@ -746,6 +882,7 @@ test('admission retains the refresh fallback when active inventory exceeds its b
 test('qualified trusted default workflow path suppresses exact dispatch', async () => {
   const f = admissionFixture(); const r = producer(f);
   r.path += '@refs/heads/develop'; f.runs.push(r);
+  proveFixtureDispatchBase(f, r);
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
 });
 test('canonical eligibility refuses absent author metadata', async () => {

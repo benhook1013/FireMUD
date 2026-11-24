@@ -94,12 +94,15 @@ if [[ -n "$expected_pr_number" ]]; then
     echo "unable to read legacy proof-retry evidence for $namespace; refusing deletion" >&2
     exit 1
   fi
-  if [[ "$legacy_retry" != null ]]; then
-    if ! delete_resource_version="$(jq -er '.metadata.resourceVersion | select(type == "string" and length > 0)' <<<"$namespace_json")" ||
-      ! preserve_legacy_preview_retry_entry "$legacy_retry" "$namespace"; then
-      echo "unable to retain the proof-retry budget for $namespace; refusing deletion" >&2
-      exit 1
-    fi
+  # Fence the read of both a present legacy record and its absence. An
+  # intervening writer can add the first record without changing the UID.
+  if ! delete_resource_version="$(jq -er '.metadata.resourceVersion | select(type == "string" and length > 0)' <<<"$namespace_json")"; then
+    echo "unable to read namespace resource version for $namespace; refusing deletion" >&2
+    exit 1
+  fi
+  if [[ "$legacy_retry" != null ]] && ! preserve_legacy_preview_retry_entry "$legacy_retry" "$namespace"; then
+    echo "unable to retain the proof-retry budget for $namespace; refusing deletion" >&2
+    exit 1
   fi
 fi
 

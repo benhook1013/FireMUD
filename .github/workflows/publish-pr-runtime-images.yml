@@ -116,7 +116,8 @@ jobs:
                   /^PR Full-Stack Smoke \(runtime-required=(?:true|false)\)$/.test(job.name));
                 const [producer] = producerJobs;
                 if (producerJobs.length !== 1 || !positiveInteger(producer.id) ||
-                    producer.run_id !== sourceId || producer.run_attempt !== sourceAttempt ||
+                    producer.run_id !== sourceId ||
+                    (Object.hasOwn(producer, "run_attempt") && producer.run_attempt !== sourceAttempt) ||
                     producer.head_sha !== run.head_sha || producer.status !== "completed" || producer.conclusion !== "success") {
                   throw new Error("publication requires one successful runtime image job from the exact source attempt");
                 }

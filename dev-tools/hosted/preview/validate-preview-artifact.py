@@ -150,7 +150,7 @@ INFRASTRUCTURE_IMAGES = {
     TRUSTED_DATABASE_IMAGES["postgres"],
     TRUSTED_DATABASE_IMAGES["redis"],
     TRUSTED_DATABASE_IMAGES["seed"],
-    "ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a",
+    "ghcr.io/benhook1013/minio-server@sha256:94ece65e582c8410b62f04d956119da50ce423f23c8c02a76ff3a342b5cd5485",
     "ghcr.io/benhook1013/minio-client@sha256:28c57b6c6564fa6b39bb99a68cd61b3494a730b08938c9d97be14c2b6c9f1dcf",
 }
 EXPECTED_SECRET_REFS = {
@@ -514,7 +514,7 @@ EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
     "minio": _infrastructure_deployment_spec(
         "minio",
         1000,
-        "ghcr.io/benhook1013/minio-server@sha256:a091800eb1c700ea662634c9ad5d9e4cf6980a1f61027a9b80aef0163e66c22a",
+        "ghcr.io/benhook1013/minio-server@sha256:94ece65e582c8410b62f04d956119da50ce423f23c8c02a76ff3a342b5cd5485",
         ["server", "/data"],
         9000,
         "minio-data",

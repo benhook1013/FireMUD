@@ -193,7 +193,8 @@ prepare_preview_dispatch() {
       echo "Skipping PR #${pr_number}: namespace $namespace disappeared before proof retry dispatch." >&2
       return 1
     fi
-    if [[ "$priority" != true && "$available_slots" -le 0 ]]; then
+    # An absent namespace requires a fresh capacity check before dispatch.
+    if [[ "$priority" != true ]]; then
       if ! refresh_available_slots; then
         echo "Unable to refresh preview capacity for ordinary PR #${pr_number}; refusing dispatch." >&2
         dispatch_outcome_failed=true
@@ -310,17 +311,27 @@ prepare_preview_dispatch() {
 
 compensate_rejected_proof_retry() {
   local namespace="$1" pr_number="$2" reason="${3:-after GitHub confirmed dispatch rejection}"
-  local holder current
+  local holder current version previously_rejected_version="" attempt
   [[ -n "$proof_retry_record" ]] || return 0
-  if ! holder="$(read_preview_retry_holder)" ||
-    ! current="$(preview_retry_entry "$holder" "$namespace")" ||
-    ! jq -e --arg uid "$proof_retry_holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null ||
-    ! jq -en --argjson current "$current" --argjson reserved "$proof_retry_record" '$current == $reserved' >/dev/null ||
-    ! write_preview_retry_entry "$holder" "$namespace" "$proof_retry_prior_record" >/dev/null; then
-    echo "Unable to release proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
-    return 1
-  fi
-  echo "Released proof-retry reservation for PR #${pr_number} $reason."
+  for attempt in 1 2 3; do
+    if ! holder="$(read_preview_retry_holder)" ||
+      ! current="$(preview_retry_entry "$holder" "$namespace")" ||
+      ! jq -e --arg uid "$proof_retry_holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null ||
+      ! jq -en --argjson current "$current" --argjson reserved "$proof_retry_record" '$current == $reserved' >/dev/null ||
+      ! version="$(jq -er '.metadata.resourceVersion' <<<"$holder")" ||
+      [[ "$version" == "$previously_rejected_version" ]]; then
+      break
+    fi
+    if write_preview_retry_entry "$holder" "$namespace" "$proof_retry_prior_record" >/dev/null; then
+      echo "Released proof-retry reservation for PR #${pr_number} $reason."
+      return 0
+    fi
+    # Reattempt only if a fresh read proves another holder version but the
+    # same exact reservation. A changed UID/row or stable refusal stays charged.
+    previously_rejected_version="$version"
+  done
+  echo "Unable to release proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+  return 1
 }
 
 active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
@@ -459,13 +470,13 @@ automatic_preview_has_tuple() {
           and ([.steps[] | select(.name | startswith("Preview resolved tuple "))] | length <= 1)
           and ([.steps[] | select(.name | startswith("Preview event tuple "))] | length <= 1)
           and ([.steps[] | select(.name == "Explain preview skip")] | length <= 1)
-          and (if ([.steps[] | select(.name | startswith("Preview resolved tuple "))] | length) == 1 then
-            any(.steps[]; (.name | test("^Preview resolved tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
-              and .status == "completed" and .conclusion == "success")
-          else
-            any(.steps[]; (.name | test("^Preview event tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
-              and .status == "completed" and .conclusion == "success")
-          end))
+          and (any(.steps[]; (.name | test("^Preview resolved tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
+                and .status == "completed" and .conclusion == "success")
+            or (all(.steps[] | select(.name | startswith("Preview resolved tuple "));
+                  .status == "completed" and .conclusion == "skipped")
+              and any(.steps[]; .name == "Explain preview skip" and .status == "completed" and .conclusion == "success")
+              and any(.steps[]; (.name | test("^Preview event tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
+                and .status == "completed" and .conclusion == "success"))))
     ' <<<"$jobs" >/dev/null || return 2
   if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null &&
     jq -e '
@@ -476,7 +487,8 @@ automatic_preview_has_tuple() {
     return 1
   fi
   if jq -e --arg tuple "$tuple" '
-    any(.jobs[] | select(.name == "Preview Plan") | .steps[]; .name == $tuple)
+    any(.jobs[] | select(.name == "Preview Plan") | .steps[];
+      .name == $tuple and .status == "completed" and .conclusion == "success")
     ' <<<"$jobs" >/dev/null; then
     :
   elif jq -e '
@@ -596,20 +608,38 @@ completed_preview_inventory() {
   '
 }
 
+# Cache the immutable inventory response only within this reconcile cycle.
+# A cached exact hit still traverses attempt and consumer checks; a miss is
+# never evidence that dispatch is safe.
+completed_default_dispatch_inventory=""
 recent_successful_source_handoff() {
   local pr_number="$1" head_sha="$2" tuple_step="$3"
-  local source_runs dispatch_source_runs source_candidates source_candidate_count source_inventory_now
+  local source_runs status=0
+  if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")"; then
+    echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
+    return 4
+  fi
+  if [[ -n "$completed_default_dispatch_inventory" ]]; then
+    evaluate_recent_source_handoff "$pr_number" "$head_sha" "$tuple_step"       "$source_runs" "$completed_default_dispatch_inventory" || status=$?
+    [[ "$status" == 1 ]] || return "$status"
+  fi
+  if ! completed_default_dispatch_inventory="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")"; then
+    completed_default_dispatch_inventory=""
+    echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
+    return 4
+  fi
+  evaluate_recent_source_handoff "$pr_number" "$head_sha" "$tuple_step"     "$source_runs" "$completed_default_dispatch_inventory"
+}
+
+evaluate_recent_source_handoff() {
+  local pr_number="$1" head_sha="$2" tuple_step="$3" source_runs="$4" dispatch_source_runs="$5"
+  local source_candidates source_candidate_count source_inventory_now
   local run_id run_attempt run_event run_head run_updated_at lookup_status source_updated_epoch now_epoch source_age
   local consumer_runs consumer_candidates consumer_candidate_count
   local consumer_run_id consumer_attempt consumer_head consumer_status consumer_created_after
   local run_name="Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"
   local pr_title="PR preview ${pr_number}"
 
-  if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")" ||
-    ! dispatch_source_runs="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")"; then
-    echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
-    return 4
-  fi
   source_inventory_now="$(date -u +%s)"
   if ! source_candidates="$(printf '%s\n' "$source_runs" "$dispatch_source_runs" | jq -r -s \
     --arg repository "$GITHUB_REPOSITORY" --arg head "$head_sha" \

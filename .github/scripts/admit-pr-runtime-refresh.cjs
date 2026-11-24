@@ -29,6 +29,11 @@ module.exports = async function admitPrRuntimeRefresh({
     return value.split('/').every(part => part.length > 0 && part[0] !== '.' && !part.endsWith('.lock'));
   };
   const isNotFound = error => error?.status === 404 || error?.response?.status === 404;
+  const transientIdentityRead = error => {
+    const status = error?.status ?? error?.response?.status;
+    if ([408, 429, 500, 502, 503, 504].includes(status)) return {error};
+    throw error;
+  };
   const dataOf = response => response && isRecord(response.data) ? response.data : null;
 
   if (!isRecord(input) ||
@@ -63,7 +68,7 @@ module.exports = async function admitPrRuntimeRefresh({
       pullResponse = await github.rest.pulls.get({...contextRepo, pull_number: pullNumber});
     } catch (error) {
       if (isNotFound(error)) return false;
-      throw error;
+      return transientIdentityRead(error);
     }
     const pull = dataOf(pullResponse);
     if (!pull || pull.number !== pullNumber || pull.state !== 'open' ||
@@ -78,7 +83,7 @@ module.exports = async function admitPrRuntimeRefresh({
       refResponse = await github.rest.git.getRef({...contextRepo, ref: `heads/${input.base_ref}`});
     } catch (error) {
       if (isNotFound(error)) return false;
-      throw error;
+      return transientIdentityRead(error);
     }
     const ref = dataOf(refResponse);
     if (ref?.ref !== `refs/heads/${input.base_ref}` || ref.object?.sha !== input.base_sha) return false;
@@ -92,7 +97,7 @@ module.exports = async function admitPrRuntimeRefresh({
       commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: reportedMerge});
     } catch (error) {
       if (isNotFound(error)) return null;
-      throw error;
+      return transientIdentityRead(error);
     }
     const commit = dataOf(commitResponse);
     if (commit?.sha !== reportedMerge || !Array.isArray(commit.parents) ||
@@ -122,7 +127,8 @@ module.exports = async function admitPrRuntimeRefresh({
   const currentIdentity = async () => {
     for (let observation = 0; observation < 6; observation++) {
       const result = await observeIdentity();
-      if (result !== null) return result;
+      if (typeof result === 'boolean') return result;
+      if (result !== null && observation === 5) throw result.error;
       if (observation < 5) await sleep(2000);
     }
     return false;
@@ -171,11 +177,8 @@ module.exports = async function admitPrRuntimeRefresh({
     activeStatuses.has(run.status) && run.conclusion == null && validChronology(run.created_at);
   const secondsUtc = timestamp => new Date(timestamp).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-  let inventoryComplete = true;
-  let newestExact = null;
-  const observedRunIds = new Set();
-  const exactRuns = [];
-  const collectInventory = async (event, status, createdSince, runs = exactRuns, ids = observedRunIds) => {
+  const seenBeforeDispatch = new Set();
+  const collectInventory = async (event, status, createdSince, runs, ids) => {
     let total;
     let seen = 0;
     for (let page = 1; page <= inventoryPages; page++) {
@@ -203,6 +206,7 @@ module.exports = async function admitPrRuntimeRefresh({
         const identity = `${run.event}:${run.id}:${run.run_attempt}`;
         if (ids.has(identity)) throw new Error('Duplicate exact runtime run identity.');
         ids.add(identity);
+        seenBeforeDispatch.add(identity);
         if (activeStatuses.has(run.status)) {
           if (run.conclusion != null) throw new Error('Active runtime run has a conclusion.');
         } else if (run.status !== 'completed' || typeof run.conclusion !== 'string' || run.conclusion.length === 0) {
@@ -216,63 +220,61 @@ module.exports = async function admitPrRuntimeRefresh({
     throw new Error('Incomplete runtime run inventory.');
   };
   const rankRuns = (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at);
-  try {
-    for (const event of inventoryEvents) {
-      for (const status of activeStatuses) await collectInventory(event, status);
-    }
+  const readNewestExact = async () => {
+    const exactRuns = [];
+    const observedRunIds = new Set();
+    try {
+      for (const event of inventoryEvents) {
+        for (const status of activeStatuses) {
+          await collectInventory(event, status, undefined, exactRuns, observedRunIds);
+        }
+      }
 
-    exactRuns.sort(rankRuns);
-    if (exactRuns.length > 0) {
-      // An older active producer still matters. Only completed runs at least
-      // as new as the newest active candidate can change that decision.
-      const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
-      for (const event of inventoryEvents) await collectInventory(event, 'completed', createdSince);
       exactRuns.sort(rankRuns);
-    }
-    if (exactRuns.length > 0) {
+      if (exactRuns.length === 0) return null;
+      // An older active producer only matters if no newer completed run supersedes it.
+      const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
+      for (const event of inventoryEvents) {
+        await collectInventory(event, 'completed', createdSince, exactRuns, observedRunIds);
+      }
+      exactRuns.sort(rankRuns);
       if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
         throw new Error('Newest exact runtime runs have equal chronology.');
       }
-      newestExact = exactRuns[0];
+      return exactRuns[0];
+    } catch {
+      core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
+      return null;
     }
-  } catch {
-    inventoryComplete = false;
-    core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
-  }
+  };
 
-  const selectedProducerIsActive = async () => {
+  const selectedProducerIsActive = async newestExact => {
     try {
       const latest = dataOf(await github.rest.actions.getWorkflowRun({
         ...contextRepo, run_id: newestExact.id,
       }));
-      return isExactActiveRun(latest) && latest.id === newestExact.id &&
-        latest.run_attempt === newestExact.run_attempt && latest.event === newestExact.event &&
-        latest.head_sha === newestExact.head_sha &&
-        Date.parse(latest.created_at) === Date.parse(newestExact.created_at);
+      const sameActiveAttempt = observed => isExactActiveRun(observed) &&
+        observed.id === newestExact.id && observed.run_attempt === newestExact.run_attempt &&
+        observed.event === newestExact.event && observed.head_sha === newestExact.head_sha &&
+        Date.parse(observed.created_at) === Date.parse(newestExact.created_at);
+      if (!sameActiveAttempt(latest)) return false;
+      if (latest.event !== 'repository_dispatch') return true;
+
+      // Native dispatch titles carry SHAs, not base refs. Only the validated
+      // exact-base claim and its attempt-bound metadata can identify this receiver.
+      const claim = await latestClaim();
+      if (claim === null || Date.parse(latest.created_at) < Date.parse(claim.date) ||
+          !await receiverProvesClaim(latest, claim)) return false;
+      // The attempt can finish or change while its claim/marker is read.
+      const afterClaim = dataOf(await github.rest.actions.getWorkflowRun({
+        ...contextRepo, run_id: newestExact.id,
+      }));
+      return sameActiveAttempt(afterClaim);
     } catch {
       core.warning('The exact active runtime producer could not be reread; preserving the required refresh fallback.');
       return false;
     }
   };
-  const activeProducerVerified = inventoryComplete && newestExact && isExactActiveRun(newestExact) &&
-    await selectedProducerIsActive();
-  if (!await currentIdentity()) {
-    core.info('Runtime refresh tuple changed during admission; no dispatch.');
-    return 'obsolete';
-  }
-  if (activeProducerVerified) {
-    // Tuple resolution can wait for merge computation. Do not suppress a repair
-    // using producer evidence from before that final live comparison lookup.
-    if (await selectedProducerIsActive()) {
-      core.info('The unique newest exact runtime producer is already active; no dispatch.');
-      return 'already-active';
-    }
-    if (!await currentIdentity()) {
-      core.info('Runtime refresh tuple changed during the final producer lookup; no dispatch.');
-      return 'obsolete';
-    }
-  }
-
   const tuple = Object.fromEntries(requiredFields.map(field => [field, input[field]]));
   const sha256 = value => createHash('sha256').update(value, 'utf8').digest('hex');
   const baseRefHash = sha256(input.base_ref);
@@ -349,7 +351,8 @@ module.exports = async function admitPrRuntimeRefresh({
       total = jobs.total_count;
       for (const job of jobs.jobs) {
         if (!isPositiveInteger(job?.id) || jobIds.has(job.id) || job.run_id !== run.id ||
-            job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha || typeof job.name !== 'string') {
+            (Object.hasOwn(job, 'run_attempt') && job.run_attempt !== run.run_attempt) ||
+            job.head_sha !== run.head_sha || typeof job.name !== 'string') {
           fail('Invalid runtime receiver job identity.');
         }
         jobIds.add(job.id);
@@ -412,6 +415,27 @@ module.exports = async function admitPrRuntimeRefresh({
       latest.created_at === receiver.created_at && latest.status === 'completed' &&
       latest.conclusion === receiver.conclusion;
   };
+
+  const newestExact = await readNewestExact();
+  const activeProducerVerified = newestExact && isExactActiveRun(newestExact) &&
+    await selectedProducerIsActive(newestExact);
+  if (!await currentIdentity()) {
+    core.info('Runtime refresh tuple changed during admission; no dispatch.');
+    return 'obsolete';
+  }
+  if (activeProducerVerified) {
+    // Tuple resolution can wait for merge computation. Do not suppress a repair
+    // using producer evidence from before that final live comparison lookup.
+    const currentProducer = await readNewestExact();
+    if (currentProducer && isExactActiveRun(currentProducer) && await selectedProducerIsActive(currentProducer)) {
+      core.info('The unique newest exact runtime producer is already active; no dispatch.');
+      return 'already-active';
+    }
+    if (!await currentIdentity()) {
+      core.info('Runtime refresh tuple changed during the final producer lookup; no dispatch.');
+      return 'obsolete';
+    }
+  }
 
   let generation;
   let witness;
@@ -494,7 +518,7 @@ module.exports = async function admitPrRuntimeRefresh({
             // Unseen activity in the dispatch second may predate this request.
             // Second-resolution chronology cannot confirm its attribution.
             run.event === 'repository_dispatch' && Date.parse(run.created_at) >= nextDispatchSecond &&
-            !observedRunIds.has(`${run.event}:${run.id}:${run.run_attempt}`))) {
+            !seenBeforeDispatch.has(`${run.event}:${run.id}:${run.run_attempt}`))) {
         core.info('An exact active runtime producer became visible after dispatch; this is not claim receipt.');
         return 'dispatched-observed';
       }

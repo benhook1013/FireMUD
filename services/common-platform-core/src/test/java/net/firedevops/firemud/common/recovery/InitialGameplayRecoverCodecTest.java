@@ -164,8 +164,11 @@ class InitialGameplayRecoverCodecTest {
         InitialGameplayRecoverCodec.MAX_RAW_BYTES - wire.getBytes(StandardCharsets.UTF_8).length;
     String atRawLimit = wire + " ".repeat(paddingBytes);
 
-    assertThat(decode(atRawLimit))
-        .isEqualTo(decode(WIRE.replace("\"initial\"", "\"" + detail + "\"")));
+    var escapedRequest = decode(atRawLimit);
+    var plainRequest = decode(WIRE.replace("\"initial\"", "\"" + detail + "\""));
+    assertThat(escapedRequest).isEqualTo(plainRequest);
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(escapedRequest))
+        .isEqualTo(InitialGameplayRecoverCodec.mutationDigest(plainRequest));
     rejects(atRawLimit + " ");
   }
 

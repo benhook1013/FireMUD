@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import tempfile
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 
 import tomllib
@@ -1637,7 +1638,11 @@ def main() -> int:
     velero_image_digest = digest_match.group("digest")
     if not has_hcl_set_value(velero_release, "configuration.backupStorageLocation[0].name", "default"):
         fail("Terraform Velero Helm release must name its default backup storage location")
-    minio_values = yaml.safe_load((root / "k8s/velero/values-minio.yaml").read_text())
+    local_backup_path = "dev-tools/backups/setup-local-backup.sh"
+    minio_values_path = "k8s/velero/values-minio.yaml"
+    local_backup = (root / local_backup_path).read_text()
+    minio_values_text = (root / minio_values_path).read_text()
+    minio_values = yaml.safe_load(minio_values_text)
     minio_locations = (
         (minio_values.get("configuration") or {}).get("backupStorageLocation")
         if isinstance(minio_values, dict)
@@ -1659,6 +1664,61 @@ def main() -> int:
         or minio_config.get("insecureSkipTLSVerify") is not True
     ):
         fail("MinIO Velero values must retain the endpoint/TLS settings and force S3 path style")
+    if (
+        minio_locations[0].get("provider") != "aws"
+        or minio_values["configuration"].get("defaultVolumesToFsBackup") is not False
+    ):
+        fail("Local Velero must use the AWS provider for MinIO without default filesystem backups")
+
+    local_chart_versions = re.findall(r"(?m)^VELERO_CHART_VERSION=(.*)$", local_backup)
+    if local_chart_versions != [chart_version]:
+        fail("Local Velero setup must select the exact grouped chart version")
+    local_chart_registry = "https://vmware-tanzu.github.io/helm-charts"
+    if not re.search(rf"(?m)^helm repo add vmware-tanzu {re.escape(local_chart_registry)}(?:\s|$)", local_backup):
+        fail("Local Velero setup must use the VMware Tanzu chart repository")
+    local_helm_calls = re.findall(r"(?m)^helm upgrade[ \t]+(.+)$", local_backup.replace("\\\n", " "))
+    local_helm_args = shlex.split(local_helm_calls[0]) if len(local_helm_calls) == 1 else []
+    local_helm_options = dict(pairwise(local_helm_args))
+    if (
+        local_helm_args[:3] != ["--install", "velero", "vmware-tanzu/velero"]
+        or local_helm_options.get("--version") != "$VELERO_CHART_VERSION"
+        or local_helm_options.get("-n") != "velero"
+        or local_helm_options.get("-f") != "$VALUES_FILE"
+        or re.findall(r"(?m)^VALUES_FILE=(.*)$", local_backup) != [f'"$ROOT_DIR/{minio_values_path}"']
+    ):
+        fail("Local Velero setup must pass the pinned chart and MinIO values to Helm in the velero namespace")
+
+    local_server = minio_values.get("image")
+    server_repo = "velero/velero"
+    server_tag = f"v{a['VELERO_VERSION']}"
+    if not isinstance(local_server, dict) or (
+        local_server.get("repository"), local_server.get("tag"), local_server.get("digest")
+    ) != (server_repo, server_tag, velero_image_digest):
+        fail("Local Velero server image must match the canonical tag and immutable digest")
+
+    plugin_repo = "velero/velero-plugin-for-aws"
+    local_init = minio_values.get("initContainers")
+    aws_plugins = [
+        container
+        for container in (local_init if isinstance(local_init, list) else [])
+        if isinstance(container, dict) and container.get("name") == "velero-plugin-for-aws"
+    ]
+    if len(aws_plugins) != 1 or {"name": "plugins", "mountPath": "/target"} not in (
+        aws_plugins[0].get("volumeMounts") or []
+    ):
+        fail("Local Velero must initialize one AWS plugin with the plugins volume mounted at /target")
+    plugin_pin = re.fullmatch(
+        rf"{re.escape(plugin_repo)}:(v([0-9]+\.[0-9]+)\.[0-9]+)@(sha256:[0-9a-f]{{64}})",
+        str(aws_plugins[0].get("image")),
+    )
+    if plugin_pin is None:
+        fail("Local Velero AWS plugin must pin the official image by exact tag and digest")
+    plugin_tag, plugin_minor, plugin_digest = plugin_pin.groups()
+    # Upstream AWS plugin compatibility is defined per minor; patch pins stay in the values file.
+    compatible_plugin_minors = {"1.18": "1.14"}
+    if plugin_minor != compatible_plugin_minors.get(a["VELERO_VERSION"].rsplit(".", 1)[0]):
+        fail("Local Velero and AWS plugin must select a known compatible minor pair")
+
     minio_readme = (root / "k8s/velero/README.md").read_text()
     if minio_readme.count('s3ForcePathStyle: "true"') != 1:
         fail('MinIO Velero README snippet must document s3ForcePathStyle: "true"')
@@ -1790,8 +1850,8 @@ def main() -> int:
     ):
         fail("Renovate hashed Python requirements must refresh behind-base branches")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 21:
-        fail("Renovate must define workflow authorities, bounded runtime images, and BSR Java generator managers")
+    if len(custom_managers) != 23:
+        fail("Renovate must define workflow authorities, local Velero pins, bounded runtime images, and BSR Java generators")
     bsr_managers = [
         manager for manager in custom_managers if manager.get("datasourceTemplate", "").startswith("custom.bsr-")
     ]
@@ -2037,6 +2097,46 @@ def main() -> int:
         or terraform_match.group("currentDigest") != velero_image_digest
     ):
         fail("Velero Terraform manager must pair the current tag and immutable digest")
+
+    for path, text, datasource, expected in (
+        (local_backup_path, local_backup, "helm", [("velero", chart_version, None)]),
+        (
+            minio_values_path,
+            minio_values_text,
+            "docker",
+            [(server_repo, server_tag, velero_image_digest), (plugin_repo, plugin_tag, plugin_digest)],
+        ),
+    ):
+        escaped_path = path.replace(".", r"\.")
+        local_managers = [
+            manager
+            for manager in custom_managers
+            if manager.get("managerFilePatterns") == [f"/^{escaped_path}$/"]
+        ]
+        if len(local_managers) != 1:
+            fail(f"Renovate must give {path} one distinct, file-scoped regex manager")
+        local_manager = local_managers[0]
+        if (
+            local_manager.get("customType") != "regex"
+            or local_manager.get("datasourceTemplate") != datasource
+            or local_manager.get("versioningTemplate") != datasource
+            or (datasource == "helm" and local_manager.get("registryUrlTemplate") != local_chart_registry)
+        ):
+            fail(f"Renovate must use the correct {datasource} source and versioning for {path}")
+        local_matches = [
+            match.groupdict()
+            for pattern in local_manager.get("matchStrings", [])
+            for match in compile_re2_pattern(pattern).finditer(text)
+        ]
+        if Counter(
+            (
+                match.get("depName") or local_manager.get("depNameTemplate"),
+                match.get("currentValue"),
+                match.get("currentDigest"),
+            )
+            for match in local_matches
+        ) != Counter(expected):
+            fail(f"Renovate must discover each exact pin in {path} once with its own digest, if applicable")
 
     docker_managers = [
         manager
@@ -2403,6 +2503,17 @@ def main() -> int:
         or velero_rule.get("automerge") is not False
     ):
         fail("Velero native managers must remain grouped, digest-pinned, and manually merged")
+    if velero_rule.get("matchFileNames") or velero_rule.get("matchDatasources"):
+        fail("The Velero group must also cover the local chart and server pins")
+    plugin_rules = [rule for rule in rules if plugin_repo in rule.get("matchPackageNames", [])]
+    if len(plugin_rules) != 1 or (
+        plugin_rules[0].get("matchManagers") != ["custom.regex"]
+        or plugin_rules[0].get("matchFileNames") != [minio_values_path]
+        or plugin_rules[0].get("groupName") != velero_rule["groupName"]
+        or plugin_rules[0].get("pinDigests") is not True
+        or plugin_rules[0].get("automerge") is not False
+    ):
+        fail("Renovate must group the local AWS plugin with Velero and require manual, digest-pinned updates")
     cli_digest_rule = next(
         (
             rule

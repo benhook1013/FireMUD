@@ -430,16 +430,21 @@ if [[ "$retire_terminal_identities" == true ]]; then
   fi
 fi
 
+proof_retry_retirement_failed=0
+if [[ "$retire_proof_retries" == true ]]; then
+  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
+  if ! source "$script_dir/preview-proof-retry-record.shlib" || ! retire_merged_preview_retry_entries; then
+    echo "Unable to retire verified merged preview proof-retry records." >&2
+    proof_retry_retirement_failed=1
+  fi
+fi
+
+# An unrelated runtime/identity error must not prevent the independent
+# retirement sweep; preserve its failure in the overall job result.
 if (( runtime_deletion_failures > 0 || retirement_failures > 0 )); then
   echo "${runtime_deletion_failures} hosted runtime deletion(s) and ${retirement_failures} hosted identity retirement(s) failed; stale cleanup is incomplete." >&2
   exit 1
 fi
-
-if [[ "$retire_proof_retries" == true ]]; then
-  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
-  source "$script_dir/preview-proof-retry-record.shlib"
-  if ! retire_merged_preview_retry_entries; then
-    echo "Unable to retire verified merged preview proof-retry records." >&2
-    exit 1
-  fi
+if (( proof_retry_retirement_failed > 0 )); then
+  exit 1
 fi

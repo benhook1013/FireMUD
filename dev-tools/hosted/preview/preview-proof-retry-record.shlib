@@ -111,13 +111,67 @@ preserve_legacy_preview_retry_entry() {
   write_preview_retry_entry "$holder" "$namespace" "$legacy" >/dev/null
 }
 
+readonly preview_retry_retirement_cursor=firemud.dev/proof-retry-retirement-cursor
+readonly preview_retry_retirement_batch_size=12
+
+write_preview_retry_retirement_cursor() {
+  local snapshot="$1" holder_uid="$2" old_cursor="$3" next_cursor="$4"
+  local version patch response
+  version="$(jq -er --arg uid "$holder_uid" --arg k "$preview_retry_retirement_cursor" \
+    --argjson old "$old_cursor" '
+    select(.metadata.uid == $uid and (.metadata.annotations[$k] // null) == $old)
+    | .metadata.resourceVersion
+  ' <<<"$snapshot")" || return 1
+  patch="$(jq -c --arg k "$preview_retry_retirement_cursor" --arg next "$next_cursor" '
+    [
+      {op:"test",path:"/metadata/uid",value:.metadata.uid},
+      {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+      (if .metadata.annotations == null
+       then {op:"add",path:"/metadata/annotations",value:{($k):$next}}
+       else {op:"add",path:("/metadata/annotations/" + ($k | gsub("~";"~0") | gsub("/";"~1"))),value:$next}
+       end)
+    ]
+  ' <<<"$snapshot")" || return 1
+  if response="$(kubectl -n "$preview_retry_holder_namespace" patch configmap "$preview_retry_holder_name" \
+      --type=json --patch "$patch" -o json --request-timeout=10s)"; then
+    response="$(validate_preview_retry_holder "$response")" || return 1
+  else
+    response="$(read_preview_retry_holder)" || return 1
+  fi
+  jq -e --arg uid "$holder_uid" --arg version "$version" --arg k "$preview_retry_retirement_cursor" \
+    --arg next "$next_cursor" '
+    .metadata.uid == $uid and .metadata.resourceVersion != $version and .metadata.annotations[$k] == $next
+  ' <<<"$response" >/dev/null
+}
+
 retire_merged_preview_retry_entries() {
-  local holder holder_uid entries namespace pr_number pr runtime row
+  local holder initial holder_uid entries cursor after last namespace pr_number pr runtime row old_row
+  [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
   holder="$(read_preview_retry_holder)" || return 1
   holder_uid="$(jq -er '.metadata.uid' <<<"$holder")" || return 1
-  entries="$(jq -r '.data | keys[] | select(. != "schemaVersion")' <<<"$holder")" || return 1
+  initial="$holder"
+  cursor="$(jq -c --arg k "$preview_retry_retirement_cursor" --arg repo "$GITHUB_REPOSITORY:" '
+    (.metadata.annotations // {}) as $annotations
+    | if ($annotations | type) != "object" then error("invalid holder annotations")
+      elif ($annotations | has($k) | not) then null
+      else $annotations[$k]
+        | if type == "string" and startswith($repo) and
+            (ltrimstr($repo) | test("^pr-[1-9][0-9]{0,50}$"))
+          then . else error("invalid preview retry retirement cursor") end
+      end
+  ' <<<"$initial")" || return 1
+  after="$(jq -r --arg repo "$GITHUB_REPOSITORY:" '. // "" | ltrimstr($repo)' <<<"$cursor")" || return 1
+  entries="$(jq -c --arg after "$after" --argjson size "$preview_retry_retirement_batch_size" '
+    (.data | keys - ["schemaVersion"]) as $keys
+    | ([ $keys[] | select(. > $after) ] + [ $keys[] | select(. <= $after) ]) as $ring
+    | {partial:($ring | length > $size), keys:$ring[:$size]}
+  ' <<<"$initial")" || return 1
+  last=""
   while IFS= read -r namespace; do
     [[ -n "$namespace" ]] || continue
+    last="$namespace"
+    old_row="$(preview_retry_entry "$initial" "$namespace")" || continue
+    [[ "$old_row" != null ]] || continue
     pr_number="${namespace#pr-}"
     # A closed, unmerged pull request can reopen with the same tuple. Only
     # positive, same-repository merge evidence permits automatic retirement.
@@ -131,9 +185,13 @@ retire_merged_preview_retry_entries() {
     [[ -z "$runtime" ]] || continue
     holder="$(read_preview_retry_holder)" || return 1
     jq -e --arg uid "$holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null || return 1
-    row="$(preview_retry_entry "$holder" "$namespace")" || return 1
-    [[ "$row" != null ]] || continue
+    row="$(preview_retry_entry "$holder" "$namespace")" || continue
+    [[ "$row" == "$old_row" ]] || continue
     write_preview_retry_entry "$holder" "$namespace" null >/dev/null || return 1
     echo "Retired the proof-retry record for merged PR #$pr_number."
-  done <<<"$entries"
+  done < <(jq -r '.keys[]' <<<"$entries")
+  if [[ -n "$last" ]] && jq -e '.partial' <<<"$entries" >/dev/null; then
+    holder="$(read_preview_retry_holder)" || return 1
+    write_preview_retry_retirement_cursor "$holder" "$holder_uid" "$cursor" "$GITHUB_REPOSITORY:$last"
+  fi
 }

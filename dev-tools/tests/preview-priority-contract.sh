@@ -335,7 +335,8 @@ if [[ "$1" == get && "$2" == namespace &&
       --arg uid "$runtime_uid" \
       --arg preview "${FAKE_RUNTIME_PREVIEW_LABEL:-true}" \
       --arg owner "${FAKE_RUNTIME_PR_NUMBER_LABEL:-${3#pr-}}" \
-      '{metadata:{name:$name,uid:$uid,labels:{"firemud.dev/preview":$preview,"firemud.dev/pr-number":$owner}}}'
+      --arg resource_version "${FAKE_RUNTIME_NAMESPACE_RESOURCE_VERSION-rv-initial}" \
+      '{metadata:{name:$name,uid:$uid,resourceVersion:$resource_version,labels:{"firemud.dev/preview":$preview,"firemud.dev/pr-number":$owner}}}'
   fi
   exit 0
 fi
@@ -378,6 +379,11 @@ if [[ "$1" == delete && "$2" == --raw && "$4" == -f && "$5" == - ]]; then
   fi
   expected_delete_uid="${FAKE_RUNTIME_DELETE_CURRENT_UID:-${FAKE_RUNTIME_NAMESPACE_UID:-uid-${3##*/}}}"
   if [[ "$delete_uid" != "$expected_delete_uid" ]]; then
+    exit 1
+  fi
+  delete_resource_version="$(jq -r '.preconditions.resourceVersion // ""' <<<"$delete_options")"
+  if [[ -n "${FAKE_RUNTIME_DELETE_CURRENT_VERSION:-}" && -n "$delete_resource_version" &&
+    "$delete_resource_version" != "$FAKE_RUNTIME_DELETE_CURRENT_VERSION" ]]; then
     exit 1
   fi
   exit 0
@@ -631,6 +637,16 @@ if [[ "$1" == api && ("$resource" == */actions/workflows/173511323/runs\?branch=
   fi
   if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_MALFORMED:-false}" == true ]]; then
     printf '%s' '[{"total_count":1,"workflow_runs":[{"id":"not-a-number"}]}]'
+  elif [[ "${FAKE_ACTIVE_INVENTORY_TOTAL:-}" == 1000 ]]; then
+    jq -cn --arg status "$active_query_status" --arg scope "$active_query_scope" '
+      [range(10) as $page | {
+        total_count:1000,
+        workflow_runs:[range(100) | {
+          id:(10000 + ($page * 100) + .), run_attempt:1, status:$status,
+          event:(if $scope == "branch" then "repository_dispatch" else $scope end),
+          head_branch:"develop", display_title:"Unrelated preview fixture"
+        }]
+      }]'
   elif [[ -n "${FAKE_ACTIVE_INVENTORY_TOTAL:-}" ]]; then
     printf '[{"total_count":%s,"workflow_runs":[]}]' "$FAKE_ACTIVE_INVENTORY_TOTAL"
   elif [[ -v FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON ]]; then
@@ -1342,6 +1358,7 @@ reset_case() {
   export FAKE_RUNTIME_ENVIRONMENT_CLASS=dev-demo-cluster
   export FAKE_RUNTIME_NAMESPACE_ABSENT_ON_DELETE=false
   export FAKE_RUNTIME_DELETE_CURRENT_UID=''
+  unset FAKE_RUNTIME_NAMESPACE_RESOURCE_VERSION FAKE_RUNTIME_DELETE_CURRENT_VERSION
   export FAKE_RUNTIME_DELETE_ERROR=false
   export FAKE_RUNTIME_WAIT_ERROR=false
   export FAKE_RUNTIME_RECHECK_ERROR=false
@@ -1548,7 +1565,105 @@ run_proof_retry_contract() (
   echo 'Preview durable proof-retry contract passed.'
 )
 
+run_retry_retirement_cursor_contract() (
+  set -euo pipefail
+  source "$ROOT_DIR/dev-tools/hosted/preview/preview-proof-retry-record.shlib"
+  export GITHUB_REPOSITORY=owner/fixture
+  holder_file="$TEMP_DIR/c15-holder" audit="$TEMP_DIR/c15-gh" patches="$TEMP_DIR/c15-patch"
+  false_repo=false
+  jq -n '{
+      apiVersion:"v1", kind:"ConfigMap", metadata:{namespace:"firemud-system",
+      name:"firemud-preview-proof-retries",uid:"fixture-holder",resourceVersion:"1",
+      annotations:{untouched:"must remain"}},
+      data:({schemaVersion:"1"} + (reduce range(101;131) as $n ({};
+        ("pr-"+($n|tostring)) as $key | .[$key] = ({repository:"owner/fixture",
+         namespace:$key,namespaceUid:"old",count:3,image:"fixture",
+         base:("a"*40),head:("b"*40),merge:("c"*40),nonce:""} | tojson))))
+    }' >"$holder_file"
+  : >"$audit"; : >"$patches"
+
+  timeout() {
+    [[ "$1" == 10s ]] || return 2
+    shift
+    "$@"
+  }
+  gh() {
+    [[ "$1" == api && "$2" == repos/owner/fixture/pulls/* ]] || return 2
+    local num="${2##*/}" merged=false repo=owner/fixture
+    printf '%s\n' "$num" >>"$audit"
+    [[ "$num" != 101 ]] || return 1  # unavailable evidence must not pin the cursor
+    [[ "$num" != 130 && "$num" != 129 && "$num" != 128 ]] || merged=true
+    [[ "$num" != 128 ]] || repo=other/fixture
+    jq -cn --argjson n "$num" --argjson m "$merged" --arg repo "$repo" '
+      {number:$n,state:"closed",merged:$m,head:{repo:{full_name:$repo}},base:{repo:{full_name:"owner/fixture"}}}'
+  }
+  kubectl() {
+    case "$*" in
+      '-n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s')
+        cat "$holder_file"
+        ;;
+      'get namespace pr-130 --ignore-not-found -o json --request-timeout=10s')
+        return 0
+        ;;
+      'get namespace pr-129 --ignore-not-found -o json --request-timeout=10s')
+        # Another authorized action changed this same row after the scan snapshot.
+        jq '.metadata.resourceVersion="77" | .data["pr-129"] |=
+          (fromjson | .namespaceUid="replacement" | tojson)' "$holder_file" >"$holder_file.next"
+        mv "$holder_file.next" "$holder_file"
+        ;;
+      '-n firemud-system patch configmap firemud-preview-proof-retries --type=json --patch '*)
+        local patch="$8"
+        jq -en --argjson p "$patch" --slurpfile f "$holder_file" '
+          $p[0] == {op:"test",path:"/metadata/uid",value:$f[0].metadata.uid}
+          and $p[1] == {op:"test",path:"/metadata/resourceVersion",value:$f[0].metadata.resourceVersion}
+          and ($p|length)==3' >/dev/null || return 2
+        printf '%s\n' "$patch" >>"$patches"
+        jq --argjson p "$patch" '
+          .metadata.resourceVersion |= (tonumber+1|tostring)
+          | if $p[2].path == "/metadata/annotations/firemud.dev~1proof-retry-retirement-cursor"
+            and $p[2].op=="add"
+            then .metadata.annotations["firemud.dev/proof-retry-retirement-cursor"]=$p[2].value
+            elif $p[2].path=="/data/pr-130" and $p[2].op=="remove" then del(.data["pr-130"])
+            else error("unexpected mock write") end
+        ' "$holder_file" >"$holder_file.next" || return 2
+        mv "$holder_file.next" "$holder_file"
+        if [[ "$false_repo" == true ]] && jq -ne '$p[2].path|startswith("/metadata/annotations/")' --argjson p "$patch" </dev/null >/dev/null; then
+          return 1
+        fi
+        cat "$holder_file"
+        ;;
+      *) printf 'unexpected mock kubectl: %s\n' "$*" >&2; return 2 ;;
+    esac
+  }
+
+  retire_merged_preview_retry_entries
+  [[ "$(wc -l <"$audit")" == 12 && "$(tail -1 "$audit")" == 112 ]]
+  false_repo=true  # exercise lost cursor-patch response with exact readback
+  retire_merged_preview_retry_entries
+  [[ "$(wc -l <"$audit")" == 24 && "$(tail -1 "$audit")" == 124 ]]
+  false_repo=false
+  retire_merged_preview_retry_entries
+  [[ "$(wc -l <"$audit")" == 36 && "$(tail -1 "$audit")" == 106 ]]
+  jq -e '
+    .metadata.annotations.untouched=="must remain"
+    and .metadata.annotations["firemud.dev/proof-retry-retirement-cursor"]=="owner/fixture:pr-106"
+    and (.data | length)==30 and (.data | has("pr-130") | not)
+    and (.data["pr-129"]|fromjson|.namespaceUid)=="replacement"
+    and (.data["pr-101"]|fromjson|.count)==3
+  ' "$holder_file" >/dev/null
+  jq '.metadata.annotations["firemud.dev/proof-retry-retirement-cursor"]="other/repo:pr-112"' \
+    "$holder_file" >"$holder_file.next"
+  mv "$holder_file.next" "$holder_file"
+  if retire_merged_preview_retry_entries; then
+    echo 'Malformed or wrong-repository cursor unexpectedly accepted' >&2
+    exit 1
+  fi
+  [[ "$(wc -l <"$audit")" == 36 && "$(wc -l <"$patches")" == 4 ]]
+  echo 'Preview proof-retry retirement cursor contract passed.'
+)
+
 run_proof_retry_contract
+run_retry_retirement_cursor_contract
 if [[ "${PREVIEW_RETRY_CONTRACT_ONLY:-false}" == true ]]; then
   exit 0
 fi
@@ -2666,6 +2781,29 @@ if grep -q '^wait ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
   exit 1
 fi
 
+# An empty resource version is never sufficient to delete a PR namespace.
+reset_case
+export FAKE_RUNTIME_NAMESPACE_RESOURCE_VERSION=''
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion accepted a preview namespace without a resource version" >&2
+  exit 1
+fi
+test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
+
+# A first legacy retry-record write changes the resource version, not the UID.
+reset_case
+export FAKE_RUNTIME_NAMESPACE_RESOURCE_VERSION=rv-no-record
+export FAKE_RUNTIME_DELETE_CURRENT_VERSION=rv-first-record
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion crossed a first legacy retry-record write" >&2
+  exit 1
+fi
+grep -qx 'uid-pr-101' "$FAKE_RUNTIME_DELETE_UID_LOG"
+test ! -e "$FAKE_RUNTIME_WAIT_MARKER"
+test ! -e "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER"
+test "$(grep -Fc 'delete --raw /api/v1/namespaces/pr-101 -f -' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
+
 reset_case
 export FAKE_RUNTIME_NAMESPACE_ABSENT_ON_DELETE=true
 bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101
@@ -3087,7 +3225,8 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
                elif $variant == "completed_success_old_tuple" then [step($old)]
                elif $variant == "ambiguous" then [step($tuple),step($old)]
                elif $variant == "event_only" then [step($tuple | sub("resolved"; "event"))]
-               elif $variant == "completed_noop" or $variant == "active_noop" then [step($tuple | sub("resolved"; "event")),step("Explain preview skip")]
+               elif $variant == "completed_noop" then [step($tuple | sub("resolved"; "event")), (step($tuple) | .conclusion = "skipped"), step("Explain preview skip")]
+               elif $variant == "active_noop" then [step($tuple | sub("resolved"; "event")),step("Explain preview skip")]
                elif $variant == "completed_old_noop" then [step($old | sub("resolved"; "event")),step("Explain preview skip")]
                elif $variant == "old_event_current_plan" then [step($old | sub("resolved"; "event")),step($tuple)]
                else [step($tuple),step($tuple | sub("resolved"; "event"))] end)}]
@@ -3134,6 +3273,7 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
       "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
       "$reconciler_pull_request_output"
     test ! -e "$FAKE_ANNOTATE_LOG"
+    test ! -e "$FAKE_RETRY_PATCH_LOG"
     test ! -e "$FAKE_DISPATCH_LOG"
   elif [[ "$tuple_case" == completed_success ]]; then
     grep -Fqx \
@@ -3321,6 +3461,7 @@ grep -Fq \
   'Skipping proof retry for PR #901: recent preview handoff lookup unavailable; retry budget unchanged.' \
   "$reconciler_unproven_dispatch_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_RETRY_PATCH_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
@@ -3491,6 +3632,7 @@ elif [[ "$observation_case" == consumer-stale-attempt || "$observation_case" == 
     "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
     "$reconciler_active_status_advance_output"
   test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
   test ! -e "$FAKE_DISPATCH_LOG"
 elif [[ "$observation_case" == consumer-finished ]]; then
   grep -Fqx 'Skipping PR #901: proof completed before retry dispatch.' "$reconciler_active_status_advance_output"
@@ -3526,11 +3668,14 @@ for namespace_count_sequence in 2,1 2,2; do
       PREVIEW_MAX_ACTIVE=2 \
       bash "$RECONCILER_RUN"
   ) > "$reconciler_capacity_refresh_output"
-  test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
   if [[ "$namespace_count_sequence" == 2,1 ]]; then
+    # A newly available slot proceeds through the final dispatch fence,
+    # requiring an additional capacity sample while the Namespace is absent.
+    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 3
     grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
     test -s "$FAKE_DISPATCH_LOG"
   else
+    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
     grep -Fq 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
       "$reconciler_capacity_refresh_output"
     test ! -e "$FAKE_DISPATCH_LOG"
@@ -3995,6 +4140,7 @@ test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 reset_case
 reconciler_recreated_output="$TEMP_DIR/reconciler-recreated-during-repair.out"
 (
+  cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_NAMESPACE_UID=uid-observed FAKE_PR_901_RECHECK_NAMESPACE_UID=uid-recreated \

@@ -33,7 +33,7 @@ if [[ "$*" == *"/pulls/7" ]]; then
 fi
 if [[ "$*" == *"/git/ref/heads/"* ]]; then
   case "${GH_FIXTURE:-}" in
-    branch_runs|branch_unpromoted_current|branch_newer_noop|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
+    branch_wrong|branch_runs|branch_unpromoted_current|branch_newer_noop|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
       printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$head_sha"
       ;;
     branch_ref_unavailable)
@@ -102,7 +102,19 @@ case "${GH_FIXTURE:-}" in
     esac
     ;;
   branch_wrong)
-    printf '[{"workflow_runs":[{"id":104,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z"},{"id":105,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/105","display_title":"Build Runtime Images trusted-branch sha-%s branch-develop","created_at":"2026-09-21T00:03:00Z"}]}]' "$head_sha" "$head_sha"
+    first="$(printf '{"id":104,"run_attempt":1,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
+    second="$(printf '{"id":105,"run_attempt":1,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/105","display_title":"Build Runtime Images trusted-branch sha-%s branch-develop","created_at":"2026-09-21T00:03:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
+    case "$*" in
+      *actions/runs/104) printf '%s' "$first" ;;
+      *actions/runs/105) printf '%s' "$second" ;;
+      *actions/runs/104/attempts/1/jobs?per_page=100|*actions/runs/105/attempts/1/jobs?per_page=100)
+        run_id=104
+        [[ "$*" != *actions/runs/105/* ]] || run_id=105
+        printf '{"total_count":1,"jobs":[{"run_id":%s,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"success","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"success"}]}]}' "$run_id"
+        ;;
+      *actions/workflows/runtime-images.yml/runs?*) printf '[{"workflow_runs":[%s,%s]}]' "$first" "$second" ;;
+      *) echo "Unexpected API request in $GH_FIXTURE fixture" >&2; exit 2 ;;
+    esac
     ;;
   branch_newer_noop|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
     source="$(printf '{"id":103,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
@@ -133,7 +145,7 @@ case "${GH_FIXTURE:-}" in
       *actions/runs/102/attempts/1/jobs?per_page=100)
         conclusion=success
         [[ "$GH_FIXTURE" != branch_older_unproved ]] || conclusion=failure
-        printf '{"total_count":1,"jobs":[{"run_id":102,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"%s","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"%s"}]}]}' "$conclusion" "$conclusion"
+        printf '{"total_count":1,"jobs":[{"run_id":102,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"success","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"%s"}]}]}' "$conclusion"
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
         printf '[{"workflow_runs":[%s,%s]}]' "$source" "$older"

@@ -150,7 +150,7 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
 def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None):
     values = {
         "github.event.changes.base.ref": repr(base_ref),
-        "github.event.pull_request.number": str(pr_number),
+        "github.event.pull_request.number": repr("") if push_branch else str(pr_number),
         "github.event.action": repr(action),
         "github.event_name": repr("push" if push_branch else "pull_request"),
         "github.workflow": repr(workflow_name),
@@ -325,8 +325,11 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     if not pr_only and not evaluate(gate["if"], None, None, event="push"):
         raise SystemExit(f"{workflow} {gate_name} must still run on push")
     needs = gate.get("needs")
-    if "changes" not in (needs if isinstance(needs, list) else [needs]):
+    needs = needs if isinstance(needs, list) else [needs]
+    if "changes" not in needs:
         raise SystemExit(f"{workflow} {gate_name} must depend on change detection")
+    if workflow == "codeql.yml" and "analyze" not in needs:
+        raise SystemExit(f"{workflow} {gate_name} must depend directly on analyze")
     compatibility = [step for step in gate.get("steps", []) if step.get("name") == "Preserve successful required gate on metadata-only edit"]
     expected_compatibility = [{"name": "Preserve successful required gate on metadata-only edit", "if": "${{ !always() }}", "run": ":"}] if workflow == "ci.yml" else []
     if compatibility != expected_compatibility:
@@ -417,6 +420,10 @@ for branch in ("main", "develop"):
             ("push", branch),
             effective_group(data["concurrency"]["group"], None, None, data["name"], push_branch=branch),
         ))
+missing_pr_collision = "${{ github.event.pull_request.number == null && 'protected-main' || github.ref }}"
+assert effective_group(missing_pr_collision, None, None, push_branch="develop") == effective_group(
+    missing_pr_collision, None, None, push_branch="main"
+), "missing push PR context must expose a cross-branch collision"
 collisions = concurrency_group_collisions(rendered_substantive_groups)
 if collisions:
     first, second = collisions[0]
@@ -1020,6 +1027,16 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
         status: kind.startsWith("pending-native") ? "queued" : "completed",
         conclusion: kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
     }
+    if (kind.startsWith("pending-native-dual-") && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      const failed = kind.endsWith("-fails") && refreshInventoryReads > 1;
+      yield {data: [
+        {...source, id: 44, created_at: "2026-09-01T00:00:02Z",
+          status: failed ? "completed" : "queued", conclusion: failed ? "failure" : null},
+        source,
+      ]};
+      return;
+    }
     if (kind.startsWith("pending-native-inventory-") && input.event === "repository_dispatch") {
       refreshInventoryReads += 1;
       const forbidden = kind.endsWith("-forbidden");
@@ -1058,6 +1075,13 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   }
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
+  const dualPending = await scenario("pending-native-dual-stays", "repository_dispatch");
+  assert(dualPending.refreshInventoryReads >= 2, "the pending refresh must receive a distinct final inventory read");
+  assert.deepEqual(dualPending.failures, [], "older proof remains usable while both newer candidates are still pending");
+  const dualFailed = await scenario("pending-native-dual-fails", "repository_dispatch");
+  assert(dualFailed.refreshInventoryReads >= 2);
+  assert(dualFailed.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
+  assert.equal(dualFailed.failures.length, 1, "a newly failed trusted refresh refuses older proof while native remains pending");
   for (const kind of ["pending-native-refresh-skipped", "pending-native-refresh-failed"]) {
     const result = await scenario(kind, "repository_dispatch");
     assert.equal(result.failures.length, 1, `${kind} cannot release queued native wait`);
