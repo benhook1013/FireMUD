@@ -144,7 +144,7 @@ jobs:
               if data.get(key) != value:
                   raise SystemExit(f"MinIO provenance {key} mismatch")
           expected_images = {
-              "server": ("ghcr.io/benhook1013/minio-server", "0c39917fe562b3c43c77e72327bc4351857c0050", "b5984027386ec1e55c504d27f42ef40a189cdb55"),
+              "server": ("ghcr.io/benhook1013/minio-server", "dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8", "dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8"),
               "client": ("ghcr.io/benhook1013/minio-client", "835afd0a86e9a3ed396b8162eabc98243c342e5f", "fdb36acbb1d793b6cca622a55e6292f0d52309f0"),
           }
           for name, (image_name, tag_object, source_commit) in expected_images.items():
@@ -267,7 +267,7 @@ jobs:
             echo '### Trusted MinIO source image publication'
             echo
             echo "- Develop source run SHA: $SOURCE_HEAD_SHA"
-            echo '- MinIO source commit: b5984027386ec1e55c504d27f42ef40a189cdb55'
+            echo '- MinIO server source: chainguard-forks/minio at dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8'
             echo '- MinIO Client source commit: fdb36acbb1d793b6cca622a55e6292f0d52309f0'
             echo "- Server: $SERVER_IMAGE_NAME@$SERVER_DIGEST"
             echo "- Client: $CLIENT_IMAGE_NAME@$CLIENT_DIGEST"

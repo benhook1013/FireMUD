@@ -68,6 +68,40 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   }
 
   @Test
+  void fenceUsesTheEarlierCallerOrOperationDeadlineOnTheWire() throws Exception {
+    for (long callerBudget : new long[] {2_000L, 30_000L}) {
+      var fixture = new Fixture();
+      var clock = mock(Clock.class);
+      long start = fixture.deadline - 5_000L;
+      AtomicLong now = new AtomicLong(start);
+      when(clock.millis()).thenAnswer(ignored -> now.get());
+      when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
+      fixture.completeWhoami(() -> now.addAndGet(30));
+      fixture.completeScriptLoad(() -> now.addAndGet(50));
+      fixture.completeEvaluation();
+      var owner =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+              fixture.redis, fixture.catalog, clock, mock());
+
+      owner.fenceCapacityExecutionOnce(
+          fixture.execution,
+          fixture.candidate,
+          fixture.assignment,
+          UUID.randomUUID(),
+          start + callerBudget);
+
+      long expectedBudget = Math.min(callerBudget, 5_000L);
+      assertThat(fixture.evaluationSubmissions).hasValue(1);
+      assertThat(fixture.evaluationDeadlineMillis).hasValue(start + expectedBudget);
+      verify(fixture.evaluation)
+          .get(
+              org.mockito.ArgumentMatchers.longThat(
+                  value -> value > 0 && value <= expectedBudget - 80),
+              eq(TimeUnit.MILLISECONDS));
+    }
+  }
+
+  @Test
   void unscopedCloseUsesOneAbsoluteDeadlineForEveryCommand() throws Exception {
     var fixture = new Fixture();
     var clock = mock(Clock.class);

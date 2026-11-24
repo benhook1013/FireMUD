@@ -5,6 +5,7 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.SetArgs;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -1322,6 +1323,60 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         secondInstallation =
             bridgeOwner.installForTransition(
                 installation, secondTransitionId, secondBinding.worldRequest());
+        // Exercise the exact same provisional transition and reused installation with a live
+        // grant (above) and with an expired grant, before bridge acknowledgement changes phase.
+        byte[] liveGrant = redis.admin().get(redisKey);
+        Long originalExpiryMillis = redis.admin().pexpiretime(redisKey);
+        if (liveGrant == null
+            || originalExpiryMillis == null
+            || originalExpiryMillis <= 0L
+            || !redis.admin().pexpire(redisKey, 0L)) {
+          throw new IllegalStateException("Fixture requires a live reused region grant to expire");
+        }
+        boolean expiredProvisionalGrantRejectedWithoutStateChange;
+        try {
+          List<List<String>> sqlBeforeExpiredGrant =
+              snapshotRegionOwnerSqlState(
+                  dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+          RegionRedisState redisBeforeExpiredGrant =
+              snapshotRegionRedisState(redis, redisKey, initialMetaKey);
+          boolean rejectedAtCurrentGrantCheck = false;
+          try {
+            bridgeOwner.installForTransition(
+                installation, secondTransitionId, secondBinding.worldRequest());
+          } catch (IllegalStateException expected) {
+            rejectedAtCurrentGrantCheck =
+                Arrays.stream(expected.getStackTrace())
+                    .anyMatch(frame ->
+                        frame
+                                .getClassName()
+                                .equals(CanonicalGameplayRegionLeaseRedisOwner.class.getName())
+                            && frame.getMethodName().equals("requireCurrent"));
+          }
+          expiredProvisionalGrantRejectedWithoutStateChange =
+              rejectedAtCurrentGrantCheck
+                  && sqlBeforeExpiredGrant.equals(
+                      snapshotRegionOwnerSqlState(
+                          dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))
+                  && redisBeforeExpiredGrant.equals(
+                      snapshotRegionRedisState(redis, redisKey, initialMetaKey));
+          if (!expiredProvisionalGrantRejectedWithoutStateChange) {
+            throw new IllegalStateException(
+                "Expired provisional grant did not fail at currentness without state changes");
+          }
+        } finally {
+          // Restore only this isolated fixture's grant at Redis's original absolute deadline.
+          // NX prevents the fixture from overwriting any unexpected replacement.
+          if (!"OK"
+                  .equals(
+                      redis
+                          .admin()
+                          .set(
+                              redisKey, liveGrant, SetArgs.Builder.pxAt(originalExpiryMillis).nx()))
+              || !originalExpiryMillis.equals(redis.admin().pexpiretime(redisKey))) {
+            throw new IllegalStateException("Fixture could not restore the original reuse lease");
+          }
+        }
       }
       var secondAcknowledgement = secondBridgeOwner.bridge(secondInstallation).obligation();
       var secondLostReplyRetry = secondBridgeOwner.bridge(secondInstallation).obligation();

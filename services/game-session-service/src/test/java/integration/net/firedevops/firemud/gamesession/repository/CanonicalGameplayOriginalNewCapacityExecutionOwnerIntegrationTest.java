@@ -151,6 +151,49 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(physicalImage()).isEqualTo(physical);
   }
 
+  @Test
+  void activeRecordCeilingRefusesADifferentOriginBelowTheRetainedCeilings() throws Exception {
+    repairAccountMember();
+    bridge(false, 1, 134217728L);
+    var dsl = fixture.dsl();
+    var attempt = controlledCapacity.request().admissionAttemptId();
+    var tenant = controlledCapacity.request().identity().tenantId();
+    dsl.execute(
+        "UPDATE game_session_capacity_evidence_budget SET maximum_retained_records = 2"
+            + " WHERE tenant_id = ?",
+        tenant);
+    UUID otherAttempt = UUID.randomUUID();
+    UUID otherRequest = UUID.randomUUID();
+    // Isolate the physical active-record trigger. The usual same-origin owner replay would
+    // reject before reaching the INSERT, so use a distinct request with the valid candidate.
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id, tenant_id,"
+                    + " request_id, admission_id, capacity_rearm_fence, mutation_digest,"
+                    + " candidate_digest, selected_owner_id, selected_owner_fence,"
+                    + " reserved_binding_bytes)"
+                    + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence, mutation_digest,"
+                    + " candidate_digest, selected_owner_id, selected_owner_fence,"
+                    + " reserved_binding_bytes FROM game_session_capacity_evidence_charge"
+                    + " WHERE admission_attempt_id = ?",
+                otherAttempt,
+                otherRequest,
+                attempt))
+        .isInstanceOfSatisfying(
+            org.jooq.exception.DataAccessException.class,
+            failure -> {
+              assertThat(failure.sqlState()).isEqualTo("23514");
+              assertThat(failure).hasMessageContaining("Capacity evidence budget is exhausted");
+            });
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT admission_attempt_id FROM game_session_capacity_evidence_charge"
+                        + " WHERE tenant_id = ?",
+                    tenant)
+                .get(0, UUID.class))
+        .isEqualTo(attempt);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.CsvSource({"1,134217728", "128,1048576"})
   void lastPrechargedCapacityEvidenceSlotSurvivesFullBudgetAndSameAttemptReplay(
@@ -435,7 +478,15 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             .isInstanceOf(java.util.concurrent.ExecutionException.class)
             .cause()
             .isExactlyInstanceOf(IllegalStateException.class)
-            .hasMessage("Original NEW capacity execution is indeterminate");
+            .hasMessage("Original NEW capacity execution is indeterminate")
+            .satisfies(failure ->
+                assertThat(java.util.Arrays.asList(failure.getStackTrace()))
+                    .anySatisfy(frame -> {
+                      assertThat(frame.getClassName())
+                          .isEqualTo(
+                              CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getName());
+                      assertThat(frame.getMethodName()).isEqualTo("exactPhysicalBinding");
+                    }));
         assertThat(admin.type(tombstoneKey)).isEqualTo("none");
       }
       assertThat(executionReads.get()).isGreaterThanOrEqualTo(2);
