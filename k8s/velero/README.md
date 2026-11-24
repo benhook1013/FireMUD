@@ -87,7 +87,7 @@ aws_access_key_id=<same-local-user>
 aws_secret_access_key=<same-local-password>'
 ```
 
-Run the helper script to deploy MinIO, create the bucket, and install Velero. The helper creates the `minio` and `velero` namespaces as needed, creates or updates `minio-creds` and `velero-minio-creds` for you, does not require `PG_DUMP_BUCKET`, and reuses the existing MinIO secret on reruns unless you explicitly override `MINIO_ROOT_USER` or `MINIO_ROOT_PASSWORD`:
+Run the helper script from the repository with `kubectl` targeting your local cluster and Helm available. The cluster must be able to run the pinned Linux/amd64 MinIO images from GHCR. The helper deploys MinIO, creates the bucket in a disposable Job in the `minio` namespace, and installs Velero; it does not require host `mc`, host access to Kubernetes service DNS, or `PG_DUMP_BUCKET`. It creates the `minio` and `velero` namespaces as needed and manages `minio-creds` and `velero-minio-creds`. Reruns reuse the bucket and keep existing credentials unless you explicitly override `MINIO_ROOT_USER` or `MINIO_ROOT_PASSWORD`:
 
 ```bash
 dev-tools/backups/setup-local-backup.sh

@@ -1456,6 +1456,8 @@ with tempfile.TemporaryDirectory() as directory:
         ("success", "failure", "skipped", "deploy", None),
         ("success", "skipped", "skipped", "deploy", None),
         ("success", "success", "failure", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "cancelled", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
         ("success", "success", "success", "smoke", "before repeating readiness or smoke"),
     ):
         summary.write_text("", encoding="utf-8")
@@ -1498,6 +1500,11 @@ with tempfile.TemporaryDirectory() as directory:
                 raise SystemExit("unrecorded target received recorded-target advice")
         elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
             raise SystemExit("recorded target lacks the correct verification boundary")
+        if deployed == "success" and recorded == "success":
+            if bootstrap != "success" and "before repeating readiness or smoke" in evidence:
+                raise SystemExit("incomplete original bootstrap must not receive smoke verification advice")
+            if bootstrap == "success" and "refer bootstrap recovery to the affected owners" in evidence:
+                raise SystemExit("completed original bootstrap must not receive bootstrap replay advice")
 runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
 target_validator_call = (
     "bash ./dev-tools/hosted/dev-demo/validate-dev-demo-target.sh \\\n"
