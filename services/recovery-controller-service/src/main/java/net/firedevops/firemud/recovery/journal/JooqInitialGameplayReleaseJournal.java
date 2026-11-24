@@ -70,7 +70,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 peer_storage_binding, scope_payload, evidence_ref, scope_digest,
                 maintenance_lock_identity, phase, revision, created_at, updated_at
             ) VALUES (?, 'initial_gameplay_release', ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?, ?, ?, 'collecting', 1, CAST(? AS timestamptz), CAST(? AS timestamptz))
-            ON CONFLICT (operation_id) DO NOTHING
+            ON CONFLICT DO NOTHING
             """,
             scope.operationId(),
             scope.targetNamespace(),
@@ -82,7 +82,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             controllerIssuedLockIdentity,
             toOffsetDateTime(now),
             toOffsetDateTime(now));
-        Operation operation = selectOperation(tx, scope.operationId(), true);
+        Operation operation = selectOperationOrNull(tx, scope.operationId(), true);
+        if (operation == null) {
+          throw conflict("maintenance-lock identity is already bound");
+        }
         requireSameScope(operation.scope(), scope, scopeDigest);
         return operation;
       });
@@ -274,10 +277,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           || current.state() == EffectOutboxState.ACKNOWLEDGED) {
         return current;
       }
-      if (current.state() == EffectOutboxState.RETRYABLE
-          && hasDurableNoEffectClosure(tx, current)
-          && !hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())) {
-        throw conflict("durable owner closure has no retained attempt identity");
+      if (current.state() == EffectOutboxState.RETRYABLE) {
+        requireExactClosureBeforeRetry(tx, current);
       }
       requirePhaseForEffect(operation.phase(), current.effect().kind());
       int changed =
@@ -898,7 +899,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     return true;
   }
 
-  private boolean hasDurableNoEffectClosure(DSLContext tx, OutboxEntry current) {
+  private void requireExactClosureBeforeRetry(DSLContext tx, OutboxEntry current) {
     Record stored =
         tx.fetchOne(
             "SELECT readback_payload, readback_digest FROM "
@@ -912,7 +913,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     JSONB payload = stored.get("readback_payload", JSONB.class);
     String digest = stored.get("readback_digest", String.class);
     if (payload == null && digest == null) {
-      return false;
+      return;
     }
     if (payload == null || digest == null) {
       throw conflict("retained effect readback is incomplete");
@@ -923,7 +924,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     requireReadbackMatches(
         saved, current, current.effect().operationId(), current.effect().effectId());
-    return saved.state() == EffectReadbackState.PROVEN_NO_EFFECT;
+    if (saved.state() == EffectReadbackState.PROVEN_NO_EFFECT) {
+      requireRetainedClosureMatchesStoredReadback(tx, current, stored, digest);
+    }
   }
 
   private void requireValidExactStoredReadback(

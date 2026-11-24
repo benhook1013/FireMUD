@@ -1,7 +1,6 @@
 spring:
   autoconfigure:
     exclude:
-      - net.firedevops.firemud.common.config.DatabaseAutoConfiguration
       - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
   application:
     name: recovery-controller-service

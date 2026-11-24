@@ -37,7 +37,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     try {
       Binder binder = Binder.get(environment);
       String url = "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
-      requireMatchingOverride(binder, "spring.datasource.url", url);
+      var primaryUrl = binder.bind("spring.datasource.url", String.class);
+      if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
+        throw new IllegalStateException("Recovery primary datasource URL must be bound exactly");
+      }
       requireMatchingOverride(binder, "spring.datasource.hikari.jdbc-url", url);
       String user = environment.getProperty("FIREMUD_RECOVERY_CONTROL_DB_USER");
       String password = environment.getProperty("FIREMUD_RECOVERY_CONTROL_DB_PASSWORD");

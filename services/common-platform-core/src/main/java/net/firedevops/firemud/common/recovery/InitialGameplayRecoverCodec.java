@@ -63,84 +63,85 @@ public final class InitialGameplayRecoverCodec {
 
   /**
    * Reads bounded raw UTF-8 in the declared member order without a generic tree/map decoder. The
-   * complete byte array is checked before UTF-8 decoding or parser allocation. Because each encoded
-   * token is part of that array, it cannot exceed 16,384 raw bytes. There is no separate raw-token
-   * check: the 4,096 limits apply to decoded string length and UTF-8 bytes, not its escaped JSON
-   * spelling. Malformed UTF-8 is rejected, not repaired. Field-specific text limits still apply
-   * before and after NFC.
+   * complete byte array is checked before UTF-8 decoding or parser allocation. Each string token's
+   * original byte span is validated in the same bounded input, without copying the token. The 4,096
+   * limits apply to decoded string length and UTF-8 bytes, not its escaped JSON spelling. Malformed
+   * UTF-8 is rejected, not repaired. Field-specific text limits still apply before and after NFC.
+   * Raw string spans never enter the canonical digest.
    */
   public static InitialGameplayRecoverRequest decode(byte[] raw) {
     Objects.requireNonNull(raw, "raw");
     if (raw.length > MAX_RAW_BYTES) throw invalid();
-    final String decoded;
+    // Bind framing, the parser and every span to one immutable-in-practice bounded snapshot.
+    byte[] input = raw.clone();
+    requireUtf8ObjectFraming(input);
     try {
-      decoded =
-          StandardCharsets.UTF_8
-              .newDecoder()
-              .onMalformedInput(CodingErrorAction.REPORT)
-              .onUnmappableCharacter(CodingErrorAction.REPORT)
-              .decode(ByteBuffer.wrap(raw))
-              .toString();
+      StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(input));
     } catch (CharacterCodingException exception) {
       throw new IllegalArgumentException("Recover request must be valid UTF-8", exception);
     }
-    try (JsonParser parser = JSON.createParser(decoded)) {
+    try (JsonParser parser = JSON.createParser(input)) {
       require(parser.nextToken(), JsonToken.START_OBJECT);
+      var tokens = new TokenInput(parser, input);
       literal(
-          parser, "actionFamilySchemaId", InitialGameplayRecoverRequest.ACTION_FAMILY_SCHEMA_ID);
+          tokens, "actionFamilySchemaId", InitialGameplayRecoverRequest.ACTION_FAMILY_SCHEMA_ID);
       literal(
-          parser,
+          tokens,
           "actionFamilySchemaVersion",
           InitialGameplayRecoverRequest.ACTION_FAMILY_SCHEMA_VERSION);
       var requestId =
-          InitialGameplayRecoverRequest.parseUuid(string(parser, "controlPlaneRequestId"));
-      literal(parser, "targetOwner", InitialGameplayRecoverRequest.TARGET_OWNER);
-      start(parser, "scope");
+          InitialGameplayRecoverRequest.parseUuid(string(tokens, "controlPlaneRequestId"));
+      literal(tokens, "targetOwner", InitialGameplayRecoverRequest.TARGET_OWNER);
+      start(tokens, "scope");
       Scope scope =
           new Scope(
-              InitialGameplayRecoverRequest.parseUuid(string(parser, "canonicalTenantId")),
-              string(parser, "targetNamespace"),
-              InitialGameplayRecoverRequest.parseUuid(string(parser, "playableStateNamespaceId")));
+              InitialGameplayRecoverRequest.parseUuid(string(tokens, "canonicalTenantId")),
+              string(tokens, "targetNamespace"),
+              InitialGameplayRecoverRequest.parseUuid(string(tokens, "playableStateNamespaceId")));
       end(parser);
-      start(parser, "target");
-      start(parser, "launchAssociation");
+      start(tokens, "target");
+      start(tokens, "launchAssociation");
       LaunchAssociation association =
           new LaunchAssociation(
-              InitialGameplayRecoverRequest.parseUuid(string(parser, "gameInstanceUuid")),
+              InitialGameplayRecoverRequest.parseUuid(string(tokens, "gameInstanceUuid")),
               InitialGameplayRecoverRequest.parseUuid(
-                  string(parser, "tenantAssociationOperationId")),
-              string(parser, "worldSlug"),
+                  string(tokens, "tenantAssociationOperationId")),
+              string(tokens, "worldSlug"),
               InitialGameplayRecoverRequest.parseUuid(
-                  string(parser, "launchControlPlaneRequestId")),
-              string(parser, "launchDescriptorId"),
-              string(parser, "descriptorRequestDigest"),
-              string(parser, "descriptorResultDigest"),
-              string(parser, "releaseAttestationEvidenceDigest"));
+                  string(tokens, "launchControlPlaneRequestId")),
+              string(tokens, "launchDescriptorId"),
+              string(tokens, "descriptorRequestDigest"),
+              string(tokens, "descriptorResultDigest"),
+              string(tokens, "releaseAttestationEvidenceDigest"));
       end(parser);
-      start(parser, "peerStorageBinding");
+      start(tokens, "peerStorageBinding");
       PeerStorageBinding binding =
           new PeerStorageBinding(
-              string(parser, "targetNamespace"), string(parser, "clusterIdentity"),
-              string(parser, "peerWorkloadIdentity"), string(parser, "storageIdentity"),
-              string(parser, "storageRevision"), string(parser, "bindingDigest"));
+              string(tokens, "targetNamespace"), string(tokens, "clusterIdentity"),
+              string(tokens, "peerWorkloadIdentity"), string(tokens, "storageIdentity"),
+              string(tokens, "storageRevision"), string(tokens, "bindingDigest"));
       end(parser);
       Target target =
           new Target(
               association,
               binding,
-              string(parser, "evidenceRef"),
-              string(parser, "evidenceDigest"));
+              string(tokens, "evidenceRef"),
+              string(tokens, "evidenceDigest"));
       end(parser);
-      start(parser, "mutation");
-      var operationId = InitialGameplayRecoverRequest.parseUuid(string(parser, "operationId"));
-      literal(parser, "verb", "recover");
-      literal(parser, "workflow", "initial-gameplay-release");
-      literal(parser, "maintenanceLockPresence", "RESULT_ONLY");
+      start(tokens, "mutation");
+      var operationId = InitialGameplayRecoverRequest.parseUuid(string(tokens, "operationId"));
+      literal(tokens, "verb", "recover");
+      literal(tokens, "workflow", "initial-gameplay-release");
+      literal(tokens, "maintenanceLockPresence", "RESULT_ONLY");
       end(parser);
-      start(parser, "auditReason");
-      literal(parser, "code", "INITIAL_GAMEPLAY_RELEASE");
+      start(tokens, "auditReason");
+      literal(tokens, "code", "INITIAL_GAMEPLAY_RELEASE");
       AuditReason reason =
-          new AuditReason(AuditReasonCode.INITIAL_GAMEPLAY_RELEASE, string(parser, "detail"));
+          new AuditReason(AuditReasonCode.INITIAL_GAMEPLAY_RELEASE, string(tokens, "detail"));
       end(parser);
       end(parser);
       if (parser.nextToken() != null) throw invalid();
@@ -285,26 +286,78 @@ public final class InitialGameplayRecoverCodec {
     output.writeBytes(bytes);
   }
 
-  private static String string(JsonParser parser, String name) throws IOException {
-    member(parser, name);
+  private record TokenInput(JsonParser parser, byte[] original) {
+    RawStringSpan stringSpan() {
+      long location = parser.currentTokenLocation().getByteOffset();
+      if (location < 0 || location >= original.length || original[(int) location] != '"') {
+        throw invalid();
+      }
+      // Retain the original token span as a view over the bounded bytes. Jackson separately
+      // enforces the escape grammar and supplies the decoded text for pre-NFC field checks.
+      for (int cursor = (int) location + 1; cursor < original.length; cursor++) {
+        byte octet = original[cursor];
+        if (octet == '"') return new RawStringSpan(original, (int) location, cursor + 1);
+        if (octet == '\\') {
+          if (++cursor >= original.length) throw invalid();
+        } else if (octet >= 0 && octet < 0x20) {
+          throw invalid();
+        }
+      }
+      throw invalid();
+    }
+  }
+
+  private record RawStringSpan(byte[] bytes, int start, int exclusiveEnd) {
+    void requireBounded() {
+      if (start < 0
+          || exclusiveEnd - start < 2
+          || exclusiveEnd > bytes.length
+          || exclusiveEnd - start > MAX_RAW_BYTES
+          || bytes[start] != '"'
+          || bytes[exclusiveEnd - 1] != '"') {
+        throw invalid();
+      }
+    }
+  }
+
+  private static void requireUtf8ObjectFraming(byte[] input) {
+    boolean objectStarted = false;
+    for (byte octet : input) {
+      boolean whitespace = octet == ' ' || octet == '\t' || octet == '\n' || octet == '\r';
+      if (!objectStarted && !whitespace) {
+        if (octet != '{') throw invalid();
+        objectStarted = true;
+      }
+      // Disallow raw control bytes and prevent Jackson's UTF-16/32 byte-prefix auto-detection.
+      if (octet >= 0 && octet < 0x20 && !whitespace) throw invalid();
+    }
+    if (!objectStarted) throw invalid();
+  }
+
+  private static String string(TokenInput input, String name) throws IOException {
+    member(input, name);
+    JsonParser parser = input.parser();
     require(parser.nextToken(), JsonToken.VALUE_STRING);
+    input.stringSpan().requireBounded();
     String decoded = parser.getText();
     InitialGameplayRecoverRequest.text(decoded, MAX_DECODED_STRING_UTF8_BYTES);
     // Field constructors need the original decoded value to enforce pre-NFC byte limits.
     return decoded;
   }
 
-  private static void literal(JsonParser parser, String name, String value) throws IOException {
-    if (!value.equals(string(parser, name))) throw invalid();
+  private static void literal(TokenInput input, String name, String value) throws IOException {
+    if (!value.equals(string(input, name))) throw invalid();
   }
 
-  private static void start(JsonParser parser, String name) throws IOException {
-    member(parser, name);
-    require(parser.nextToken(), JsonToken.START_OBJECT);
+  private static void start(TokenInput input, String name) throws IOException {
+    member(input, name);
+    require(input.parser().nextToken(), JsonToken.START_OBJECT);
   }
 
-  private static void member(JsonParser parser, String name) throws IOException {
+  private static void member(TokenInput input, String name) throws IOException {
+    JsonParser parser = input.parser();
     require(parser.nextToken(), JsonToken.FIELD_NAME);
+    input.stringSpan().requireBounded();
     if (!name.equals(parser.currentName())) throw invalid();
   }
 

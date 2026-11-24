@@ -39,7 +39,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
                 new MockEnvironment()
                     .withProperty(
                         RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
-                        "localhost"),
+                        "localhost")
+                    .withProperty("spring.datasource.url", recoveryUrl("localhost", "5432")),
                 new SpringApplication()))
         .doesNotThrowAnyException();
   }
@@ -64,7 +65,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
                 new MockEnvironment()
                     .withProperty(
                         RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
-                        "recovery-control.invalid"),
+                        "recovery-control.invalid")
+                    .withProperty("spring.datasource.url", recoveryUrl("recovery-control.invalid", "5432")),
                 new SpringApplication()))
         .doesNotThrowAnyException();
   }
@@ -90,7 +92,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         new MockEnvironment()
             .withProperty(
                 RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, "localhost")
-            .withProperty(RecoveryControlDatabaseHostEnvironmentPostProcessor.PORT_PROPERTY, port);
+            .withProperty(RecoveryControlDatabaseHostEnvironmentPostProcessor.PORT_PROPERTY, port)
+            .withProperty("spring.datasource.url", recoveryUrl("localhost", port));
     assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .doesNotThrowAnyException();
   }
@@ -109,7 +112,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   void acceptsOnlySupportedSingleHostForms(String host) {
     var environment =
         new MockEnvironment()
-            .withProperty(RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, host);
+            .withProperty(RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, host)
+            .withProperty("spring.datasource.url", recoveryUrl(host, "5432"));
     assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .doesNotThrowAnyException();
   }
@@ -238,8 +242,27 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .hasNoCause();
   }
 
+  @Test
+  void requiresExplicitPrimaryRecoveryUrlEvenWhenHikariHasTheExactEndpoint() {
+    var environment =
+        new MockEnvironment()
+            .withProperty(
+                RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, "localhost")
+            .withProperty("spring.datasource.hikari.jdbc-url", recoveryUrl("localhost", "5432"));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("dedicated datasource")
+        .hasNoCause();
+  }
+
+  private static String recoveryUrl(String host, String port) {
+    return "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
+  }
+
   private static MockEnvironment fixtureEnvironment() {
     return new MockEnvironment()
+        .withProperty("spring.datasource.url", recoveryUrl("localhost", "5432"))
         .withProperty(
             RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, "localhost")
         .withProperty("FIREMUD_RECOVERY_CONTROL_DB_USER", "fixture-user")

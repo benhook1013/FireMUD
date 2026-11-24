@@ -861,102 +861,110 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(replacement);
   }
 
-  @Test
-  void noEffectReplayRequiresExactOriginalClosureHistory() {
-    for (String variant :
-        List.of(
-            "missing",
-            "ordinal",
-            "digest",
-            "attempt",
-            "receipt",
-            "observation",
-            "dispatch",
-            "outbox-observation")) {
-      clearJournal();
-      Instant base = Instant.parse("2026-09-01T00:00:00Z");
-      OutboxEntry dispatch = authorizedDispatch(base);
-      UUID operationId = dispatch.effect().operationId();
-      UUID effectId = dispatch.effect().effectId();
-      EffectReadback original =
+  @ParameterizedTest(name = "{0}")
+  @ValueSource(
+      strings = {
+        "missing",
+        "ordinal",
+        "digest",
+        "attempt",
+        "receipt",
+        "observation",
+        "dispatch",
+        "outbox-observation"
+      })
+  void noEffectReplayRequiresExactOriginalClosureHistory(String variant) {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    EffectReadback original =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "original-closure",
+            base.plusSeconds(5));
+    Operation operation = journal.recordEffectReadback(dispatch, original, base.plusSeconds(7));
+    if (variant.equals("missing")) {
+      dsl.execute(
+          "DELETE FROM recovery_control.initial_gameplay_release_attempt_closure WHERE outbox_id=?",
+          dispatch.outboxId());
+    } else if (variant.equals("ordinal")) {
+      dsl.execute(
+          "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET attempt_ordinal=2 WHERE outbox_id=?",
+          dispatch.outboxId());
+    } else if (variant.equals("digest")) {
+      dsl.execute(
+          "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET readback_digest=? WHERE outbox_id=?",
+          "c".repeat(64),
+          dispatch.outboxId());
+    } else if (variant.equals("dispatch")) {
+      dsl.execute(
+          "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET dispatched_at=CAST(? AS timestamptz) WHERE outbox_id=?",
+          base.plusSeconds(6).atOffset(ZoneOffset.UTC),
+          dispatch.outboxId());
+    } else if (variant.equals("outbox-observation")) {
+      EffectReadback altered =
           readbackFor(
               dispatch,
               dispatch.lastAttemptId(),
               EffectReadbackState.PROVEN_NO_EFFECT,
-              "original-closure",
-              base.plusSeconds(5));
-      Operation operation = journal.recordEffectReadback(dispatch, original, base.plusSeconds(7));
-      if (variant.equals("missing")) {
-        dsl.execute(
-            "DELETE FROM recovery_control.initial_gameplay_release_attempt_closure WHERE outbox_id=?",
-            dispatch.outboxId());
-      } else if (variant.equals("ordinal")) {
-        dsl.execute(
-            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET attempt_ordinal=2 WHERE outbox_id=?",
-            dispatch.outboxId());
-      } else if (variant.equals("digest")) {
-        dsl.execute(
-            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET readback_digest=? WHERE outbox_id=?",
-            "c".repeat(64),
-            dispatch.outboxId());
-      } else if (variant.equals("dispatch")) {
-        dsl.execute(
-            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET dispatched_at=CAST(? AS timestamptz) WHERE outbox_id=?",
-            base.plusSeconds(6).atOffset(ZoneOffset.UTC),
-            dispatch.outboxId());
-      } else if (variant.equals("outbox-observation")) {
-        EffectReadback altered =
-            readbackFor(
-                dispatch,
-                dispatch.lastAttemptId(),
-                EffectReadbackState.PROVEN_NO_EFFECT,
-                original.readbackIdentity(),
-                base.plusSeconds(6));
-        dsl.execute(
-            "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE outbox_id=?",
-            tupleCodec.toJson(altered),
-            tupleCodec.digest(altered),
-            dispatch.outboxId());
+              original.readbackIdentity(),
+              base.plusSeconds(6));
+      dsl.execute(
+          "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE outbox_id=?",
+          tupleCodec.toJson(altered),
+          tupleCodec.digest(altered),
+          dispatch.outboxId());
+    } else {
+      EffectReadback altered =
+          readbackFor(
+              dispatch,
+              variant.equals("attempt") ? UUID.randomUUID() : dispatch.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              variant.equals("receipt") ? "conflicting-closure" : "original-closure",
+              variant.equals("observation") ? base.plusSeconds(6) : original.observedAt());
+      dsl.execute(
+          "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE outbox_id=?",
+          tupleCodec.toJson(altered),
+          tupleCodec.digest(altered),
+          dispatch.outboxId());
+    }
+    String outboxBefore = storedOutbox(operationId, effectId);
+    String closureBefore = variant.equals("missing") ? null : storedClosure(dispatch);
+    if (variant.equals("outbox-observation")) {
+      UUID replacementAttempt = UUID.randomUUID();
+      assertThatThrownBy(() ->
+              journal.claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(8)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("retained effect readback does not match exact replay");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(outboxBefore);
+      assertThat(storedClosure(dispatch)).isEqualTo(closureBefore);
+      assertThat(journal.find(operationId)).contains(operation);
+    }
+    for (Instant observation : List.of(original.observedAt(), base.plusSeconds(6))) {
+      EffectReadback replay =
+          readbackFor(
+              dispatch,
+              dispatch.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              original.readbackIdentity(),
+              observation);
+      assertThatThrownBy(() -> journal.recordEffectReadback(dispatch, replay, base.plusSeconds(8)))
+          .as(variant + " closure history must refuse both exact and later-observation replay")
+          .isInstanceOf(InitialGameplayReleaseConflictException.class);
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(outboxBefore);
+      assertThat(journal.find(operationId)).contains(operation);
+      assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+          .isEmpty();
+      if (closureBefore != null) {
+        assertThat(storedClosure(dispatch)).isEqualTo(closureBefore);
       } else {
-        EffectReadback altered =
-            readbackFor(
-                dispatch,
-                variant.equals("attempt") ? UUID.randomUUID() : dispatch.lastAttemptId(),
-                EffectReadbackState.PROVEN_NO_EFFECT,
-                variant.equals("receipt") ? "conflicting-closure" : "original-closure",
-                variant.equals("observation") ? base.plusSeconds(6) : original.observedAt());
-        dsl.execute(
-            "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE outbox_id=?",
-            tupleCodec.toJson(altered),
-            tupleCodec.digest(altered),
-            dispatch.outboxId());
-      }
-      String outboxBefore = storedOutbox(operationId, effectId);
-      String closureBefore = variant.equals("missing") ? null : storedClosure(dispatch);
-      for (Instant observation : List.of(original.observedAt(), base.plusSeconds(6))) {
-        EffectReadback replay =
-            readbackFor(
-                dispatch,
-                dispatch.lastAttemptId(),
-                EffectReadbackState.PROVEN_NO_EFFECT,
-                original.readbackIdentity(),
-                observation);
-        assertThatThrownBy(
-                () -> journal.recordEffectReadback(dispatch, replay, base.plusSeconds(8)))
-            .as(variant + " closure history must refuse both exact and later-observation replay")
-            .isInstanceOf(InitialGameplayReleaseConflictException.class);
-        assertThat(storedOutbox(operationId, effectId)).isEqualTo(outboxBefore);
-        assertThat(journal.find(operationId)).contains(operation);
-        assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
-            .isEmpty();
-        if (closureBefore != null) {
-          assertThat(storedClosure(dispatch)).isEqualTo(closureBefore);
-        } else {
-          assertThat(
-                  dsl.fetchCount(
-                      DSL.table("recovery_control.initial_gameplay_release_attempt_closure")))
-              .isZero();
-        }
+        assertThat(
+                dsl.fetchCount(
+                    DSL.table("recovery_control.initial_gameplay_release_attempt_closure")))
+            .isZero();
       }
     }
   }
