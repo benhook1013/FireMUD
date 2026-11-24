@@ -22,6 +22,8 @@ metadata:
   namespace: minio
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: minio
@@ -32,7 +34,8 @@ spec:
     spec:
       containers:
         - name: minio
-          image: quay.io/minio/minio:latest
+          # Use the immutable server image from docker/docker-compose.yml.
+          image: ghcr.io/benhook1013/minio-server@sha256:94ece65e582c8410b62f04d956119da50ce423f23c8c02a76ff3a342b5cd5485
           args:
             - server
             - /data
@@ -49,6 +52,10 @@ spec:
                   key: secretkey
           ports:
             - containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
           volumeMounts:
             - name: data
               mountPath: /data
