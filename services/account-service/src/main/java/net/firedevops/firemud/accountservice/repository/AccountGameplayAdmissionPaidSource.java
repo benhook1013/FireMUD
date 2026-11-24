@@ -112,6 +112,11 @@ public final class AccountGameplayAdmissionPaidSource {
       throw new IllegalStateException("Original paid NEW source observation required");
     }
     var receipt = reader(exactDsl).readCurrent(observation.preparation.fence, observation.result);
+    requireReceiptStillCurrent(receipt);
+    return receipt;
+  }
+
+  void requireReceiptStillCurrent(AccountHostingSubscriptionCurrentReceipt receipt) {
     Instant now = clock.instant();
     if (receipt.evaluatedAt() == null
         || receipt.validUntil() == null
@@ -119,7 +124,6 @@ public final class AccountGameplayAdmissionPaidSource {
         || !now.isBefore(receipt.validUntil())) {
       throw new IllegalStateException("Current paid NEW source has expired");
     }
-    return receipt;
   }
 
   private AccountHostingSubscriptionLifecycleRepository reader(DSLContext exactDsl) {

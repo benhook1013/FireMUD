@@ -137,6 +137,7 @@ import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -439,6 +440,55 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   }
 
   @Test
+  void paidReceiptExpiringDuringFinalCallerSourceReadIsUnavailableWithoutWrites() throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    var observed = paid.prepare().observeOutsideSql();
+    long validUntil = paid.read(observed).sourceValidUntilMs();
+    Instant pastDeadline = Instant.ofEpochMilli(validUntil).plusMillis(1);
+    UUID originalJti = caller.committedCandidate.identity().tokenJti();
+    int providerReads = paid.hosting().transport().reads();
+    var before = caller.sourceAndIssuanceImage();
+    var reachedCallerRead = new AtomicBoolean();
+    // This exact issuance SELECT is downstream of the paid receipt read and early clock check.
+    var expireDuringCallerRead =
+        ExecuteListener.onExecuteEnd(
+            ctx -> {
+              String sql = ctx.sql();
+              var query = ctx.query();
+              if (sql != null
+                  && sql.contains(
+                      "SELECT request_id FROM account_gameplay_delegation_issuance_operations")
+                  && sql.contains("WHERE token_jti = ? AND status = 'COMMITTED'")
+                  && query != null
+                  && query.getBindValues().equals(List.of(originalJti))
+                  && reachedCallerRead.compareAndSet(false, true)) {
+                assertThat(paid.hosting().clock().instant())
+                    .isBefore(Instant.ofEpochMilli(validUntil));
+                paid.hosting().clock().advanceToAtLeast(pastDeadline);
+              }
+            });
+
+    assertThatThrownBy(
+            () ->
+                caller.inCurrentSources(
+                    sources ->
+                        sources.readCurrentPublicProductionNew(
+                            paid.hosting().tenantId(),
+                            originalJti,
+                            caller.committedCandidate,
+                            observed),
+                    expireDuringCallerRead))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Current paid NEW source has expired");
+    assertThat(reachedCallerRead).isTrue();
+    assertThat(paid.hosting().clock().instant()).isEqualTo(pastDeadline);
+    assertThat(paid.hosting().transport().reads()).isEqualTo(providerReads);
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(before);
+    assertThat(caller.leaseOperationCount()).isZero();
+  }
+
+  @Test
   void paidObservationExpiryAndContradictoryProviderFactsCannotFinalizeTheOriginalLease()
       throws Exception {
     PaidFixture paid = newPaidFixture(null);
@@ -538,6 +588,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               requestId, jwt, candidate, target, BigInteger.ONE);
       var response = new AtomicReference<AccountGameplayAdmissionLeaseResponse>();
       var before = caller.sourceAndIssuanceImageForAuthenticatedCommit();
+      long acquisitionDatabaseMillis =
+          caller.inSerializableTransaction(caller::currentDatabaseMillisOnEnlistedConnection);
+      paid.hosting().clock().advanceToAtLeast(Instant.ofEpochMilli(acquisitionDatabaseMillis));
       withPeer(peer, () -> response.set(owner.acquire(acquire)));
       var lease =
           AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
@@ -3012,6 +3065,12 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private <T> T inCurrentSources(
         java.util.function.Function<AccountGameplayAdmissionCurrentSources, T> read) {
+      return inCurrentSources(read, null);
+    }
+
+    private <T> T inCurrentSources(
+        java.util.function.Function<AccountGameplayAdmissionCurrentSources, T> read,
+        ExecuteListener listener) {
       return serializable.execute(status -> {
         if (!TransactionSynchronizationManager.isActualTransactionActive()
             || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
@@ -3024,7 +3083,11 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           throw new IllegalStateException("Expected the manager-enlisted Account connection");
         }
         Connection connection = holder.getConnection();
-        DSLContext exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
+        DSLContext boundDsl = DSL.using(connection, SQLDialect.POSTGRES);
+        DSLContext exactDsl =
+            listener == null
+                ? boundDsl
+                : DSL.using(boundDsl.configuration().deriveAppending(listener));
         try {
           Integer backendBefore =
               exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);

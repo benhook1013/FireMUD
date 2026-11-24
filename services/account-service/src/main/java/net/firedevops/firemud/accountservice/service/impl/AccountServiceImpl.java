@@ -595,36 +595,38 @@ public class AccountServiceImpl implements AccountService {
       String requestId,
       String callerBinding) {
     // Retain the exact policy-independent intent before any fallible source/provider work.
-    joinTransactionTemplate.executeWithoutResult(status -> {
-      lockCanonicalScopeAccount(scope);
-      accountJoinOperationRepository.insertCanonicalIntent(requestId, scope, callerBinding);
-    });
-    return Objects.requireNonNull(
-        joinTransactionTemplate.execute(status -> {
-          // Lock the caller and distinct payer before source selection or a hosting read.
-          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
           lockCanonicalScopeAccount(scope);
-          CanonicalJoinOperationEvidence operation =
-              accountJoinOperationRepository
-                  .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                  .orElseThrow();
-          if ("FAILED".equals(operation.status())) {
-            return new CanonicalJoinPreparation(operation, null, null, null);
-          }
-          SourceSelection source =
-              consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
-          return switch (source.kind()) {
-            case PAID_HOSTING ->
-                new CanonicalJoinPreparation(
-                    operation,
-                    source,
-                    null,
-                    consumers.hosting().prepareCurrentRead(scope.tenantId()));
-            case NON_PAID_DEMO ->
-                new CanonicalJoinPreparation(
-                    operation, source, consumers.demos().readCurrent(scope.tenantId()), null);
-          };
-        }));
+          accountJoinOperationRepository.insertCanonicalIntent(requestId, scope, callerBinding);
+        });
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              // Lock the caller and distinct payer before source selection or a hosting read.
+              accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
+              lockCanonicalScopeAccount(scope);
+              CanonicalJoinOperationEvidence operation =
+                  accountJoinOperationRepository
+                      .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                      .orElseThrow();
+              if ("FAILED".equals(operation.status())) {
+                return new CanonicalJoinPreparation(operation, null, null, null);
+              }
+              SourceSelection source =
+                  consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+              return switch (source.kind()) {
+                case PAID_HOSTING ->
+                    new CanonicalJoinPreparation(
+                        operation,
+                        source,
+                        null,
+                        consumers.hosting().prepareCurrentRead(scope.tenantId()));
+                case NON_PAID_DEMO ->
+                    new CanonicalJoinPreparation(
+                        operation, source, consumers.demos().readCurrent(scope.tenantId()), null);
+              };
+            }));
   }
 
   private CanonicalJoinResult commitCanonicalJoin(
@@ -635,101 +637,105 @@ public class AccountServiceImpl implements AccountService {
       CanonicalJoinPreparation prepared,
       StripeHostingSubscriptionObserver.Result observation) {
     return Objects.requireNonNull(
-        joinTransactionTemplate.execute(status -> {
-          // The provider observation was outside SQL; reacquire the same Account lock order.
-          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
-          lockCanonicalScopeAccount(scope);
-          requireCanonicalScopeFresh(consumers, scope);
-          CanonicalJoinOperationEvidence lockedOperation =
-              accountJoinOperationRepository
-                  .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                  .orElseThrow();
-          if ("FAILED".equals(lockedOperation.status())) {
-            // Preparation precedes provider/target reads. Another exact attempt may have
-            // finished meanwhile, including before any policy evidence could be bound.
-            var retained =
+        joinTransactionTemplate.execute(
+            status -> {
+              // The provider observation was outside SQL; reacquire the same Account lock order.
+              accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
+              lockCanonicalScopeAccount(scope);
+              requireCanonicalScopeFresh(consumers, scope);
+              CanonicalJoinOperationEvidence lockedOperation =
+                  accountJoinOperationRepository
+                      .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                      .orElseThrow();
+              if ("FAILED".equals(lockedOperation.status())) {
+                // Preparation precedes provider/target reads. Another exact attempt may have
+                // finished meanwhile, including before any policy evidence could be bound.
+                var retained =
+                    accountJoinOperationRepository.finishCanonicalFailure(
+                        requestId, scope, callerBinding, lockedOperation.outcome());
+                return new CanonicalJoinResult(retained.outcome(), null, false, true);
+              }
+              SourceSelection current =
+                  consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+              if (current.kind() != prepared.source().kind()
+                  || !prepared.source().matches(current.checkpoint())) {
+                throw new AuthenticationException(
+                    "ENTITLEMENT_UNAVAILABLE", "Tenant source changed");
+              }
+              final boolean gameplayAvailable;
+              final boolean allowPublicJoin;
+              final long entitlementVersion;
+              if (prepared.fence() != null) {
+                AccountHostingSubscriptionCurrentReceipt receipt =
+                    consumers.hosting().readCurrent(prepared.fence(), observation);
+                gameplayAvailable = receipt.gameplayAvailable();
+                allowPublicJoin = receipt.allowPublicJoin();
+                entitlementVersion = receipt.entitlementVersion();
+              } else {
+                DemoTenantEntitlementSnapshot demo = consumers.demos().revalidate(prepared.demo());
+                gameplayAvailable = demo.gameplayAvailable();
+                allowPublicJoin = demo.allowPublicJoin();
+                entitlementVersion = demo.entitlementVersion();
+              }
+              CanonicalJoinOperationEvidence policyBoundOperation =
+                  accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+                      requestId, scope, callerBinding, allowPublicJoin, entitlementVersion);
+              Optional<AccountTenantMembership> member =
+                  accountTenantMembershipRepository.findFreshMembershipForUpdate(
+                      scope.accountId(), scope.tenantId());
+              boolean active =
+                  member.filter(value -> "ACTIVE".equals(value.getLifecycleState())).isPresent();
+              if ("PENDING".equals(policyBoundOperation.status())
+                  && (!gameplayAvailable || (!active && !allowPublicJoin))) {
+                String outcome =
+                    gameplayAvailable
+                        ? "PUBLIC_PRODUCTION_ADMISSION_DENIED"
+                        : "TENANT_BILLING_BLOCKED";
                 accountJoinOperationRepository.finishCanonicalFailure(
-                    requestId, scope, callerBinding, lockedOperation.outcome());
-            return new CanonicalJoinResult(retained.outcome(), null, false, true);
-          }
-          SourceSelection current =
-              consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
-          if (current.kind() != prepared.source().kind()
-              || !prepared.source().matches(current.checkpoint())) {
-            throw new AuthenticationException("ENTITLEMENT_UNAVAILABLE", "Tenant source changed");
-          }
-          final boolean gameplayAvailable;
-          final boolean allowPublicJoin;
-          final long entitlementVersion;
-          if (prepared.fence() != null) {
-            AccountHostingSubscriptionCurrentReceipt receipt =
-                consumers.hosting().readCurrent(prepared.fence(), observation);
-            gameplayAvailable = receipt.gameplayAvailable();
-            allowPublicJoin = receipt.allowPublicJoin();
-            entitlementVersion = receipt.entitlementVersion();
-          } else {
-            DemoTenantEntitlementSnapshot demo = consumers.demos().revalidate(prepared.demo());
-            gameplayAvailable = demo.gameplayAvailable();
-            allowPublicJoin = demo.allowPublicJoin();
-            entitlementVersion = demo.entitlementVersion();
-          }
-          CanonicalJoinOperationEvidence policyBoundOperation =
-              accountJoinOperationRepository.bindCanonicalPolicyEvidence(
-                  requestId, scope, callerBinding, allowPublicJoin, entitlementVersion);
-          Optional<AccountTenantMembership> member =
-              accountTenantMembershipRepository.findFreshMembershipForUpdate(
-                  scope.accountId(), scope.tenantId());
-          boolean active =
-              member.filter(value -> "ACTIVE".equals(value.getLifecycleState())).isPresent();
-          if ("PENDING".equals(policyBoundOperation.status())
-              && (!gameplayAvailable || (!active && !allowPublicJoin))) {
-            String outcome =
-                gameplayAvailable ? "PUBLIC_PRODUCTION_ADMISSION_DENIED" : "TENANT_BILLING_BLOCKED";
-            accountJoinOperationRepository.finishCanonicalFailure(
-                requestId, scope, callerBinding, outcome);
-            return new CanonicalJoinResult(outcome, null, false, false);
-          }
-          var committed =
-              consumers
-                  .firstJoin()
-                  .commitCanonicalJoin(
-                      scope,
-                      requestId,
-                      callerBinding,
-                      prepared.fence() == null ? null : consumers.hosting(),
-                      prepared.fence(),
-                      observation);
-          requireCanonicalScopeFresh(consumers, scope);
-          Optional<AccountTenantMembership> currentMembership =
-              accountTenantMembershipRepository.findFreshMembershipForUpdate(
-                  scope.accountId(), scope.tenantId());
-          if ("COMMITTED".equals(policyBoundOperation.status())) {
-            // A committed exact retry returns its original operation proof after the current
-            // policy binding above. Membership may have changed since that proof was retained;
-            // expose only the current admission flag, never use the old proof as admission.
-            return new CanonicalJoinResult(
-                committed.outcome(),
-                committed.terminalProof(),
-                gameplayAvailable
-                    && currentMembership
-                        .map(AccountTenantMembership::isGameplayAdmissionAllowed)
-                        .orElse(false),
-                true);
-          }
-          AccountTenantMembership committedMembership = currentMembership.orElseThrow();
-          if (committedMembership.getMembershipVersion()
-                  != committed.terminalProof().membershipVersion()
-              || committedMembership.getMembershipAuthorityGeneration()
-                  != committed.terminalProof().membershipAuthorityGeneration()) {
-            throw new IllegalStateException(
-                "Canonical JOIN result differs from current membership");
-          }
-          return new CanonicalJoinResult(
-              committed.outcome(),
-              committed.terminalProof(),
-              committedMembership.isGameplayAdmissionAllowed(),
-              false);
-        }));
+                    requestId, scope, callerBinding, outcome);
+                return new CanonicalJoinResult(outcome, null, false, false);
+              }
+              var committed =
+                  consumers
+                      .firstJoin()
+                      .commitCanonicalJoin(
+                          scope,
+                          requestId,
+                          callerBinding,
+                          prepared.fence() == null ? null : consumers.hosting(),
+                          prepared.fence(),
+                          observation);
+              requireCanonicalScopeFresh(consumers, scope);
+              Optional<AccountTenantMembership> currentMembership =
+                  accountTenantMembershipRepository.findFreshMembershipForUpdate(
+                      scope.accountId(), scope.tenantId());
+              if ("COMMITTED".equals(policyBoundOperation.status())) {
+                // A committed exact retry returns its original operation proof after the current
+                // policy binding above. Membership may have changed since that proof was retained;
+                // expose only the current admission flag, never use the old proof as admission.
+                return new CanonicalJoinResult(
+                    committed.outcome(),
+                    committed.terminalProof(),
+                    gameplayAvailable
+                        && currentMembership
+                            .map(AccountTenantMembership::isGameplayAdmissionAllowed)
+                            .orElse(false),
+                    true);
+              }
+              AccountTenantMembership committedMembership = currentMembership.orElseThrow();
+              if (committedMembership.getMembershipVersion()
+                      != committed.terminalProof().membershipVersion()
+                  || committedMembership.getMembershipAuthorityGeneration()
+                      != committed.terminalProof().membershipAuthorityGeneration()) {
+                throw new IllegalStateException(
+                    "Canonical JOIN result differs from current membership");
+              }
+              return new CanonicalJoinResult(
+                  committed.outcome(),
+                  committed.terminalProof(),
+                  committedMembership.isGameplayAdmissionAllowed(),
+                  false);
+            }));
   }
 
   private void requireCanonicalScopeFresh(
@@ -772,28 +778,32 @@ public class AccountServiceImpl implements AccountService {
   private BootstrapCharacterAuthority prepareBootstrapCharacterAuthority(
       CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
     return Objects.requireNonNull(
-        joinTransactionTemplate.execute(status -> {
-          lockCanonicalScopeAccount(scope);
-          requireCanonicalScopeFresh(consumers, scope);
-          var membership = readBootstrapCharacterMembership(scope);
-          try {
-            SourceSelection source =
-                consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
-            return new BootstrapCharacterAuthority(
-                source,
-                membership,
-                source.kind() == AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO
-                    ? consumers.demos().readCurrent(scope.tenantId())
-                    : null,
-                source.kind() == AccountTenantAuthorityEventRepository.SourceKind.PAID_HOSTING
-                    ? consumers.hosting().prepareCurrentRead(scope.tenantId())
-                    : null,
-                consumers.clock().instant());
-          } catch (RuntimeException failure) {
-            throw new AuthenticationException(
-                "ENTITLEMENT_UNAVAILABLE", "Bootstrap entitlement source is unavailable", failure);
-          }
-        }));
+        joinTransactionTemplate.execute(
+            status -> {
+              accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
+              lockCanonicalScopeAccount(scope);
+              requireCanonicalScopeFresh(consumers, scope);
+              var membership = readBootstrapCharacterMembership(scope);
+              try {
+                SourceSelection source =
+                    consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+                return new BootstrapCharacterAuthority(
+                    source,
+                    membership,
+                    source.kind() == AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO
+                        ? consumers.demos().readCurrent(scope.tenantId())
+                        : null,
+                    source.kind() == AccountTenantAuthorityEventRepository.SourceKind.PAID_HOSTING
+                        ? consumers.hosting().prepareCurrentRead(scope.tenantId())
+                        : null,
+                    consumers.clock().instant());
+              } catch (RuntimeException failure) {
+                throw new AuthenticationException(
+                    "ENTITLEMENT_UNAVAILABLE",
+                    "Bootstrap entitlement source is unavailable",
+                    failure);
+              }
+            }));
   }
 
   private Optional<AccountCanonicalPublicRealmScopeOwner.ExistingMembership>
@@ -801,13 +811,14 @@ public class AccountServiceImpl implements AccountService {
     try {
       return accountTenantMembershipRepository
           .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
-          .map(member ->
-              new AccountCanonicalPublicRealmScopeOwner.ExistingMembership(
-                  member.getId(),
-                  member.getLifecycleState(),
-                  member.isGameplayAdmissionAllowed(),
-                  member.getMembershipVersion(),
-                  member.getMembershipAuthorityGeneration()));
+          .map(
+              member ->
+                  new AccountCanonicalPublicRealmScopeOwner.ExistingMembership(
+                      member.getId(),
+                      member.getLifecycleState(),
+                      member.isGameplayAdmissionAllowed(),
+                      member.getMembershipVersion(),
+                      member.getMembershipAuthorityGeneration()));
     } catch (RuntimeException failure) {
       throw new AuthenticationException(
           "AUTH_UNAVAILABLE", "Bootstrap membership source is unavailable", failure);
@@ -819,58 +830,62 @@ public class AccountServiceImpl implements AccountService {
       CanonicalJoinScopeV2 scope,
       BootstrapCharacterAuthority prepared,
       StripeHostingSubscriptionObserver.Result observation) {
-    joinTransactionTemplate.executeWithoutResult(status -> {
-      lockCanonicalScopeAccount(scope);
-      requireCanonicalScopeFresh(consumers, scope);
-      var membership = readBootstrapCharacterMembership(scope);
-      if (!prepared.membership().equals(membership)) {
-        throw new AuthenticationException(
-            "AUTH_UNAVAILABLE", "Bootstrap membership changed during discovery");
-      }
-      final boolean gameplayAvailable;
-      final boolean allowPublicJoin;
-      try {
-        SourceSelection current =
-            consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
-        if (current.kind() != prepared.source().kind()
-            || !prepared.source().matches(current.checkpoint())) {
-          throw new IllegalStateException("Bootstrap entitlement source changed");
-        }
-        if (prepared.fence() != null) {
-          var receipt = consumers.hosting().readCurrent(prepared.fence(), observation);
-          gameplayAvailable = receipt.gameplayAvailable();
-          allowPublicJoin = receipt.allowPublicJoin();
-        } else {
-          Instant currentTime = consumers.clock().instant();
-          if (currentTime.isBefore(prepared.observedAt())
-              || !currentTime.isBefore(prepared.observedAt().plusSeconds(15))) {
-            throw new IllegalStateException("Original bootstrap entitlement observation expired");
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
+          lockCanonicalScopeAccount(scope);
+          requireCanonicalScopeFresh(consumers, scope);
+          var membership = readBootstrapCharacterMembership(scope);
+          if (!prepared.membership().equals(membership)) {
+            throw new AuthenticationException(
+                "AUTH_UNAVAILABLE", "Bootstrap membership changed during discovery");
           }
-          var demo = consumers.demos().revalidate(prepared.demo());
-          gameplayAvailable = demo.gameplayAvailable();
-          allowPublicJoin = demo.allowPublicJoin();
-        }
-      } catch (RuntimeException failure) {
-        throw new AuthenticationException(
-            "ENTITLEMENT_UNAVAILABLE",
-            "Bootstrap entitlement source is unavailable or changed",
-            failure);
-      }
-      if (!gameplayAvailable) {
-        throw new AuthenticationException(
-            "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-      }
-      if (membership.isEmpty() || "INACTIVE".equals(membership.orElseThrow().lifecycleState())) {
-        throw new AuthenticationException(
-            allowPublicJoin ? "JOIN_REQUIRED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            allowPublicJoin ? JOIN_REQUIRED_CHARACTERS_MESSAGE : "Public enrollment is closed");
-      }
-      if (!"ACTIVE".equals(membership.orElseThrow().lifecycleState())
-          || !membership.orElseThrow().gameplayAdmissionAllowed()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED", "Membership does not allow actor discovery");
-      }
-    });
+          final boolean gameplayAvailable;
+          final boolean allowPublicJoin;
+          try {
+            SourceSelection current =
+                consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+            if (current.kind() != prepared.source().kind()
+                || !prepared.source().matches(current.checkpoint())) {
+              throw new IllegalStateException("Bootstrap entitlement source changed");
+            }
+            if (prepared.fence() != null) {
+              var receipt = consumers.hosting().readCurrent(prepared.fence(), observation);
+              gameplayAvailable = receipt.gameplayAvailable();
+              allowPublicJoin = receipt.allowPublicJoin();
+            } else {
+              Instant currentTime = consumers.clock().instant();
+              if (currentTime.isBefore(prepared.observedAt())
+                  || !currentTime.isBefore(prepared.observedAt().plusSeconds(15))) {
+                throw new IllegalStateException(
+                    "Original bootstrap entitlement observation expired");
+              }
+              var demo = consumers.demos().revalidate(prepared.demo());
+              gameplayAvailable = demo.gameplayAvailable();
+              allowPublicJoin = demo.allowPublicJoin();
+            }
+          } catch (RuntimeException failure) {
+            throw new AuthenticationException(
+                "ENTITLEMENT_UNAVAILABLE",
+                "Bootstrap entitlement source is unavailable or changed",
+                failure);
+          }
+          if (!gameplayAvailable) {
+            throw new AuthenticationException(
+                "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+          }
+          if (membership.isEmpty()
+              || "INACTIVE".equals(membership.orElseThrow().lifecycleState())) {
+            throw new AuthenticationException(
+                allowPublicJoin ? "JOIN_REQUIRED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+                allowPublicJoin ? JOIN_REQUIRED_CHARACTERS_MESSAGE : "Public enrollment is closed");
+          }
+          if (!"ACTIVE".equals(membership.orElseThrow().lifecycleState())
+              || !membership.orElseThrow().gameplayAdmissionAllowed()) {
+            throw new AuthenticationException(
+                "PUBLIC_PRODUCTION_ADMISSION_DENIED", "Membership does not allow actor discovery");
+          }
+        });
   }
 
   private record BootstrapCharacterAuthority(
@@ -912,27 +927,28 @@ public class AccountServiceImpl implements AccountService {
           "AUTH_UNAVAILABLE", "Canonical public-realm scope source is unavailable");
     }
     return owner.listRealmScopes(bootstrapToken, tenantSlug, worldSlug).stream()
-        .map(retained -> {
-          var target = retained.target();
-          var scope = retained.scope();
-          return new BootstrapRealmDto(
-              scope.worldSlug(),
-              scope.realmSlug(),
-              scope.realmId(),
-              target.realmDisplayName(),
-              scope.tenantId(),
-              scope.gameInstanceId(),
-              scope.pointerVersion(),
-              scope.catalogRevision(),
-              scope.playableStateNamespaceId(),
-              PlayableStateScope.valueOf("PLAYABLE_STATE_SCOPE_" + scope.playableStateScope())
-                  .name(),
-              scope.playableStateScope(),
-              target.characterCreationPolicy(),
-              scope.evaluatedAt(),
-              scope.connectScopeExpiresAt(),
-              scope.connectScopeId());
-        })
+        .map(
+            retained -> {
+              var target = retained.target();
+              var scope = retained.scope();
+              return new BootstrapRealmDto(
+                  scope.worldSlug(),
+                  scope.realmSlug(),
+                  scope.realmId(),
+                  target.realmDisplayName(),
+                  scope.tenantId(),
+                  scope.gameInstanceId(),
+                  scope.pointerVersion(),
+                  scope.catalogRevision(),
+                  scope.playableStateNamespaceId(),
+                  PlayableStateScope.valueOf("PLAYABLE_STATE_SCOPE_" + scope.playableStateScope())
+                      .name(),
+                  scope.playableStateScope(),
+                  target.characterCreationPolicy(),
+                  scope.evaluatedAt(),
+                  scope.connectScopeExpiresAt(),
+                  scope.connectScopeId());
+            })
         .toList();
   }
 
@@ -995,13 +1011,14 @@ public class AccountServiceImpl implements AccountService {
         .sorted(
             Comparator.comparing(AccountBootstrapRosterReadClient.Actor::displayName)
                 .thenComparing(actor -> actor.characterId().toString()))
-        .map(actor ->
-            new BootstrapCharacterDto(
-                actor.characterId().toString(),
-                actor.displayName(),
-                actor.level(),
-                scope.playableStateScope(),
-                published.currentTarget().characterCreationPolicy()))
+        .map(
+            actor ->
+                new BootstrapCharacterDto(
+                    actor.characterId().toString(),
+                    actor.displayName(),
+                    actor.level(),
+                    scope.playableStateScope(),
+                    published.currentTarget().characterCreationPolicy()))
         .toList();
   }
 
@@ -1114,26 +1131,30 @@ public class AccountServiceImpl implements AccountService {
     // reader rejects the same expired scope without rewriting its retained intent; preserve
     // that behavior when time crosses the boundary during provider I/O or the commit gate.
     if ("CONNECT_SCOPE_INVALID".equals(failureCode)) return;
-    joinTransactionTemplate.executeWithoutResult(status -> {
-      lockCanonicalScopeAccount(scope);
-      Optional<CanonicalJoinOperationEvidence> found =
-          accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId);
-      if (found.isEmpty() || !"PENDING".equals(found.orElseThrow().status())) return;
-      if ("CONNECT_SCOPE_MISMATCH".equals(failureCode)) {
-        accountJoinOperationRepository.finishCanonicalFailure(
-            requestId, scope, callerBinding, failureCode);
-      } else {
-        String retryCode =
-            List.of("ADMISSION_POINTER_UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE", "AUTH_UNAVAILABLE")
-                    .contains(failureCode)
-                ? failureCode
-                : "AUTH_UNAVAILABLE";
-        String authorityAvailability =
-            "ENTITLEMENT_UNAVAILABLE".equals(retryCode) ? "UNAVAILABLE" : "NOT_EVALUATED";
-        accountJoinOperationRepository.recordCanonicalAttemptFailure(
-            requestId, scope, callerBinding, authorityAvailability, retryCode);
-      }
-    });
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          Optional<CanonicalJoinOperationEvidence> found =
+              accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId);
+          if (found.isEmpty() || !"PENDING".equals(found.orElseThrow().status())) return;
+          if ("CONNECT_SCOPE_MISMATCH".equals(failureCode)) {
+            accountJoinOperationRepository.finishCanonicalFailure(
+                requestId, scope, callerBinding, failureCode);
+          } else {
+            String retryCode =
+                List.of(
+                            "ADMISSION_POINTER_UNAVAILABLE",
+                            "ENTITLEMENT_UNAVAILABLE",
+                            "AUTH_UNAVAILABLE")
+                        .contains(failureCode)
+                    ? failureCode
+                    : "AUTH_UNAVAILABLE";
+            String authorityAvailability =
+                "ENTITLEMENT_UNAVAILABLE".equals(retryCode) ? "UNAVAILABLE" : "NOT_EVALUATED";
+            accountJoinOperationRepository.recordCanonicalAttemptFailure(
+                requestId, scope, callerBinding, authorityAvailability, retryCode);
+          }
+        });
   }
 
   @Override
@@ -1272,18 +1293,20 @@ public class AccountServiceImpl implements AccountService {
     return accountRealmAccessGrantRepository
         .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
             accountId, tenantId, worldSlug, realmSlug)
-        .map(grant ->
-            new RealmAccessGrantResult(
-                accountId,
-                tenantId,
-                worldSlug,
-                realmSlug,
-                grant.isGranted(),
-                grant.getGrantVersion(),
-                evaluatedAt.toString()))
-        .orElseGet(() ->
-            new RealmAccessGrantResult(
-                accountId, tenantId, worldSlug, realmSlug, false, 0L, evaluatedAt.toString()));
+        .map(
+            grant ->
+                new RealmAccessGrantResult(
+                    accountId,
+                    tenantId,
+                    worldSlug,
+                    realmSlug,
+                    grant.isGranted(),
+                    grant.getGrantVersion(),
+                    evaluatedAt.toString()))
+        .orElseGet(
+            () ->
+                new RealmAccessGrantResult(
+                    accountId, tenantId, worldSlug, realmSlug, false, 0L, evaluatedAt.toString()));
   }
 
   @Override
@@ -1296,17 +1319,18 @@ public class AccountServiceImpl implements AccountService {
         accountRealmAccessGrantRepository
             .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
                 request.accountId(), request.tenantId(), request.worldSlug(), request.realmSlug())
-            .orElseGet(() -> {
-              AccountRealmAccessGrant created = new AccountRealmAccessGrant();
-              created.setAccount(account);
-              created.setTenantId(request.tenantId());
-              created.setWorldSlug(request.worldSlug());
-              created.setRealmSlug(request.realmSlug());
-              created.setGrantVersion(0L);
-              created.setGranted(true);
-              created.setCreatedAt(now);
-              return created;
-            });
+            .orElseGet(
+                () -> {
+                  AccountRealmAccessGrant created = new AccountRealmAccessGrant();
+                  created.setAccount(account);
+                  created.setTenantId(request.tenantId());
+                  created.setWorldSlug(request.worldSlug());
+                  created.setRealmSlug(request.realmSlug());
+                  created.setGrantVersion(0L);
+                  created.setGranted(true);
+                  created.setCreatedAt(now);
+                  return created;
+                });
     grant.setGrantVersion(grant.getGrantVersion() + 1L);
     grant.setGranted(true);
     grant.setGrantedBy(request.grantedBy());
@@ -1572,13 +1596,14 @@ public class AccountServiceImpl implements AccountService {
     }
     authentication
         .emailLoginChallenge()
-        .ifPresent(challenge -> {
-          if (challenge.getId() == null
-              || challenge.getId() <= 0L
-              || !lockedAccount.getId().equals(challenge.getAccountId())) {
-            throw new IllegalStateException("Exact login challenge ownership is required");
-          }
-        });
+        .ifPresent(
+            challenge -> {
+              if (challenge.getId() == null
+                  || challenge.getId() <= 0L
+                  || !lockedAccount.getId().equals(challenge.getAccountId())) {
+                throw new IllegalStateException("Exact login challenge ownership is required");
+              }
+            });
     return new CredentialVerification(
         authentication.account().getAccountUuid(),
         authentication.emailLoginChallenge().map(AccountEmailLoginChallenge::getId).orElse(null));
@@ -1669,9 +1694,10 @@ public class AccountServiceImpl implements AccountService {
       String username, String password, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
     Account account =
-        accountOpt.orElseThrow(() ->
-            new AuthenticationException(
-                AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
+        accountOpt.orElseThrow(
+            () ->
+                new AuthenticationException(
+                    AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
     return authenticateAccountIdentity(account, password, allowEmailLoginOtp);
   }
 
@@ -1691,10 +1717,11 @@ public class AccountServiceImpl implements AccountService {
       emailLoginChallenge = activeEmailLoginChallenge(account);
     }
     if (emailLoginChallenge
-        .filter(challenge ->
-            work == null
-                ? matchesEmailLoginOtp(challenge, password)
-                : work.verify(challenge.getCodeHash()))
+        .filter(
+            challenge ->
+                work == null
+                    ? matchesEmailLoginOtp(challenge, password)
+                    : work.verify(challenge.getCodeHash()))
         .isPresent()) {
       requireAuthenticationEligible(account);
       return new PrimaryAuthentication(account, emailLoginChallenge);
@@ -1912,10 +1939,11 @@ public class AccountServiceImpl implements AccountService {
       return Map.of();
     }
     return profileRepository.findByTenantIdAndAccountIds(tenantId, accountIds).stream()
-        .filter(profile ->
-            profile.getAccount() != null
-                && profile.getAccount().getId() != null
-                && profile.getPresenceVisibilityPolicy() != null)
+        .filter(
+            profile ->
+                profile.getAccount() != null
+                    && profile.getAccount().getId() != null
+                    && profile.getPresenceVisibilityPolicy() != null)
         .collect(
             java.util.stream.Collectors.toUnmodifiableMap(
                 profile -> profile.getAccount().getId(),
@@ -1943,8 +1971,9 @@ public class AccountServiceImpl implements AccountService {
     profile.setBio(request.bio());
     profile.setPresenceVisibilityPolicy(request.presenceVisibilityPolicy());
     profile = profileRepository.save(profile);
-    runAfterCommit(() ->
-        notificationService.sendNotification(request.tenantId(), accountId, "Profile updated"));
+    runAfterCommit(
+        () ->
+            notificationService.sendNotification(request.tenantId(), accountId, "Profile updated"));
     return projectProfile(profile, request.tenantId(), accountId);
   }
 
@@ -2084,12 +2113,14 @@ public class AccountServiceImpl implements AccountService {
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
     passwordResetTokenRepository.save(token);
     String url = String.format(mailProperties.getResetUrl(), token.getToken());
-    runAfterCommit(() ->
-        sendRecoveryEmailSafely(() ->
-            emailService.sendEmail(
-                account.getEmail(),
-                "Password Reset",
-                String.format(readTemplate("password-reset.txt"), url))));
+    runAfterCommit(
+        () ->
+            sendRecoveryEmailSafely(
+                () ->
+                    emailService.sendEmail(
+                        account.getEmail(),
+                        "Password Reset",
+                        String.format(readTemplate("password-reset.txt"), url))));
   }
 
   @Override
@@ -2104,8 +2135,10 @@ public class AccountServiceImpl implements AccountService {
     String tokenHash = sha256Hex(request.token());
     String candidatePasswordVerifier = hashPassword(request.newPassword());
     PasswordResetAttempt attempt =
-        passwordResetOwnerTransaction.execute(status ->
-            completePasswordResetInOwnerTransaction(request, tokenHash, candidatePasswordVerifier));
+        passwordResetOwnerTransaction.execute(
+            status ->
+                completePasswordResetInOwnerTransaction(
+                    request, tokenHash, candidatePasswordVerifier));
     if (attempt == null) {
       throw new IllegalStateException("Password-reset owner transaction returned no result");
     }
@@ -2118,11 +2151,14 @@ public class AccountServiceImpl implements AccountService {
     PasswordResetReceipt committed =
         Objects.requireNonNull(attempt.receipt(), "Committed password-reset receipt is required");
     PasswordResetReceipt postCommitReadback =
-        passwordResetOwnerTransaction.execute(status ->
-            passwordResetOperationRepository
-                .findByTokenHash(tokenHash)
-                .orElseThrow(() ->
-                    new IllegalStateException("Password-reset receipt disappeared after commit")));
+        passwordResetOwnerTransaction.execute(
+            status ->
+                passwordResetOperationRepository
+                    .findByTokenHash(tokenHash)
+                    .orElseThrow(
+                        () ->
+                            new IllegalStateException(
+                                "Password-reset receipt disappeared after commit")));
     if (!committed.equals(postCommitReadback)) {
       throw new IllegalStateException("Password-reset committed receipt readback differs");
     }
@@ -2141,12 +2177,17 @@ public class AccountServiceImpl implements AccountService {
     Long accountId =
         resolvedReceipt
             .map(PasswordResetReceipt::accountId)
-            .orElseGet(() ->
-                resolvedIntentAccountId.orElseGet(() ->
-                    resolvedToken
-                        .map(
-                            token -> token.getAccount() == null ? null : token.getAccount().getId())
-                        .orElse(null)));
+            .orElseGet(
+                () ->
+                    resolvedIntentAccountId.orElseGet(
+                        () ->
+                            resolvedToken
+                                .map(
+                                    token ->
+                                        token.getAccount() == null
+                                            ? null
+                                            : token.getAccount().getId())
+                                .orElse(null)));
     if (accountId == null || accountId <= 0L) {
       throw new IllegalArgumentException("Invalid token");
     }
@@ -2843,12 +2884,15 @@ public class AccountServiceImpl implements AccountService {
       return;
     }
     Account account = accountOptional.get();
-    runAfterCommit(() ->
-        sendRecoveryEmailSafely(() ->
-            emailService.sendEmail(
-                account.getEmail(),
-                "Username Reminder",
-                String.format(readTemplate("username-reminder.txt"), account.getUsername()))));
+    runAfterCommit(
+        () ->
+            sendRecoveryEmailSafely(
+                () ->
+                    emailService.sendEmail(
+                        account.getEmail(),
+                        "Username Reminder",
+                        String.format(
+                            readTemplate("username-reminder.txt"), account.getUsername()))));
   }
 
   private void sendRecoveryEmailSafely(Runnable delivery) {
