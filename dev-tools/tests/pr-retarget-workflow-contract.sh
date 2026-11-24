@@ -3956,7 +3956,99 @@ async function checkIdentityQuotaFailures() {
     onSmokeSleep = originalSleep;
   }
 }
-checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
+
+async function checkSparseReplacementUsesOverallBudget() {
+  const priorRuns = availableRuns, priorHook = onRepositoryDispatchQuery;
+  const event = {...runtimeRun(610, runtimeTitle(baseSha, headSha, mergeSha)), conclusion: "cancelled"};
+  const replacement = {...dispatchRun(611, baseSha, headSha, mergeSha), status: null, conclusion: null};
+  const start = repositoryDispatchQueryCount;
+  let listedAt = null, runningAt = null, completedAt = null;
+  const jobs = jobQueries.length;
+  availableRuns = [event];
+  onRepositoryDispatchQuery = (count) => {
+    if (count === start + 2) {
+      listedAt = fakeNow;
+      availableRuns = [event, replacement];
+    } else if (listedAt !== null && runningAt === null && fakeNow > listedAt) {
+      runningAt = fakeNow;
+      replacement.status = "in_progress";
+    } else if (runningAt !== null && completedAt === null && fakeNow - runningAt >= 150000) {
+      completedAt = fakeNow;
+      replacement.status = "completed";
+      replacement.conclusion = "success";
+    }
+  };
+  try {
+    await check("success", false);
+    if (listedAt === null || runningAt === null || completedAt === null ||
+        runningAt - listedAt >= 120000 || completedAt - runningAt < 150000 ||
+        !jobQueries.slice(jobs).some(({run_id, attempt_number}) => run_id === 611 && attempt_number === 1)) {
+      throw new Error("sparse replacement must leave the snapshot allowance and finish under the original execution deadline");
+    }
+  } finally {
+    availableRuns = priorRuns;
+    onRepositoryDispatchQuery = priorHook;
+  }
+}
+async function checkTypedFailureProofTemporaryRefusal() {
+  const priorRuns = availableRuns, priorRequest = github.request, priorEventSha = context.sha;
+  const priorWorkflow = github.rest.actions.getWorkflow;
+  const event = {...runtimeRun(620, runtimeTitle(baseSha, headSha, mergeSha)), conclusion: "cancelled"};
+  for (const cancelledOriginal of [false, true]) {
+    for (const status of [503, 403]) {
+      const failed = {...dispatchRun(621, baseSha, headSha, mergeSha), name: "Build Runtime Images", conclusion: "failure"};
+      const successor = dispatchRun(622, baseSha, headSha, mergeSha);
+      context.sha = cancelledOriginal ? priorEventSha : undefined;
+      const originals = cancelledOriginal ? [event] : [];
+      availableRuns = [...originals, failed];
+      let reads = 0, warnings = 0;
+      const jobs = jobQueries.length;
+      const refusal = Object.assign(new Error("injected exact typed attempt lookup failure"), {status});
+      github.rest.actions.getWorkflow = async (input) => {
+        if (input.workflow_id === "runtime-images.yml") return {data: {
+          id: failed.workflow_id, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images",
+        }};
+        return priorWorkflow(input);
+      };
+      github.request = async (route, input) => {
+        if (input.run_id === failed.id) {
+          reads++;
+          throw refusal;
+        }
+        return priorRequest(route, input);
+      };
+      smokeStepConclusion = "success";
+      const core = {
+        info: () => {},
+        warning: (message) => {
+          if (message.startsWith("Exact typed failure proof temporarily unavailable:")) {
+            warnings++;
+            availableRuns = [...originals, successor];
+          }
+        },
+        setFailed: (message) => {throw new Error(message);},
+      };
+      let caught;
+      try { await run(github, context, core); } catch (error) { caught = error; }
+      finally {
+        availableRuns = priorRuns;
+        github.request = priorRequest;
+        github.rest.actions.getWorkflow = priorWorkflow;
+        context.sha = priorEventSha;
+      }
+      if (status === 503 && (caught || reads !== 4 || warnings !== 1 ||
+          !jobQueries.slice(jobs).some(({run_id, attempt_number}) => run_id === 622 && attempt_number === 1))) {
+        throw new Error(`exhausted transient proof lookups must keep polling for exact successor: ${cancelledOriginal}/${reads}/${warnings}`, {cause: caught});
+      }
+      if (status === 403 && (!caught || reads !== 1 || warnings !== 0)) {
+        throw new Error("terminal proof refusal must stop without polling", {cause: caught});
+      }
+    }
+  }
+}
+
+checkPartialPaginationRetry().then(checkIdentityQuotaFailures)
+  .then(checkSparseReplacementUsesOverallBudget).then(checkTypedFailureProofTemporaryRefusal).then(() => {
   setExactEventRun(101);
   return check("skipped", true, "credential-free full-stack smoke step did not pass");
 })
