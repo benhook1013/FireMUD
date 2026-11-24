@@ -66,7 +66,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
                     .withProperty(
                         RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
                         "recovery-control.invalid")
-                    .withProperty("spring.datasource.url", recoveryUrl("recovery-control.invalid", "5432")),
+                    .withProperty(
+                        "spring.datasource.url", recoveryUrl("recovery-control.invalid", "5432")),
                 new SpringApplication()))
         .doesNotThrowAnyException();
   }
