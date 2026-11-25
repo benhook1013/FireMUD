@@ -2022,20 +2022,28 @@ assert_publish_checkout_configuration "$pr_image_publisher_path"
 
 python3 - "$pr_image_publisher_path" <<'PY'
 import os
-import re
 import sys
 import tempfile
-import textwrap
 from pathlib import Path
+
+import yaml
 
 if len(sys.argv) != 2:
     raise SystemExit("trusted PR image publisher contract requires one workflow path")
-workflow_text = Path(sys.argv[1]).read_text(encoding="utf-8")
-matches = list(re.finditer(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL))
-if len(matches) != 2:
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+summary_steps = [
+    step for step in workflow["jobs"]["publish"]["steps"]
+    if step.get("name") == "Summarize trusted publication source"
+]
+if len(summary_steps) != 1:
+    raise SystemExit("trusted PR image publisher must have exactly one source summary step")
+run = summary_steps[0].get("run")
+if not isinstance(run, str):
+    raise SystemExit("trusted PR image publisher summary step must run a script")
+command, *lines = run.rstrip("\n").splitlines()
+if command != "python3 - <<'PY'" or not lines or lines[-1] != "PY":
     raise SystemExit("trusted PR image publisher summary script was not found")
-
-script = textwrap.dedent(matches[1].group("script"))
+script = "\n".join(lines[:-1])
 with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
     test_environment = {
         "GITHUB_STEP_SUMMARY": summary_file.name,
@@ -2202,6 +2210,65 @@ if (require_branch_return "$contract_fixture_dir/branch-non-return.js" examplePr
   echo "require_branch_return must match return as a complete token" >&2
   exit 1
 fi
+# Give the positive waiter fixtures historic server-authored receipts. A
+# receipt belongs to the fixture's original producing run, not whichever run
+# the waiter happens to ask about.
+cat >"$contract_fixture_dir/publication-artifacts.py" <<'PY_ARTIFACTS'
+import hashlib
+import io
+import json
+import os
+import re
+import sys
+import zipfile
+
+endpoint = sys.argv[1]
+repo = "example/FireMUD"
+image = "pr-merge-" + "c" * 40
+workflow_id = 50
+producer_digests = {run: "sha256:" + str(run)[-1] * 64 for run in (101, 104)}
+publisher_sources = {201: 104 if os.environ.get("CONTRACT_DUPLICATE_DIR") else 101, 202: 101}
+
+def artifact(run, name, artifact_id, digest):
+    return {"total_count": 1, "artifacts": [{
+        "id": artifact_id, "name": name, "expired": False,
+        "workflow_run": {"id": run}, "digest": digest,
+    }]}
+
+def receipt_zip(publisher):
+    producer = publisher_sources[publisher]
+    receipt = {
+        "schema": 1, "repository": repo, "prNumber": 1,
+        "baseSha": "b" * 40, "headSha": "a" * 40, "mergeSha": "c" * 40,
+        "imageTag": image, "producerWorkflowId": workflow_id, "producerRunId": producer,
+        "producerAttempt": 1, "producerArtifactId": 300 + producer,
+        "producerArtifactDigest": producer_digests[producer],
+        "publisherWorkflowRef": repo + "/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop",
+        "publisherRunId": publisher, "publisherAttempt": 2,
+        "publishJob": "Publish Fixed PR Merge Image Tags", "publishStep": "Publish fixed PR image tags",
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(zipfile.ZipInfo("exact-pr-runtime-publication.json"), json.dumps(receipt))
+    return buffer.getvalue()
+
+if match := re.fullmatch(r".*/runs/(\d+)/artifacts\?name=([^&]+)&per_page=100", endpoint):
+    run, name = int(match[1]), match[2]
+    if run in producer_digests and name == f"pr-runtime-images-{image}-attempt-1":
+        print(json.dumps(artifact(run, name, 300 + run, producer_digests[run])))
+    elif run in publisher_sources and name == f"pr-runtime-publication-{run}-attempt-2":
+        digest = "sha256:" + hashlib.sha256(receipt_zip(run)).hexdigest()
+        print(json.dumps(artifact(run, name, 400 + run, digest)))
+    else:
+        print('{"total_count":0,"artifacts":[]}')
+elif match := re.fullmatch(r".*/artifacts/(\d+)/zip", endpoint):
+    publisher = int(match[1]) - 400
+    if publisher not in publisher_sources:
+        sys.exit(1)
+    sys.stdout.buffer.write(receipt_zip(publisher))
+else:
+    sys.exit(1)
+PY_ARTIFACTS
 cat >"$contract_fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -2216,6 +2283,14 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
     exit 0
   fi
 fi
+
+case "$*" in
+  *actions/workflows/runtime-images.yml)
+    printf '%s\n' '{"id":50,"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml"}'
+    exit 0 ;;
+  *actions/runs/*/artifacts\?*|*actions/artifacts/*/zip)
+    exec python3 "$fixture_dir/publication-artifacts.py" "$2" ;;
+esac
 
 if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
   case "$*" in
@@ -2331,13 +2406,13 @@ runs = [run for page in pages for run in page.get("workflow_runs", [])]
 run = next((run for run in runs if run.get("id") == 101), None)
 if run is None:
     raise SystemExit(1)
-run.update({"run_attempt": 1, "repository": {"full_name": "example/FireMUD"},
+run.update({"run_attempt": 1, "workflow_id": 50, "path": ".github/workflows/runtime-images.yml", "repository": {"full_name": "example/FireMUD"},
             "head_repository": {"full_name": "example/FireMUD"}})
 print(json.dumps(run))
 PY_SOURCE_DETAIL
       else
         cat <<'JSON'
-{"id":101,"event":"pull_request","status":"completed","conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","html_url":"https://example.test/runtime/101","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z","run_attempt":1,"repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}
+{"id":101,"event":"pull_request","status":"completed","conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","html_url":"https://example.test/runtime/101","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z","run_attempt":1,"workflow_id":50,"path":".github/workflows/runtime-images.yml","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}
 JSON
       fi
       exit 0 ;;
@@ -2545,7 +2620,7 @@ for name, runs in {
 
 for event, run in {"typed": typed_source, "native": source}.items():
     (root / f"duplicate-source-{event}.json").write_text(json.dumps({**run, "run_attempt": 1,
-        "repository": repository, "head_repository": repository}))
+        "workflow_id": 50, "path": ".github/workflows/runtime-images.yml", "repository": repository, "head_repository": repository}))
 publisher_path = ".github/workflows/publish-pr-runtime-images.yml"
 publisher = {**base, "run_attempt": 2, "path": publisher_path, "head_branch": "develop", "repository": repository,
     "head_repository": repository}
@@ -2564,7 +2639,8 @@ for event, source_run in {
               "created_at": "2026-07-24T00:05:00Z", "run_attempt": 1},
 }.items():
     (root / f"duplicate-source-104-{event}.json").write_text(json.dumps({
-        **source_run, "repository": repository, "head_repository": repository,
+        **source_run, "workflow_id": 50, "path": ".github/workflows/runtime-images.yml",
+        "repository": repository, "head_repository": repository,
     }))
 direct_typed_source = {**typed_source, "id": 104, "status": "completed", "conclusion": "success",
                        "created_at": "2026-07-24T00:05:00Z"}
