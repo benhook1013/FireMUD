@@ -37,6 +37,15 @@ class InitialGameplayReleaseModelTest {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   @Test
+  void writerInventoryKeepsValidOwnerIdentitiesInCanonicalOrder() {
+    var inventory =
+        new WriterInventory("revision-1", DIGEST, "legacy", List.of("writer-b", "writer-a"));
+
+    assertThat(inventory.applicableWriterIdentities()).containsExactly("writer-a", "writer-b");
+    assertThat(inventory.legacyWriterIdentity()).isEqualTo("legacy");
+  }
+
+  @Test
   void validatesDecodedOwnerTextWithoutRepairOrNormalization() {
     String valid = "owner-é-😀-e\u0301";
     assertThat(InitialGameplayReleaseModel.requiredText(valid, "owner")).isEqualTo(valid);

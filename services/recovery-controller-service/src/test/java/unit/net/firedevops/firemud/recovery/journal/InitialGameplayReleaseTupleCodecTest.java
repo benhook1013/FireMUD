@@ -37,6 +37,30 @@ class InitialGameplayReleaseTupleCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void typedRetainedClosureRoundTripsWithoutChangingItsDigest() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    var codec = new InitialGameplayReleaseTupleCodec(mapper);
+    var closure =
+        new EffectReadback(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1,
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            "a".repeat(64),
+            "b".repeat(64),
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            EffectReadbackAuthority.GAME_SESSION_DURABLE_CLOSED_ATTEMPT,
+            "owner-receipt-123",
+            Instant.EPOCH);
+    String json = codec.toJson(closure);
+    assertThat(mapper.readTree(json).get("readbackIdentity").isTextual()).isTrue();
+    var retained = codec.readEffectReadback(json);
+    assertThat(retained).isEqualTo(closure);
+    assertThat(codec.digest(retained)).isEqualTo(codec.digest(closure));
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
   void persistedReadbackEnumsRequireTextualNames(String replacement) {

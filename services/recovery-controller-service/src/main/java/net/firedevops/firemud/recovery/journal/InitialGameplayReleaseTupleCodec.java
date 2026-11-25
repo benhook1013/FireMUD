@@ -159,7 +159,13 @@ public final class InitialGameplayReleaseTupleCodec {
 
   InitialGameplayReleaseModel.EffectReadback readEffectReadback(String json) {
     try {
-      var readback = objectMapper.readValue(json, InitialGameplayReleaseModel.EffectReadback.class);
+      JsonNode persisted = objectMapper.readTree(json);
+      JsonNode identity = persisted == null ? null : persisted.get("readbackIdentity");
+      if (identity == null || !identity.isTextual()) {
+        throw new IllegalStateException("Persisted effect readback identity must be text");
+      }
+      var readback =
+          objectMapper.treeToValue(persisted, InitialGameplayReleaseModel.EffectReadback.class);
       if (readback == null) {
         throw new IllegalStateException("Persisted initial gameplay release readback is null");
       }
