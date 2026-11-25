@@ -725,9 +725,14 @@ if "format('repository-dispatch-run-{0}', github.run_id)" not in concurrency_gro
     raise SystemExit("incomplete typed refresh identity must receive a unique run namespace")
 if "github.sha" in concurrency_group.split("github.event_name == 'repository_dispatch'", 1)[-1].split("github.event_name == 'workflow_run'", 1)[0]:
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
-# Execute the workflow-level selector before its dispatcher can classify a CI
-# callback. A title/body CI completion must not evict substantive reconciliation.
-assert runtime["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
+# Keep the active run and queue further work without evicting pending runs.
+assert runtime["concurrency"]["cancel-in-progress"] == "false"
+assert runtime["concurrency"]["queue"] == "max"
+assert runtime_jobs["publish-runtime-images"]["concurrency"] == {
+    "group": "runtime-image-promotion-protected-branches",
+    "cancel-in-progress": "false",
+    "queue": "max",
+}, "promotion across protected branches must serialize without displacement"
 
 def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40, conclusion="success", selector=concurrency_group):
     values = {
@@ -775,17 +780,13 @@ for branch in ("main", "develop"):
     next_source = callback_group(branch, 7102, 1, "push")
     next_attempt = callback_group(branch, 7101, 2, "push")
     assert len({publisher, next_head, next_source, next_attempt}) == 4, (
-        "a successful callback may cancel only its exact branch, head, source and attempt"
+        "distinct protected callbacks must retain their exact branch, head, source and attempt"
     )
-    assert callback_group(branch, 7101, 1, "push", selector=runtime["concurrency"]["cancel-in-progress"]) == "True"
     for conclusion in ("failure", "cancelled", "timed_out", "skipped", ""):
         nonpublisher = callback_group(branch, 7101, 1, "push", conclusion=conclusion)
         assert nonpublisher != publisher, "a non-publishing callback must not displace an active or pending publisher"
         assert nonpublisher != callback_group(branch, 7101, 2, "push", conclusion=conclusion)
-        assert callback_group(branch, 7101, 1, "push", conclusion=conclusion,
-                              selector=runtime["concurrency"]["cancel-in-progress"]) == "False"
 assert callback_group("feature/parent", 7101, 1, "push") != callback_group("feature/parent", 7102, 1, "push")
-assert callback_group("feature/parent", 7101, 1, "push", selector=runtime["concurrency"]["cancel-in-progress"]) == "False"
 assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7101, 1, "push"), "protected publication branches must remain separate when only the branch differs"
 
 PY
@@ -1623,7 +1624,6 @@ require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, 
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
-require_contains "$runtime_images_path" "  cancel-in-progress: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
