@@ -822,6 +822,9 @@ public final class InitialGameplayReleaseModel {
 
   private static List<String> sortedUniqueTexts(List<String> values, String name) {
     Objects.requireNonNull(values, name + " must not be null");
+    if (values.stream().anyMatch(Objects::isNull)) {
+      throw new IllegalArgumentException(name + " must not contain null elements");
+    }
     List<String> sorted = values.stream().map(value -> requiredText(value, name)).sorted().toList();
     if (sorted.stream().distinct().count() != sorted.size()) {
       throw new IllegalArgumentException(name + " contains duplicate identities");
