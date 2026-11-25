@@ -60,8 +60,9 @@ public final class AccountBootstrapRosterFixture {
     return create(AuthoringFixtures.freshGraphRequest(canonicalTenantId));
   }
 
-  private static Fixture create(WorldDraftTerminalReadEvidence.Request owner) throws Exception {
-    var account = owner.accountBinding();
+  private static Fixture create(WorldDraftTerminalReadEvidence.Request draftTerminal)
+      throws Exception {
+    var account = draftTerminal.accountBinding();
     var draft =
         DraftCommitBinding.fromStored(
             new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());
