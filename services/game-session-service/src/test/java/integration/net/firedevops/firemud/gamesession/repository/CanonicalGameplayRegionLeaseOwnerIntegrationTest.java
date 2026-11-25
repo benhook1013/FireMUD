@@ -1677,8 +1677,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                     new org.jooq.impl.DefaultExecuteListener() {
                       @Override
                       public void executeEnd(org.jooq.ExecuteContext context) {
-                        if (context.sql() != null
-                            && context.sql().contains("SET phase = 'PREPARED'")) {
+                        String sql = context.sql();
+                        if (sql != null && sql.contains("SET phase = 'PREPARED'")) {
                           assertThat(context.rows()).isEqualTo(1);
                           releaseUpdates.incrementAndGet();
                           time.set(cutoff);
