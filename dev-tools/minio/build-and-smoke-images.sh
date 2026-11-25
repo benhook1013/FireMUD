@@ -36,6 +36,10 @@ resolve_source() {
     echo "$name upstream tag object changed: expected $expected_tag_object, got ${actual_tag_object:-missing}." >&2
     return 1
   }
+  # A lightweight tag points directly at the pinned commit and has no peeled ref.
+  if [[ -z "$actual_commit" && "$expected_tag_object" == "$expected_commit" ]]; then
+    actual_commit="$actual_tag_object"
+  fi
   [[ "$actual_commit" == "$expected_commit" ]] || {
     echo "$name upstream tag no longer resolves to the pinned source commit." >&2
     return 1
@@ -56,8 +60,8 @@ resolve_source() {
   }
 }
 
-resolve_source minio https://github.com/minio/minio.git RELEASE.2024-05-10T01-41-38Z \
-  0c39917fe562b3c43c77e72327bc4351857c0050 b5984027386ec1e55c504d27f42ef40a189cdb55
+resolve_source minio https://github.com/chainguard-forks/minio.git RELEASE.2026-11-23T00-10-37Z \
+  dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8 dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8
 resolve_source mc https://github.com/minio/mc.git RELEASE.2024-05-09T17-04-24Z \
   835afd0a86e9a3ed396b8162eabc98243c342e5f fdb36acbb1d793b6cca622a55e6292f0d52309f0
 
@@ -140,8 +144,8 @@ payload = {
     "sourceRunAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
     "sourceHeadSha": os.environ["GITHUB_SHA"],
     "server": {"image": server_image, "imageId": server_image_id,
-               "tagObject": "0c39917fe562b3c43c77e72327bc4351857c0050",
-               "sourceCommit": "b5984027386ec1e55c504d27f42ef40a189cdb55"},
+               "tagObject": "dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8",
+               "sourceCommit": "dd3f3fa63fc9195fcd5b4d6d7e6f8524bc33c2b8"},
     "client": {"image": client_image, "imageId": client_image_id,
                "tagObject": "835afd0a86e9a3ed396b8162eabc98243c342e5f",
                "sourceCommit": "fdb36acbb1d793b6cca622a55e6292f0d52309f0"},

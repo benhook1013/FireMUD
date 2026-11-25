@@ -1727,6 +1727,43 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     f.creation().requestId())
                 .get("released_at"))
         .isNull();
+
+    // Keep the same verified original event and commit consent strictly after its creation.
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    f.clock()
+        .advanceToAtLeast(
+            Instant.ofEpochSecond(verified.eventCreatedAtEpochSeconds()).plusSeconds(2));
+    var providerReads = checkout.providerReads();
+    checkout.prepareConfirmationDispatch(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var consent =
+        one(
+                c,
+                "SELECT consented_at FROM subscription_first_invoice_confirmations"
+                    + " WHERE subscription_id = ?",
+                checkout.invoice().subscriptionId())
+            .get("consented_at", java.time.OffsetDateTime.class);
+    assertThat(consent).isNotNull();
+    assertThat(consent.toInstant().getEpochSecond())
+        .isGreaterThan(verified.eventCreatedAtEpochSeconds());
+    assertThat(checkout.confirmations()).isZero();
+    assertThat(checkout.providerReads()).isEqualTo(providerReads);
+    var imageWithConsent = firstInvoiceImage(c);
+
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("RECONCILING");
+    assertThat(firstInvoiceImage(c)).isEqualTo(imageWithConsent);
+    assertThat(count(c, "subscription_first_invoice_confirmations")).isOne();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(count(c, "stripe_event_inbox")).isOne();
+    assertThat(
+            one(
+                    c,
+                    "SELECT processing_status FROM stripe_event_inbox WHERE provider_event_id = ?",
+                    verified.providerEventId())
+                .get("processing_status", String.class))
+        .isEqualTo("PENDING");
+    assertThat(checkout.confirmations()).isZero();
+    assertThat(checkout.providerReads()).isEqualTo(providerReads);
   }
 
   @Test

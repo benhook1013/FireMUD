@@ -369,6 +369,52 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   @Test
+  void timelinePreparationRefusesReconnectBeforeQualifyingOrSubmittingRedisCommands() {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var catalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis, uri, catalog);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    when(source.tenantId()).thenReturn(UUID.randomUUID());
+    when(source.gameInstanceId()).thenReturn(UUID.randomUUID());
+    when(source.regionId()).thenReturn(UUID.randomUUID());
+    when(preparation.source()).thenReturn(source);
+    when(preparation.operationId()).thenReturn(UUID.randomUUID());
+    when(preparation.sourceDigest()).thenReturn("a".repeat(64));
+    when(preparation.regionEpoch()).thenReturn(1L);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenReturn(
+            ConnectionFuture.from(
+                new InetSocketAddress("localhost", 6379),
+                CompletableFuture.completedFuture(connection)));
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+    RuntimeIdentity identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "controlled-instance",
+            "localhost",
+            CLOCK.instant(),
+            "controlled-test",
+            "controlled-sha",
+            "controlled-image");
+
+    assertThatThrownBy(() ->
+            owner
+                .forHandoffDeadline(CLOCK, CLOCK.millis() + 4_000L)
+                .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity))
+        .isInstanceOf(IllegalStateException.class);
+    verify(connection).getOptions();
+    verify(connection, never()).async();
+    verify(connection).closeAsync();
+  }
+
+  @Test
   void preparedTimelineRetainsAdmissionThroughRejectedCallersAsyncClose() throws Exception {
     RedisClient redis = mock();
     RedisURI uri = RedisURI.create("redis://localhost:6379");
@@ -770,15 +816,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             request.evidence().evaluationIdentity());
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     long started = System.nanoTime();
-    try {
-      var result =
-          CompletableFuture.runAsync(() ->
-              assertThatThrownBy(() ->
-                      Context.current()
-                          .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
-                          .call(() -> owner.readExact(request, reservation)))
-                  .isInstanceOf(IllegalStateException.class));
-      result.get(3500, TimeUnit.MILLISECONDS);
+    try (var caller =
+        new WatchdogCaller(
+            CompletableFuture.runAsync(() ->
+                assertThatThrownBy(() ->
+                        Context.current()
+                            .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
+                            .call(() -> owner.readExact(request, reservation)))
+                    .isInstanceOf(IllegalStateException.class)),
+            release::countDown)) {
+      caller.result().get(3500, TimeUnit.MILLISECONDS);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
       Semaphore background =
@@ -796,7 +843,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verifyNoInteractions(connection, redis);
       assertThat(dsl.configuration().connectionProvider()).isSameAs(provider);
     } finally {
-      release.countDown();
       scheduler.shutdownNow();
     }
   }
@@ -1009,14 +1055,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     // Initialize the fixture DSL before starting the execution/cancellation budget.
     DSLContext dsl = source(provider);
     long started = System.nanoTime();
-    try {
-      var result =
-          CompletableFuture.runAsync(() ->
-              assertThatThrownBy(() ->
-                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                          CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
-                  .isInstanceOf(IllegalStateException.class));
-      result.get(3500, TimeUnit.MILLISECONDS);
+    try (var caller =
+        new WatchdogCaller(
+            CompletableFuture.runAsync(() ->
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
+                    .isInstanceOf(IllegalStateException.class)),
+            () -> {
+              finishExecution.countDown();
+              finishCancellation.countDown();
+            })) {
+      caller.result().get(3500, TimeUnit.MILLISECONDS);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(executing.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(cancelling.await(1, TimeUnit.SECONDS)).isTrue();
@@ -1029,9 +1079,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(provider, timeout(2000)).release(connection);
       verify(statement).cancel();
       verify(statement).setQueryTimeout(anyInt());
-    } finally {
-      finishExecution.countDown();
-      finishCancellation.countDown();
     }
   }
 
@@ -1438,27 +1485,26 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           return true;
         });
     DSLContext dsl = source(provider);
-    try {
-      var outcome =
-          CompletableFuture.runAsync(() ->
-              assertThatThrownBy(() ->
-                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                          clock,
-                          clock.millis() + 2000,
-                          budget -> {
-                            var sql = budget.sql(dsl);
-                            execute(sql);
-                            return execute(sql);
-                          }))
-                  .isInstanceOf(IllegalStateException.class));
-      outcome.get(3500, TimeUnit.MILLISECONDS);
+    try (var caller =
+        new WatchdogCaller(
+            CompletableFuture.runAsync(() ->
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            clock,
+                            clock.millis() + 2000,
+                            budget -> {
+                              var sql = budget.sql(dsl);
+                              execute(sql);
+                              return execute(sql);
+                            }))
+                    .isInstanceOf(IllegalStateException.class)),
+            release::countDown)) {
+      caller.result().get(3500, TimeUnit.MILLISECONDS);
       assertThat(second.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(secondTimeout)
           .as("second query receives at most the remaining 500 ms")
           .hasValue(1);
       verify(statement, timeout(1000)).cancel();
-    } finally {
-      release.countDown();
     }
   }
 
@@ -1724,5 +1770,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       }
     }
     if (interrupted) Thread.currentThread().interrupt();
+  }
+
+  private record WatchdogCaller(CompletableFuture<Void> result, Runnable release)
+      implements AutoCloseable {
+
+    @Override
+    public void close() throws Exception {
+      release.run();
+      // Await termination after releasing the fixture. The watchdog owns the assertion
+      // outcome; this join ignores that outcome without ignoring a cleanup timeout.
+      result.handle((ignored, failure) -> null).get(2, TimeUnit.SECONDS);
+    }
   }
 }

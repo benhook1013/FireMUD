@@ -452,33 +452,30 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     var reachedCallerRead = new AtomicBoolean();
     // This exact issuance SELECT is downstream of the paid receipt read and early clock check.
     var expireDuringCallerRead =
-        ExecuteListener.onExecuteEnd(
-            ctx -> {
-              String sql = ctx.sql();
-              var query = ctx.query();
-              if (sql != null
-                  && sql.contains(
-                      "SELECT request_id FROM account_gameplay_delegation_issuance_operations")
-                  && sql.contains("WHERE token_jti = ? AND status = 'COMMITTED'")
-                  && query != null
-                  && query.getBindValues().equals(List.of(originalJti))
-                  && reachedCallerRead.compareAndSet(false, true)) {
-                assertThat(paid.hosting().clock().instant())
-                    .isBefore(Instant.ofEpochMilli(validUntil));
-                paid.hosting().clock().advanceToAtLeast(pastDeadline);
-              }
-            });
+        ExecuteListener.onExecuteEnd(ctx -> {
+          String sql = ctx.sql();
+          var query = ctx.query();
+          if (sql != null
+              && sql.contains(
+                  "SELECT request_id FROM account_gameplay_delegation_issuance_operations")
+              && sql.contains("WHERE token_jti = ? AND status = 'COMMITTED'")
+              && query != null
+              && query.getBindValues().equals(List.of(originalJti))
+              && reachedCallerRead.compareAndSet(false, true)) {
+            assertThat(paid.hosting().clock().instant()).isBefore(Instant.ofEpochMilli(validUntil));
+            paid.hosting().clock().advanceToAtLeast(pastDeadline);
+          }
+        });
 
-    assertThatThrownBy(
-            () ->
-                caller.inCurrentSources(
-                    sources ->
-                        sources.readCurrentPublicProductionNew(
-                            paid.hosting().tenantId(),
-                            originalJti,
-                            caller.committedCandidate,
-                            observed),
-                    expireDuringCallerRead))
+    assertThatThrownBy(() ->
+            caller.inCurrentSources(
+                sources ->
+                    sources.readCurrentPublicProductionNew(
+                        paid.hosting().tenantId(),
+                        originalJti,
+                        caller.committedCandidate,
+                        observed),
+                expireDuringCallerRead))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Current paid NEW source has expired");
     assertThat(reachedCallerRead).isTrue();

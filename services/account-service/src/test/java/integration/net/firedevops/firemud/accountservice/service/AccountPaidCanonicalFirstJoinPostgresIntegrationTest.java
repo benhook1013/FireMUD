@@ -116,18 +116,17 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
             .configuration()
             .derive(
                 new DefaultExecuteListenerProvider(
-                    ExecuteListener.onExecuteStart(
-                        context -> {
-                          String sql = context.sql();
-                          var query = context.query();
-                          if (sql != null
-                              && query != null
-                              && sql.startsWith(
-                                  "SELECT account_uuid FROM accounts WHERE account_uuid = ")
-                              && sql.endsWith(" FOR UPDATE")) {
-                            captured.add((UUID) query.getBindValues().getFirst());
-                          }
-                        })));
+                    ExecuteListener.onExecuteStart(context -> {
+                      String sql = context.sql();
+                      var query = context.query();
+                      if (sql != null
+                          && query != null
+                          && sql.startsWith(
+                              "SELECT account_uuid FROM accounts WHERE account_uuid = ")
+                          && sql.endsWith(" FOR UPDATE")) {
+                        captured.add((UUID) query.getBindValues().getFirst());
+                      }
+                    })));
     var repository = new AccountRepository(configuration.dsl());
 
     c.hosting
@@ -152,18 +151,11 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     var transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     var accounts = new AccountRepository(dsl);
-    var candidates = new ArrayList<Account>();
-    transaction.executeWithoutResult(
-        status -> {
-          for (int i = 0; i < 2; i++) {
-            var account = new Account();
-            String name = "physical-pair-" + UUID.randomUUID();
-            account.setUsername(name);
-            account.setEmail(name + "@example.test");
-            account.setPasswordHash("controlled-hash");
-            candidates.add(accounts.save(account));
-          }
-        });
+    var candidates =
+        new ArrayList<>(
+            List.of(
+                CanonicalHostingSubscriptionTestFixture.createBillingAccount(dsl, transaction),
+                CanonicalHostingSubscriptionTestFixture.createBillingAccount(dsl, transaction)));
     candidates.sort(Comparator.comparing(Account::getAccountUuid));
     Account earlierPayer = candidates.getFirst();
     UUID payer = earlierPayer.getAccountUuid();
@@ -190,65 +182,57 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       for (boolean revalidating : List.of(false, true)) {
         var waitingPid = new CompletableFuture<Integer>();
         var done =
-            transaction.execute(
-                status -> {
-                  int holderPid =
-                      Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-                          .get(0, Integer.class);
-                  accounts.findByAccountUuidForUpdate(payer).orElseThrow();
-                  var worker =
-                      workers.submit(
-                          () ->
-                              transaction.executeWithoutResult(
-                                  ignored -> {
-                                    dsl.execute("SET LOCAL lock_timeout = '8s'");
-                                    waitingPid.complete(
-                                        Objects.requireNonNull(
-                                                dsl.fetchOne("SELECT pg_backend_pid()"))
-                                            .get(0, Integer.class));
-                                    accounts.lockCanonicalJoinAccounts(tenant, caller);
-                                    accounts.findByAccountUuidForUpdate(caller).orElseThrow();
-                                    if (revalidating) {
-                                      assertThat(
-                                              lifecycle
-                                                  .readCurrent(fence, observation)
-                                                  .gameplayAvailable())
-                                          .isTrue();
-                                    } else {
-                                      assertThat(lifecycle.prepareCurrentRead(tenant).binding())
-                                          .isEqualTo(fence.binding());
-                                    }
-                                  }));
-                  int waiter = waitingPid.orTimeout(4, TimeUnit.SECONDS).join();
-                  assertThat(waiter).isNotEqualTo(holderPid);
-                  long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
-                  while (!Boolean.TRUE.equals(
-                      Objects.requireNonNull(
-                              dsl.fetchOne(
-                                  "SELECT ? = ANY(pg_blocking_pids(?))", holderPid, waiter))
-                          .get(0, Boolean.class))) {
-                    if (System.nanoTime() >= deadline) {
-                      throw new AssertionError(
-                          "Ordered read did not block on the earlier payer Account");
-                    }
-                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
-                  }
-                  try (var connection = source.getConnection();
-                      var query =
-                          connection.prepareStatement(
-                              "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE"
-                                  + " NOWAIT")) {
-                    query.setObject(1, caller);
-                    try (var selected = query.executeQuery()) {
-                      assertThat(selected.next()).isTrue();
-                      assertThat(selected.getObject(1, UUID.class)).isEqualTo(caller);
-                    }
-                  } catch (SQLException failure) {
-                    throw new AssertionError(
-                        "Earlier payer wait must leave caller Account unlocked", failure);
-                  }
-                  return worker;
-                });
+            transaction.execute(status -> {
+              int holderPid =
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class);
+              accounts.findByAccountUuidForUpdate(payer).orElseThrow();
+              var worker =
+                  workers.submit(() ->
+                      transaction.executeWithoutResult(ignored -> {
+                        dsl.execute("SET LOCAL lock_timeout = '8s'");
+                        waitingPid.complete(
+                            Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                                .get(0, Integer.class));
+                        accounts.lockCanonicalJoinAccounts(tenant, caller);
+                        accounts.findByAccountUuidForUpdate(caller).orElseThrow();
+                        if (revalidating) {
+                          assertThat(lifecycle.readCurrent(fence, observation).gameplayAvailable())
+                              .isTrue();
+                        } else {
+                          assertThat(lifecycle.prepareCurrentRead(tenant).binding())
+                              .isEqualTo(fence.binding());
+                        }
+                      }));
+              int waiter = waitingPid.orTimeout(4, TimeUnit.SECONDS).join();
+              assertThat(waiter).isNotEqualTo(holderPid);
+              long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
+              while (!Boolean.TRUE.equals(
+                  Objects.requireNonNull(
+                          dsl.fetchOne("SELECT ? = ANY(pg_blocking_pids(?))", holderPid, waiter))
+                      .get(0, Boolean.class))) {
+                if (System.nanoTime() >= deadline) {
+                  throw new AssertionError(
+                      "Ordered read did not block on the earlier payer Account");
+                }
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
+              }
+              try (var connection = source.getConnection();
+                  var query =
+                      connection.prepareStatement(
+                          "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE"
+                              + " NOWAIT")) {
+                query.setObject(1, caller);
+                try (var selected = query.executeQuery()) {
+                  assertThat(selected.next()).isTrue();
+                  assertThat(selected.getObject(1, UUID.class)).isEqualTo(caller);
+                }
+              } catch (SQLException failure) {
+                throw new AssertionError(
+                    "Earlier payer wait must leave caller Account unlocked", failure);
+              }
+              return worker;
+            });
         Objects.requireNonNull(done).get(5, TimeUnit.SECONDS);
       }
     }
@@ -326,28 +310,26 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
   void finalCommitFailureRollsBackMembershipRolesPairEventAuditAndTerminalReceipt() {
     Context c = context(false);
     var original = c.operation();
-    assertThatThrownBy(
-            () ->
-                c.hosting
-                    .transaction()
-                    .execute(
-                        status -> {
-                          TransactionSynchronizationManager.registerSynchronization(
-                              new TransactionSynchronization() {
-                                @Override
-                                public void beforeCommit(boolean readOnly) {
-                                  throw new IllegalStateException(
-                                      "controlled final paid JOIN commit refusal");
-                                }
-                              });
-                          return c.coordinator.commitPaidCanonicalFirstJoin(
-                              c.scope,
-                              c.requestId,
-                              CALLER,
-                              c.hosting.lifecycleRepository(),
-                              c.fence,
-                              c.observed);
-                        }))
+    assertThatThrownBy(() ->
+            c.hosting
+                .transaction()
+                .execute(status -> {
+                  TransactionSynchronizationManager.registerSynchronization(
+                      new TransactionSynchronization() {
+                        @Override
+                        public void beforeCommit(boolean readOnly) {
+                          throw new IllegalStateException(
+                              "controlled final paid JOIN commit refusal");
+                        }
+                      });
+                  return c.coordinator.commitPaidCanonicalFirstJoin(
+                      c.scope,
+                      c.requestId,
+                      CALLER,
+                      c.hosting.lifecycleRepository(),
+                      c.fence,
+                      c.observed);
+                }))
         .hasMessageContaining("controlled final paid JOIN commit refusal");
     c.assertRolledBack(original);
   }
@@ -470,43 +452,40 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
               now.plusSeconds(120).toString());
       hosting
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                var source = fresh.read(hosting.tenantId()).orElseThrow();
-                sources.initializeIssuerIfAbsent("firemud-account-service");
-                generations.initialize(
-                    AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                        player.getAccountUuid(), hosting.tenantId()));
-                scopes.insertCanonical(
-                    player.getId(),
-                    scope,
-                    new VerifiedTenantProvenance(
-                        null,
-                        TenantProvenanceKind.FRESH_GAME_DESIGN,
-                        source.operationId(),
-                        source.evidenceDigest()));
-                operations.insertCanonicalIntent(requestId, scope, CALLER);
-              });
+          .executeWithoutResult(status -> {
+            var source = fresh.read(hosting.tenantId()).orElseThrow();
+            sources.initializeIssuerIfAbsent("firemud-account-service");
+            generations.initialize(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    player.getAccountUuid(), hosting.tenantId()));
+            scopes.insertCanonical(
+                player.getId(),
+                scope,
+                new VerifiedTenantProvenance(
+                    null,
+                    TenantProvenanceKind.FRESH_GAME_DESIGN,
+                    source.operationId(),
+                    source.evidenceDigest()));
+            operations.insertCanonicalIntent(requestId, scope, CALLER);
+          });
       fence =
           Objects.requireNonNull(
               hosting
                   .transaction()
-                  .execute(
-                      status ->
-                          hosting.lifecycleRepository().prepareCurrentRead(hosting.tenantId())));
+                  .execute(status ->
+                      hosting.lifecycleRepository().prepareCurrentRead(hosting.tenantId())));
       observed = hosting.observer().observe(fence.binding());
       hosting
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                var receipt = hosting.lifecycleRepository().readCurrent(fence, observed);
-                operations.bindCanonicalPolicyEvidence(
-                    requestId,
-                    scope,
-                    CALLER,
-                    receipt.allowPublicJoin(),
-                    receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
-              });
+          .executeWithoutResult(status -> {
+            var receipt = hosting.lifecycleRepository().readCurrent(fence, observed);
+            operations.bindCanonicalPolicyEvidence(
+                requestId,
+                scope,
+                CALLER,
+                receipt.allowPublicJoin(),
+                receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
+          });
       paidAuditRows = auditRows();
       assertThat(paidAuditRows).isNotEmpty();
     }
@@ -516,30 +495,28 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       return Objects.requireNonNull(
           hosting
               .transaction()
-              .execute(
-                  status ->
-                      coordinator.commitPaidCanonicalFirstJoin(
-                          scope, requestId, CALLER, hosting.lifecycleRepository(), fence, result)));
+              .execute(status ->
+                  coordinator.commitPaidCanonicalFirstJoin(
+                      scope, requestId, CALLER, hosting.lifecycleRepository(), fence, result)));
     }
 
     private AccountJoinOperationRepository.CanonicalJoinOperationEvidence operation() {
       return Objects.requireNonNull(
           hosting
               .transaction()
-              .execute(
-                  status -> {
-                    operations.lockAccount(
-                        Objects.requireNonNull(
-                                hosting
-                                    .dsl()
-                                    .fetchOne(
-                                        "SELECT id FROM accounts WHERE account_uuid = ?",
-                                        scope.accountId()))
-                            .get(0, Long.class));
-                    return operations
-                        .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                        .orElseThrow();
-                  }));
+              .execute(status -> {
+                operations.lockAccount(
+                    Objects.requireNonNull(
+                            hosting
+                                .dsl()
+                                .fetchOne(
+                                    "SELECT id FROM accounts WHERE account_uuid = ?",
+                                    scope.accountId()))
+                        .get(0, Long.class));
+                return operations
+                    .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                    .orElseThrow();
+              }));
     }
 
     private String stream() {
@@ -579,11 +556,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
           Objects.requireNonNull(
               hosting
                   .transaction()
-                  .execute(
-                      status ->
-                          new AccountAuditOutboxRepository(hosting.dsl())
-                              .findCanonicalTenantEnvelopeForUpdate(proof.auditEventId())
-                              .orElseThrow()));
+                  .execute(status ->
+                      new AccountAuditOutboxRepository(hosting.dsl())
+                          .findCanonicalTenantEnvelopeForUpdate(proof.auditEventId())
+                          .orElseThrow()));
       assertThat(joined.auditEventId()).isEqualTo(proof.auditEventId());
       assertThat(joined.eventType()).isEqualTo("ACCOUNT_JOINED_PUBLIC_PRODUCTION");
       assertThat(joined.tenantUuid()).isEqualTo(scope.tenantId());

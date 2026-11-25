@@ -1189,6 +1189,64 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void applicationAuthorityCutoffAfterReservationStagingRollsBackWhileDatabaseEvidenceIsFresh()
+      throws Exception {
+    try (Session session = session()) {
+      var request = session.retainControlledEvaluation(true, null);
+      var evidence = request.evidence();
+      Instant stillCurrent = evidence.evaluatedAt().minusSeconds(1);
+      Instant callerCutoff =
+          Instant.ofEpochSecond(
+              session.account.committedCandidate.identity().expiresAtEpochSecond());
+      var parsed =
+          RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(evidence.canonicalBytes());
+      Instant scopeCutoff =
+          Instant.parse(
+              new AccountConnectScopeRepository(session.dsl)
+                  .findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash())
+                  .orElseThrow()
+                  .connectScopeExpiresAt());
+      Instant appCutoff = callerCutoff.isBefore(scopeCutoff) ? callerCutoff : scopeCutoff;
+      assertThat(stillCurrent).isBefore(appCutoff);
+      assertThat(AccountTenantCapacityRepository.databaseNow(session.dsl))
+          .isBefore(evidence.expiresAt());
+      String before = session.capacityImage() + session.capacityDecisionImage();
+      var staged = new java.util.concurrent.atomic.AtomicBoolean();
+      Clock appClock = org.mockito.Mockito.mock(Clock.class);
+      org.mockito.Mockito.when(appClock.instant())
+          .thenAnswer(ignored -> {
+            if (!org.springframework.transaction.support.TransactionSynchronizationManager
+                .isActualTransactionActive()) return stillCurrent;
+            // session.dsl is backed by TransactionAwareDataSourceProxy over the very same data
+            // source used by capacityOwner; only the enlisted thread can see the staged row.
+            boolean reservationStaged =
+                session.dsl.fetchExists(
+                    DSL.selectOne()
+                        .from(DSL.table("account_tenant_capacity_reservations"))
+                        .where(
+                            DSL.field("request_id", UUID.class)
+                                .eq(request.identity().requestId())));
+            if (!reservationStaged) return stillCurrent;
+            assertThat(AccountTenantCapacityRepository.databaseNow(session.dsl))
+                .isBefore(evidence.expiresAt());
+            staged.set(true);
+            return appCutoff;
+          });
+
+      assertThatThrownBy(() -> session.account.capacityOwner(appClock).commit(request, GS))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
+      assertThat(staged).isTrue();
+      assertThat(session.capacityImage() + session.capacityDecisionImage()).isEqualTo(before);
+
+      var stillEligible = session.account.capacityOwner(Clock.fixed(stillCurrent, ZoneOffset.UTC));
+      assertThat(stillEligible.commit(request, GS).state())
+          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+    }
+  }
+
+  @Test
   void actualUsageLockWaitAcrossExpiryCannotCreateAReservationEvenWithAFrozenOwnerClock()
       throws Exception {
     try (Session session = session();

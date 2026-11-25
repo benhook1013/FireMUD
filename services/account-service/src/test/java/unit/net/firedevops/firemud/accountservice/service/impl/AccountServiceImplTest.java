@@ -330,11 +330,10 @@ class AccountServiceImplTest {
     service.setCanonicalPublicRealmScopeOwner(owner);
     SessionContext.setContext("e9e3aa54-9712-4e01-8767-f23f3c662e64", List.of(), Map.of());
     when(owner.listRealmScopes("bootstrap", "source-tenant", "demo"))
-        .thenAnswer(
-            invocation -> {
-              assertTrue(SessionContext.hasAuthenticatedCallerContext());
-              throw new IllegalStateException("Canonical source requires workload-only context");
-            });
+        .thenAnswer(invocation -> {
+          assertTrue(SessionContext.hasAuthenticatedCallerContext());
+          throw new IllegalStateException("Canonical source requires workload-only context");
+        });
     try {
       assertThrows(
           IllegalStateException.class,
@@ -452,10 +451,9 @@ class AccountServiceImplTest {
   private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
       ordinaryIssuanceIdentityFailures() {
     return java.util.Arrays.stream(OrdinaryIssuance.values())
-        .flatMap(
-            mode ->
-                java.util.Arrays.stream(IdentityFailure.values())
-                    .map(failure -> org.junit.jupiter.params.provider.Arguments.of(mode, failure)));
+        .flatMap(mode ->
+            java.util.Arrays.stream(IdentityFailure.values())
+                .map(failure -> org.junit.jupiter.params.provider.Arguments.of(mode, failure)));
   }
 
   @ParameterizedTest
@@ -780,15 +778,14 @@ class AccountServiceImplTest {
         new CreateAccountRequest("demo", "  DEMO@example.com ", "password");
     UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
-        .thenAnswer(
-            invocation -> {
-              Account saved = invocation.getArgument(0);
-              saved.setId(1L);
-              saved.setAccountUuid(accountUuid);
-              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
-              saved.setAccountUuidSourceNumericId(1L);
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          Account saved = invocation.getArgument(0);
+          saved.setId(1L);
+          saved.setAccountUuid(accountUuid);
+          saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+          saved.setAccountUuidSourceNumericId(1L);
+          return saved;
+        });
 
     AccountDto dto = service.createAccount(request);
 
@@ -812,15 +809,14 @@ class AccountServiceImplTest {
   @Test
   void createAccountRejectsPublicIdentityWithoutExactPersistedSourceRow() {
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
-        .thenAnswer(
-            invocation -> {
-              Account saved = invocation.getArgument(0);
-              saved.setId(1L);
-              saved.setAccountUuid(UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b"));
-              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
-              saved.setAccountUuidSourceNumericId(2L);
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          Account saved = invocation.getArgument(0);
+          saved.setId(1L);
+          saved.setAccountUuid(UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b"));
+          saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+          saved.setAccountUuidSourceNumericId(2L);
+          return saved;
+        });
 
     assertThrows(
         IllegalStateException.class,
@@ -1251,18 +1247,16 @@ class AccountServiceImplTest {
           when(f.demos.revalidate(f.demo)).thenThrow(unavailable).thenReturn(f.demo);
       case "member" ->
           org.mockito.Mockito.doThrow(unavailable)
-              .doAnswer(
-                  invocation ->
-                      f.joined.get() ? Optional.of(f.currentMembership) : Optional.empty())
+              .doAnswer(invocation ->
+                  f.joined.get() ? Optional.of(f.currentMembership) : Optional.empty())
               .when(accountTenantMembershipRepository)
               .findFreshMembershipForUpdate(f.scope.accountId(), f.scope.tenantId());
       case "terminal" ->
           org.mockito.Mockito.doThrow(unavailable)
-              .doAnswer(
-                  invocation -> {
-                    f.joined.set(true);
-                    return f.committed;
-                  })
+              .doAnswer(invocation -> {
+                f.joined.set(true);
+                return f.committed;
+              })
               .when(f.terminal)
               .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
       default -> throw new AssertionError(stage);
@@ -1330,10 +1324,8 @@ class AccountServiceImplTest {
         org.mockito.Mockito.mock(Target.class, org.mockito.AdditionalAnswers.delegatesTo(f.target));
     when(changed.activeWorldEpoch()).thenReturn(2L);
     var reads = new java.util.concurrent.atomic.AtomicInteger();
-    org.mockito.Mockito.doAnswer(
-            invocation ->
-                f.resolve(
-                    invocation.getArgument(0), reads.incrementAndGet() == 1 ? f.target : changed))
+    org.mockito.Mockito.doAnswer(invocation ->
+            f.resolve(invocation.getArgument(0), reads.incrementAndGet() == 1 ? f.target : changed))
         .when(f.targets)
         .resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any());
     assertEquals(
@@ -1491,10 +1483,9 @@ class AccountServiceImplTest {
     var f = canonicalJoinFixture();
     var clock = org.mockito.Mockito.mock(Clock.class);
     when(clock.instant())
-        .thenAnswer(
-            invocation ->
-                Instant.parse(f.scope.evaluatedAt())
-                    .plusSeconds(!afterCoordinator || f.joined.get() ? 120 : 1));
+        .thenAnswer(invocation ->
+            Instant.parse(f.scope.evaluatedAt())
+                .plusSeconds(!afterCoordinator || f.joined.get() ? 120 : 1));
     f.compose(clock);
 
     assertEquals(
@@ -1531,9 +1522,8 @@ class AccountServiceImplTest {
     var committed = new AtomicBoolean();
     var clock = org.mockito.Mockito.mock(Clock.class);
     when(clock.instant())
-        .thenAnswer(
-            invocation ->
-                Instant.parse(f.scope.evaluatedAt()).plusSeconds(committed.get() ? 120 : 1));
+        .thenAnswer(invocation ->
+            Instant.parse(f.scope.evaluatedAt()).plusSeconds(committed.get() ? 120 : 1));
     f.compose(clock);
     org.mockito.Mockito.doAnswer(
             invocation -> {
@@ -1695,11 +1685,10 @@ class AccountServiceImplTest {
     org.mockito.Mockito.clearInvocations(sessionService);
     var result =
         canonicalGameSessionPeer()
-            .call(
-                () ->
-                    service.joinPublicProductionFromGameSession(
-                        caller,
-                        new JoinPublicProductionRequest(f.scope.connectScopeId(), f.requestId)));
+            .call(() ->
+                service.joinPublicProductionFromGameSession(
+                    caller,
+                    new JoinPublicProductionRequest(f.scope.connectScopeId(), f.requestId)));
     assertTrue(result.success());
     assertEquals(f.scope.tenantId(), result.tenantId());
     assertFalse(result.replayed());
@@ -1727,15 +1716,14 @@ class AccountServiceImplTest {
     }
     assertEquals(
         "AUTH_UNAVAILABLE",
-        peer.call(
-                () ->
-                    assertThrows(
-                        AuthenticationException.class,
-                        () ->
-                            service.joinPublicProductionFromGameSession(
-                                f.directCaller(f.requestId),
-                                new JoinPublicProductionRequest(
-                                    f.scope.connectScopeId(), f.requestId))))
+        peer.call(() ->
+                assertThrows(
+                    AuthenticationException.class,
+                    () ->
+                        service.joinPublicProductionFromGameSession(
+                            f.directCaller(f.requestId),
+                            new JoinPublicProductionRequest(
+                                f.scope.connectScopeId(), f.requestId))))
             .getCode());
     verifyNoInteractions(f.reader, accountJoinOperationRepository, f.terminal);
   }
@@ -1758,15 +1746,14 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_SCOPE_MISMATCH",
         canonicalGameSessionPeer()
-            .call(
-                () ->
-                    assertThrows(
-                        AuthenticationException.class,
-                        () ->
-                            service.joinPublicProductionFromGameSession(
-                                caller,
-                                new JoinPublicProductionRequest(
-                                    f.scope.connectScopeId(), f.requestId))))
+            .call(() ->
+                assertThrows(
+                    AuthenticationException.class,
+                    () ->
+                        service.joinPublicProductionFromGameSession(
+                            caller,
+                            new JoinPublicProductionRequest(
+                                f.scope.connectScopeId(), f.requestId))))
             .getCode());
     verifyNoInteractions(accountJoinOperationRepository, f.terminal);
   }
@@ -1912,43 +1899,42 @@ class AccountServiceImplTest {
       when(targets.resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any()))
           .thenAnswer(invocation -> resolve(invocation.getArgument(0), target));
       when(targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                var strict =
-                    invocation.getArgument(
-                        0,
-                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-                            .Request.class);
-                Target currentTarget = resolvedTarget;
-                long activeWorldEpoch = currentTarget.activeWorldEpoch();
-                var published =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.gamesession
-                            .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
-                            .class);
-                when(published.selector()).thenReturn(strict);
-                when(published.currentTarget()).thenReturn(currentTarget);
-                var sourceEvidence =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-                            .class);
-                when(sourceEvidence.request()).thenReturn(strict);
-                var policies =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.publication
-                            .PublishedRealmEntryPolicySetEvidence.class);
-                when(policies.canonicalBytes()).thenReturn(policyBytes);
-                when(sourceEvidence.publishedPolicySetEvidence()).thenReturn(policies);
-                when(published.sourceEvidence()).thenReturn(sourceEvidence);
-                var world =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
-                            .class);
-                when(world.lifecycleStatus()).thenReturn("ACTIVE");
-                when(world.lifecycleEpoch()).thenReturn(activeWorldEpoch);
-                when(published.worldLifecycleEvidence()).thenReturn(world);
-                return published;
-              });
+          .thenAnswer(invocation -> {
+            var strict =
+                invocation.getArgument(
+                    0,
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .Request.class);
+            Target currentTarget = resolvedTarget;
+            long activeWorldEpoch = currentTarget.activeWorldEpoch();
+            var published =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.gamesession
+                        .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
+                        .class);
+            when(published.selector()).thenReturn(strict);
+            when(published.currentTarget()).thenReturn(currentTarget);
+            var sourceEvidence =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .class);
+            when(sourceEvidence.request()).thenReturn(strict);
+            var policies =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence
+                        .class);
+            when(policies.canonicalBytes()).thenReturn(policyBytes);
+            when(sourceEvidence.publishedPolicySetEvidence()).thenReturn(policies);
+            when(published.sourceEvidence()).thenReturn(sourceEvidence);
+            var world =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+                        .class);
+            when(world.lifecycleStatus()).thenReturn("ACTIVE");
+            when(world.lifecycleEpoch()).thenReturn(activeWorldEpoch);
+            when(published.worldLifecycleEvidence()).thenReturn(world);
+            return published;
+          });
       when(pending.status()).thenReturn("PENDING");
       when(accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId))
           .thenReturn(Optional.of(pending));
@@ -1982,11 +1968,10 @@ class AccountServiceImplTest {
               org.mockito.ArgumentMatchers.isNull(),
               org.mockito.ArgumentMatchers.isNull(),
               org.mockito.ArgumentMatchers.isNull()))
-          .thenAnswer(
-              invocation -> {
-                joined.set(true);
-                return committed;
-              });
+          .thenAnswer(invocation -> {
+            joined.set(true);
+            return committed;
+          });
       service.setAccountBootstrapRosterReadClient(roster);
       compose(Clock.fixed(now.plusSeconds(1), java.time.ZoneOffset.UTC));
     }
@@ -2105,10 +2090,9 @@ class AccountServiceImplTest {
     assertEquals(List.of(12, 37), actors.stream().map(value -> value.level()).toList());
     assertTrue(
         actors.stream()
-            .allMatch(
-                value ->
-                    "SHARED".equals(value.stateScope())
-                        && "PRESEEDED_ONLY".equals(value.characterCreationPolicy())));
+            .allMatch(value ->
+                "SHARED".equals(value.stateScope())
+                    && "PRESEEDED_ONLY".equals(value.characterCreationPolicy())));
     var target =
         org.mockito.ArgumentCaptor.forClass(
             net.firedevops.firemud.common.gamesession
@@ -2145,12 +2129,11 @@ class AccountServiceImplTest {
     when(f.hosting.readCurrent(paidFence, null)).thenReturn(paidReceipt);
     when(paidReceipt.gameplayAvailable()).thenReturn(true);
     when(f.observer.observe(paidFence.binding()))
-        .thenAnswer(
-            invocation -> {
-              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-              assertFalse(TransactionSynchronizationManager.isSynchronizationActive());
-              return null;
-            });
+        .thenAnswer(invocation -> {
+          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+          assertFalse(TransactionSynchronizationManager.isSynchronizationActive());
+          return null;
+        });
     when(f.roster.read(
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.eq(f.scope.accountId()),
@@ -2340,13 +2323,12 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              drift.set(true);
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Ada", 12));
-            });
+        .thenAnswer(invocation -> {
+          drift.set(true);
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Ada", 12));
+        });
     assertEquals(
         "CONNECT_SCOPE_MISMATCH",
         assertThrows(AuthenticationException.class, f::characters).getCode());
@@ -2361,14 +2343,13 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              f.currentMembership.setLifecycleState("INACTIVE");
-              f.currentMembership.setGameplayAdmissionAllowed(false);
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Ada", 12));
-            });
+        .thenAnswer(invocation -> {
+          f.currentMembership.setLifecycleState("INACTIVE");
+          f.currentMembership.setGameplayAdmissionAllowed(false);
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Ada", 12));
+        });
     var failure = assertThrows(AuthenticationException.class, f::characters);
     assertEquals("AUTH_UNAVAILABLE", failure.getCode());
     assertEquals("Bootstrap membership changed during discovery", failure.getMessage());
@@ -2389,22 +2370,21 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              switch (changed) {
-                case "version" ->
-                    f.currentMembership.setMembershipVersion(
-                        f.currentMembership.getMembershipVersion() + 1L);
-                case "generation" ->
-                    f.currentMembership.setMembershipAuthorityGeneration(
-                        f.currentMembership.getMembershipAuthorityGeneration() + 1L);
-                case "membership-id" -> f.currentMembership.setId(702L);
-                default -> throw new AssertionError(changed);
-              }
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Withheld", 12));
-            });
+        .thenAnswer(invocation -> {
+          switch (changed) {
+            case "version" ->
+                f.currentMembership.setMembershipVersion(
+                    f.currentMembership.getMembershipVersion() + 1L);
+            case "generation" ->
+                f.currentMembership.setMembershipAuthorityGeneration(
+                    f.currentMembership.getMembershipAuthorityGeneration() + 1L);
+            case "membership-id" -> f.currentMembership.setId(702L);
+            default -> throw new AssertionError(changed);
+          }
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Withheld", 12));
+        });
     assertEquals(
         "AUTH_UNAVAILABLE", assertThrows(AuthenticationException.class, f::characters).getCode());
     verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
@@ -2418,14 +2398,13 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              f.policyBytes =
-                  "changed-controlled-policy-set".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Withheld", 12));
-            });
+        .thenAnswer(invocation -> {
+          f.policyBytes =
+              "changed-controlled-policy-set".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Withheld", 12));
+        });
     assertEquals(
         "CONNECT_SCOPE_MISMATCH",
         assertThrows(AuthenticationException.class, f::characters).getCode());
@@ -2440,18 +2419,15 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              when(f.demos.readCurrent(f.scope.tenantId()))
-                  .thenThrow(
-                      new DataAccessResourceFailureException("controlled late billing outage"));
-              when(f.demos.revalidate(f.demo))
-                  .thenThrow(
-                      new DataAccessResourceFailureException("controlled late billing outage"));
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Ada", 12));
-            });
+        .thenAnswer(invocation -> {
+          when(f.demos.readCurrent(f.scope.tenantId()))
+              .thenThrow(new DataAccessResourceFailureException("controlled late billing outage"));
+          when(f.demos.revalidate(f.demo))
+              .thenThrow(new DataAccessResourceFailureException("controlled late billing outage"));
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Ada", 12));
+        });
     assertEquals(
         "ENTITLEMENT_UNAVAILABLE",
         assertThrows(AuthenticationException.class, f::characters).getCode());
@@ -2500,13 +2476,12 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              time.set(Instant.parse(f.scope.connectScopeExpiresAt()));
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Ada", 12));
-            });
+        .thenAnswer(invocation -> {
+          time.set(Instant.parse(f.scope.connectScopeExpiresAt()));
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Ada", 12));
+        });
     assertEquals(
         "CONNECT_SCOPE_INVALID",
         assertThrows(AuthenticationException.class, f::characters).getCode());
@@ -2556,14 +2531,13 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              when(sessionService.isAccountSessionActive(f.account.getId(), f.bootstrap))
-                  .thenReturn(false);
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Withheld", 12));
-            });
+        .thenAnswer(invocation -> {
+          when(sessionService.isAccountSessionActive(f.account.getId(), f.bootstrap))
+              .thenReturn(false);
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Withheld", 12));
+        });
     assertEquals(
         "CONNECT_CONTEXT_INVALID",
         assertThrows(AuthenticationException.class, f::characters).getCode());
@@ -2627,18 +2601,17 @@ class AccountServiceImplTest {
     // Retained resolution admits PRESEEDED_ONLY only. Change this controlled owner response
     // after that check to exercise the facade's own unsupported-policy refusal, not the codec.
     when(f.targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              when(f.target.characterCreationPolicy()).thenReturn(policy);
-              var published =
-                  org.mockito.Mockito.mock(
-                      net.firedevops.firemud.common.gamesession
-                          .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
-                          .class);
-              when(published.selector()).thenReturn(invocation.getArgument(0));
-              when(published.currentTarget()).thenReturn(f.target);
-              return published;
-            });
+        .thenAnswer(invocation -> {
+          when(f.target.characterCreationPolicy()).thenReturn(policy);
+          var published =
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.common.gamesession
+                      .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
+                      .class);
+          when(published.selector()).thenReturn(invocation.getArgument(0));
+          when(published.currentTarget()).thenReturn(f.target);
+          return published;
+        });
     var failure = assertThrows(AuthenticationException.class, f::characters);
     assertEquals("REALM_UNAVAILABLE", failure.getCode());
     assertEquals(
@@ -2685,13 +2658,12 @@ class AccountServiceImplTest {
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
-                  invocation.getArgument(0);
-              challenge.setId(3L);
-              return challenge;
-            });
+        .thenAnswer(invocation -> {
+          net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+              invocation.getArgument(0);
+          challenge.setId(3L);
+          return challenge;
+        });
 
     service.requestEmailLoginOtp("verified@example.com");
 
@@ -4421,11 +4393,10 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(65536),
             org.mockito.ArgumentMatchers.eq(1),
             org.mockito.ArgumentMatchers.any(char[].class)))
-        .thenAnswer(
-            invocation -> {
-              candidateVerifierPrepared.set(true);
-              return "prepared-candidate-verifier";
-            });
+        .thenAnswer(invocation -> {
+          candidateVerifierPrepared.set(true);
+          return "prepared-candidate-verifier";
+        });
     org.mockito.Mockito.doAnswer(
             invocation -> {
               assertTrue(
@@ -4510,17 +4481,16 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation ->
-                sourceChanges.participate(
-                    invocation.getArgument(0),
-                    invocation.getArgument(1),
-                    invocation.getArgument(2),
-                    invocation.getArgument(3),
-                    invocation.getArgument(4),
-                    invocation.getArgument(5),
-                    invocation.getArgument(6),
-                    invocation.getArgument(7)));
+        .thenAnswer(invocation ->
+            sourceChanges.participate(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+                invocation.getArgument(3),
+                invocation.getArgument(4),
+                invocation.getArgument(5),
+                invocation.getArgument(6),
+                invocation.getArgument(7)));
 
     org.springframework.transaction.support.TransactionSynchronizationManager
         .setActualTransactionActive(true);
@@ -4712,10 +4682,9 @@ class AccountServiceImplTest {
               "demo@example.com"));
       assertTrue(
           appender.list.stream()
-              .anyMatch(
-                  event ->
-                      "Recovery email delivery failed; cause=RuntimeException"
-                          .equals(event.getFormattedMessage())));
+              .anyMatch(event ->
+                  "Recovery email delivery failed; cause=RuntimeException"
+                      .equals(event.getFormattedMessage())));
       assertFalse(
           appender.list.stream()
               .anyMatch(event -> event.getFormattedMessage().contains("SMTP failure")));
