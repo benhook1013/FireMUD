@@ -183,7 +183,10 @@ public final class InitialGameplayReleaseController {
     }
     EffectReadbackResolution resolution;
     try {
-      resolution = effectPort.readback(outbox.effect(), attemptId, outbox.attemptCount());
+      resolution =
+          Objects.requireNonNull(
+              effectPort.readback(outbox.effect(), attemptId, outbox.attemptCount()),
+              "readbackResolution");
     } catch (RuntimeException exception) {
       return requireOperation(operation.scope().operationId());
     }

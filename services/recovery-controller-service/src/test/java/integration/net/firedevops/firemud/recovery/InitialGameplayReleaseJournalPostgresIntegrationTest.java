@@ -400,6 +400,49 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"last_dispatched_at", "last_outcome_code"})
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void migratedPackagedDatabaseWithMissingOutboxColumnIsNotReady(String column) throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true);
+        var packagedConnection =
+            DriverManager.getConnection(
+                packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      var packagedDsl = DSL.using(packagedConnection, SQLDialect.POSTGRES);
+      packagedDsl.execute(
+          "ALTER TABLE recovery_control.initial_gameplay_release_outbox RENAME COLUMN "
+              + switch (column) {
+                case "last_dispatched_at" -> "last_dispatched_at";
+                case "last_outcome_code" -> "last_outcome_code";
+                default -> throw new AssertionError("Unexpected test fixture column");
+              }
+              + " TO fixture_missing_column");
+      assertThat(
+              packagedDsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM recovery_control.flyway_schema_history_recovery_control"
+                          + " WHERE success AND version IN ('1', '2')")
+                  .get(0, Long.class))
+          .isEqualTo(2L);
+      var health = application.getBean(HealthEndpoint.class);
+      assertThat(health.healthForPath("readiness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.DOWN);
+      assertThat(health.healthForPath("liveness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.UP);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
   private static HealthIndicator journalHealth(ConfigurableApplicationContext context) {
     return context.getBean("recoveryJournalHealthIndicator", HealthIndicator.class);
   }
@@ -527,6 +570,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .findEffect(scope.operationId(), EffectKind.PREPARE_PLAYABLE_STATE_FENCED)
             .orElseThrow();
     assertThat(pendingPrepare.state()).isEqualTo(EffectOutboxState.PENDING);
+    assertThat(pendingPrepare.attemptCount()).isZero();
+    assertThat(pendingPrepare.lastAttemptId()).isNull();
 
     UUID prepareAttempt = UUID.randomUUID();
     OutboxEntry prepare =

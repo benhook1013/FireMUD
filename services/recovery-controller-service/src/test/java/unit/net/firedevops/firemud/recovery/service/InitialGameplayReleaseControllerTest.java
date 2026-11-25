@@ -445,15 +445,26 @@ class InitialGameplayReleaseControllerTest {
 
   @Test
   void unavailableReadbackReloadsLatestOperation() {
-    assertReadbackFailureReloadsLatestOperation(false);
+    assertReadbackFailureReloadsLatestOperation(ReadbackFailure.UNAVAILABLE);
   }
 
   @Test
   void failedReadbackReloadsLatestOperation() {
-    assertReadbackFailureReloadsLatestOperation(true);
+    assertReadbackFailureReloadsLatestOperation(ReadbackFailure.THROWN);
   }
 
-  private void assertReadbackFailureReloadsLatestOperation(boolean throwsException) {
+  @Test
+  void missingReadbackReloadsLatestOperation() {
+    assertReadbackFailureReloadsLatestOperation(ReadbackFailure.MISSING);
+  }
+
+  private enum ReadbackFailure {
+    UNAVAILABLE,
+    THROWN,
+    MISSING
+  }
+
+  private void assertReadbackFailureReloadsLatestOperation(ReadbackFailure failure) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var effectPort = mock(InitialGameplayReleaseEffectPort.class);
     var scope =
@@ -488,12 +499,15 @@ class InitialGameplayReleaseControllerTest {
     when(journal.find(scope.operationId()))
         .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
     when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
-    if (throwsException) {
-      when(effectPort.readback(effect, attempt, outbox.attemptCount()))
-          .thenThrow(new IllegalStateException("owner readback failed"));
-    } else {
-      when(effectPort.readback(effect, attempt, outbox.attemptCount()))
-          .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable());
+    switch (failure) {
+      case THROWN ->
+          when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+              .thenThrow(new IllegalStateException("owner readback failed"));
+      case UNAVAILABLE ->
+          when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+              .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable());
+      case MISSING ->
+          when(effectPort.readback(effect, attempt, outbox.attemptCount())).thenReturn(null);
     }
     var controller =
         new InitialGameplayReleaseController(

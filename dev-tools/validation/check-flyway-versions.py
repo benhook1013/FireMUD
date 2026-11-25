@@ -28,7 +28,16 @@ Snapshot = dict[str, bytes]
 class UniqueKeyLoader(yaml.SafeLoader):
     """Reject repeated keys authored in a mapping before YAML merge expansion."""
 
+    def __init__(self, stream: object) -> None:
+        super().__init__(stream)
+        self._authored_mappings_checked: set[yaml.MappingNode] = set()
+
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        # PyYAML mutates reused alias targets during the first merge expansion.
+        if node in self._authored_mappings_checked:
+            super().flatten_mapping(node)
+            return
+        self._authored_mappings_checked.add(node)
         seen: set[object] = set()
         for key_node, _ in node.value:
             key = (key_node.tag, key_node.value) if key_node.tag in {
@@ -492,6 +501,14 @@ def run_self_test() -> None:
         **complete_recovery_history, recovery_config: (
             b"defaults: &fallback\n  enabled: false\n" + recovery_settings
             + b"    <<: *fallback\n    enabled: true\n"
+        ),
+    }, complete_recovery_history, None)
+    check("reused merged mapping preserves its authored override", {
+        **complete_recovery_history, recovery_config: (
+            b"defaults: &fallback {enabled: false}\n"
+            b"qualified: &qualified {<<: *fallback, enabled: true}\n"
+            b"spring:\n  flyway:\n    <<: *qualified\n"
+            b"    locations: classpath:db/recovery-control-migration\n"
         ),
     }, complete_recovery_history, None)
     harmless_second_document = recovery_settings + b"---\ncustom:\n  setting: value\n"

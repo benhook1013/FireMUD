@@ -1584,6 +1584,7 @@ run_proof_retry_contract() (
 
   # Validate the retained annotation before any namespace operations are possible.
   (
+    # shellcheck source=/dev/null
     source "$ROOT_DIR/dev-tools/hosted/preview/preview-proof-retry-record.shlib"
     snapshot="$(jq -cn --argjson legacy "$legacy" '
       {metadata:{name:"pr-901",uid:"uid-pr-901",
