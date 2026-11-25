@@ -1582,6 +1582,23 @@ run_proof_retry_contract() (
   fi
   test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
 
+  reset_case
+  # Benign multiline placeholder text is not retention evidence. Exercise the
+  # deletion entry point with the local fake; the retain and delete mocks must
+  # both remain untouched when the metadata validator refuses it.
+  local invalid_multiline_legacy
+  invalid_multiline_legacy="$(jq -c '
+    .["firemud.dev/proof-retry-image-tag"] = ("not an image tag" + "\n" + "still not an image tag")
+  ' <<<"$legacy")"
+  if FAKE_LEGACY_RETRY_JSON="$invalid_multiline_legacy" FAKE_RUNTIME_NAMESPACE_UID=uid-pr-901 \
+    bash "$DELETE_HOSTED_NAMESPACE" pr-901 pr-901 >"$case_output" 2>&1; then
+    echo 'multiline legacy record permitted deletion' >&2
+    exit 1
+  fi
+  grep -Fq 'unable to read legacy proof-retry evidence for pr-901; refusing deletion' "$case_output"
+  test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+
   # Validate the retained annotation before any namespace operations are possible.
   (
     # shellcheck source=/dev/null
