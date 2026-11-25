@@ -12,10 +12,13 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
@@ -217,6 +220,46 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
   }
 
   @Test
+  void successfulFinalReadbackReleasesItsSlotBeforeTheBudgetedSqlReceipt() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    var owner = finalOwner();
+    var operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int occupied = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS - 1;
+    // Leave one resource slot for FINAL and then for the SQL commit, using the existing owner path
+    // for both. No setup or final receipt recovery starts while the other slots are held.
+    assertThat(operations.tryAcquire(occupied, 2L, TimeUnit.SECONDS)).isTrue();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      long absoluteDeadline = deadline();
+      try (var actual =
+          owner.finalizeOriginalNewOnce(
+              source, template, accountOpen, issuerOpen, controlledCapacity, absoluteDeadline)) {
+        assertThat(operations.availablePermits()).isEqualTo(1);
+        inventory.commitOriginalNewFinalAdmission(actual, CLOCK, absoluteDeadline);
+        var current = inventory.readOriginalNewFinalAdmissionSource(decision);
+        assertThat(current.transitionStatus())
+            .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+        var receipt = current.finalReceipt().orElseThrow();
+        assertThat(receipt.finalSessionSha256()).isEqualTo(actual.finalSessionSha256());
+        assertThat(receipt.admissionAtMillis()).isEqualTo(actual.admissionAtMillis());
+        assertThat(receipt.continuityExpiresAtMillis())
+            .isEqualTo(actual.continuityExpiresAtMillis());
+      }
+    } finally {
+      operations.release(occupied);
+    }
+  }
+
+  @Test
   void committedReceiptSurvivesDeleteRefusalAndClockUnavailabilityUntilCatchup() throws Exception {
     repairAccountMember();
     bridge();
@@ -232,8 +275,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                     source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       String retainedReceiptQuery =
-          "SELECT xmin::text || '/' || to_jsonb(transition)::text"
-              + " FROM game_session_canonical_binding_transition transition WHERE transition_id = ?";
+          "SELECT xmin::text || '/' || to_jsonb(transition)::text FROM"
+              + " game_session_canonical_binding_transition transition WHERE transition_id = ?";
       String retainedReceipt =
           fixture
               .dsl()
@@ -247,7 +290,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
               fixture
                   .dsl()
                   .execute(
-                      "DELETE FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                      "DELETE FROM game_session_canonical_binding_transition WHERE transition_id ="
+                          + " ?",
                       fixture.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .satisfies(failure ->
@@ -317,7 +361,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
             .fetchSingle(
                 "SELECT original_projection_state, original_projection_member,"
                     + " original_projection_inventory_revision FROM"
-                    + " game_session_canonical_account_member_repair_operation WHERE transition_id = ?",
+                    + " game_session_canonical_account_member_repair_operation WHERE transition_id"
+                    + " = ?",
                 fixture.transitionId());
     assertThat(repair.get("original_projection_state", String.class))
         .isEqualTo("PRESENT_AWAITING_COVERAGE");
@@ -379,9 +424,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
               fixture
                   .dsl()
                   .execute(
-                      "UPDATE game_session_canonical_binding_issuer_index_obligation"
-                          + " SET status = 'ACKNOWLEDGED', inventory_revision = inventory_revision + 1"
-                          + " WHERE transition_id = ?",
+                      "UPDATE game_session_canonical_binding_issuer_index_obligation SET status ="
+                          + " 'ACKNOWLEDGED', inventory_revision = inventory_revision + 1 WHERE"
+                          + " transition_id = ?",
                       fixture.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .satisfies(failure ->
@@ -389,7 +434,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                   failure,
                   "23514",
                   "gs_original_new_issuer_obligation_source",
-                  "Final issuer obligation requires matching committed original NEW and native acknowledgement"));
+                  "Final issuer obligation requires matching committed original NEW and native"
+                      + " acknowledgement"));
       assertThat(sqlImage()).isEqualTo(beforeCommitRows);
       // SQL cannot terminalize the genuine provisional source without its complete receipt.
       assertThatThrownBy(() ->
@@ -406,7 +452,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                   failure,
                   "23514",
                   "gs_binding_runtime_fence_terminal_owner_required",
-                  "A lease-bound runtime fence cannot be released without definitive first-NEW Account abort evidence"));
+                  "A lease-bound runtime fence cannot be released without definitive first-NEW"
+                      + " Account abort evidence"));
       assertThat(sqlImage()).isEqualTo(beforeCommitRows);
       // Even genuine final readback values cannot authorize changing the original source.
       assertThatThrownBy(() ->
@@ -415,9 +462,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                   .execute(
                       "UPDATE game_session_canonical_binding_transition SET status = 'COMMITTED',"
                           + " inventory_revision = inventory_revision + 1,"
-                          + " original_new_final_session_sha256 = ?, original_new_admission_at_ms = ?,"
-                          + " original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ?,"
-                          + " candidate_account_index_fence = ? WHERE transition_id = ?",
+                          + " original_new_final_session_sha256 = ?, original_new_admission_at_ms ="
+                          + " ?, original_new_continuity_expires_at_ms = ?,"
+                          + " original_new_session_duration_ms = ?, candidate_account_index_fence ="
+                          + " ? WHERE transition_id = ?",
                       actual.finalSessionSha256(),
                       actual.admissionAtMillis(),
                       actual.continuityExpiresAtMillis(),
@@ -438,7 +486,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
           fixture
               .dsl()
               .fetchSingle(
-                  "SELECT to_jsonb(runtime)::text FROM game_instances runtime WHERE game_instance_uuid = ?",
+                  "SELECT to_jsonb(runtime)::text FROM game_instances runtime WHERE"
+                      + " game_instance_uuid = ?",
                   decision.candidate().gameInstanceId())
               .get(0, String.class);
       assertThatThrownBy(fixture::stopRuntime)
@@ -448,12 +497,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                   failure,
                   "23514",
                   "gs_binding_runtime_row_mutation_fenced",
-                  "Game Instance runtime row is fenced by an unresolved lease-bound binding decision"));
+                  "Game Instance runtime row is fenced by an unresolved lease-bound binding"
+                      + " decision"));
       assertThat(
               fixture
                   .dsl()
                   .fetchSingle(
-                      "SELECT to_jsonb(runtime)::text FROM game_instances runtime WHERE game_instance_uuid = ?",
+                      "SELECT to_jsonb(runtime)::text FROM game_instances runtime WHERE"
+                          + " game_instance_uuid = ?",
                       decision.candidate().gameInstanceId())
                   .get(0, String.class))
           .isEqualTo(runningRuntime);
@@ -615,8 +666,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
               fixture
                   .dsl()
                   .execute(
-                      "UPDATE game_session_canonical_binding_issuer_index_obligation SET status = 'REQUIRED'"
-                          + " WHERE transition_id = ?",
+                      "UPDATE game_session_canonical_binding_issuer_index_obligation SET status ="
+                          + " 'REQUIRED' WHERE transition_id = ?",
                       fixture.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .satisfies(failure ->
@@ -643,8 +694,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
               fixture
                   .dsl()
                   .execute(
-                      "UPDATE game_session_canonical_binding_transition SET candidate_account_index_fence = ?"
-                          + " WHERE transition_id = ?",
+                      "UPDATE game_session_canonical_binding_transition SET"
+                          + " candidate_account_index_fence = ? WHERE transition_id = ?",
                       UUID.randomUUID(),
                       fixture.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
@@ -658,8 +709,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
               fixture
                   .dsl()
                   .execute(
-                      "UPDATE game_session_canonical_binding_transition SET original_new_final_session_sha256 = NULL,"
-                          + " original_new_admission_at_ms = NULL, original_new_continuity_expires_at_ms = NULL,"
+                      "UPDATE game_session_canonical_binding_transition SET"
+                          + " original_new_final_session_sha256 = NULL,"
+                          + " original_new_admission_at_ms = NULL,"
+                          + " original_new_continuity_expires_at_ms = NULL,"
                           + " original_new_session_duration_ms = NULL WHERE transition_id = ?",
                       fixture.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
@@ -673,8 +726,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
               fixture
                   .dsl()
                   .execute(
-                      "UPDATE game_session_canonical_binding_transition SET inventory_revision = inventory_revision - 1"
-                          + " WHERE transition_id = ?",
+                      "UPDATE game_session_canonical_binding_transition SET inventory_revision ="
+                          + " inventory_revision - 1 WHERE transition_id = ?",
                       fixture.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .satisfies(failure ->

@@ -334,8 +334,12 @@ class AccountGameplayAdmissionLeaseClientTest {
       assertThat(received.toString())
           .doesNotContain(JWT, signedBoundJwts.getFirst(), HexFormat.of().formatHex(handle));
       var confirmation = client.confirmOriginalNewGameplayAdmission(JWT, originalLease);
+      var boundedConfirmation =
+          client.confirmOriginalNewGameplayAdmission(
+              JWT, originalLease, Deadline.after(3, TimeUnit.SECONDS));
 
-      assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER);
+      assertThat(boundedConfirmation).usingRecursiveComparison().isEqualTo(confirmation);
+      assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER, GAME_SESSION_PEER);
       assertThat(issuedRequests)
           .singleElement()
           .satisfies(request -> {
@@ -347,18 +351,21 @@ class AccountGameplayAdmissionLeaseClientTest {
           .isEqualTo(UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
       assertThat(confirmation.continuityExpiresAtMillis()).isEqualTo(1_320_000L);
       assertThat(confirmationRequests)
-          .singleElement()
-          .satisfies(request -> {
+          .hasSize(2)
+          .allSatisfy(request -> {
             assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
             assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
                 .containsExactly(originalLease);
           });
-      assertThat(deadlines)
-          .hasSize(2)
+      assertThat(deadlines).hasSize(3);
+      assertThat(deadlines.subList(0, 2))
           .allSatisfy(deadline -> {
             long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
             assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
           });
+      assertThat(deadlines.get(2).timeRemaining(TimeUnit.MILLISECONDS))
+          .isPositive()
+          .isLessThanOrEqualTo(3_000L);
       received.close();
       java.util.Arrays.fill(originalLease, (byte) 0);
     } finally {
