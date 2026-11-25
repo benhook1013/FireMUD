@@ -154,14 +154,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   @Test
   void activeRecordCeilingRefusesADifferentOriginBelowTheRetainedCeilings() throws Exception {
     repairAccountMember();
-    bridge(false, 1, 134217728L);
+    bridge(false, 1, 134217728L, 2);
     var dsl = fixture.dsl();
     var attempt = controlledCapacity.request().admissionAttemptId();
     var tenant = controlledCapacity.request().identity().tenantId();
-    dsl.execute(
-        "UPDATE game_session_capacity_evidence_budget SET maximum_retained_records = 2"
-            + " WHERE tenant_id = ?",
-        tenant);
+    var budget =
+        dsl.fetchSingle(
+            "SELECT maximum_records, maximum_retained_records"
+                + " FROM game_session_capacity_evidence_budget WHERE tenant_id = ?",
+            tenant);
+    assertThat(budget.get(0, Integer.class)).isEqualTo(1);
+    assertThat(budget.get(1, Integer.class)).isEqualTo(2);
     UUID otherAttempt = UUID.randomUUID();
     UUID otherRequest = UUID.randomUUID();
     // Isolate the physical active-record trigger. The usual same-origin owner replay would
@@ -479,14 +482,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             .cause()
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW capacity execution is indeterminate")
-            .satisfies(failure ->
-                assertThat(java.util.Arrays.asList(failure.getStackTrace()))
-                    .anySatisfy(frame -> {
-                      assertThat(frame.getClassName())
-                          .isEqualTo(
-                              CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getName());
-                      assertThat(frame.getMethodName()).isEqualTo("exactPhysicalBinding");
-                    }));
+            .satisfies(failure -> {
+              // The second retained SQL read removed this exact Redis execution hash. Refusal
+              // must come from reading its missing persistent tombstone, not the budget.
+              StackTraceElement refusal = failure.getStackTrace()[1];
+              assertThat(refusal.getClassName())
+                  .isEqualTo(CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getName());
+              assertThat(refusal.getMethodName()).isEqualTo("readExecution");
+            });
         assertThat(admin.type(tombstoneKey)).isEqualTo("none");
       }
       assertThat(executionReads.get()).isGreaterThanOrEqualTo(2);

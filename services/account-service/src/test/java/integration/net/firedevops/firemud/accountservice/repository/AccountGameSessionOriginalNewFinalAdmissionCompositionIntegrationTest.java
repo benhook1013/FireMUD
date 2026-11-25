@@ -1200,13 +1200,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               session.account.committedCandidate.identity().expiresAtEpochSecond());
       var parsed =
           RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(evidence.canonicalBytes());
-      var scopeEvidence =
-          session.serializable.execute(status ->
-              new AccountConnectScopeRepository(session.dsl)
-                  .findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash())
-                  .orElseThrow());
       Instant scopeCutoff =
-          Instant.parse(Objects.requireNonNull(scopeEvidence).connectScopeExpiresAt());
+          session.account.retainedCanonicalConnectScopeCutoff(
+              parsed.verifiedConnectScopeTokenHash());
       Instant appCutoff = callerCutoff.isBefore(scopeCutoff) ? callerCutoff : scopeCutoff;
       assertThat(stillCurrent).isBefore(appCutoff);
       assertThat(AccountTenantCapacityRepository.databaseNow(session.dsl))
