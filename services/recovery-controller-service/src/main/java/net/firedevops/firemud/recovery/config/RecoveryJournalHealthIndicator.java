@@ -11,7 +11,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
   private static final String CHECK =
       """
       SELECT
-        (SELECT count(DISTINCT version) = 2
+        current_setting('transaction_read_only') = 'off'
+        AND (SELECT count(DISTINCT version) = 2
          FROM recovery_control.flyway_schema_history_recovery_control
          WHERE success AND (
            (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
