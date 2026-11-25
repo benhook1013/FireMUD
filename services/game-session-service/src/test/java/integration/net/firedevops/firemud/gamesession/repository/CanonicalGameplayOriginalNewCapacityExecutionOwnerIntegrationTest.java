@@ -35,16 +35,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                 .fetchCount(
                     org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
         .isZero();
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             fixture
@@ -133,11 +131,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template()) {
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                          ownerClient, catalog, CLOCK, tags)
-                      .finalizeOriginalNewOnce(source, template, account, issuer, null, deadline()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      ownerClient, catalog, CLOCK, tags)
+                  .finalizeOriginalNewOnce(source, template, account, issuer, null, deadline()))
           .isExactlyInstanceOf(NullPointerException.class)
           .hasMessage("Exact Account capacity execution is required");
     }
@@ -160,12 +157,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
         var bound = raw.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                          ownerClient, catalog, CLOCK, tags)
-                      .finalizeOriginalNewOnce(
-                          source, bound, account, issuer, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      ownerClient, catalog, CLOCK, tags)
+                  .finalizeOriginalNewOnce(
+                      source, bound, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(admin.type(key)).isEqualTo("none");
@@ -188,20 +184,19 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     UUID otherRequest = UUID.randomUUID();
     // Isolate the physical active-record trigger. The usual same-origin owner replay would
     // reject before reaching the INSERT, so use a distinct request with the valid candidate.
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id, tenant_id,"
-                        + " request_id, admission_id, capacity_rearm_fence, mutation_digest,"
-                        + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                        + " reserved_binding_bytes)"
-                        + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence, mutation_digest,"
-                        + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                        + " reserved_binding_bytes FROM game_session_capacity_evidence_charge"
-                        + " WHERE admission_attempt_id = ?",
-                    otherAttempt,
-                    otherRequest,
-                    attempt))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id, tenant_id,"
+                    + " request_id, admission_id, capacity_rearm_fence, mutation_digest,"
+                    + " candidate_digest, selected_owner_id, selected_owner_fence,"
+                    + " reserved_binding_bytes)"
+                    + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence, mutation_digest,"
+                    + " candidate_digest, selected_owner_id, selected_owner_fence,"
+                    + " reserved_binding_bytes FROM game_session_capacity_evidence_charge"
+                    + " WHERE admission_attempt_id = ?",
+                otherAttempt,
+                otherRequest,
+                attempt))
         .isInstanceOfSatisfying(
             org.jooq.exception.DataAccessException.class,
             failure -> {
@@ -336,28 +331,25 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
         var template = raw.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(
-                          source,
-                          template,
-                          controlledAccountOpen(),
-                          issuerOpen(),
-                          controlledCapacity,
-                          deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(
+                      source,
+                      template,
+                      controlledAccountOpen(),
+                      issuerOpen(),
+                      controlledCapacity,
+                      deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(admin.type(ascii(key))).isEqualTo("none");
     assertThat(admin.get(ascii(installation.sessionKey())))
@@ -389,10 +381,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
         var template = raw.bindCapacityExecution(controlledCapacity)) {
       var account = controlledAccountOpen();
       var issuer = issuerOpen();
-      assertThatThrownBy(
-              () ->
-                  failedOwner.authorize(
-                      source, template, account, issuer, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              failedOwner.authorize(
+                  source, template, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
       verify(failedClient, times(1)).connect(ByteArrayCodec.INSTANCE);
       assertThat(
@@ -404,16 +395,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                   .get(0, String.class))
           .isEqualTo("INSTALL_DISPATCHED");
       String retained = sqlImage();
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(source, template, account, issuer, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(source, template, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .closeOriginalAttempt(
-                          controlledCapacity.request(), controlledCapacity.reservation()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .closeOriginalAttempt(
+                      controlledCapacity.request(), controlledCapacity.reservation()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(admin.type(ascii(key))).isEqualTo("none");
       assertThat(sqlImage()).isEqualTo(retained);
@@ -471,10 +460,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                 assignment, source.candidate().bindingIdentity().bindingRef()));
     try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
       var first =
-          workers.submit(
-              () ->
-                  waitingOwner.closeOriginalAttempt(
-                      controlledCapacity.request(), controlledCapacity.reservation()));
+          workers.submit(() ->
+              waitingOwner.closeOriginalAttempt(
+                  controlledCapacity.request(), controlledCapacity.reservation()));
       try {
         assertThat(initialReadDone.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         assertThat(first.isDone()).isFalse();
@@ -502,17 +490,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             .cause()
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW capacity execution is indeterminate")
-            .satisfies(
-                failure ->
-                    assertThat(java.util.Arrays.asList(failure.getStackTrace()))
-                        .anySatisfy(
-                            frame -> {
-                              assertThat(frame.getClassName())
-                                  .isEqualTo(
-                                      CanonicalGameplayOriginalNewCapacityExecutionOwner.class
-                                          .getName());
-                              assertThat(frame.getMethodName()).isEqualTo("exactPhysicalBinding");
-                            }));
+            .satisfies(failure ->
+                assertThat(java.util.Arrays.asList(failure.getStackTrace()))
+                    .anySatisfy(frame -> {
+                      assertThat(frame.getClassName())
+                          .isEqualTo(
+                              CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getName());
+                      assertThat(frame.getMethodName()).isEqualTo("exactPhysicalBinding");
+                    }));
         assertThat(admin.type(tombstoneKey)).isEqualTo("none");
       }
       assertThat(executionReads.get()).isGreaterThanOrEqualTo(2);
@@ -534,16 +519,15 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template()) {
-      assertThatThrownBy(
-              () ->
-                  finalOwner()
-                      .finalizeOriginalNewOnce(
-                          source,
-                          template,
-                          controlledAccountOpen(),
-                          issuerOpen(),
-                          controlledCapacity,
-                          deadline()))
+      assertThatThrownBy(() ->
+              finalOwner()
+                  .finalizeOriginalNewOnce(
+                      source,
+                      template,
+                      controlledAccountOpen(),
+                      issuerOpen(),
+                      controlledCapacity,
+                      deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     var assignment = tags.assignmentForTransition(fixture.transitionId());
@@ -580,10 +564,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template()) {
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(source, template, accountOpen, issuerOpen, changed, deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(source, template, accountOpen, issuerOpen, changed, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(sqlImage()).isEqualTo(sqlBefore);
@@ -602,11 +585,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     Map<String, String> physicalBefore = physicalImage();
     String capacityKey = capacityKey(assignment);
 
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .authorize(
-                        source, null, accountOpen, issuerOpen, controlledCapacity, deadline()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .authorize(source, null, accountOpen, issuerOpen, controlledCapacity, deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             fixture
@@ -631,16 +612,15 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template();
         var mismatchedTemplate = template.bindCapacityExecution(mismatchedTemplateExecution)) {
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(
-                          source,
-                          mismatchedTemplate,
-                          accountOpen,
-                          issuerOpen,
-                          controlledCapacity,
-                          deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(
+                      source,
+                      mismatchedTemplate,
+                      accountOpen,
+                      issuerOpen,
+                      controlledCapacity,
+                      deadline()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThat(
@@ -687,10 +667,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var rawTemplate = credential.template();
         var template = rawTemplate.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  stoppingOwner.authorize(
-                      source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              stoppingOwner.authorize(
+                  source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
           .isInstanceOf(RuntimeException.class);
       assertThat(stoppedAfterCommit).isTrue();
       String originalKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
@@ -703,16 +682,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                       controlledCapacity.digest())
                   .get(0, String.class))
           .isEqualTo("INSTALL_DISPATCHED");
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(
-                          source,
-                          template,
-                          accountOpen,
-                          issuerOpen,
-                          controlledCapacity,
-                          deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(
+                      source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class)
           .isNotInstanceOf(
               CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class)
@@ -727,16 +700,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                   .get(0, String.class))
           .isEqualTo("INSTALL_DISPATCHED");
     }
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(physicalImage()).isEqualTo(physicalBefore);
   }
@@ -811,10 +782,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
         var bound = raw.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(source, bound, account, issuer, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(source, bound, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(sqlImage()).isEqualTo(rows);
@@ -829,20 +799,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     admin.pexpire(ascii(regionBinding.installation().grant.key()), 0);
     String rows = sqlImage();
     var physical = physicalImage();
-    assertThatThrownBy(
-            () ->
-                regionBinding
-                    .owner()
-                    .revalidateOriginalNewFinalBinding(regionBinding.installation(), source))
+    assertThatThrownBy(() ->
+            regionBinding
+                .owner()
+                .revalidateOriginalNewFinalBinding(regionBinding.installation(), source))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-closure"))
         .isInstanceOf(IllegalStateException.class);
     // The positive continuation cannot turn an unexecuted/missing final result into proof.
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .retainCommittedBeforeCleanup(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);

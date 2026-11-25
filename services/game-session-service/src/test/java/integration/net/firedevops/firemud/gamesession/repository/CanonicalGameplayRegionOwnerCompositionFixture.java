@@ -340,17 +340,16 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             metaDigest,
             java.sql.Timestamp.from(now),
             initializationId));
-    dsl.transaction(
-        configuration -> {
-          var transaction = DSL.using(configuration);
-          BigInteger revision =
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BigInteger next = revision.add(BigInteger.ONE);
-          BigInteger prior = evidence.transition().inventoryRevision();
-          historicalWriteRegionRevisionRows(transaction, evidence, prior, next);
-          historicalRequireOne(
-              transaction.execute(
-                  """
+    dsl.transaction(configuration -> {
+      var transaction = DSL.using(configuration);
+      BigInteger revision =
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      BigInteger next = revision.add(BigInteger.ONE);
+      BigInteger prior = evidence.transition().inventoryRevision();
+      historicalWriteRegionRevisionRows(transaction, evidence, prior, next);
+      historicalRequireOne(
+          transaction.execute(
+              """
               UPDATE game_session_canonical_binding_region_bridge_obligation
               SET bridge_operation_id = ?, bridge_preimage_state = 'ABSENT', runtime_entity_id = ?,
                   entity_projection_generation = ?, entity_projection_fence = ?, entity_workload_namespace = ?,
@@ -360,33 +359,33 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   world_preparation_input_digest = ?, executor_fence = ?, lease_token_correlation = ?, inventory_revision = ?
               WHERE transition_id = ? AND bridge_operation_id IS NULL AND inventory_revision = ?
               """,
-                  UUID.randomUUID(),
-                  reference.runtimeEntityId().value(),
-                  reference.projectionGeneration(),
-                  reference.projectionFence(),
-                  reference.workloadNamespace(),
-                  UUID.fromString(worldRequest.getAssignmentUuid()),
-                  worldRequest.getAssignmentIntentDigest(),
-                  parentEntityReferenceDigest,
-                  worldDigest,
-                  source.canonicalRegionId(),
-                  source.lifecycleEpoch(),
-                  source.lifecycleRowVersion(),
-                  source.captureId(),
-                  source.graphSha256(),
-                  source.preparationInputDigest(),
-                  new BigDecimal(status.executorFence()),
-                  grantCorrelation,
-                  new BigDecimal(next),
-                  transitionId,
-                  new BigDecimal(prior)));
-          historicalRequireOne(
-              transaction.execute(
-                  "UPDATE game_session_canonical_binding_inventory_clock SET inventory_revision = ?"
-                      + " WHERE singleton_id = 1 AND inventory_revision = ?",
-                  new BigDecimal(next),
-                  new BigDecimal(revision)));
-        });
+              UUID.randomUUID(),
+              reference.runtimeEntityId().value(),
+              reference.projectionGeneration(),
+              reference.projectionFence(),
+              reference.workloadNamespace(),
+              UUID.fromString(worldRequest.getAssignmentUuid()),
+              worldRequest.getAssignmentIntentDigest(),
+              parentEntityReferenceDigest,
+              worldDigest,
+              source.canonicalRegionId(),
+              source.lifecycleEpoch(),
+              source.lifecycleRowVersion(),
+              source.captureId(),
+              source.graphSha256(),
+              source.preparationInputDigest(),
+              new BigDecimal(status.executorFence()),
+              grantCorrelation,
+              new BigDecimal(next),
+              transitionId,
+              new BigDecimal(prior)));
+      historicalRequireOne(
+          transaction.execute(
+              "UPDATE game_session_canonical_binding_inventory_clock SET inventory_revision = ?"
+                  + " WHERE singleton_id = 1 AND inventory_revision = ?",
+              new BigDecimal(next),
+              new BigDecimal(revision)));
+    });
     return transitionId;
   }
 
@@ -1184,12 +1183,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         } catch (IllegalStateException expected) {
           rejectedAtCurrentGrantCheck =
               Arrays.stream(expected.getStackTrace())
-                  .anyMatch(
-                      frame ->
-                          frame
-                                  .getClassName()
-                                  .equals(CanonicalGameplayRegionLeaseRedisOwner.class.getName())
-                              && frame.getMethodName().equals("requireCurrent"));
+                  .anyMatch(frame ->
+                      frame
+                              .getClassName()
+                              .equals(CanonicalGameplayRegionLeaseRedisOwner.class.getName())
+                          && frame.getMethodName().equals("requireCurrent"));
         }
         expiredProvisionalGrantRejectedWithoutStateChange =
             rejectedAtCurrentGrantCheck
@@ -1260,10 +1258,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       List<String> changedPreparationColumns =
           Arrays.stream(firstTimelineBefore.fields())
               .map(field -> field.getName())
-              .filter(
-                  column ->
-                      !Objects.deepEquals(
-                          firstTimelineBefore.get(column), firstTimelineAfter.get(column)))
+              .filter(column ->
+                  !Objects.deepEquals(
+                      firstTimelineBefore.get(column), firstTimelineAfter.get(column)))
               .toList();
       boolean preparationGrantMatchesCurrent =
           Objects.equals(
@@ -1467,10 +1464,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 CanonicalGameplayIssuerCohortSql.cohortBindings(
                     GameSessionAccountDelegationProfile.ISSUER, revision))
             .stream()
-            .filter(
-                row ->
-                    "REGION_OBLIGATION".equals(row.get("source_kind", String.class))
-                        && transitionId.toString().equals(row.get("source_key", String.class)))
+            .filter(row ->
+                "REGION_OBLIGATION".equals(row.get("source_kind", String.class))
+                    && transitionId.toString().equals(row.get("source_key", String.class)))
             .toList();
     if (captured.size() != 1
         || !Objects.equals(exactRow, captured.getFirst().get("source_row_json", String.class))) {

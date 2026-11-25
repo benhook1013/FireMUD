@@ -142,39 +142,33 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     var release = new java.util.concurrent.CountDownLatch(1);
     var disposed = new java.util.concurrent.CountDownLatch(1);
     when(fixture.redis.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            ignored -> {
-              entered.countDown();
-              contextRef.get().cancel(new TimeoutException("controlled connect-phase expiry"));
-              while (release.getCount() != 0) {
-                try {
-                  release.await();
-                } catch (InterruptedException cancelled) {
-                  /* physical connect ignores cancellation */
-                }
-              }
-              return fixture.connection;
-            });
+        .thenAnswer(ignored -> {
+          entered.countDown();
+          contextRef.get().cancel(new TimeoutException("controlled connect-phase expiry"));
+          while (release.getCount() != 0) {
+            try {
+              release.await();
+            } catch (InterruptedException cancelled) {
+              /* physical connect ignores cancellation */
+            }
+          }
+          return fixture.connection;
+        });
     when(fixture.connection.closeAsync())
-        .thenAnswer(
-            ignored -> {
-              disposed.countDown();
-              return CompletableFuture.completedFuture(null);
-            });
+        .thenAnswer(ignored -> {
+          disposed.countDown();
+          return CompletableFuture.completedFuture(null);
+        });
     var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
       contextRef.set(context);
       var previous = context.attach();
       try {
-        assertThatThrownBy(
-                () ->
-                    new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                            fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
-                        .closeCapacityExecutionOnce(
-                            fixture.execution,
-                            fixture.candidate,
-                            fixture.assignment,
-                            fixture.deadline))
+        assertThatThrownBy(() ->
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                        fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                    .closeCapacityExecutionOnce(
+                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
             .isInstanceOf(IllegalStateException.class);
         assertThat(entered.getCount()).isZero();
         verifyNoInteractions(fixture.whoami, fixture.scriptLoad, fixture.evaluation);
@@ -202,25 +196,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     var close = new CompletableFuture<Void>();
     var contextRef = new AtomicReference<io.grpc.Context.CancellableContext>();
     when(fixture.connection.closeAsync())
-        .thenAnswer(
-            ignored -> {
-              contextRef.get().cancel(new TimeoutException("controlled close-phase expiry"));
-              return close;
-            });
+        .thenAnswer(ignored -> {
+          contextRef.get().cancel(new TimeoutException("controlled close-phase expiry"));
+          return close;
+        });
     var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
       contextRef.set(context);
       var previous = context.attach();
       try {
-        assertThatThrownBy(
-                () ->
-                    new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                            fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
-                        .closeCapacityExecutionOnce(
-                            fixture.execution,
-                            fixture.candidate,
-                            fixture.assignment,
-                            fixture.deadline))
+        assertThatThrownBy(() ->
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                        fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                    .closeCapacityExecutionOnce(
+                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
             .isInstanceOf(IllegalStateException.class);
         assertThat(close).isNotDone();
         assertThat(fixture.evaluationSubmissions).hasValue(1);
@@ -268,12 +257,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     AtomicLong remaining = new AtomicLong(500);
     fixture.completeWhoami(() -> remaining.set(0));
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .scoped(checked(remaining))
-                    .closeCapacityExecutionOnce(
-                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
+    assertThatThrownBy(() ->
+            fixture
+                .scoped(checked(remaining))
+                .closeCapacityExecutionOnce(
+                    fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
         .isInstanceOf(IllegalStateException.class);
 
     verifyNoInteractions(fixture.scriptLoad, fixture.evaluation);
@@ -290,12 +278,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     fixture.completeWhoami(() -> {});
     fixture.completeScriptLoad(() -> remaining.set(0));
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .scoped(checked(remaining))
-                    .closeCapacityExecutionOnce(
-                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
+    assertThatThrownBy(() ->
+            fixture
+                .scoped(checked(remaining))
+                .closeCapacityExecutionOnce(
+                    fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(fixture.scriptSubmissions).hasValue(1);
@@ -313,12 +300,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     when(fixture.evaluation.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
         .thenThrow(new TimeoutException("Controlled lost write reply"));
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .scoped(() -> 100)
-                    .closeCapacityExecutionOnce(
-                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
+    assertThatThrownBy(() ->
+            fixture
+                .scoped(() -> 100)
+                .closeCapacityExecutionOnce(
+                    fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(fixture.evaluationSubmissions).hasValue(1);
@@ -487,20 +473,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
 
     void completeWhoami(Runnable completion) throws Exception {
       when(whoami.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
-          .thenAnswer(
-              ignored -> {
-                completion.run();
-                return "gamesession_coord_app";
-              });
+          .thenAnswer(ignored -> {
+            completion.run();
+            return "gamesession_coord_app";
+          });
     }
 
     void completeScriptLoad(Runnable completion) throws Exception {
       when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
-          .thenAnswer(
-              ignored -> {
-                completion.run();
-                return loadedSha;
-              });
+          .thenAnswer(ignored -> {
+            completion.run();
+            return loadedSha;
+          });
     }
 
     void completeEvaluation() throws Exception {
