@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
@@ -32,8 +33,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
@@ -127,6 +131,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -261,8 +266,8 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     TestAccount ownerB = registerAccount("uuid-owner-b-" + suffix);
     assertThat(ownerA.accountUuid()).isNotEqualTo(ownerB.accountUuid());
     configureCanonicalAccountOwners();
-    initializeMemberAuthority(ownerA);
-    initializeMemberAuthority(ownerB);
+    initializeMemberAuthority(ownerA, SOURCE.target().tenantUuid());
+    initializeMemberAuthority(ownerB, SOURCE.target().tenantUuid());
     String tokenA = issuePlayerBootstrap(ownerA);
     String tokenB = issuePlayerBootstrap(ownerB);
     String scopeA = discoverConnectScope(ownerA, tokenA);
@@ -385,36 +390,119 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     assertThat(retainedNumericOwnerRow(entity)).isEqualTo(retainedBefore);
   }
 
+  @org.junit.jupiter.api.Nested
+  class PaidJoinDiscoveryComposition {
+    @org.junit.jupiter.api.io.TempDir Path checkoutDirectory;
+    @Autowired private DataSource paidCompositionDataSource;
+
+    @org.junit.jupiter.api.Test
+    @org.springframework.test.annotation.DirtiesContext
+    void paidJoinReplayAndCharacterDiscoveryCompleteConcurrently() throws Exception {
+      var source = AccountBootstrapRosterFixture.create();
+      var target = accountTarget(source);
+      String suffix = UUID.randomUUID().toString().substring(0, 8);
+      var first = registerAccount("paid-pair-a-" + suffix);
+      var second = registerAccount("paid-pair-b-" + suffix);
+      boolean firstIsPayer = first.accountUuid().compareTo(second.accountUuid()) < 0;
+      var payer = firstIsPayer ? first : second;
+      var caller = firstIsPayer ? second : first;
+      assertThat(payer.accountUuid().compareTo(caller.accountUuid())).isNegative();
+      var hosting =
+          CanonicalHostingSubscriptionTestFixture.createForExistingTenant(
+                  paidCompositionDataSource,
+                  accounts.findByAccountUuid(payer.accountUuid()).orElseThrow(),
+                  tenantEvidence(target, 102L))
+              .withCheckoutDirectory(checkoutDirectory);
+      assertThat(hosting.completeFirstInvoice("password123").outcome().name())
+          .isEqualTo("COMMITTED");
+      new TransactionTemplate(transactionManager)
+          .executeWithoutResult(
+              status -> accountSources.initializeIssuerIfAbsent("firemud-account-service"));
+      initializeMemberAuthority(caller, target.canonicalTenantId());
+
+      var observer = Mockito.mock(StripeHostingSubscriptionObserver.class);
+      var concurrentObservations = new CountDownLatch(2);
+      var observeTogether = new java.util.concurrent.atomic.AtomicBoolean();
+      var firstObservationByWorker = ThreadLocal.withInitial(() -> true);
+      Mockito.when(observer.observe(Mockito.any()))
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            if (observeTogether.get() && firstObservationByWorker.get()) {
+              firstObservationByWorker.set(false);
+              concurrentObservations.countDown();
+              if (!concurrentObservations.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Paid entrypoints did not overlap outside SQL");
+              }
+            }
+            synchronized (hosting) {
+              return hosting.observer().observe(invocation.getArgument(0));
+            }
+          });
+      configureCanonicalAccountOwners(
+          controlledAccountTargets(target, source),
+          hosting.lifecycleRepository(),
+          observer,
+          hosting.clock());
+      var roster = Mockito.mock(AccountBootstrapRosterReadClient.class);
+      UUID actorId = UUID.randomUUID();
+      Mockito.when(roster.read(Mockito.any(), Mockito.eq(caller.accountUuid()), Mockito.any()))
+          .thenReturn(
+              List.of(new AccountBootstrapRosterReadClient.Actor(actorId, "Fixture actor", 7)));
+      facade.setAccountBootstrapRosterReadClient(roster);
+      String token = issuePlayerBootstrap(caller);
+      String scope = discoverConnectScope(caller, token, target);
+      var request = new JoinPublicProductionRequest(scope, UUID.randomUUID().toString());
+      var joined = facade.joinPublicProduction(token, request);
+      assertThat(joined.success()).isTrue();
+      assertThat(joined.tenantId()).isEqualTo(target.canonicalTenantId());
+
+      var ready = new CountDownLatch(2);
+      var go = new CountDownLatch(1);
+      var workers = Executors.newFixedThreadPool(2);
+      try {
+        var replay =
+            workers.submit(() -> {
+              ready.countDown();
+              if (!go.await(10, TimeUnit.SECONDS))
+                throw new IllegalStateException("Start not released");
+              return facade.joinPublicProduction(token, request);
+            });
+        var discovery =
+            workers.submit(() -> {
+              ready.countDown();
+              if (!go.await(10, TimeUnit.SECONDS))
+                throw new IllegalStateException("Start not released");
+              return facade.listBootstrapCharacters(
+                  token, target.worldSlug(), target.realmSlug(), scope);
+            });
+        assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+        observeTogether.set(true);
+        go.countDown();
+        var retained = replay.get(30, TimeUnit.SECONDS);
+        assertThat(retained.success()).isTrue();
+        assertThat(retained.tenantId()).isEqualTo(joined.tenantId());
+        assertThat(retained.membershipVersion()).isEqualTo(joined.membershipVersion());
+        assertThat(discovery.get(30, TimeUnit.SECONDS))
+            .singleElement()
+            .satisfies(actor -> {
+              assertThat(actor.characterId()).isEqualTo(actorId.toString());
+              assertThat(actor.characterName()).isEqualTo("Fixture actor");
+              assertThat(actor.level()).isEqualTo(7);
+            });
+        assertThat(concurrentObservations.getCount()).isZero();
+        Mockito.verify(roster).read(Mockito.any(), Mockito.eq(caller.accountUuid()), Mockito.any());
+      } finally {
+        go.countDown();
+        workers.shutdownNow();
+        assertThat(workers.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
   private void configureCanonicalAccountOwners() {
     var transaction = new TransactionTemplate(transactionManager);
     var target = accountTarget();
-    var creationRequest = UUID.randomUUID();
-    var operation = UUID.randomUUID();
-    String key = "b-" + operation.toString().replace("-", "");
-    String digest =
-        GameTenantCreationDigest.requestDigest(
-            TEST_NAMESPACE, creationRequest, key, "Bootstrap composition", null);
-    long rowId = 101L;
-    var source =
-        new FreshTenantCreationEvidence(
-            1,
-            TEST_NAMESPACE,
-            creationRequest,
-            operation,
-            digest,
-            target.canonicalTenantId(),
-            rowId,
-            key,
-            "NEW_GAME_ROW",
-            GameTenantCreationDigest.evidenceDigest(
-                TEST_NAMESPACE,
-                creationRequest,
-                operation,
-                digest,
-                target.canonicalTenantId(),
-                rowId,
-                key,
-                "NEW_GAME_ROW"));
+    var source = tenantEvidence(target, 101L);
     transaction.executeWithoutResult(status -> {
       tenants.importVerified(source);
       generations.initializeTenantIfAbsent(target.canonicalTenantId());
@@ -438,7 +526,42 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     var targets = controlledAccountTargets(target);
     var hosting = Mockito.mock(AccountHostingSubscriptionLifecycleRepository.class);
     var observer = Mockito.mock(StripeHostingSubscriptionObserver.class);
-    var clock = Clock.systemUTC();
+    configureCanonicalAccountOwners(targets, hosting, observer, Clock.systemUTC());
+  }
+
+  private static FreshTenantCreationEvidence tenantEvidence(Target target, long rowId) {
+    var creationRequest = UUID.randomUUID();
+    var operation = UUID.randomUUID();
+    String key = "b-" + operation.toString().replace("-", "");
+    String digest =
+        GameTenantCreationDigest.requestDigest(
+            TEST_NAMESPACE, creationRequest, key, "Bootstrap composition", null);
+    return new FreshTenantCreationEvidence(
+        1,
+        TEST_NAMESPACE,
+        creationRequest,
+        operation,
+        digest,
+        target.canonicalTenantId(),
+        rowId,
+        key,
+        "NEW_GAME_ROW",
+        GameTenantCreationDigest.evidenceDigest(
+            TEST_NAMESPACE,
+            creationRequest,
+            operation,
+            digest,
+            target.canonicalTenantId(),
+            rowId,
+            key,
+            "NEW_GAME_ROW"));
+  }
+
+  private void configureCanonicalAccountOwners(
+      CanonicalGameplayAdmissionDecisionReadClient targets,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      StripeHostingSubscriptionObserver observer,
+      Clock clock) {
     var entitlement =
         new AccountPublicBootstrapEntitlementOwner(
             tenantEvents,
@@ -474,6 +597,11 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
   }
 
   private CanonicalGameplayAdmissionDecisionReadClient controlledAccountTargets(Target target) {
+    return controlledAccountTargets(target, SOURCE);
+  }
+
+  private CanonicalGameplayAdmissionDecisionReadClient controlledAccountTargets(
+      Target target, AccountBootstrapRosterFixture.Fixture source) {
     var client = Mockito.mock(CanonicalGameplayAdmissionDecisionReadClient.class);
     Mockito.when(client.listVisiblePublicProductionAdmissionTargets(Mockito.any()))
         .thenAnswer(invocation -> {
@@ -504,7 +632,7 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
                   CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
           Mockito.when(published.selector()).thenReturn(request);
           Mockito.when(published.currentTarget()).thenReturn(target);
-          Mockito.when(published.sourceEvidence()).thenReturn(ownerEvidence(request));
+          Mockito.when(published.sourceEvidence()).thenReturn(ownerEvidence(request, source));
           var world = Mockito.mock(WorldCanonicalInstanceLifecycleEvidence.class);
           Mockito.when(world.lifecycleStatus()).thenReturn("ACTIVE");
           Mockito.when(world.lifecycleEpoch()).thenReturn(target.activeWorldEpoch());
@@ -514,17 +642,21 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     return client;
   }
 
-  private void initializeMemberAuthority(TestAccount account) {
+  private void initializeMemberAuthority(TestAccount account, UUID tenantId) {
     new TransactionTemplate(transactionManager)
         .executeWithoutResult(status ->
             generations.initialize(
                 AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.accountUuid(), SOURCE.target().tenantUuid())));
+                    account.accountUuid(), tenantId)));
   }
 
   private static Target accountTarget() {
-    var target = SOURCE.target();
-    var proof = SOURCE.evidence().gameSessionOwnerProof();
+    return accountTarget(SOURCE);
+  }
+
+  private static Target accountTarget(AccountBootstrapRosterFixture.Fixture source) {
+    var target = source.target();
+    var proof = source.evidence().gameSessionOwnerProof();
     var hold = proof.holdIdentity();
     var request = hold.request();
     return new Target(
@@ -564,7 +696,13 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
 
   private static CanonicalGameplayRosterOwnerReadEvidence ownerEvidence(
       CanonicalGameplayRosterOwnerReadEvidence.Request request) {
-    var base = SOURCE.evidence().request();
+    return ownerEvidence(request, SOURCE);
+  }
+
+  private static CanonicalGameplayRosterOwnerReadEvidence ownerEvidence(
+      CanonicalGameplayRosterOwnerReadEvidence.Request request,
+      AccountBootstrapRosterFixture.Fixture source) {
+    var base = source.evidence().request();
     var expected =
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
             request.requestUuid(),
@@ -585,9 +723,9 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
       throw new IllegalArgumentException("Controlled owner target mismatch");
     return new CanonicalGameplayRosterOwnerReadEvidence(
         request,
-        SOURCE.target().admissionPointerSnapshotDigest(),
-        SOURCE.evidence().gameSessionOwnerProof(),
-        SOURCE.evidence().publishedPolicySetEvidence());
+        source.target().admissionPointerSnapshotDigest(),
+        source.evidence().gameSessionOwnerProof(),
+        source.evidence().publishedPolicySetEvidence());
   }
 
   private TestAccount registerAccount(String username) throws Exception {
@@ -630,14 +768,19 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
   }
 
   private String discoverConnectScope(TestAccount account, String token) throws Exception {
+    return discoverConnectScope(account, token, accountTarget());
+  }
+
+  private String discoverConnectScope(TestAccount account, String token, Target target)
+      throws Exception {
     var request =
         HttpRequest.newBuilder(
                 URI.create(
                     accountBaseUrl()
                         + "/auth/bootstrap/worlds/"
-                        + SOURCE.target().worldSlug()
+                        + target.worldSlug()
                         + "/realms?tenantSlug="
-                        + accountTarget().tenantSlug()))
+                        + target.tenantSlug()))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
@@ -645,9 +788,8 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     if (response.statusCode() != 200) {
       // Preserve the HTTP assertion while exposing an owner/proxy exception otherwise hidden by
       // the public INTERNAL_ERROR projection. This uses the same actual caller and owner setup.
-      org.assertj.core.api.Assertions.assertThatCode(() ->
-              facade.listBootstrapRealms(
-                  token, accountTarget().tenantSlug(), SOURCE.target().worldSlug()))
+      org.assertj.core.api.Assertions.assertThatCode(
+              () -> facade.listBootstrapRealms(token, target.tenantSlug(), target.worldSlug()))
           .as("REALMS owner composition after HTTP response: %s", response.body())
           .doesNotThrowAnyException();
     }
@@ -655,13 +797,13 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     var realms = jsonMapper.readTree(response.body()).path("data");
     assertThat(realms.size()).isEqualTo(1);
     assertThat(realms.get(0).path("tenantId").asText())
-        .isEqualTo(SOURCE.target().tenantUuid().toString());
+        .isEqualTo(target.canonicalTenantId().toString());
     String scope = realms.get(0).path("connectScopeId").asText();
     var claims = jwtUtil.parseToken(scope).getPayload();
     assertThat(claims.getSubject()).isEqualTo(account.accountUuid().toString());
     assertThat(claims.get("scopeDigestVersion", Number.class).longValue()).isEqualTo(2L);
     assertThat(claims.get("tenantId", String.class))
-        .isEqualTo(SOURCE.target().tenantUuid().toString());
+        .isEqualTo(target.canonicalTenantId().toString());
     return scope;
   }
 

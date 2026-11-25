@@ -425,17 +425,17 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   void paidObservationCannotRunInsideThePreparingAccountTransaction() throws Exception {
     PaidFixture paid = newPaidFixture(null);
     int reads = paid.hosting().transport().reads();
-    assertThatThrownBy(() ->
-            paid.caller()
-                .inCurrentSources(sources ->
-                    sources
-                        .prepareCurrentPublicProductionNew(
-                            paid.hosting().tenantId(),
-                            paid.caller().committedCandidate.identity().tokenJti(),
-                            paid.caller().committedCandidate,
-                            paid.hosting().admissionPaidSource())
-                        .observeOutsideSql()))
-        .isInstanceOf(IllegalStateException.class);
+    paid.caller()
+        .inCurrentSources(sources -> {
+          var prepared =
+              sources.prepareCurrentPublicProductionNew(
+                  paid.hosting().tenantId(),
+                  paid.caller().committedCandidate.identity().tokenJti(),
+                  paid.caller().committedCandidate,
+                  paid.hosting().admissionPaidSource());
+          assertThatThrownBy(prepared::observeOutsideSql).isInstanceOf(IllegalStateException.class);
+          return null;
+        });
     assertThat(paid.hosting().transport().reads()).isEqualTo(reads);
   }
 

@@ -998,6 +998,8 @@ class AccountServiceImplTest {
           .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
       order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
       order.verify(f.hosting).readCurrent(paidFence, null);
+      org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(3))
+          .findByAccountUuidForUpdate(f.scope.accountId());
     }
 
     org.mockito.Mockito.verify(f.terminal)
@@ -2166,6 +2168,8 @@ class AccountServiceImplTest {
         .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
     order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
     order.verify(f.hosting).readCurrent(paidFence, null);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(3))
+        .findByAccountUuidForUpdate(f.scope.accountId());
     verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
