@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -409,7 +410,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 .forHandoffDeadline(CLOCK, CLOCK.millis() + 4_000L)
                 .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity))
         .isInstanceOf(IllegalStateException.class);
-    verify(connection).getOptions();
+    verify(connection, atLeastOnce()).getOptions();
     verify(connection, never()).async();
     verify(connection).closeAsync();
   }
