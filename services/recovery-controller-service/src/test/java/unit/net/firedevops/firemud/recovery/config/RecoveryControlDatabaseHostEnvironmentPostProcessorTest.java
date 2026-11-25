@@ -177,8 +177,15 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage(
-            "Recovery database overrides must retain the dedicated datasource and shared Flyway connection")
+        .hasMessageStartingWith(
+            switch (property) {
+              case "spring.datasource.hikari.data-source-properties.serverName" ->
+                  "spring.datasource.hikari.data-source-properties ";
+              case "spring.datasource.hikari.data-source-jndi" ->
+                  "spring.datasource.hikari.data-source-j-n-d-i ";
+              default -> property + " ";
+            })
+        .hasMessageNotContaining("override-secret")
         .hasNoCause();
   }
 
@@ -204,8 +211,22 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage(
-            "Recovery database overrides must retain the dedicated datasource and shared Flyway connection")
+        .hasMessageStartingWith(
+            switch (property) {
+              case "SPRING_DATASOURCE_URL" -> "spring.datasource.url ";
+              case "SPRING_DATASOURCE_HIKARI_JDBCURL" -> "spring.datasource.hikari.jdbc-url ";
+              case "SPRING_DATASOURCE_PASSWORD" -> "spring.datasource.password ";
+              case "SPRING_DATASOURCE_HIKARI_DATASOURCECLASSNAME" ->
+                  "spring.datasource.hikari.data-source-class-name ";
+              case "SPRING_DATASOURCE_HIKARI_DATASOURCEPROPERTIES_SERVERNAME" ->
+                  "spring.datasource.hikari.data-source-properties ";
+              case "SPRING_FLYWAY_URL" -> "spring.flyway.url ";
+              case "SPRING_FLYWAY_USER" -> "spring.flyway.user ";
+              case "SPRING_FLYWAY_PASSWORD" -> "spring.flyway.password ";
+              default ->
+                  throw new AssertionError("Unhandled override fixture property: " + property);
+            })
+        .hasMessageNotContaining("override-secret")
         .hasNoCause();
   }
 
@@ -239,7 +260,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("shared Flyway connection")
+        .hasMessageContaining("spring.flyway.url")
         .hasNoCause();
   }
 
@@ -253,7 +274,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("dedicated datasource")
+        .hasMessageContaining("spring.datasource.url")
         .hasNoCause();
   }
 

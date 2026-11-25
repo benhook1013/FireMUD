@@ -470,9 +470,11 @@ def run_self_test() -> None:
           {**recovery_history, recovery_config: recovery_settings + (
               b"    enabled: false\n---\nspring.flyway.enabled: 'TrUe'\n"
           )}, recovery_history, None)
-    check("quoted yes is not Spring Boot true", {
-        **recovery_history, recovery_config: recovery_settings + b"    enabled: 'yes'\n",
-    }, recovery_history, "historical effective migration no longer applied")
+    for nonmatching_value in (b"yes", b"on", b"1"):
+        check(f"quoted {nonmatching_value!r} is not Spring Boot true", {
+            **recovery_history,
+            recovery_config: recovery_settings + b"    enabled: '" + nonmatching_value + b"'\n",
+        }, recovery_history, "historical effective migration no longer applied")
     complete_recovery_history = {**recovery_history, recovery + "V2__attempt_closure.sql": b"-- closure"}
     check("recovery target latest applies V1 and V2", {
         **complete_recovery_history, recovery_config: recovery_settings + b"    target: latest\n",

@@ -848,6 +848,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String retained = storedOutbox(scope.operationId(), effectId);
     String retainedClosure = storedClosure(dispatched);
 
+    var exactCurrentDispatch =
+        dsl.fetchOne(
+            """
+            SELECT c.dispatched_at = o.last_dispatched_at AS same_dispatch
+            FROM recovery_control.initial_gameplay_release_attempt_closure c
+            JOIN recovery_control.initial_gameplay_release_outbox o ON o.outbox_id=c.outbox_id
+            WHERE c.outbox_id=? AND c.attempt_id=?
+            """,
+            dispatched.outboxId(),
+            firstAttempt);
+    assertThat(exactCurrentDispatch).isNotNull();
+    assertThat(exactCurrentDispatch.get("same_dispatch", Boolean.class)).isTrue();
     assertThat(journal.recordEffectReadback(dispatched, terminal, base.plusSeconds(7)))
         .isEqualTo(authorized);
     assertThat(
