@@ -117,6 +117,8 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
     denied) echo 'Error from server (Forbidden): holder patch denied' >&2; exit 1 ;;
   esac
   state="$(kubectl -n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s)"
+  target_phase="$(jq -r '.[2].value | if type=="string" then fromjson | .phase // empty else empty end' <<<"$8")"
+  if [[ "${FAKE_RETRY_PATCH_CASE:-}" == denied-start && "$target_phase" == SEND_STARTED ]]; then exit 1; fi
   next="$(jq -ec --argjson patch "$8" '
     select(($patch | length) == 3
       and $patch[0] == {op:"test",path:"/metadata/uid",value:.metadata.uid}
@@ -132,7 +134,10 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
     next="$(jq -c '.data["pr-901"] |= (fromjson | .nonce = "12345678-1234-4234-8234-123456789abc" | tojson)' <<<"$next")"
   fi
   printf '%s\n' "$next" > "$FAKE_RETRY_HOLDER"
-  if [[ "${FAKE_RETRY_PATCH_CASE:-}" == lost-response || "${FAKE_RETRY_PATCH_CASE:-}" == different-nonce ]]; then
+  if [[ "${FAKE_RETRY_PATCH_CASE:-}" == different-nonce ||
+    ( "${FAKE_RETRY_PATCH_CASE:-}" == lost-reserve && "$target_phase" == RESERVED ) ||
+    ( "${FAKE_RETRY_PATCH_CASE:-}" == lost-send && "$target_phase" == SEND_STARTED ) ||
+    ( "${FAKE_RETRY_PATCH_CASE:-}" == competing-start && "$target_phase" == SEND_STARTED ) ]]; then
     exit 1
   fi
   case "${FAKE_RETRY_PATCH_CASE:-}" in
@@ -1412,8 +1417,8 @@ run_proof_retry_contract() (
   assert_retry_count 1
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
   test ! -e "$FAKE_ANNOTATE_LOG"
-  jq -se 'length == 1 and .[0][0].value == "uid-holder" and .[0][1].value == "1"
-    and ((.[0][2].value | length) < 512)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+  jq -se 'length == 2 and .[0][0].value == "uid-holder" and .[0][1].value == "1"
+    and (.[0][2].value|fromjson|.phase=="RESERVED") and (.[1][2].value|fromjson|.phase=="SEND_STARTED")' "$FAKE_RETRY_PATCH_LOG" >/dev/null
 
   reset_case
   seed_retry_holder 2
@@ -1426,11 +1431,11 @@ run_proof_retry_contract() (
   # A fresh callback after deletion, and then an unannotated replacement,
   # recognize the same exhausted tuple without dispatching or patching it.
   FAKE_PR_901_NAMESPACE_ABSENT=true fixture_reconcile >"$case_output" 2>&1
-  grep -Fq 'proof retry budget exhausted' "$case_output"
+  grep -Fq 'leaving it charged' "$case_output"
   FAKE_PR_901_SNAPSHOT_HEAD='' FAKE_PR_901_NAMESPACE_UID=replacement-uid fixture_reconcile >"$case_output" 2>&1
-  grep -Fq 'proof retry budget exhausted' "$case_output"
+  grep -Fq 'leaving it charged' "$case_output"
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
-  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 1
+  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
 
   reset_case
   seed_retry_holder 3 "$other_base"
@@ -1442,18 +1447,19 @@ run_proof_retry_contract() (
   jq -e --arg base "$base" '(.data["pr-901"] | fromjson).base == $base' "$FAKE_RETRY_HOLDER" >/dev/null
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 2
 
-  for patch_case in denied different-nonce wrong-holder unchanged-version wrong-row lost-response; do
+  for patch_case in denied different-nonce wrong-holder unchanged-version wrong-row lost-reserve; do
     reset_case
     seed_retry_holder 1
     local status=0
     FAKE_RETRY_PATCH_CASE="$patch_case" fixture_reconcile >"$case_output" 2>&1 || status=$?
-    test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 1
-    if [[ "$patch_case" == lost-response ]]; then
+    if [[ "$patch_case" == lost-reserve ]]; then
+      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
       test "$status" -eq 0
       test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
       assert_retry_count 2
     else
       test "$status" -ne 0
+      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 1
       grep -Fq 'Unable to prove proof-retry reservation custody' "$case_output"
       test ! -e "$FAKE_DISPATCH_LOG"
     fi
@@ -1480,9 +1486,38 @@ run_proof_retry_contract() (
   seed_retry_holder 1
   FAKE_RETRY_RUNTIME_CHANGE_BEFORE_SEND=true fixture_reconcile >"$case_output" 2>&1
   grep -Fq 'Namespace fence changed before proof retry dispatch' "$case_output"
-  assert_retry_count 1
-  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
+  assert_retry_count 2
+  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 1
   test ! -e "$FAKE_DISPATCH_LOG"
+
+  reset_case
+  seed_retry_holder 1
+  if FAKE_RETRY_PATCH_CASE=denied-start fixture_reconcile >"$case_output" 2>&1; then
+    echo 'unacknowledged send-start authorized dispatch' >&2; exit 1
+  fi
+  test ! -e "$FAKE_DISPATCH_LOG"
+  assert_retry_count 2
+  retained="$(jq -er '.data["pr-901"] | fromjson | select(.phase=="RESERVED").nonce' "$FAKE_RETRY_HOLDER")"
+  fixture_reconcile >"$case_output"
+  assert_retry_count 2
+  jq -e --arg nonce "$retained" '
+    .data["pr-901"] | fromjson | .phase=="SEND_STARTED" and .nonce==$nonce
+  ' "$FAKE_RETRY_HOLDER" >/dev/null
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+
+  for transition_case in lost-send competing-start; do
+    reset_case
+    seed_retry_holder 1
+    if FAKE_RETRY_PATCH_CASE="$transition_case" fixture_reconcile >"$case_output" 2>&1; then
+      echo 'a send-start without an original acknowledgement authorized dispatch' >&2; exit 1
+    fi
+    test ! -e "$FAKE_DISPATCH_LOG"
+    assert_retry_count 2
+    jq -e '.data["pr-901"] | fromjson | .phase=="SEND_STARTED"' "$FAKE_RETRY_HOLDER" >/dev/null
+    fixture_reconcile >"$case_output"
+    grep -Fq 'no guarded rejection; leaving it charged' "$case_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  done
 
   for custody in exact updated changed; do
     reset_case
@@ -1497,13 +1532,13 @@ run_proof_retry_contract() (
     if [[ "$custody" != changed ]]; then
       assert_retry_count 2
       jq -e --arg nonce "$nonce" '(.data["pr-901"] | fromjson).nonce == $nonce' "$FAKE_RETRY_HOLDER" >/dev/null
-      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
+      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 3
       if [[ "$custody" == updated ]]; then
         jq -e '.data | has("pr-902")' "$FAKE_RETRY_HOLDER" >/dev/null
       fi
     else
       assert_retry_count 3
-      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 1
+      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
     fi
   done
 

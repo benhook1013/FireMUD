@@ -338,6 +338,61 @@ fetch_alternate_run_metadata() {
   timeout --signal=KILL "$remaining" gh api "$2"
 }
 
+# Resolve exactly one retained Actions artifact on its authenticated run endpoint.
+read_exact_run_artifact() {
+  local deadline="$1" run_id="$2" name="$3"
+  fetch_alternate_run_metadata "$deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?name=${name}&per_page=100" |
+    jq -cer --argjson run "$run_id" --arg name "$name" '
+      select(.total_count == 1 and (.artifacts | type == "array" and length == 1))
+      | .artifacts[0]
+      | select(.name == $name and .expired == false and .workflow_run.id == $run)
+      | select(.id | type == "number" and floor == . and . > 0)
+      | select(.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+      | {id, digest}'
+}
+
+verify_exact_publication_receipt() {
+  local deadline="$1" receipt_id="$2" receipt_digest="$3" expected="$4" remaining
+  remaining=$((deadline - SECONDS))
+  (( remaining > 0 )) || return 1
+  timeout --signal=KILL "$remaining" gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${receipt_id}/zip" |
+    python3 -c '
+import hashlib
+import io
+import json
+import sys
+import zipfile
+
+def closed_object(pairs):
+    obj = dict(pairs)
+    if len(obj) != len(pairs):
+        raise ValueError("duplicate receipt key")
+    return obj
+
+try:
+    data = sys.stdin.buffer.read(65537)
+    if not data or len(data) > 65536 or "sha256:" + hashlib.sha256(data).hexdigest() != sys.argv[1]:
+        raise ValueError("invalid retained archive digest")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        entries = archive.infolist()
+        if (len(entries) != 1 or entries[0].filename != "exact-pr-runtime-publication.json"
+                or not 0 < entries[0].file_size <= 8192):
+            raise ValueError("invalid receipt inventory")
+        with archive.open(entries[0]) as stream:
+            payload = stream.read(8193)
+        if len(payload) > 8192:
+            raise ValueError("invalid receipt size")
+    receipt = json.loads(payload, object_pairs_hook=closed_object)
+    expected = json.loads(sys.argv[2])
+    if type(receipt) is not dict or set(receipt) != set(expected) or any(
+            type(receipt[key]) != type(value) or receipt[key] != value
+            for key, value in expected.items()):
+        raise ValueError("invalid exact attempt receipt")
+except (OSError, TypeError, ValueError, RuntimeError, zipfile.BadZipFile):
+    sys.exit(1)
+' "$receipt_digest" "$expected"
+}
+
 # PR callbacks bind the immutable source tuple. Typed native and explicit
 # publishers bind the exact source run ID as well as the tuple. Every path
 # needs a positive publication step in the exact current attempt.
@@ -348,6 +403,7 @@ use_completed_duplicate_publication() {
   local observed_inventory="${4:-}"
   local source source_attempt source_title source_latest publisher_event expected_title
   local run attempt jobs latest publisher_path default_branch repository_info
+  local source_workflow source_workflow_id source_pr producer_artifact publisher_artifact expected_receipt
   local -a publisher_events=()
   IFS=$'\t' read -r state older_id _ _ _ source_event older_created <<<"$source_state"
   [[ "$state" == "found" ]] || return 1
@@ -359,6 +415,20 @@ use_completed_duplicate_publication() {
     | select(.event != "pull_request" or .head_sha == $head)
     | .run_attempt | select(type == "number" and . >= 1 and floor == .)
   ' <<<"$source")" || return 1
+  source_workflow="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml")" || return 1
+  source_workflow_id="$(jq -er '
+    select(.name == "Build Runtime Images" and .path == ".github/workflows/runtime-images.yml")
+    | .id | select(type == "number" and floor == . and . > 0)
+  ' <<<"$source_workflow")" || return 1
+  jq -e --argjson workflow "$source_workflow_id" '
+    .workflow_id == $workflow and (.path == ".github/workflows/runtime-images.yml"
+       or ((.path | type == "string") and (.path | startswith(".github/workflows/runtime-images.yml@"))))
+  ' <<<"$source" >/dev/null || return 1
+  if [[ ! "$source_title" =~ ^Build\ Runtime\ Images\ secure-pr-artifact\ pr-([1-9][0-9]*)\ base- ]]; then
+    return 1
+  fi
+  source_pr="${BASH_REMATCH[1]}"
+  producer_artifact="$(read_exact_run_artifact "$lookup_deadline" "$older_id" "pr-runtime-images-${image_tag}-attempt-${source_attempt}")" || return 1
   if [[ "$source_event" == "pull_request" ]]; then
     publisher_events=(workflow_run)
   else
@@ -418,9 +488,24 @@ use_completed_duplicate_publication() {
             ([.steps[] | select(.name == "Publish fixed PR image tags")] as $steps |
               ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
       ' <<<"$jobs" >/dev/null || continue
+      publisher_artifact="$(read_exact_run_artifact "$lookup_deadline" "$publisher_id" "pr-runtime-publication-${publisher_id}-attempt-${attempt}")" || continue
+      expected_receipt="$(jq -cn --arg repo "$GITHUB_REPOSITORY" --argjson pr "$source_pr" \
+        --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" --arg tag "$image_tag" \
+        --argjson workflow "$source_workflow_id" --argjson source "$older_id" --argjson sourceAttempt "$source_attempt" \
+        --argjson artifact "$producer_artifact" --argjson publisher "$publisher_id" --argjson attempt "$attempt" \
+        --arg publisherRef "${GITHUB_REPOSITORY}/.github/workflows/publish-pr-runtime-images.yml@refs/heads/${default_branch}" '
+        {schema:1, repository:$repo, prNumber:$pr, baseSha:$base, headSha:$head, mergeSha:$merge, imageTag:$tag,
+         producerWorkflowId:$workflow, producerRunId:$source, producerAttempt:$sourceAttempt,
+         producerArtifactId:$artifact.id, producerArtifactDigest:$artifact.digest, publisherWorkflowRef:$publisherRef,
+         publisherRunId:$publisher, publisherAttempt:$attempt, publishJob:"Publish Fixed PR Merge Image Tags",
+         publishStep:"Publish fixed PR image tags"}')" || continue
+      verify_exact_publication_receipt "$lookup_deadline" "$(jq -r '.id' <<<"$publisher_artifact")" \
+        "$(jq -r '.digest' <<<"$publisher_artifact")" "$expected_receipt" || continue
       source_latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || continue
-      jq -e --argjson attempt "$source_attempt" --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" '
-        .run_attempt == $attempt and .repository.full_name == $repo and .head_repository.full_name == $repo
+      jq -e --argjson id "$older_id" --argjson workflow "$source_workflow_id" --argjson attempt "$source_attempt" \
+        --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" '
+        .id == $id and .workflow_id == $workflow and .run_attempt == $attempt
+        and .repository.full_name == $repo and .head_repository.full_name == $repo
         and .display_title == $title and (.event != "pull_request" or .head_sha == $head)
       ' <<<"$source_latest" >/dev/null || continue
       [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source_latest" | read_run_state)" == "$source_state" ]] || continue

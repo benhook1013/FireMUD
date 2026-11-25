@@ -382,7 +382,7 @@ const source = { id: 4242, run_attempt: 2, workflow_id: 777, path: ".github/work
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
 const producer = run => ({id: 8, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
   name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success"});
-async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs } = {}) {
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs, artifactOverride = {} } = {}) {
   let reads = 0, clock = 0;
   const output = {};
   const lastRead = () => runs[Math.min(reads - 1, runs.length - 1)];
@@ -392,6 +392,13 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
     return jobs ?? [producer(lastRead())];
   }, rest: { actions: {
     getWorkflow: async () => ({data: workflow}),
+    listWorkflowRunArtifacts: async ({run_id, name, per_page}) => {
+      assert.equal(run_id, 4242);
+      assert.equal(name, `pr-runtime-images-pr-merge-${sha("c")}-attempt-${lastRead().run_attempt}`);
+      assert.equal(per_page, 100);
+      return {data: {total_count: 1, artifacts: [{id: 71, name, expired: false,
+        workflow_run: {id: run_id}, digest: "sha256:" + "a".repeat(64), ...artifactOverride}]}};
+    },
     getWorkflowRun: async request => { assert.equal(request.run_id, 4242); reads++; if (error) throw Error("API unavailable"); return {data: runs[Math.min(reads - 1, runs.length - 1)]}; },
   } } };
   await resolver(github, context, {notice: () => {}, setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
@@ -401,6 +408,8 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
   }
   assert.equal(output.title, title);
   assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}-attempt-${lastRead().run_attempt}`);
+  assert.equal(output.artifact_id, "71");
+  assert.equal(output.artifact_digest, "sha256:" + "a".repeat(64));
   assert.equal(JSON.parse(output.source).status, "completed");
   assert.equal(JSON.parse(output.source).run_attempt, lastRead().run_attempt);
   return {reads, output};
@@ -498,9 +507,14 @@ for (const publishable of ["false", "", undefined]) {
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
   const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
     .split("      - name: Validate exact PR source and artifact before registry login\n")[0];
-  const inputs = Object.fromEntries([...download.matchAll(/^          (name|path|run-id): (.+)$/gm)]
+  const inputs = Object.fromEntries([...download.matchAll(/^          (artifact-ids|digest-mismatch|path|run-id): (.+)$/gm)]
     .map(match => [match[1], match[2]]));
-  assert.equal(inputs.name, "${{ needs.source.outputs.artifact_name }}");
+  assert.equal(inputs["artifact-ids"], "${{ needs.source.outputs.artifact_id }}");
+  assert.equal(inputs["digest-mismatch"], "error");
+  assert.equal(inputs.name, undefined);
+  for (const artifactOverride of [{expired:true}, {digest:"not-sha256"}, {id:0}, {workflow_run:{id:4243}}]) {
+    await assert.rejects(resolve({artifactOverride}), /immutable exact-attempt artifact and SHA256/);
+  }
   assert.equal(inputs.path, "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}");
   assert.equal(inputs["run-id"], "${{ fromJSON(needs.source.outputs.source).id }}");
   assert.ok(publisherWorkflow.includes("artifact_name: ${{ steps.resolve.outputs.artifact_name }}"));

@@ -178,7 +178,8 @@ prepare_preview_dispatch() {
   local snapshot="" tuple="" namespace_uid="" namespace_resource_version=""
   local deployed_base deployed_head deployed_merge deployed_image deployed_exact=false
   local proof_base proof_head proof_merge proof_image proof_uid
-  local holder prior legacy reservation next_count=1 nonce fresh_snapshot
+  local holder prior legacy reservation phase next_count=1 nonce reservation_holder_rv
+  local proof_completed=false
   proof_retry_record=""
   proof_retry_prior_record=""
   proof_retry_holder_uid=""
@@ -226,8 +227,7 @@ prepare_preview_dispatch() {
     fi
     if [[ "$proof_base|$proof_head|$proof_merge|$proof_image" == "$base_sha|$head_sha|$merge_sha|$image_tag" &&
       -n "$namespace_uid" && "$proof_uid" == "$namespace_uid" ]]; then
-      echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
-      return 2
+      proof_completed=true
     fi
   fi
 
@@ -236,6 +236,36 @@ prepare_preview_dispatch() {
     echo "Unable to verify the proof-retry holder for PR #${pr_number}; refusing dispatch." >&2
     dispatch_outcome_failed=true
     return 1
+  fi
+  phase="$(jq -r '.phase // empty' <<<"$prior")" || return 1
+  if [[ "$phase" == RESERVED ]]; then
+    # Recover this original charge and nonce, never allocate another one or
+    # treat a vanished run as proof that a request was not sent.
+    if ! jq -e --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" \
+        --arg image "$image_tag" --arg uid "$namespace_uid" --arg rv "$namespace_resource_version" '
+      .base == $base and .head == $head and .merge == $merge and .image == $image
+      and .namespaceUid == $uid and .namespaceResourceVersion == $rv
+    ' <<<"$prior" >/dev/null; then
+      echo "Retained proof-retry reservation for PR #${pr_number} lacks current custody; leaving it charged." >&2
+      return 1
+    fi
+    proof_retry_record="$prior"
+    proof_retry_prior_record="$(jq -c '.predecessor' <<<"$prior")" || return 1
+    proof_retry_holder_uid="$(jq -er '.metadata.uid' <<<"$holder")" || return 1
+    if [[ "$proof_completed" == true ]]; then
+      compensate_rejected_proof_retry "$namespace" "$pr_number" RESERVED "after verified proof completion" ||
+        dispatch_outcome_failed=true
+      return 2
+    fi
+    start_reserved_proof_retry "$holder" "$namespace" "$pr_number"
+    return $?
+  elif [[ "$phase" == SEND_STARTED ]]; then
+    echo "Retained proof-retry send-start for PR #${pr_number} has no guarded rejection; leaving it charged."
+    return 1
+  fi
+  if [[ "$proof_completed" == true ]]; then
+    echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
+    return 2
   fi
   if [[ "$prior" == null && -n "$snapshot" ]]; then
     if ! legacy="$(legacy_preview_retry_entry "$snapshot" "$namespace")"; then
@@ -274,12 +304,18 @@ prepare_preview_dispatch() {
     dispatch_outcome_failed=true
     return 1
   fi
+  proof_retry_holder_uid="$(jq -er '.metadata.uid' <<<"$holder")" || return 1
+  reservation_holder_rv="$(jq -er '.metadata.resourceVersion' <<<"$holder")" || return 1
   reservation="$(jq -cn --arg repo "$GITHUB_REPOSITORY" --arg namespace "$namespace" \
-    --arg uid "$namespace_uid" --arg nonce "$nonce" --argjson count "$next_count" \
+    --arg uid "$namespace_uid" --arg rv "$namespace_resource_version" --arg nonce "$nonce" \
+    --arg holder_uid "$proof_retry_holder_uid" --arg holder_rv "$reservation_holder_rv" \
+    --argjson count "$next_count" --argjson predecessor "$prior" \
     --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" --arg image "$image_tag" '
-      {repository:$repo,namespace:$namespace,namespaceUid:$uid,nonce:$nonce,count:$count,
-       base:$base,head:$head,merge:$merge,image:$image}
-    ')" || return 1
+      {repository:$repo,namespace:$namespace,namespaceUid:$uid,namespaceResourceVersion:$rv,
+       nonce:$nonce,count:$count,base:$base,head:$head,merge:$merge,image:$image,
+       stageVersion:2,phase:"RESERVED",predecessor:$predecessor,
+       holderUid:$holder_uid,holderResourceVersion:$holder_rv}
+  ')" || return 1
   if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$reservation")"; then
     echo "Unable to prove proof-retry reservation custody for PR #${pr_number}; refusing dispatch." >&2
     dispatch_outcome_failed=true
@@ -288,38 +324,68 @@ prepare_preview_dispatch() {
   proof_retry_record="$reservation"
   proof_retry_prior_record="$prior"
   proof_retry_holder_uid="$(jq -r '.metadata.uid' <<<"$holder")"
-  if ! fresh_snapshot="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)"; then
-    echo "Unable to verify the Namespace fence for PR #${pr_number}; refusing dispatch." >&2
+  start_reserved_proof_retry "$holder" "$namespace" "$pr_number"
+}
+
+proof_retry_namespace_matches() {
+  local namespace="$1" record="$2" fresh uid rv
+  fresh="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || return 1
+  uid="$(jq -r '.namespaceUid' <<<"$record")" || return 1
+  rv="$(jq -r '.namespaceResourceVersion' <<<"$record")" || return 1
+  if [[ -z "$uid" ]]; then
+    [[ -z "$rv" && -z "$fresh" ]]
+  else
+    jq -es --arg namespace "$namespace" --arg uid "$uid" --arg rv "$rv" '
+      length == 1 and (.[0].metadata | .name == $namespace and .uid == $uid
+        and .resourceVersion == $rv and .deletionTimestamp == null)
+    ' <<<"$fresh" >/dev/null
+  fi
+}
+
+start_reserved_proof_retry() {
+  local holder="$1" namespace="$2" pr_number="$3" started acknowledged current current_row tuple version
+  if ! proof_retry_namespace_matches "$namespace" "$proof_retry_record"; then
+    echo "Skipping PR #${pr_number}: Namespace fence changed before proof retry dispatch; reservation stays charged." >&2
+    return 1
+  fi
+  started="$(jq -c 'select(.stageVersion == 2 and .phase == "RESERVED") | .phase = "SEND_STARTED"' \
+    <<<"$proof_retry_record")" || return 1
+  [[ -n "$started" ]] || return 1
+  if ! acknowledged="$(write_preview_retry_entry "$holder" "$namespace" "$started" true)"; then
+    echo "Unable to acknowledge ownership of the proof-retry send-start for PR #${pr_number}; refusing dispatch." >&2
     dispatch_outcome_failed=true
-    compensate_rejected_proof_retry "$namespace" "$pr_number" "before dispatch" || true
     return 1
   fi
-  if [[ -z "$snapshot" && -n "$fresh_snapshot" ]] ||
-    { [[ -n "$snapshot" ]] && ! jq -e --arg namespace "$namespace" --arg uid "$namespace_uid" \
-        --arg rv "$namespace_resource_version" '
-      .metadata.name == $namespace and .metadata.uid == $uid and .metadata.resourceVersion == $rv
-    ' <<<"$fresh_snapshot" >/dev/null; }; then
-    echo "Skipping PR #${pr_number}: Namespace fence changed before proof retry dispatch." >&2
-    if ! compensate_rejected_proof_retry "$namespace" "$pr_number" "before dispatch"; then
-      dispatch_outcome_failed=true
-    fi
+  proof_retry_record="$started"
+  version="$(jq -er '.metadata.resourceVersion' <<<"$acknowledged")" || return 1
+  if ! current="$(read_preview_retry_holder)" ||
+    ! jq -e --arg uid "$proof_retry_holder_uid" --arg version "$version" '
+      .metadata.uid == $uid and .metadata.resourceVersion == $version
+    ' <<<"$current" >/dev/null ||
+    ! current_row="$(preview_retry_entry "$current" "$namespace")" ||
+    [[ "$current_row" != "$started" ]] ||
+    ! proof_retry_namespace_matches "$namespace" "$started"; then
+    echo "Proof-retry send-start custody changed before POST for PR #${pr_number}; leaving its budget charged." >&2
+    dispatch_outcome_failed=true
     return 1
   fi
-  echo "Recorded proof retry $next_count/3 for PR #${pr_number} ($base_sha/$head_sha/$merge_sha/$image_tag)."
-  return 0
+  tuple="$(jq -r '[.base,.head,.merge,.image] | join("/")' <<<"$started")" || return 1
+  echo "Recorded proof retry $(jq -r '.count' <<<"$started")/3 for PR #${pr_number} ($tuple)."
 }
 
 compensate_rejected_proof_retry() {
-  local namespace="$1" pr_number="$2" reason="${3:-after GitHub confirmed dispatch rejection}"
+  local namespace="$1" pr_number="$2" phase="$3" reason="${4:-after GitHub confirmed dispatch rejection}"
   local holder current version previously_rejected_version="" attempt
   [[ -n "$proof_retry_record" ]] || return 0
+  jq -e --arg phase "$phase" '.stageVersion == 2 and .phase == $phase' <<<"$proof_retry_record" >/dev/null || return 1
   for attempt in 1 2 3; do
     if ! holder="$(read_preview_retry_holder)" ||
       ! current="$(preview_retry_entry "$holder" "$namespace")" ||
       ! jq -e --arg uid "$proof_retry_holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null ||
       ! jq -en --argjson current "$current" --argjson reserved "$proof_retry_record" '$current == $reserved' >/dev/null ||
       ! version="$(jq -er '.metadata.resourceVersion' <<<"$holder")" ||
-      [[ "$version" == "$previously_rejected_version" ]]; then
+      [[ "$version" == "$previously_rejected_version" ]] ||
+      ! proof_retry_namespace_matches "$namespace" "$current"; then
       break
     fi
     if write_preview_retry_entry "$holder" "$namespace" "$proof_retry_prior_record" >/dev/null; then
@@ -1220,7 +1286,7 @@ dispatch_candidates() {
   elif [[ "${dispatch_status_line_count}" -eq 1 && "${dispatch_http_status}" =~ ^4[0-9][0-9]$ ]]; then
     dispatch_outcome_failed=true
     echo "GitHub confirmed preview dispatch rejection for PR #${pr_number} (HTTP ${dispatch_http_status})."
-    if ! compensate_rejected_proof_retry "$namespace" "$pr_number"; then
+    if ! compensate_rejected_proof_retry "$namespace" "$pr_number" SEND_STARTED; then
       echo "The rejected dispatch could not be safely compensated; its proof-retry budget remains charged." >&2
     fi
     if [[ "${rate_limited_dispatch}" == true ]]; then

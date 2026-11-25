@@ -24,6 +24,8 @@ jobs:
       source: ${{ steps.resolve.outputs.source }}
       title: ${{ steps.resolve.outputs.title }}
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      artifact_id: ${{ steps.resolve.outputs.artifact_id }}
+      artifact_digest: ${{ steps.resolve.outputs.artifact_digest }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -129,7 +131,20 @@ jobs:
                 }
                 core.setOutput("source", JSON.stringify(run));
                 core.setOutput("title", run.display_title);
-                core.setOutput("artifact_name", `pr-runtime-images-pr-merge-${title[4]}-attempt-${sourceAttempt}`);
+                const artifactName = `pr-runtime-images-pr-merge-${title[4]}-attempt-${sourceAttempt}`;
+                const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+                  ...context.repo, run_id: sourceId, name: artifactName, per_page: 100,
+                });
+                const [artifact] = artifacts.artifacts;
+                if (artifacts.total_count !== 1 || artifacts.artifacts.length !== 1 ||
+                    !positiveInteger(artifact.id) || artifact.name !== artifactName ||
+                    artifact.expired !== false || artifact.workflow_run?.id !== sourceId ||
+                    !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "")) {
+                  throw new Error("publication requires one immutable exact-attempt artifact and SHA256");
+                }
+                core.setOutput("artifact_name", artifactName);
+                core.setOutput("artifact_id", String(artifact.id));
+                core.setOutput("artifact_digest", artifact.digest);
                 break;
               }
               if (callback || !["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status) ||
@@ -173,7 +188,8 @@ jobs:
       - name: Download successful PR image artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: ${{ needs.source.outputs.artifact_name }}
+          artifact-ids: ${{ needs.source.outputs.artifact_id }}
+          digest-mismatch: error
           # The pinned action extracts a sole artifact directly into path.
           path: /tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}
           github-token: ${{ github.token }}
@@ -731,3 +747,45 @@ jobs:
             done
             available_services+=("$service")
           done
+
+      - name: Record exact fixed-tag publication receipt
+        env:
+          SOURCE_WORKFLOW_ID: ${{ fromJSON(needs.source.outputs.source).workflow_id }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
+          SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.source.outputs.artifact_digest }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          env = os.environ
+          receipt = {
+              "schema": 1, "repository": env["GITHUB_REPOSITORY"],
+              "prNumber": int(env["PR_NUMBER"]), "baseSha": env["BASE_SHA"],
+              "headSha": env["HEAD_SHA"], "mergeSha": env["MERGE_SHA"],
+              "imageTag": env["IMAGE_TAG"], "producerWorkflowId": int(env["SOURCE_WORKFLOW_ID"]),
+              "producerRunId": int(env["SOURCE_RUN_ID"]),
+              "producerAttempt": int(env["SOURCE_RUN_ATTEMPT"]),
+              "producerArtifactId": int(env["SOURCE_ARTIFACT_ID"]),
+              "producerArtifactDigest": env["SOURCE_ARTIFACT_DIGEST"],
+              "publisherWorkflowRef": env["GITHUB_WORKFLOW_REF"],
+              "publisherRunId": int(env["GITHUB_RUN_ID"]),
+              "publisherAttempt": int(env["GITHUB_RUN_ATTEMPT"]),
+              "publishJob": "Publish Fixed PR Merge Image Tags",
+              "publishStep": "Publish fixed PR image tags",
+          }
+          path = Path(env["RUNNER_TEMP"]) / "exact-pr-runtime-publication.json"
+          with path.open("x", encoding="utf-8") as output:
+              json.dump(receipt, output, sort_keys=True, separators=(",", ":"))
+          PY
+
+      - name: Retain exact fixed-tag publication receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pr-runtime-publication-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/exact-pr-runtime-publication.json
+          if-no-files-found: error
+          overwrite: false

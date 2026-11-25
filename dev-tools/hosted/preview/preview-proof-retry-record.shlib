@@ -26,23 +26,39 @@ read_preview_retry_holder() {
 preview_retry_entry() {
   local snapshot="$1" namespace="$2"
   jq -c --arg namespace "$namespace" --arg repo "$GITHUB_REPOSITORY" '
-    if (.data | has($namespace) | not) then null
+    def ordinary($repository; $ns):
+      keys == ["base","count","head","image","merge","namespace","namespaceUid","nonce","repository"]
+      and .repository == $repository and .namespace == $ns
+      and (.count | type == "number" and . == floor and . >= 1 and . <= 3)
+      and all(.base,.head,.merge; type == "string" and test("^[a-f0-9]{40}$"))
+      and (.image | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
+      and (.namespaceUid | type == "string" and test("^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$"))
+      and (.nonce | type == "string" and test("^([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?$"));
+    def tuple: [.base,.head,.merge,.image];
+    def staged($repository; $ns; $uid; $rv):
+      keys == ["base","count","head","holderResourceVersion","holderUid","image","merge","namespace","namespaceResourceVersion","namespaceUid",
+                 "nonce","phase","predecessor","repository","stageVersion"]
+        and .stageVersion == 2 and (.phase == "RESERVED" or .phase == "SEND_STARTED")
+        and (.nonce != "") and .holderUid == $uid and .holderResourceVersion != $rv
+        and (.holderResourceVersion | type == "string" and test("^[A-Za-z0-9._:-]{1,128}$"))
+        and (del(.holderResourceVersion,.holderUid,.namespaceResourceVersion,.phase,.predecessor,.stageVersion) | ordinary($repository; $ns))
+        and (.namespaceResourceVersion | type == "string" and test("^[A-Za-z0-9._:-]{0,128}$"))
+        and ((.namespaceUid == "") == (.namespaceResourceVersion == ""))
+        and (if .predecessor == null then .count == 1
+             else (.predecessor | ordinary($repository; $ns))
+               and (if (.predecessor | tuple) == tuple then .count == (.predecessor.count + 1) else .count == 1 end)
+             end);
+    .metadata as $holder
+    | if (.data | has($namespace) | not) then null
     else .data[$namespace] | fromjson
-      | if (
-          keys == ["base","count","head","image","merge","namespace","namespaceUid","nonce","repository"]
-          and .repository == $repo and .namespace == $namespace
-          and (.count | type == "number" and . == floor and . >= 1 and . <= 3)
-          and all(.base,.head,.merge; type == "string" and test("^[a-f0-9]{40}$"))
-          and (.image | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
-          and (.namespaceUid | type == "string" and test("^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$"))
-          and (.nonce | type == "string" and test("^([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?$"))
-        ) then . else error("invalid preview proof-retry record") end
+      | if ordinary($repo; $namespace) or staged($repo; $namespace; $holder.uid; $holder.resourceVersion)
+        then . else error("invalid preview proof-retry record") end
     end
   ' <<<"$snapshot"
 }
 
 write_preview_retry_entry() {
-  local snapshot="$1" namespace="$2" replacement="$3"
+  local snapshot="$1" namespace="$2" replacement="$3" require_ack="${4:-false}"
   local patch response entry uid version
   [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]] || return 1
   uid="$(jq -er '.metadata.uid' <<<"$snapshot")" || return 1
@@ -59,6 +75,9 @@ write_preview_retry_entry() {
       --type=json --patch "$patch" -o json --request-timeout=10s)"; then
     response="$(validate_preview_retry_holder "$response")" || return 1
   else
+    # Recovered readback may establish custody for a reservation, never
+    # authorship of SEND_STARTED. A successor cannot authorize a POST.
+    [[ "$require_ack" == false ]] || return 1
     # A response can be lost after the server commits. Prove the exact row
     # and holder identity with one bounded reread before authorizing a send.
     response="$(read_preview_retry_holder)" || return 1

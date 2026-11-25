@@ -180,7 +180,6 @@ class RecoveryControllerOwnerConfigurationTest {
 
   @TestConfiguration(proxyBeanMethods = false)
   @ImportAutoConfiguration({
-    DatabaseAutoConfiguration.class,
     DataSourceAutoConfiguration.class,
     FlywayAutoConfiguration.class,
     JooqAutoConfiguration.class

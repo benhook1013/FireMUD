@@ -159,7 +159,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|publisher_stale_receipt|publisher_exact_retry)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -171,8 +171,32 @@ case "${GH_FIXTURE:-}" in
       source_event=repository_dispatch
       publisher_title+=" source-run-101"
     fi
-    source="$(printf '{"id":101,"run_attempt":1,"status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_event" "$head_sha" "$source_title")"
-    publisher="$(printf '{"id":102,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_title")"
+    source_attempt=1 publisher_id=102 recorded_attempt=1
+    [[ "$GH_FIXTURE" != publisher_stale_receipt ]] || source_attempt=2
+    if [[ "$GH_FIXTURE" == publisher_exact_retry ]]; then
+      source_attempt=2 publisher_id=103 recorded_attempt=2
+    fi
+    receipt_zip() {
+      python3 - "$publisher_id" "$recorded_attempt" <<'PY_RECEIPT'
+import json
+import os
+import sys
+import zipfile
+with zipfile.ZipFile(sys.stdout.buffer, "w") as archive:
+    archive.writestr(zipfile.ZipInfo("exact-pr-runtime-publication.json"), json.dumps({
+        "schema": 1, "repository": "example/firemud", "prNumber": 7,
+        "baseSha": os.environ["base_sha"], "headSha": os.environ["head_sha"],
+        "mergeSha": os.environ["merge_sha"], "imageTag": "pr-merge-" + os.environ["merge_sha"],
+        "producerWorkflowId": 50, "producerRunId": 101, "producerAttempt": int(sys.argv[2]),
+        "producerArtifactId": 300 + int(sys.argv[2]), "producerArtifactDigest": "sha256:" + "8"*64,
+        "publisherWorkflowRef": "example/firemud/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop",
+        "publisherRunId": int(sys.argv[1]), "publisherAttempt": 2,
+        "publishJob": "Publish Fixed PR Merge Image Tags", "publishStep": "Publish fixed PR image tags",
+    }))
+PY_RECEIPT
+    }
+    source="$(printf '{"id":101,"run_attempt":%s,"workflow_id":50,"path":".github/workflows/runtime-images.yml","status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_attempt" "$source_event" "$head_sha" "$source_title")"
+    publisher="$(printf '{"id":%s,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_id" "$publisher_title")"
     if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate ]]; then
       publisher="$(jq -c '.conclusion="failure"' <<<"$publisher")"
     fi
@@ -180,13 +204,28 @@ case "${GH_FIXTURE:-}" in
       "api repos/example/firemud")
         printf '%s' '{"full_name":"example/firemud","default_branch":"develop"}'
         ;;
+      *actions/workflows/runtime-images.yml)
+        printf '%s' '{"id":50,"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml"}'
+        ;;
+      *actions/runs/101/artifacts?*)
+        jq -cn --arg name "pr-runtime-images-pr-merge-${merge_sha}-attempt-${source_attempt}" \
+          --argjson attempt "$source_attempt" '{total_count:1,artifacts:[{name:$name,id:(300+$attempt),expired:false,workflow_run:{id:101},digest:("sha256:"+("8"*64))}]}'
+        ;;
+      *actions/runs/"$publisher_id"/artifacts?*)
+        receipt_sha="$(receipt_zip | sha256sum | cut -d' ' -f1)"
+        jq -cn --arg name "pr-runtime-publication-${publisher_id}-attempt-2" --arg dig "sha256:$receipt_sha" \
+          --argjson run "$publisher_id" '{total_count:1,artifacts:[{name:$name,id:499,expired:false,workflow_run:{id:$run},digest:$dig}]}'
+        ;;
+      *actions/artifacts/499/zip)
+        receipt_zip
+        ;;
       *actions/runs/101)
         printf '%s' "$source"
         ;;
-      *actions/runs/102)
+      *actions/runs/"$publisher_id")
         printf '%s' "$publisher"
         ;;
-      *actions/runs/102/attempts/2/jobs?per_page=100)
+      *actions/runs/"$publisher_id"/attempts/2/jobs?per_page=100)
         publication_step='{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}'
         unrelated_step='{"name":"Load fixed-tag images","status":"completed","conclusion":"success"}'
         case "$GH_FIXTURE" in
@@ -203,8 +242,8 @@ case "${GH_FIXTURE:-}" in
             steps="[$publication_step]"
             ;;
         esac
-        jq -cn --argjson steps "$steps" '
-          {run_id:102,run_attempt:2,name:"Publish Fixed PR Merge Image Tags",status:"completed",conclusion:"success"}
+        jq -cn --argjson run "$publisher_id" --argjson steps "$steps" '
+          {run_id:$run,run_attempt:2,name:"Publish Fixed PR Merge Image Tags",status:"completed",conclusion:"success"}
           + (if $steps == null then {} else {steps:$steps} end)
           | {total_count:1,jobs:[.]}
         '
@@ -320,8 +359,15 @@ GH_FIXTURE=typed_publisher_success \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/typed-publisher-success.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/typed-publisher-success.out"
+# New producer attempt cannot borrow the old receipt; its own exact publisher can qualify.
+GH_FIXTURE=publisher_exact_retry \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-exact-retry.out"
+grep -Fq 'Trusted PR image publisher 103 succeeded' "$TEMP_DIR/publisher-exact-retry.out"
 
-for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent; do
+
+for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent publisher_stale_receipt; do
   publisher_status=0
   publisher_output="$(
     GH_FIXTURE="$publisher_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
