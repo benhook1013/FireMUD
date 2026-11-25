@@ -853,6 +853,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     "wrong-title": {display_title: title + " unrelated"}, "wrong-source-attempt": {run_attempt: 2},
     "wrong-dispatch-branch": {head_branch: "feature"},
   };
+  const fallbackReadOrder = [];
+  let pendingRefreshObserved = false, selectedRerunObserved = false;
   const listRuns = async () => {}, listJobs = async () => {};
   const github = {rest: {
     pulls: {get: async () => {
@@ -896,11 +898,15 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
           if (acceptanceLookupAttempts === 4) acceptanceLookupArmed = false;
           throw Object.assign(new Error("final current-base workflow-run lookup unavailable"), {status: 503});
         }
+        fallbackReadOrder.push(runId);
         if (runId === 43 && (kind.startsWith("pending-native") || kind.startsWith("duplicate-"))) {
-          const terminal = kind === "pending-native-fails-after-final-order";
+          const terminal = kind === "pending-native-fails-after-final-order" ||
+            (kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved);
+          if (kind === "pending-native-dual-selected-reruns-during-native") selectedRerunObserved = true;
           return {data: {...exactPrimary, status: terminal ? "completed" : "queued", conclusion: terminal ? "failure" : null}};
         }
-        if (runId === 44 && kind === "pending-native-dual-stays") {
+        if (runId === 44 && kind.startsWith("pending-native-dual-")) {
+          pendingRefreshObserved = true;
           return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
         }
         currentRunReads += 1;
@@ -915,7 +921,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
           snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
           return {data: {...source, run_attempt: snapshotRerunVisible ? 2 : 1}};
         }
-        const superseded = kind === "newer-attempt" || rerunStartedDuringLatestIdentityRead ||
+        const superseded = kind === "newer-attempt" || selectedRerunObserved || rerunStartedDuringLatestIdentityRead ||
           rerunStartedDuringFinalTupleRead || (kind === "rerun-after-proof" && currentRunReads > 1);
         return {data: {...source, run_attempt: superseded ? 2 : 1, status: superseded ? "in_progress" : "completed"}};
       },
@@ -1031,9 +1037,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       yield {data: [next, source]}; return;
     }
     if (event === "repository_dispatch" && input.event === "pull_request") {
+      const nativeFailed = kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved;
       yield {data: [{...source, id: kind.startsWith("pending-native") ? 43 : source.id, event: "pull_request", head_sha: head,
-        status: kind.startsWith("pending-native") ? "queued" : "completed",
-        conclusion: kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
+        status: kind.startsWith("pending-native") && !nativeFailed ? "queued" : "completed",
+        conclusion: nativeFailed ? "failure" : kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
     }
     if (kind.startsWith("pending-native-dual-") && input.event === "repository_dispatch") {
       refreshInventoryReads += 1;
@@ -1084,7 +1091,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     lookupFailure = error;
   }
   return {failures, refs, snapshots, info, warnings, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads,
-    completedPrimaryJobReads, acceptanceLookupAttempts, rerunStartedDuringFinalTupleRead, lookupFailure};
+    completedPrimaryJobReads, acceptanceLookupAttempts, rerunStartedDuringFinalTupleRead, lookupFailure, fallbackReadOrder};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -1095,7 +1102,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
   const latePendingFailure = await scenario("pending-native-fails-after-final-order", "repository_dispatch");
-  assert(latePendingFailure.warnings.some(line => line.includes("Pending runtime attempt changed after fallback proof")));
+  assert(latePendingFailure.warnings.some(line => line.includes("Pending runtime attempt changed before fallback proof")));
   assert.equal(latePendingFailure.failures.length, 1, "late native failure cannot inherit older refresh proof");
   const intermediateFailure = await scenario("duplicate-intermediate-fails-during-acceptance");
   assert(intermediateFailure.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
@@ -1103,6 +1110,15 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const dualPending = await scenario("pending-native-dual-stays", "repository_dispatch");
   assert(dualPending.refreshInventoryReads >= 2, "the pending refresh must receive a distinct final inventory read");
   assert.deepEqual(dualPending.failures, [], "older proof remains usable while both newer candidates are still pending");
+  assert.deepEqual(dualPending.fallbackReadOrder.slice(-3), [44, 43, 42],
+    "observe trusted refresh and native primary before making the selected attempt the last read");
+  const nativeDuringRefresh = await scenario("pending-native-dual-native-fails-during-refresh", "repository_dispatch");
+  assert(nativeDuringRefresh.warnings.some(line => line.includes("Pending runtime attempt changed before fallback proof")));
+  assert.equal(nativeDuringRefresh.failures.length, 1, "terminal native result observed after the refresh read refuses older proof");
+  const selectedDuringNative = await scenario("pending-native-dual-selected-reruns-during-native", "repository_dispatch");
+  assert(selectedDuringNative.warnings.some(line => line.includes("Successful fallback attempt changed during ordering")));
+  assert.equal(selectedDuringNative.failures.length, 1, "a selected rerun observed after the last pending read refuses older proof");
+
   const dualFailed = await scenario("pending-native-dual-fails", "repository_dispatch");
   assert(dualFailed.refreshInventoryReads >= 2);
   assert(dualFailed.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));

@@ -1665,9 +1665,36 @@ jobs:
                     break smokeGatePolling;
                   }
                 }
-                // Ordering lookups do not reread the successful older attempt.
-                // Fence proof against a rerun that started during those awaits.
                 if (pendingOrderingFences.length > 0) {
+                  // Observe each pending attempt again, checking the native primary
+                  // after the optional trusted refresh. Changed or terminal runs
+                  // must be evaluated through exact selection, never older proof.
+                  for (const pending of [...pendingOrderingFences].reverse()) {
+                    let finalPending;
+                    try {
+                      ({ data: finalPending } = await withTransientGitHubRetry(
+                        "pending attempt before final fallback proof",
+                        () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: pending.id })
+                      ));
+                    } catch (error) {
+                      if (canResumeAfterOptionalGitHubError(error, pending) && await retryExactSelection(
+                        "Pending runtime attempt is unavailable before fallback proof; retry exact selection."
+                      )) continue smokeGatePolling;
+                      throw error;
+                    }
+                    if (finalPending.id !== pending.id || finalPending.run_attempt !== pending.run_attempt ||
+                        !["requested", "queued", "waiting", "pending", "in_progress"].includes(finalPending.status) ||
+                        (finalPending.conclusion != null && finalPending.conclusion !== "")) {
+                      if (await retryExactSelection(
+                        "Pending runtime attempt changed before fallback proof; retry exact primary selection."
+                      )) continue smokeGatePolling;
+                      break smokeGatePolling;
+                    }
+                  }
+                  // This must be the last awaited validation on the fallback
+                  // path. A selected rerun can start during any preceding read.
+                  // Pending observations have the cutoff above; separate GitHub
+                  // reads are not an atomic snapshot across attempts.
                   let finalSelected;
                   try {
                     ({ data: finalSelected } = await withTransientGitHubRetry(
@@ -1686,30 +1713,6 @@ jobs:
                       "Successful fallback attempt changed during ordering; retry exact selection."
                     )) continue smokeGatePolling;
                     break smokeGatePolling;
-                  }
-                  // Direct recheck after the selected attempt closes the
-                  // latest avoidable ordering-read gap for every pending fence.
-                  for (const pending of pendingOrderingFences) {
-                    let finalPending;
-                    try {
-                      ({ data: finalPending } = await withTransientGitHubRetry(
-                        "pending attempt after final fallback proof",
-                        () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: pending.id })
-                      ));
-                    } catch (error) {
-                      if (canResumeAfterOptionalGitHubError(error, pending) && await retryExactSelection(
-                        "Pending runtime attempt is unavailable after fallback proof; retry exact selection."
-                      )) continue smokeGatePolling;
-                      throw error;
-                    }
-                    if (finalPending.id !== pending.id || finalPending.run_attempt !== pending.run_attempt ||
-                        !["requested", "queued", "waiting", "pending", "in_progress"].includes(finalPending.status) ||
-                        (finalPending.conclusion != null && finalPending.conclusion !== "")) {
-                      if (await retryExactSelection(
-                        "Pending runtime attempt changed after fallback proof; retry exact primary selection."
-                      )) continue smokeGatePolling;
-                      break smokeGatePolling;
-                    }
                   }
                 }
                 return;
