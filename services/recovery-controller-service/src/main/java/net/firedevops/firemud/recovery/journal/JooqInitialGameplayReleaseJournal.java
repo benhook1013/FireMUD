@@ -837,9 +837,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record row =
         tx.fetchOne(
             """
-            SELECT attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at
-            FROM recovery_control.initial_gameplay_release_attempt_closure
-            WHERE outbox_id=? AND attempt_id=?
+            SELECT c.attempt_ordinal, c.readback_payload, c.readback_digest, c.dispatched_at,
+                   c.recorded_at, o.last_dispatched_at
+            FROM recovery_control.initial_gameplay_release_attempt_closure c
+            JOIN recovery_control.initial_gameplay_release_outbox o ON o.outbox_id=c.outbox_id
+            WHERE c.outbox_id=? AND c.attempt_id=?
             """,
             current.outboxId(),
             attemptId);
@@ -854,6 +856,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || dispatchedAt == null
         || recordedAt == null) {
       throw conflict("retained effect dispatch generation changed");
+    }
+    if (attemptId.equals(current.lastAttemptId())) {
+      OffsetDateTime currentDispatchedAt = row.get("last_dispatched_at", OffsetDateTime.class);
+      if (currentDispatchedAt == null
+          || !currentDispatchedAt.toInstant().equals(dispatchedAt.toInstant())) {
+        throw conflict("retained attempt closure dispatch time differs from the current attempt");
+      }
     }
     EffectReadback retained =
         tupleCodec.readEffectReadback(row.get("readback_payload", JSONB.class).data());

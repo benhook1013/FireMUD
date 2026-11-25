@@ -39,7 +39,8 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       String url = "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
       if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
-        throw new IllegalStateException("Recovery primary datasource URL must be bound exactly");
+        throw new SafeOverrideException(
+            "spring.datasource.url must match the dedicated recovery datasource");
       }
       requireMatchingOverride(binder, "spring.datasource.hikari.jdbc-url", url);
       String user = environment.getProperty("FIREMUD_RECOVERY_CONTROL_DB_USER");
@@ -60,29 +61,42 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
                   Bindable.mapOf(String.class, String.class))
               .orElse(Map.of());
       if (dataSourceProperties == null || !dataSourceProperties.isEmpty()) {
-        throw new IllegalStateException("Recovery datasource driver overrides are unsupported");
+        throw new SafeOverrideException(
+            "spring.datasource.hikari.data-source-properties is unsupported");
       }
       // Flyway must use the very same datasource, not create an independent connection endpoint.
       requireAbsent(binder, "spring.flyway.url");
       requireAbsent(binder, "spring.flyway.user");
       requireAbsent(binder, "spring.flyway.password");
+    } catch (SafeOverrideException invalidOverride) {
+      throw invalidOverride;
     } catch (RuntimeException invalidOverride) {
       // Binding exceptions can carry URLs and passwords in both their message and cause.
       throw new IllegalStateException(
-          "Recovery database overrides must retain the dedicated datasource and shared Flyway connection");
+          "Recovery database overrides must retain the dedicated datasource and shared Flyway"
+              + " connection");
     }
   }
 
   private static void requireMatchingOverride(Binder binder, String property, String expected) {
     var value = binder.bind(property, String.class);
     if (value.isBound() && !Objects.equals(value.get(), expected)) {
-      throw new IllegalStateException("Recovery datasource override differs");
+      throw new SafeOverrideException(property + " must match the dedicated recovery datasource");
     }
   }
 
   private static void requireAbsent(Binder binder, String property) {
     if (binder.bind(property, String.class).isBound()) {
-      throw new IllegalStateException("Separate recovery database endpoint is unsupported");
+      throw new SafeOverrideException(property + " is unsupported for the recovery datasource");
+    }
+  }
+
+  // Only validation branches with fixed, value-free text may use this exception type.
+  private static final class SafeOverrideException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    private SafeOverrideException(String message) {
+      super(message);
     }
   }
 

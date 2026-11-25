@@ -10,6 +10,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.JavaExec
@@ -145,7 +146,14 @@ class FiremudJooqConventionsPlugin : Plugin<Project> {
                 dependsOn(writeConfig)
                 classpath = jooqCodegen
                 mainClass.set("org.jooq.codegen.GenerationTool")
-                inputs.files(fileTree(layout.projectDirectory.dir("src/main/resources/db/migration")))
+                inputs.files(
+                    extension.migrationGlob.map { glob ->
+                        fileTree(layout.projectDirectory.asFile).include(glob)
+                    },
+                ).withPathSensitivity(PathSensitivity.RELATIVE)
+                inputs.file(writeConfig.flatMap { it.configFile })
+                    .withPropertyName("jooqConfiguration")
+                    .withPathSensitivity(PathSensitivity.RELATIVE)
                 outputs.dir(extension.outputDirectory)
                 val configPath = writeConfig.flatMap { it.configFile }.map { it.asFile.absolutePath }
                 doFirst {

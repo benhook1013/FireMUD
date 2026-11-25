@@ -7,7 +7,13 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 /**
  * Reads immutable evidence from the actual peer, storage, Account, World, Entity, and lease owners.
  */
+@FunctionalInterface
 public interface InitialGameplayReleaseEvidenceProvider {
+  /**
+   * Returns AVAILABLE only after revalidating the evidence with its owners for this read. If
+   * currentness cannot be established, return a non-AVAILABLE resolution. This read-time check does
+   * not replace the owning commit-time fence.
+   */
   EvidenceResolution read(Scope scope);
 
   record EvidenceResolution(ResolutionStatus status, InitialGameplayReleaseEvidence evidence) {
