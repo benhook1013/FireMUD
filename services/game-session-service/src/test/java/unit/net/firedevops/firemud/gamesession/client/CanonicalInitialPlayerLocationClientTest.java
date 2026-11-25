@@ -206,6 +206,51 @@ class CanonicalInitialPlayerLocationClientTest {
   }
 
   @Test
+  void defaultRegionReadUsesTwentySecondOptionsOnTheActualCall() throws Exception {
+    var request = request();
+    var region = regionResponse(request);
+    var channel = mock(ManagedChannel.class);
+    @SuppressWarnings("unchecked")
+    ClientCall<CanonicalInitialPlayerLocationRequest, CanonicalInitialPlayerLocationRegionResponse>
+        call = mock(ClientCall.class);
+    var ssl = mock(javax.net.ssl.SSLSession.class);
+    var certificate = mock(X509Certificate.class);
+    when(ssl.getPeerCertificates()).thenReturn(new java.security.cert.Certificate[] {certificate});
+    when(certificate.getSubjectAlternativeNames())
+        .thenReturn(List.of(List.of(6, EXPECTED_WORLD_PEER)));
+    when(call.getAttributes())
+        .thenReturn(
+            Attributes.newBuilder().set(io.grpc.Grpc.TRANSPORT_ATTR_SSL_SESSION, ssl).build());
+    doAnswer(
+            invocation -> {
+              ClientCall.Listener<CanonicalInitialPlayerLocationRegionResponse> listener =
+                  invocation.getArgument(0);
+              listener.onMessage(region);
+              listener.onClose(Status.OK, new Metadata());
+              return null;
+            })
+        .when(call)
+        .start(any(), any());
+    var method =
+        CanonicalInitialPlayerLocationServiceGrpc.getReadInitialPlayerLocationRegionMethod();
+    when(channel.newCall(org.mockito.ArgumentMatchers.eq(method), any())).thenReturn(call);
+    when(channels.buildChannel(anyString(), anyInt(), any(), anyBoolean())).thenReturn(channel);
+    var client = newClient();
+    client.init();
+
+    Deadline earliest = Deadline.after(20L, TimeUnit.SECONDS);
+    assertThat(client.readInitialPlayerLocationRegion(request)).isEqualTo(region);
+    Deadline latest = Deadline.after(20L, TimeUnit.SECONDS);
+
+    var optionsCaptor = org.mockito.ArgumentCaptor.forClass(CallOptions.class);
+    verify(channel).newCall(org.mockito.ArgumentMatchers.eq(method), optionsCaptor.capture());
+    var actual = optionsCaptor.getValue().getDeadline();
+    assertThat(actual).isNotNull();
+    assertThat(actual.compareTo(earliest)).isGreaterThanOrEqualTo(0);
+    assertThat(actual.compareTo(latest)).isLessThanOrEqualTo(0);
+  }
+
+  @Test
   void deadlineBoundRegionReadDoesNotWaitForStalledTlsReload() throws Exception {
     var request = request();
     var stub = mockStub();

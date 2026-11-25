@@ -12,11 +12,14 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -148,7 +151,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchSingle(
-                    "SELECT completed_inventory_revision FROM game_session_canonical_account_member_repair_operation WHERE transition_id = ?",
+                    "SELECT completed_inventory_revision FROM"
+                        + " game_session_canonical_account_member_repair_operation WHERE"
+                        + " transition_id = ?",
                     fixture.transitionId())
                 .get(0, java.math.BigDecimal.class)
                 .toBigIntegerExact())
@@ -254,7 +259,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     var originalOwner = regionBinding.installation().status;
     UUID attemptId = controlledCapacity.request().admissionAttemptId();
     String executionState =
-        "SELECT status FROM game_session_original_new_capacity_execution WHERE admission_attempt_id=?";
+        "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+            + " admission_attempt_id=?";
     assertThat(fixture.dsl().fetchSingle(executionState, attemptId).get("status", String.class))
         .isEqualTo("AUTHORIZED");
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
@@ -351,6 +357,46 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
 
     repairAccountMember();
     assertSameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows();
+  }
+
+  @Test
+  void successfulFinalReadbackReleasesItsSlotBeforeTheBudgetedSqlReceipt() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    var owner = finalOwner();
+    var operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int occupied = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS - 1;
+    // Leave one resource slot for FINAL and then for the SQL commit, using the existing owner path
+    // for both. No setup or final receipt recovery starts while the other slots are held.
+    assertThat(operations.tryAcquire(occupied, 2L, TimeUnit.SECONDS)).isTrue();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      long absoluteDeadline = deadline();
+      try (var actual =
+          owner.finalizeOriginalNewOnce(
+              source, template, accountOpen, issuerOpen, controlledCapacity, absoluteDeadline)) {
+        assertThat(operations.availablePermits()).isEqualTo(1);
+        inventory.commitOriginalNewFinalAdmission(actual, CLOCK, absoluteDeadline);
+        var current = inventory.readOriginalNewFinalAdmissionSource(decision);
+        assertThat(current.transitionStatus())
+            .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+        var receipt = current.finalReceipt().orElseThrow();
+        assertThat(receipt.finalSessionSha256()).isEqualTo(actual.finalSessionSha256());
+        assertThat(receipt.admissionAtMillis()).isEqualTo(actual.admissionAtMillis());
+        assertThat(receipt.continuityExpiresAtMillis())
+            .isEqualTo(actual.continuityExpiresAtMillis());
+      }
+    } finally {
+      operations.release(occupied);
+    }
   }
 
   @Test
