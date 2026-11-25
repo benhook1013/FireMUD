@@ -2235,6 +2235,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void deadlineBeforeRawCommitRestoresTheSameNoWriteProofAfterConfirmedRollback() throws Exception {
+    assertKnownNoWriteRecovery(6);
+  }
+
+  @Test
   void composedOwnerRetainsNoWriteProofAcrossRefusedCleanupAndExactRetry() throws Exception {
     assertKnownNoWriteRecovery(4);
   }
@@ -2623,6 +2628,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           }
                           return;
                         }
+                        if (mode == 6) {
+                          assertPreCommitDeadlineRestoresProof(
+                              testSchema, repository, preparation, retained);
+                          return;
+                        }
                         if (mode == 2) {
                           var concurrentRelease = new AtomicReference<CompletableFuture<Void>>();
                           var lockAttempted = new CompletableFuture<Void>();
@@ -2802,6 +2812,65 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     } finally {
       dropSchema(testSchema.schema());
     }
+  }
+
+  private static void assertPreCommitDeadlineRestoresProof(
+      TestSchema schema,
+      CanonicalGameplayRegionRuntimeStatusRepository repository,
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof) {
+    long cutoff = NOW.toEpochMilli() + 4_000L;
+    var time = new java.util.concurrent.atomic.AtomicLong(NOW.toEpochMilli());
+    var clock = org.mockito.Mockito.mock(Clock.class);
+    org.mockito.Mockito.when(clock.millis()).thenAnswer(ignored -> time.get());
+    var releaseUpdates = new java.util.concurrent.atomic.AtomicInteger();
+    var invokedCommits = new java.util.concurrent.atomic.AtomicLong(-1);
+    var released = new CompletableFuture<Void>();
+    var observedSql =
+        schema
+            .dsl()
+            .configuration()
+            .derive(
+                new org.jooq.impl.DefaultExecuteListenerProvider(
+                    new org.jooq.impl.DefaultExecuteListener() {
+                      @Override
+                      public void executeEnd(org.jooq.ExecuteContext context) {
+                        if (context.sql() != null
+                            && context.sql().contains("SET phase = 'PREPARED'")) {
+                          assertThat(context.rows()).isEqualTo(1);
+                          releaseUpdates.incrementAndGet();
+                          time.set(cutoff);
+                        }
+                      }
+                    }));
+    var observed = new CanonicalGameplayRegionRuntimeStatusRepository(DSL.using(observedSql));
+
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                clock,
+                cutoff,
+                budget -> {
+                  try {
+                    observed
+                        .forBudget(budget)
+                        .releaseInitialTimelineNoWrite(preparation, proof, NOW);
+                    return null;
+                  } finally {
+                    invokedCommits.set(budget.jdbcCommitInvocations());
+                  }
+                },
+                () -> released.complete(null)))
+        .isInstanceOf(IllegalStateException.class);
+    released.orTimeout(3, TimeUnit.SECONDS).join();
+    assertThat(releaseUpdates).hasValue(1);
+    assertThat(invokedCommits).hasValue(0);
+    assertThat(proof.consumedFor(preparation)).isFalse();
+    assertThat(repository.findTimelinePreparation(preparation.source()).orElseThrow().phase())
+        .isEqualTo(
+            CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
+
+    repository.releaseInitialTimelineNoWrite(preparation, proof, NOW);
+    assertThat(proof.consumedFor(preparation)).isTrue();
   }
 
   @Test
