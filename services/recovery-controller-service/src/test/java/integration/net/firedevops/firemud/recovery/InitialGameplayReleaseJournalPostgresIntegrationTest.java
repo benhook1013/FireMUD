@@ -572,6 +572,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(pendingPrepare.state()).isEqualTo(EffectOutboxState.PENDING);
     assertThat(pendingPrepare.attemptCount()).isZero();
     assertThat(pendingPrepare.lastAttemptId()).isNull();
+    assertThat(journal.findNextEffect(scope.operationId())).contains(pendingPrepare);
 
     UUID prepareAttempt = UUID.randomUUID();
     OutboxEntry prepare =
@@ -683,6 +684,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         journal
             .findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF)
             .orElseThrow();
+    OutboxEntry completedPrepare =
+        journal
+            .findEffect(scope.operationId(), EffectKind.PREPARE_PLAYABLE_STATE_FENCED)
+            .orElseThrow();
+    assertThat(completedPrepare.state()).isEqualTo(EffectOutboxState.ACKNOWLEDGED);
+    assertThat(completedPrepare.attemptCount()).isEqualTo(prepare.attemptCount());
+    assertThat(completedPrepare.lastAttemptId()).isEqualTo(prepareAttempt);
+    assertThat(completedPrepare.acknowledgedAt()).isEqualTo(prepareReadback.observedAt());
+    assertThat(journal.findNextEffect(scope.operationId())).contains(handoff);
     UUID handoffAttempt = UUID.randomUUID();
     handoff =
         journal.claimEffect(
