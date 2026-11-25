@@ -446,8 +446,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @Test
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void migratedPackagedDatabaseInReadOnlyModeIsNotJournalReadyButProcessIsLive()
-      throws Exception {
+  void migratedPackagedDatabaseInReadOnlyModeIsNotJournalReadyButProcessIsLive() throws Exception {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
     try {
