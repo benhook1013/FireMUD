@@ -398,8 +398,9 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     @org.junit.jupiter.api.Test
     @org.springframework.test.annotation.DirtiesContext
     void paidJoinReplayAndCharacterDiscoveryCompleteConcurrently() throws Exception {
-      var source = AccountBootstrapRosterFixture.create();
+      var source = AccountBootstrapRosterFixture.create(UUID.randomUUID());
       var target = accountTarget(source);
+      assertThat(target.canonicalTenantId()).isNotEqualTo(SOURCE.target().tenantUuid());
       String suffix = UUID.randomUUID().toString().substring(0, 8);
       var first = registerAccount("paid-pair-a-" + suffix);
       var second = registerAccount("paid-pair-b-" + suffix);

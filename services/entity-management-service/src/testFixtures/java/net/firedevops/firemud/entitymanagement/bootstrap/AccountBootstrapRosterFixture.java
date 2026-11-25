@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.testing.PlayerCreatedPublishedPolicyFixture
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterReadRequest;
@@ -51,7 +52,16 @@ public final class AccountBootstrapRosterFixture {
   }
 
   public static Fixture create() throws Exception {
-    var account = AuthoringFixtures.freshGraphRequest().accountBinding();
+    return create(AuthoringFixtures.freshGraphRequest());
+  }
+
+  /** Uses independent canonical owner evidence for a separately seeded tenant. */
+  public static Fixture create(UUID canonicalTenantId) throws Exception {
+    return create(AuthoringFixtures.freshGraphRequest(canonicalTenantId));
+  }
+
+  private static Fixture create(WorldDraftTerminalReadEvidence.Request owner) throws Exception {
+    var account = owner.accountBinding();
     var draft =
         DraftCommitBinding.fromStored(
             new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());

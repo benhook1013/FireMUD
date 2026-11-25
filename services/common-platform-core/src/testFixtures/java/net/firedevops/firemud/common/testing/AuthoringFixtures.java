@@ -48,7 +48,13 @@ public final class AuthoringFixtures {
   private AuthoringFixtures() {}
 
   public static WorldDraftTerminalReadEvidence.Request freshGraphRequest() throws Exception {
-    DraftCommitBinding draft = freshGraphBinding();
+    return freshGraphRequest(TENANT_ID);
+  }
+
+  /** Uses a distinct tenant while preserving the same controlled graph topology. */
+  public static WorldDraftTerminalReadEvidence.Request freshGraphRequest(UUID tenantId)
+      throws Exception {
+    DraftCommitBinding draft = freshGraphBinding(tenantId);
     return new WorldDraftTerminalReadEvidence.Request(
         1, "test", uuid("33333333-3333-4333-8333-333333333333"), accountBinding(draft));
   }
@@ -217,7 +223,7 @@ public final class AuthoringFixtures {
             COMMIT_ID,
             FENCE_ID,
             ACTOR_ID,
-            TENANT_ID,
+            draft.target().canonicalTenantId(),
             VERSION_ID,
             "base-1",
             "0",
@@ -242,7 +248,7 @@ public final class AuthoringFixtures {
     var account = request.accountBinding();
     var selector =
         Map.of(
-            "tenantId", TENANT_ID.toString(),
+            "tenantId", draft.target().canonicalTenantId().toString(),
             "versionId", VERSION_ID.toString(),
             "roomTemplateId", ROOM_TEMPLATE_ID.toString());
     String accountBindingDigest = sha256(request.originalAccountBinding());
@@ -255,7 +261,7 @@ public final class AuthoringFixtures {
             account.fenceId(),
             accountBindingDigest,
             draft.digest(),
-            TENANT_ID,
+            draft.target().canonicalTenantId(),
             VERSION_ID,
             ROOM_TEMPLATE_ID,
             graphDigest);
@@ -370,7 +376,7 @@ public final class AuthoringFixtures {
     }
   }
 
-  private static DraftCommitBinding freshGraphBinding() throws Exception {
+  private static DraftCommitBinding freshGraphBinding(UUID tenantId) throws Exception {
     List<Map<String, Object>> familyCounts =
         List.of(
             insertionOrderedMap("family", "WORLD_DESIGN_AGGREGATE_TYPE_REGION", "count", 1),
@@ -384,17 +390,16 @@ public final class AuthoringFixtures {
     String declaration =
         JSON.writeValueAsString(
             insertionOrderedMap(
-                "tenantId", TENANT_ID.toString(),
+                "tenantId", tenantId.toString(),
                 "versionId", VERSION_ID.toString(),
                 "startLocation",
                     insertionOrderedMap(
-                        "tenantId", TENANT_ID.toString(),
+                        "tenantId", tenantId.toString(),
                         "versionId", VERSION_ID.toString(),
                         "roomTemplateId", ROOM_TEMPLATE_ID.toString()),
                 "familyCounts", familyCounts));
     return DraftCommitBinding.create(
-        new TargetProof(
-            TENANT_ID, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
+        new TargetProof(tenantId, VERSION_ID, 19L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW"),
         REQUEST_ID,
         COMMIT_ID,
         "base-1",
