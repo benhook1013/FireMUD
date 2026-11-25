@@ -1975,9 +1975,27 @@ assert clean_revalidate_run.index(
 ) < clean_revalidate_run.index(
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
+proof_retry_recheck = deploy_by_name["Recheck proof retry under the preview allocation lock"]
+assert proof_retry_recheck["id"] == "recheck-proof-retry"
+assert proof_retry_recheck["env"]["RETRY_NAMESPACE_UID"] == (
+    "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}"
+)
+assert "check-preview-proof-retry.sh" in proof_retry_recheck["run"]
+for guarded_step in (
+    "Prune stale runtime namespaces",
+    "Revalidate exact PR source binding before capacity reclaim",
+    "Enforce priority-aware preview capacity",
+):
+    assert list(deploy_by_name).index(proof_retry_recheck["name"]) < list(
+        deploy_by_name
+    ).index(guarded_step)
+    assert deploy_by_name[guarded_step]["if"] == (
+        "${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}"
+    )
 clean_delete = deploy_by_name["Delete exact preview runtime namespace before recreate"]
 assert clean_delete["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "PREVIEW_EXPECTED_NAMESPACE_UID": "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
 }
