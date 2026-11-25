@@ -451,6 +451,12 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
               List.of(new AccountBootstrapRosterReadClient.Actor(actorId, "Fixture actor", 7)));
       facade.setAccountBootstrapRosterReadClient(roster);
       String token = issuePlayerBootstrap(caller);
+      // HTTP issuance uses the wall clock; keep the retained paid and scope fixtures on one clock.
+      hosting.clock().advanceToAtLeast(Clock.systemUTC().instant());
+      var bootstrapClaims = jwtUtil.parseToken(token).getPayload();
+      assertThat(hosting.clock().instant())
+          .isAfterOrEqualTo(bootstrapClaims.getIssuedAt().toInstant())
+          .isBefore(bootstrapClaims.getExpiration().toInstant());
       String scope = discoverConnectScope(caller, token, target);
       var request = new JoinPublicProductionRequest(scope, UUID.randomUUID().toString());
       var joined = facade.joinPublicProduction(token, request);
