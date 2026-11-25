@@ -1582,6 +1582,25 @@ run_proof_retry_contract() (
   fi
   test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
 
+  # Validate the retained annotation before any namespace operations are possible.
+  (
+    source "$ROOT_DIR/dev-tools/hosted/preview/preview-proof-retry-record.shlib"
+    snapshot="$(jq -cn --argjson legacy "$legacy" '
+      {metadata:{name:"pr-901",uid:"uid-pr-901",
+        labels:{"firemud.dev/preview":"true","firemud.dev/pr-number":"901"},
+        annotations:$legacy}}')"
+    legacy_preview_retry_entry "$snapshot" pr-901 |
+      jq -e --arg image "$base" '.count == 3 and .image == $image' >/dev/null
+    multiline_snapshot="$(jq -c --arg image "$base" '
+      .metadata.annotations["firemud.dev/proof-retry-image-tag"] = ($image + "\n" + $image)
+    ' <<<"$snapshot")"
+    if legacy_preview_retry_entry "$multiline_snapshot" pr-901 >"$case_output" 2>&1; then
+      echo 'legacy retry validator accepted a multiline field' >&2
+      exit 1
+    fi
+    grep -Fq 'malformed legacy preview proof-retry annotations' "$case_output"
+  )
+
   for terminal_case in unmerged wrong-owner runtime-live merged; do
     reset_case
     seed_retry_holder 3
