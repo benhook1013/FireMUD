@@ -63,12 +63,21 @@ write_preview_retry_entry() {
   [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]] || return 1
   uid="$(jq -er '.metadata.uid' <<<"$snapshot")" || return 1
   version="$(jq -er '.metadata.resourceVersion' <<<"$snapshot")" || return 1
-  patch="$(jq -c --arg key "/data/$namespace" --argjson replacement "$replacement" '
-    [
+  # Kubernetes counts stored value bytes, not JSON-over-the-wire length. Detect a
+  # definitely oversized update without deleting or retargeting retained rows.
+  # Binary data and any lower provider limits still require the server's validation.
+  patch="$(jq -c --arg namespace "$namespace" --argjson replacement "$replacement" '
+    ($replacement | tojson) as $serialized
+    | if $replacement != null and
+         ((.data | .[$namespace] = $serialized | map(utf8bytelength) | add) > 1048576)
+      then error("preview proof-retry holder would exceed the Kubernetes 1 MiB data limit; retained records were not changed")
+      else . end
+    | ("/data/" + $namespace) as $key
+    | [
       {op:"test",path:"/metadata/uid",value:.metadata.uid},
       {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
       (if $replacement == null then {op:"remove",path:$key}
-       else {op:"add",path:$key,value:($replacement | tojson)} end)
+       else {op:"add",path:$key,value:$serialized} end)
     ]
   ' <<<"$snapshot")" || return 1
   if response="$(kubectl -n "$preview_retry_holder_namespace" patch configmap "$preview_retry_holder_name" \

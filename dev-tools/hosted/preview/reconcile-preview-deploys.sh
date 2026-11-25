@@ -183,6 +183,7 @@ prepare_preview_dispatch() {
   proof_retry_record=""
   proof_retry_prior_record=""
   proof_retry_holder_uid=""
+  proof_retry_exact_namespace_uid=""
 
   if ! snapshot="$(kubectl get namespace "$namespace" --ignore-not-found -o json)"; then
     echo "Unable to recheck namespace $namespace before preview dispatch." >&2
@@ -221,6 +222,7 @@ prepare_preview_dispatch() {
     fi
     if [[ "$deployed_base|$deployed_head|$deployed_merge|$deployed_image" == "$base_sha|$head_sha|$merge_sha|$image_tag" ]]; then
       deployed_exact=true
+      proof_retry_exact_namespace_uid="$namespace_uid"
     elif [[ "$require_deployed_tuple" == true ]]; then
       echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
       return 1
@@ -1248,11 +1250,24 @@ dispatch_candidates() {
   fi
   # A consumer may finish deployment and proof during the active-run lookup.
   local proof_retry_record="" proof_retry_prior_record="" proof_retry_holder_uid=""
+  local proof_retry_exact_namespace_uid="" started_retry_uid=""
   prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
     "$require_deployed_tuple" "$priority" "$namespace_uid" || continue
 
   echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"
   dispatch_exit=0
+  local -a proof_retry_payload=()
+  if [[ -n "$proof_retry_exact_namespace_uid" ]]; then
+    if ! started_retry_uid="$(jq -er --arg uid "$proof_retry_exact_namespace_uid" '
+      select(.stageVersion == 2 and .phase == "SEND_STARTED" and .namespaceUid == $uid)
+      | .namespaceUid
+    ' <<<"$proof_retry_record")"; then
+      echo "Unable to verify the started exact Namespace proof retry for PR #${pr_number}; refusing dispatch." >&2
+      dispatch_outcome_failed=true
+      continue
+    fi
+    proof_retry_payload=(-f "client_payload[proof_retry_namespace_uid]=${started_retry_uid}")
+  fi
   if dispatch_response="$(gh api --include \
     --method POST \
     "repos/${GITHUB_REPOSITORY}/dispatches" \
@@ -1264,7 +1279,8 @@ dispatch_candidates() {
     -f "client_payload[base_sha]=${base_sha}" \
     -f "client_payload[merge_sha]=${merge_sha}" \
     -f "client_payload[image_tag]=${image_tag}" \
-    -f 'client_payload[preview_domain]=preview.firedevops.net')"; then
+    -f 'client_payload[preview_domain]=preview.firedevops.net' \
+    "${proof_retry_payload[@]}")"; then
     dispatch_exit=0
   else
     dispatch_exit=$?

@@ -9,6 +9,7 @@ trap 'report_contract_failure "$?" "$LINENO"' ERR
 python3 -c 'import sys; sys.exit(0 if __debug__ else "Preview priority contract requires Python assertions; unset PYTHONOPTIMIZE.")'
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+bash "$ROOT_DIR/dev-tools/tests/preview-proof-retry-lock-contract.sh"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 DELETE_HOSTED_NAMESPACE="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"

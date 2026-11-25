@@ -463,6 +463,29 @@ test('an unexpected dispatch response status cannot be described as accepted', a
   assert.equal(f.sent.length, 1);
 });
 
+test('admission retries a transient identity read after acknowledging the claim', async () => {
+  const f = admissionFixture();
+  const exactPull = f.admission.github.rest.pulls.get;
+  let pending = false;
+  let transientReads = 0;
+  f.state.afterClaim = () => { pending = true; };
+  f.admission.github.rest.pulls.get = async request => {
+    if (pending) {
+      pending = false;
+      transientReads++;
+      throw Object.assign(new Error('temporarily unavailable'), {status: 502});
+    }
+    return exactPull(request);
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(transientReads, 1);
+  assert.equal(f.claimRefs.size, 1);
+  assert.equal(f.sent.length, 1);
+  const dispatch = f.sent[0].client_payload;
+  assert.equal(dispatch.runtime_refresh_claim, '1');
+  assert.equal(dispatch.merge_sha, A);
+});
+
 test('a comparison moving during the claim is never dispatched', async () => {
   const f = admissionFixture();
   f.state.afterClaim = () => { f.state.base = D; };
@@ -497,6 +520,25 @@ test('advancing a generation requires one exact terminal receiver with a success
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
   assert.equal(f.sent.length, 2);
+});
+
+test('attempt-scoped receiver accepts a sibling job without a redundant attempt field', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  const [tag] = f.claimTags.values();
+  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure', run_attempt: 2};
+  f.runs.push(run);
+  f.receiverJobs.set(`${run.id}:2`, [
+    {id: 1, run_id: run.id, run_attempt: 2, head_sha: run.head_sha,
+      name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',
+      steps: [{name: `Runtime refresh claim generation 1 attempt 2 tag ${tag.sha}`,
+        status: 'completed', conclusion: 'success'}]},
+    {id: 2, run_id: run.id, head_sha: run.head_sha, name: 'Build Runtime Images',
+      status: 'completed', conclusion: 'failure'},
+  ]);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
 });
 
 test('a successful marker carried from another attempt cannot advance the claim', async () => {

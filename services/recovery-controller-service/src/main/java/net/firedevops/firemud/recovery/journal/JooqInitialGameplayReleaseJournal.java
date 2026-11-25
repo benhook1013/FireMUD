@@ -244,6 +244,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   @Override
   public Optional<OutboxEntry> findNextEffect(UUID operationId) {
+    // Surface an incomplete retained dispatch to the typed row validator before normal work.
+    // The operation key bounds this selection; valid acknowledged rows still do not queue work.
     Record record =
         dsl.fetchOne(
             """
@@ -251,8 +253,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                    payload_digest, state,
                    attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
             FROM recovery_control.initial_gameplay_release_outbox
-            WHERE operation_id = ? AND state <> 'acknowledged'
-            ORDER BY created_at, outbox_id
+            WHERE operation_id = ?
+              AND (state <> 'acknowledged' OR attempt_count = 0 OR last_attempt_id IS NULL
+                   OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid)
+            ORDER BY CASE WHEN state <> 'pending' AND
+                               (attempt_count = 0 OR last_attempt_id IS NULL
+                                OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid)
+                          THEN 0 ELSE 1 END,
+                     created_at, outbox_id
             LIMIT 1
             """,
             operationId);

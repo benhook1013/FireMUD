@@ -2059,6 +2059,13 @@ def validate_metadata(
     if event == "repository_dispatch":
         expected["action"] = "deploy"
     allowed_fields = set(expected) | {"manifestSha256"}
+    if event == "repository_dispatch" and "proofRetryNamespaceUid" in metadata:
+        retry_uid = metadata["proofRetryNamespaceUid"]
+        if not isinstance(retry_uid, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", retry_uid
+        ):
+            fail("metadata proofRetryNamespaceUid must be a canonical Namespace UID")
+        allowed_fields.add("proofRetryNamespaceUid")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
         fail(f"metadata contains unsupported fields: {sorted(unexpected_fields)}")

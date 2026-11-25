@@ -44,6 +44,7 @@ jobs:
       base_sha: ${{ steps.derive.outputs.base_sha }}
       merge_sha: ${{ steps.derive.outputs.merge_sha }}
       base_refresh_required: ${{ steps.derive.outputs.base_refresh_required }}
+      proof_retry_namespace_uid: ${{ steps.derive.outputs.proof_retry_namespace_uid }}
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
     steps:
@@ -84,6 +85,7 @@ jobs:
           CLIENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha }}
           CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
           CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}
+          CLIENT_PROOF_RETRY_NAMESPACE_UID: ${{ github.event.client_payload.proof_retry_namespace_uid }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -96,6 +98,7 @@ jobs:
             exit 1
           fi
 
+          PROOF_RETRY_NAMESPACE_UID=""
           if [[ "$EVENT_NAME" == pull_request ]]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             HEAD_SHA="$EVENT_HEAD_SHA"
@@ -122,6 +125,17 @@ jobs:
                 exit 1
                 ;;
             esac
+            if [[ -n "${CLIENT_PROOF_RETRY_NAMESPACE_UID:-}" ]]; then
+              if [[ "$ACTION" != deploy || ! "$CLIENT_PROOF_RETRY_NAMESPACE_UID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
+                echo "::error title=Invalid preview proof retry::Expected a canonical Namespace UID on a deploy request." >&2
+                exit 1
+              fi
+              if [[ -z "$PLANNED_BASE_SHA" || -z "$PLANNED_MERGE_SHA" || -z "$PLANNED_IMAGE_TAG" ]]; then
+                echo "::error title=Incomplete preview proof retry::Expected all exact tuple fields." >&2
+                exit 1
+              fi
+              PROOF_RETRY_NAMESPACE_UID="$CLIENT_PROOF_RETRY_NAMESPACE_UID"
+            fi
             if [[ "$CLIENT_ACTION" != "$ACTION" ]]; then
               echo "::error title=Invalid preview dispatch action::Payload action does not match the typed dispatch event." >&2
               exit 1
@@ -326,6 +340,7 @@ jobs:
             echo "base_sha=${BASE_SHA}"
             echo "merge_sha=${MERGE_SHA}"
             echo "base_refresh_required=${BASE_REFRESH_REQUIRED}"
+            echo "proof_retry_namespace_uid=${PROOF_RETRY_NAMESPACE_UID}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve preview target metadata
@@ -565,6 +580,7 @@ jobs:
           BASE_SHA: ${{ needs.preview-plan.outputs.base_sha }}
           HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
           PLANNED_MERGE_SHA: ${{ needs.preview-plan.outputs.merge_sha }}
+          PROOF_RETRY_NAMESPACE_UID: ${{ needs.preview-plan.outputs.proof_retry_namespace_uid }}
         run: |
           set -euo pipefail
           umask 077
@@ -650,8 +666,8 @@ jobs:
             --arg imageTag "$IMAGE_TAG" \
             --arg hostname "$HOSTNAME" \
             --arg manifestSha256 "$manifest_sha256" \
-            --arg action deploy \
-            '{schemaVersion:1,event:$event,repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,imageTag:$imageTag,hostname:$hostname,manifestSha256:$manifestSha256} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
+            --arg action deploy --arg retryUid "${PROOF_RETRY_NAMESPACE_UID:-}" \
+            '{schemaVersion:1,event:$event,repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,imageTag:$imageTag,hostname:$hostname,manifestSha256:$manifestSha256} + (if $event == "repository_dispatch" then {action:$action} else {} end) + (if $retryUid != "" then {proofRetryNamespaceUid:$retryUid} else {} end)' \
             > "$metadata"
           {
             echo '### Sanitized PR preview artifact'

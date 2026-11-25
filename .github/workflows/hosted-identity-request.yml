@@ -34,6 +34,7 @@ jobs:
       hostname: ${{ steps.target.outputs.hostname }}
       certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
       exposure_mode: ${{ steps.target.outputs.exposure_mode }}
+      proof_retry_namespace_uid: ${{ steps.target.outputs.proof_retry_namespace_uid }}
       v2_schema_migration_change: ${{ steps.target.outputs.v2_schema_migration_change }}
       render_run_id: ${{ steps.target.outputs.render_run_id }}
       artifact_name: ${{ steps.target.outputs.artifact_name }}
@@ -378,6 +379,7 @@ jobs:
             [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || emit_no_action \
               "Ignoring source artifact whose name is not bound to its canonical PR head."
           fi
+          proof_retry_namespace_uid=""
           if [[ "$ACTION" == deploy ]]; then
             metadata_pr_number="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
             metadata_head_sha="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
@@ -392,6 +394,7 @@ jobs:
               "$current_head_sha" "$merge_sha" "$effective_image_tag" \
               "pr-${PR_NUMBER}.preview.firedevops.net" \
               "${{ steps.certificate-identity.outputs.mode }}"
+            proof_retry_namespace_uid="$(jq -r '.proofRetryNamespaceUid // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
             exposure_mode="$(python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
               exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
               "${{ steps.certificate-identity.outputs.mode }}")"
@@ -422,6 +425,7 @@ jobs:
             echo "hostname=pr-${PR_NUMBER}.preview.firedevops.net"
             if [[ "$ACTION" == deploy ]]; then
               echo "exposure_mode=${exposure_mode}"
+              echo "proof_retry_namespace_uid=${proof_retry_namespace_uid}"
             fi
             echo "render_run_id=${SOURCE_RUN_ID}"
             echo "artifact_name=${ARTIFACT_NAME}"
@@ -647,13 +651,42 @@ jobs:
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
             "before privileged runtime mutation"
 
+      - name: Recheck proof retry under the preview allocation lock
+        id: recheck-proof-retry
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          RETRY_NAMESPACE_UID: ${{ needs.validate-target.outputs.proof_retry_namespace_uid }}
+          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RETRY_NAMESPACE_UID" ]]; then
+            echo 'proceed=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          result="$(bash ./dev-tools/hosted/preview/check-preview-proof-retry.sh \
+            "$RUNTIME_NAMESPACE" "$RETRY_NAMESPACE_UID" "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG")"
+          case "$result" in
+            proof-missing) echo 'proceed=true' >> "$GITHUB_OUTPUT" ;;
+            proof-complete|namespace-changed)
+              echo "::notice::Preview proof retry skipped: $result."
+              echo 'proceed=false' >> "$GITHUB_OUTPUT"
+              ;;
+            *) exit 1 ;;
+          esac
+
       - name: Prune stale runtime namespaces
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
 
       - name: Revalidate exact PR source binding before capacity reclaim
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -668,6 +701,7 @@ jobs:
 
       - name: Enforce priority-aware preview capacity
         id: allocate-capacity
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
@@ -757,6 +791,7 @@ jobs:
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          PREVIEW_EXPECTED_NAMESPACE_UID: ${{ needs.validate-target.outputs.proof_retry_namespace_uid }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
         run: |
