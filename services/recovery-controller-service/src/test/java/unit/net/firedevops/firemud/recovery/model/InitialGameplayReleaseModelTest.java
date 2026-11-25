@@ -3,7 +3,9 @@ package net.firedevops.firemud.recovery.model;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -260,6 +262,38 @@ class InitialGameplayReleaseModelTest {
         .isInstanceOf(UnsupportedOperationException.class);
     assertThatThrownBy(() -> evidence.writerFencing().writerAcknowledgements().clear())
         .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @Test
+  void issuerProofSnapshotsCallerOwnedCollectionsAndKeepsItsDigest() {
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence original = evidence(scope);
+    IssuerLayoutProof layout = original.issuerLayout();
+    var acknowledgements = new ArrayList<>(layout.acknowledgements());
+    var capacities = new HashMap<>(layout.capacityVector());
+    var proof =
+        new IssuerLayoutProof(
+            layout.layoutOperationId(),
+            layout.descriptor(),
+            layout.accountIssuerSourceIdentity(),
+            layout.operationFence(),
+            layout.coverageFence(),
+            layout.inventoryRevision(),
+            layout.inventoryDigest(),
+            acknowledgements,
+            capacities);
+    InitialGameplayReleaseEvidence retained = withLayout(original, proof);
+    var codec =
+        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    var digest = codec.digest(retained);
+
+    acknowledgements.clear();
+    capacities.clear();
+
+    assertThat(proof.acknowledgements()).isEqualTo(layout.acknowledgements());
+    assertThat(proof.capacityVector()).isEqualTo(layout.capacityVector());
+    assertThat(codec.digest(retained)).isEqualTo(digest);
+    retained.validateFor(scope);
   }
 
   @Test

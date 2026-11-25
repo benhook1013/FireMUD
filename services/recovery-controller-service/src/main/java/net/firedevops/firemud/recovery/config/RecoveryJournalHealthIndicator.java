@@ -17,13 +17,20 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
            (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
            OR (version = '2' AND script = 'V2__retain_initial_gameplay_release_attempt_closure.sql')))
         AND NOT EXISTS (
-          SELECT operation_id, maintenance_lock_identity, scope_payload, evidence_snapshot, revision
+          SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
+                 peer_storage_binding, scope_payload, evidence_ref, scope_digest,
+                 maintenance_lock_identity, phase, evidence_snapshot, evidence_identity,
+                 evidence_digest, revision, created_at, updated_at, finalized_at
           FROM recovery_control.initial_gameplay_release_operation WHERE FALSE)
         AND NOT EXISTS (
-          SELECT operation_id, verb, tuple_digest, tuple_payload
+          SELECT operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase,
+                 created_at
           FROM recovery_control.initial_gameplay_release_transition WHERE FALSE)
         AND NOT EXISTS (
-          SELECT outbox_id, operation_id, effect_id, payload, last_attempt_id, attempt_count
+          SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
+                 payload_digest, payload, state, attempt_count, last_attempt_id, last_dispatched_at,
+                 last_outcome_code, readback_identity, readback_payload, readback_digest,
+                 created_at, updated_at, acknowledged_at
           FROM recovery_control.initial_gameplay_release_outbox WHERE FALSE)
         AND NOT EXISTS (
           SELECT outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest,

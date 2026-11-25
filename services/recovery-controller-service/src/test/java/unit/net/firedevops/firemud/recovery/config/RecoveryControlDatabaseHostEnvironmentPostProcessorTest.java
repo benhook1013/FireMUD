@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
 
@@ -31,6 +33,31 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("FIREMUD_RECOVERY_CONTROL_DB_HOST");
   }
+
+  @Test
+  void bootDiscoversAndInvokesTheRegisteredDatasourceGuard() {
+    // Exercise normal Boot factory discovery without registering connection-capable beans.
+    var application = new SpringApplication(FactoryDiscoveryProbe.class);
+    application.setWebApplicationType(WebApplicationType.NONE);
+    assertThatThrownBy(
+            () -> {
+              try (var context =
+                  application.run(
+                      "--spring.config.name=recovery-factory-discovery-fixture",
+                      "--spring.flyway.enabled=false",
+                      "--spring.grpc.server.enabled=false",
+                      "--FIREMUD_RECOVERY_CONTROL_DB_HOST=recovery-control.invalid",
+                      "--spring.datasource.url=" + recoveryUrl("unconfigured.invalid", "5432"))) {
+                assertThatCode(context::getBeanDefinitionCount).doesNotThrowAnyException();
+              }
+            })
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.datasource.url ")
+        .hasMessageNotContaining("unconfigured.invalid");
+  }
+
+  @Configuration(proxyBeanMethods = false)
+  static class FactoryDiscoveryProbe {}
 
   @Test
   void acceptsExplicitLocalhostForAnIsolatedFixture() {

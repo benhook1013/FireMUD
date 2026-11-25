@@ -741,6 +741,9 @@ public final class InitialGameplayReleaseModel {
       if (lastAttemptId != null) {
         lastAttemptId = requiredUuid(lastAttemptId, "lastAttemptId");
       }
+      if (state != EffectOutboxState.PENDING && (attemptCount == 0 || lastAttemptId == null)) {
+        throw new IllegalArgumentException("dispatched outbox states require an attempt identity");
+      }
       if ((state == EffectOutboxState.ACKNOWLEDGED) != (acknowledgedAt != null)) {
         throw new IllegalArgumentException("acknowledgedAt must exactly match acknowledged state");
       }
