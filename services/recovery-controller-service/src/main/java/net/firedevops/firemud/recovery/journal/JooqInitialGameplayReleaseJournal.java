@@ -441,7 +441,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           || current.state() == EffectOutboxState.RETRYABLE) {
         Record stored =
             tx.fetchOne(
-                "SELECT readback_digest, readback_payload, last_dispatched_at FROM "
+                "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at FROM "
                     + OUTBOX_TABLE
                     + " WHERE operation_id = ? AND effect_id = ?",
                 operationId,
@@ -454,7 +454,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
-          if (stored != null && sameRetainedOutcome(readback, stored, storedDigest)) {
+          if (stored != null && sameRetainedOutcome(readback, stored, storedDigest, now)) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
@@ -470,7 +470,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
         if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
             && stored != null
-            && sameRetainedOutcome(readback, stored, storedDigest)) {
+            && sameRetainedOutcome(readback, stored, storedDigest, now)) {
           requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
           requireTerminalReplayWithinAttempt(readback, stored, now);
           return operation;
@@ -494,7 +494,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       Record timestamps =
           tx.fetchOne(
-              "SELECT last_dispatched_at, readback_payload, readback_digest FROM "
+              "SELECT last_dispatched_at, readback_payload, readback_digest, readback_identity FROM "
                   + OUTBOX_TABLE
                   + " WHERE operation_id = ? AND effect_id = ?",
               operationId,
@@ -902,7 +902,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   private void requireExactClosureBeforeRetry(DSLContext tx, OutboxEntry current) {
     Record stored =
         tx.fetchOne(
-            "SELECT readback_payload, readback_digest FROM "
+            "SELECT readback_payload, readback_digest, readback_identity FROM "
                 + OUTBOX_TABLE
                 + " WHERE operation_id = ? AND effect_id = ?",
             current.effect().operationId(),
@@ -922,6 +922,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!digest.equals(tupleCodec.digest(saved))) {
       throw conflict("retained effect readback digest does not match");
     }
+    requireStoredReadbackIdentity(stored, saved);
     requireReadbackMatches(
         saved, current, current.effect().operationId(), current.effect().effectId());
     if (saved.state() == EffectReadbackState.PROVEN_NO_EFFECT) {
@@ -939,6 +940,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!digest.equals(tupleCodec.digest(saved)) || !saved.equals(replay)) {
       throw conflict("retained effect readback does not match exact replay");
     }
+    requireStoredReadbackIdentity(stored, saved);
     requireReadbackMatches(
         saved, current, current.effect().operationId(), current.effect().effectId());
   }
@@ -968,6 +970,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!digest.equals(tupleCodec.digest(previous))) {
       throw conflict("retained effect readback digest does not match");
     }
+    requireStoredReadbackIdentity(stored, previous);
     requireReadbackMatches(
         previous, current, current.effect().operationId(), current.effect().effectId());
     if (readback.observedAt().isBefore(previous.observedAt())) {
@@ -991,9 +994,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       return false;
     }
+    requireStoredReadbackIdentity(stored, previous);
     requireReadbackMatches(
         previous, current, current.effect().operationId(), current.effect().effectId());
     return true;
+  }
+
+  private void requireStoredReadbackIdentity(Record stored, EffectReadback readback) {
+    if (!readback.readbackIdentity().equals(stored.get("readback_identity", String.class))) {
+      throw conflict("retained effect readback identity does not match");
+    }
   }
 
   private void requireTerminalReplayWithinAttempt(
@@ -1010,7 +1020,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
   }
 
-  private boolean sameRetainedOutcome(EffectReadback readback, Record stored, String storedDigest) {
+  private boolean sameRetainedOutcome(
+      EffectReadback readback, Record stored, String storedDigest, Instant now) {
     JSONB payload = stored.get("readback_payload", JSONB.class);
     if (payload == null || storedDigest == null) {
       return false;
@@ -1019,6 +1030,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!storedDigest.equals(tupleCodec.digest(acknowledged))) {
       return false;
     }
+    requireStoredReadbackIdentity(stored, acknowledged);
+    requireTerminalReplayWithinAttempt(acknowledged, stored, now);
     // The authenticated outcome identifies the durable closure, not the read clock.
     // A valid new observation time never replaces the first durable receipt.
     return acknowledged.equals(

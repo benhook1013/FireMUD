@@ -12,6 +12,7 @@ import java.sql.DriverManager;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -57,11 +58,18 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.availability.ApplicationAvailability;
+import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
+import org.springframework.boot.health.contributor.HealthIndicator;
+import org.springframework.boot.health.contributor.Status;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.StandardEnvironment;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -310,43 +318,27 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
   void packagedApplicationMigratesAndPersistsThroughTheInjectedJournal() throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
-    var environment = new StandardEnvironment();
-    // Keep ambient datasource overrides out of the context before Flyway migrates.
-    environment
-        .getPropertySources()
-        .remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
-    environment
-        .getPropertySources()
-        .remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
-
     dsl.execute("CREATE DATABASE " + database);
-    try (var application =
-            new SpringApplicationBuilder(RecoveryControllerServiceApplication.class)
-                .environment(environment)
-                .web(WebApplicationType.NONE)
-                .run(
-                    "--spring.config.location=classpath:/application.yml",
-                    "--FIREMUD_RECOVERY_CONTROL_DB_HOST=" + POSTGRES.getHost(),
-                    "--FIREMUD_RECOVERY_CONTROL_DB_PORT=" + POSTGRES.getMappedPort(5432),
-                    "--FIREMUD_RECOVERY_CONTROL_DB_USER=" + POSTGRES.getUsername(),
-                    "--FIREMUD_RECOVERY_CONTROL_DB_PASSWORD=" + POSTGRES.getPassword(),
-                    "--spring.grpc.server.enabled=false",
-                    "--firemud.auth.jwt-secret=" + UUID.randomUUID() + UUID.randomUUID(),
-                    "--spring.ssl.bundle.pem.firemud-grpc.keystore.certificate=classpath:certs/dev-cert.pem",
-                    "--spring.ssl.bundle.pem.firemud-grpc.keystore.private-key=classpath:certs/dev-key.pem",
-                    "--spring.ssl.bundle.pem.firemud-grpc.truststore.certificate=classpath:certs/dev-ca.pem");
+    try (var application = startPackagedApplication(true);
         Connection packagedConnection =
             DriverManager.getConnection(
                 packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
       DSLContext packagedDsl = DSL.using(packagedConnection, SQLDialect.POSTGRES);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      assertThat(application.getBean(HealthEndpoint.class).healthForPath("readiness"))
+          .isNotNull()
+          .extracting(health -> health.getStatus())
+          .isEqualTo(Status.UP);
       assertThat(
               packagedDsl
                   .fetch(
-                      "SELECT script FROM recovery_control.flyway_schema_history_recovery_control WHERE version IS NOT NULL AND success")
+                      "SELECT script FROM recovery_control.flyway_schema_history_recovery_control"
+                          + " WHERE version IS NOT NULL AND success")
                   .getValues(0, String.class))
           .contains(
               "V1__initial_gameplay_release_journal.sql",
@@ -377,6 +369,72 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void reachableEmptyPackagedDatabaseIsNotJournalReadyButProcessIsLive() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(false);
+        var connection =
+            DriverManager.getConnection(
+                packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      assertThat(connection.isValid(2)).isTrue();
+      assertThat(application.getBean(ApplicationAvailability.class).getLivenessState())
+          .isEqualTo(LivenessState.CORRECT);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      var health = application.getBean(HealthEndpoint.class);
+      assertThat(health.healthForPath("readiness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.DOWN);
+      assertThat(health.healthForPath("liveness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.UP);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  private static HealthIndicator journalHealth(ConfigurableApplicationContext context) {
+    return context.getBean("recoveryJournalHealthIndicator", HealthIndicator.class);
+  }
+
+  private static ConfigurableApplicationContext startPackagedApplication(boolean migrate) {
+    var environment = new StandardEnvironment();
+    // Keep ambient datasource overrides out of the context before Flyway migrates.
+    environment
+        .getPropertySources()
+        .remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+    environment
+        .getPropertySources()
+        .remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
+
+    var builder =
+        new SpringApplicationBuilder(RecoveryControllerServiceApplication.class)
+            .environment(environment)
+            .web(WebApplicationType.NONE);
+    var args =
+        new ArrayList<>(
+            List.of(
+                "--spring.config.location=classpath:/application.yml",
+                "--FIREMUD_RECOVERY_CONTROL_DB_HOST=" + POSTGRES.getHost(),
+                "--FIREMUD_RECOVERY_CONTROL_DB_PORT=" + POSTGRES.getMappedPort(5432),
+                "--FIREMUD_RECOVERY_CONTROL_DB_USER=" + POSTGRES.getUsername(),
+                "--FIREMUD_RECOVERY_CONTROL_DB_PASSWORD=" + POSTGRES.getPassword(),
+                "--spring.grpc.server.enabled=false",
+                "--firemud.auth.jwt-secret=" + UUID.randomUUID() + UUID.randomUUID(),
+                "--spring.ssl.bundle.pem.firemud-grpc.keystore.certificate=classpath:certs/dev-cert.pem",
+                "--spring.ssl.bundle.pem.firemud-grpc.keystore.private-key=classpath:certs/dev-key.pem",
+                "--spring.ssl.bundle.pem.firemud-grpc.truststore.certificate=classpath:certs/dev-ca.pem"));
+    if (!migrate) {
+      args.add("--spring.flyway.enabled=false");
+    }
+    return builder.run(args.toArray(String[]::new));
   }
 
   @Test
@@ -1353,8 +1411,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         assertThat(
                 dsl.execute(
                     "UPDATE recovery_control.initial_gameplay_release_outbox "
-                        + "SET readback_payload=CAST(? AS jsonb), readback_digest=? "
-                        + "WHERE operation_id=? AND effect_id=?",
+                        + "SET readback_identity=?, readback_payload=CAST(? AS jsonb), "
+                        + "readback_digest=? WHERE operation_id=? AND effect_id=?",
+                    wrongStateReadback.readbackIdentity(),
                     tupleCodec.toJson(wrongStateReadback),
                     tupleCodec.digest(wrongStateReadback),
                     operationId,
