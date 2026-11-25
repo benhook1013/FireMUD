@@ -23,10 +23,10 @@ import org.springframework.util.ClassUtils;
     webEnvironment = SpringBootTest.WebEnvironment.NONE,
     properties = {
       "FIREMUD_RECOVERY_CONTROL_DB_HOST=recovery-control.invalid",
+      "FIREMUD_RECOVERY_CONTROL_DB_PORT=5432",
       "FIREMUD_RECOVERY_CONTROL_DB_USER=recovery",
       "FIREMUD_RECOVERY_CONTROL_DB_PASSWORD=test-only",
       "firemud.auth.jwt-secret=fixture-only-4c5f8d93e7ad4f58a8d81235cb7521b0d8439508",
-      "spring.autoconfigure.exclude=org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration",
       "spring.jooq.sql-dialect=POSTGRES",
       "spring.flyway.enabled=false",
       "spring.grpc.server.enabled=false",

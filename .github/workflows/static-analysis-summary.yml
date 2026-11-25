@@ -238,6 +238,22 @@ jobs:
                   (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
                 const substantive = data.jobs.some(job => job.name === gateName);
                 if (metadata && !substantive && candidate.conclusion === "skipped") continue;
+                // Older License metadata jobs shared the substantive name.
+                // Only exact, unambiguous step evidence can classify their result.
+                if (workflowId === "license-scan.yml" && candidate.status === "completed" &&
+                    candidate.conclusion === "success") {
+                  const namedSteps = (name) => data.jobs.filter(job => job.name === gateName)
+                    .flatMap(job => Array.isArray(job.steps) ? job.steps.filter(step => step?.name === name) : []);
+                  const enforcement = namedSteps("Verify ORT results");
+                  const legacyMetadata = namedSteps("Report dependency-deferred required gate");
+                  if (enforcement.length === 1 && enforcement[0].status === "completed" &&
+                      enforcement[0].conclusion === "skipped" && legacyMetadata.length === 1 &&
+                      legacyMetadata[0].status === "completed" && legacyMetadata[0].conclusion === "success") continue;
+                  if (enforcement.length !== 1 || enforcement[0].status !== "completed" ||
+                      enforcement[0].conclusion !== "success") {
+                    return { ...candidate, status: "unavailable", conclusion: null, jobs: [] };
+                  }
+                }
                 if (!substantive) {
                   if (candidate.status === "completed" && terminalFailure.has(candidate.conclusion)) {
                     return { ...candidate, jobs: data.jobs };

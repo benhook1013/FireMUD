@@ -159,7 +159,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|publisher_stale_receipt|publisher_exact_retry)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|publisher_replacement_handoff|publisher_stale_receipt|publisher_exact_retry)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -177,7 +177,7 @@ case "${GH_FIXTURE:-}" in
       source_attempt=2 publisher_id=103 recorded_attempt=2
     fi
     receipt_zip() {
-      python3 - "$publisher_id" "$recorded_attempt" <<'PY_RECEIPT'
+      python3 - "${1:-$publisher_id}" "$recorded_attempt" "${2:-101}" <<'PY_RECEIPT'
 import json
 import os
 import sys
@@ -187,7 +187,7 @@ with zipfile.ZipFile(sys.stdout.buffer, "w") as archive:
         "schema": 1, "repository": "example/firemud", "prNumber": 7,
         "baseSha": os.environ["base_sha"], "headSha": os.environ["head_sha"],
         "mergeSha": os.environ["merge_sha"], "imageTag": "pr-merge-" + os.environ["merge_sha"],
-        "producerWorkflowId": 50, "producerRunId": 101, "producerAttempt": int(sys.argv[2]),
+        "producerWorkflowId": 50, "producerRunId": int(sys.argv[3]), "producerAttempt": int(sys.argv[2]),
         "producerArtifactId": 300 + int(sys.argv[2]), "producerArtifactDigest": "sha256:" + "8"*64,
         "publisherWorkflowRef": "example/firemud/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop",
         "publisherRunId": int(sys.argv[1]), "publisherAttempt": 2,
@@ -197,8 +197,18 @@ PY_RECEIPT
     }
     source="$(printf '{"id":101,"run_attempt":%s,"workflow_id":50,"path":".github/workflows/runtime-images.yml","status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_attempt" "$source_event" "$head_sha" "$source_title")"
     publisher="$(printf '{"id":%s,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_id" "$publisher_title")"
-    if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate ]]; then
+    if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate || "$GH_FIXTURE" == publisher_replacement_handoff ]]; then
       publisher="$(jq -c '.conclusion="failure"' <<<"$publisher")"
+    fi
+    if [[ "$GH_FIXTURE" == publisher_replacement_handoff ]]; then
+      reads=0
+      [[ ! -e "$GH_FIXTURE_STATE" ]] || read -r reads <"$GH_FIXTURE_STATE"
+      alt_source="$(jq -c '.id=103 | .event="repository_dispatch" | .created_at="2026-09-21T00:02:00Z"' <<<"$source")"
+      alt_publisher="$(jq -c '.id=104 | .display_title += " source-run-103" |
+        .created_at="2026-09-21T00:03:00Z" | .conclusion="success"' <<<"$publisher")"
+      if (( reads <= 3 )); then
+        alt_publisher="$(jq -c '.status="queued" | .conclusion=null' <<<"$alt_publisher")"
+      fi
     fi
     case "$*" in
       "api repos/example/firemud")
@@ -210,6 +220,37 @@ PY_RECEIPT
       *actions/runs/101/artifacts?*)
         jq -cn --arg name "pr-runtime-images-pr-merge-${merge_sha}-attempt-${source_attempt}" \
           --argjson attempt "$source_attempt" '{total_count:1,artifacts:[{name:$name,id:(300+$attempt),expired:false,workflow_run:{id:101},digest:("sha256:"+("8"*64))}]}'
+        ;;
+      *actions/runs/103/artifacts?*)
+        if [[ "$GH_FIXTURE" != publisher_replacement_handoff ]]; then
+          receipt_sha="$(receipt_zip | sha256sum | cut -d' ' -f1)"
+          jq -cn --arg name "pr-runtime-publication-${publisher_id}-attempt-2" --arg dig "sha256:$receipt_sha" \
+            --argjson run "$publisher_id" '{total_count:1,artifacts:[{name:$name,id:499,expired:false,workflow_run:{id:$run},digest:$dig}]}'
+          exit
+        fi
+        jq -cn --arg name "pr-runtime-images-pr-merge-${merge_sha}-attempt-1" \
+          '{total_count:1,artifacts:[{name:$name,id:301,expired:false,workflow_run:{id:103},digest:("sha256:"+("8"*64))}]}'
+        ;;
+      *actions/runs/104/artifacts?*)
+        receipt_sha="$(receipt_zip 104 103 | sha256sum | cut -d' ' -f1)"
+        jq -cn --arg dig "sha256:$receipt_sha" \
+          '{total_count:1,artifacts:[{name:"pr-runtime-publication-104-attempt-2",id:498,expired:false,workflow_run:{id:104},digest:$dig}]}'
+        ;;
+      *actions/artifacts/498/zip)
+        receipt_zip 104 103
+        ;;
+      *actions/runs/103)
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff ]]; then
+          printf '%s' "$alt_source"
+        else
+          printf '%s' "$publisher"
+        fi
+        ;;
+      *actions/runs/104)
+        printf '%s' "$alt_publisher"
+        ;;
+      *actions/runs/104/attempts/2/jobs?per_page=100)
+        printf '%s' '{"total_count":1,"jobs":[{"run_id":104,"run_attempt":2,"name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}'
         ;;
       *actions/runs/"$publisher_id"/artifacts?*)
         receipt_sha="$(receipt_zip | sha256sum | cut -d' ' -f1)"
@@ -249,13 +290,27 @@ PY_RECEIPT
         '
         ;;
       *actions/workflows/publish-pr-runtime-images.yml/runs?*event=workflow_run*)
-        printf '{"total_count":1,"workflow_runs":[%s]}' "$publisher"
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff && "$*" == *created=2026-09-21T00:02:00Z* ]]; then
+          printf '{"total_count":1,"workflow_runs":[%s]}' "$alt_publisher"
+        else
+          printf '{"total_count":1,"workflow_runs":[%s]}' "$publisher"
+        fi
         ;;
       *actions/workflows/publish-pr-runtime-images.yml/runs?*event=repository_dispatch*)
         printf '%s' '{"total_count":0,"workflow_runs":[]}'
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
-        if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate && -e "$GH_FIXTURE_STATE" ]]; then
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff ]]; then
+          printf '%s\n' "$((reads + 1))" >"$GH_FIXTURE_STATE"
+          if (( reads == 0 )); then
+            printf '[{"workflow_runs":[%s]}]' "$source"
+          else
+            if (( reads == 1 )); then
+              alt_source="$(jq -c '.status="in_progress" | .conclusion=null' <<<"$alt_source")"
+            fi
+            printf '[{"workflow_runs":[%s,%s]}]' "$source" "$alt_source"
+          fi
+        elif [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate && -e "$GH_FIXTURE_STATE" ]]; then
           alternate="$(jq -c '.id=103 | .status="in_progress" | .conclusion=null | .created_at="2026-09-21T00:02:00Z"' <<<"$source")"
           printf '[{"workflow_runs":[%s,%s]}]' "$source" "$alternate"
         else
@@ -350,6 +405,13 @@ alternate_output="$(
 )" || alternate_status=$?
 test "$alternate_status" = 1
 grep -Fq 'Another exact runtime-images producer is still active' <<<"$alternate_output"
+
+GH_FIXTURE=publisher_replacement_handoff GH_FIXTURE_STATE="$TEMP_DIR/replacement-handoff-state" \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=8 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+  timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-handoff.out"
+grep -Fq 'Waiting for publication of a tracked exact replacement producer' "$TEMP_DIR/publisher-handoff.out"
+grep -Fq 'Trusted PR image publisher 104 succeeded' "$TEMP_DIR/publisher-handoff.out"
 
 # A typed native callback binds the exact source run in its title, and both
 # producer events still require one positive publication step for the attempt.

@@ -25,6 +25,30 @@ PLUGIN_RE = re.compile(r'(?:\bid|pluginManager\.apply)\(\s*"([^\"]+)"\s*\)')
 Snapshot = dict[str, bytes]
 
 
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Reject repeated keys authored in a mapping before YAML merge expansion."""
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            key = (key_node.tag, key_node.value) if key_node.tag in {
+                "tag:yaml.org,2002:merge", "tag:yaml.org,2002:value",
+            } else self.construct_object(key_node, deep=False)
+            try:
+                if key in seen:
+                    raise yaml.constructor.ConstructorError(
+                        "while constructing a mapping", node.start_mark,
+                        "found duplicate YAML key", key_node.start_mark,
+                    )
+                seen.add(key)
+            except TypeError as error:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping", node.start_mark,
+                    "found unhashable YAML key", key_node.start_mark,
+                ) from error
+        super().flatten_mapping(node)
+
+
 @dataclasses.dataclass(frozen=True)
 class MigrationFile:
     path: str
@@ -193,7 +217,7 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
     flyway = {}
     for config_path in [*base_paths, *profile_paths]:
         try:
-            documents = list(yaml.safe_load_all(snapshot.get(config_path, b"")))
+            documents = list(yaml.load_all(snapshot.get(config_path, b""), Loader=UniqueKeyLoader))
         except yaml.YAMLError as error:
             raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
 
@@ -209,19 +233,17 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
                 return False
-            enabled_path = "spring.flyway.enabled"
-            locations_path = "spring.flyway.locations"
+            exact_guard_paths = {"spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target"}
             guard_paths = {
                 path for path in properties
-                if path in {enabled_path, locations_path}
-                or path.startswith((enabled_path + ".", enabled_path + "[",
-                                    locations_path + ".", locations_path + "["))
+                if path in exact_guard_paths
+                or any(path.startswith((guard + ".", guard + "[")) for guard in exact_guard_paths)
             }
             if not guard_paths:
                 # Profile configuration with no Flyway guard properties does not
                 # affect this static qualification.
                 continue
-            if guard_paths & ambiguous or any(path not in {enabled_path, locations_path} for path in guard_paths):
+            if guard_paths & ambiguous or not guard_paths <= exact_guard_paths:
                 return False
 
             activation = properties.get("spring.config.activate")
@@ -233,21 +255,24 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
                 path.startswith("spring.config.activate.") for path in properties
             ) or legacy_profile_activation:
                 # The active profile/cloud environment is unknown, so the checker
-                # cannot qualify an activation-dependent override of either guard.
+                # cannot qualify an activation-dependent override of these guards.
                 return False
 
             for path in guard_paths:
                 flyway[path.rsplit(".", 1)[-1]] = properties[path]
 
-    if str(flyway.get("enabled", True)).strip().lower() not in {"true", "on", "yes", "1"}:
+    enabled = flyway.get("enabled", True)
+    if enabled is not True and not (isinstance(enabled, str) and enabled.lower() == "true"):
+        return False
+    if flyway.get("target", "latest") != "latest":
+        # Qualify the complete packaged history, not a pinned migration prefix.
         return False
     locations = flyway.get("locations", [])
     if isinstance(locations, str):
         locations = locations.split(",")
-    return isinstance(locations, list) and any(
-        isinstance(location, str) and location.strip() == "classpath:db/recovery-control-migration"
-        for location in locations
-    )
+    if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
+        return False
+    return any(location.strip() == "classpath:db/recovery-control-migration" for location in locations)
 
 
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
@@ -256,7 +281,13 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     issues = []
     for project in sorted({item.project for item in migrations if RECOVERY_MIGRATION_DIR in item.path}):
         if not recovery_location_configured(current, project):
-            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway and select the recovery-control location")
+            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway with target latest and select the recovery-control location")
+    recovery_sql_root = (
+        "services/recovery-controller-service/src/main/resources" + RECOVERY_MIGRATION_DIR
+    )
+    for path in sorted(current):
+        if path.startswith(recovery_sql_root) and path.endswith(".sql") and "/" in path.removeprefix(recovery_sql_root):
+            issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -400,6 +431,21 @@ def run_self_test() -> None:
     }, recovery_history, "historical effective migration no longer applied")
     check("equivalent enabled list recovery history",
           {**recovery_history, recovery_config: recovery_list_settings}, recovery_history, None)
+    check("malformed late locations entry cannot be hidden by a matching entry", {
+        **recovery_history,
+        recovery_config: (
+            b"spring:\n  flyway:\n    locations:\n"
+            b"      - classpath:db/recovery-control-migration\n"
+            b"      - path: classpath:db/migration\n"
+        ),
+    }, recovery_history, "historical effective migration no longer applied")
+    check("comma-separated scalar locations still qualify", {
+        **recovery_history,
+        recovery_config: recovery_settings.replace(
+            b"locations: classpath:db/recovery-control-migration",
+            b"locations: classpath:db/migration,classpath:db/recovery-control-migration",
+        ),
+    }, recovery_history, None)
     dotted_recovery_settings = (
         b"spring.flyway.enabled: true\n"
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
@@ -412,6 +458,40 @@ def run_self_test() -> None:
     check("dotted Spring Flyway disable fails closed",
           {**recovery_history, recovery_config: dotted_disabled_settings}, recovery_history,
           "historical effective migration no longer applied")
+    try:
+        collect_issues({**recovery_history, recovery_config:
+                        recovery_settings + b"    enabled: true\n    enabled: true\n"}, recovery_history)
+    except ValueError as error:
+        if "duplicate YAML key" not in str(error) or recovery_config not in str(error):
+            raise
+    else:
+        raise AssertionError("duplicate packaged YAML key did not fail closed")
+    check("explicit enablement can override across separate YAML documents",
+          {**recovery_history, recovery_config: recovery_settings + (
+              b"    enabled: false\n---\nspring.flyway.enabled: 'TrUe'\n"
+          )}, recovery_history, None)
+    check("quoted yes is not Spring Boot true", {
+        **recovery_history, recovery_config: recovery_settings + b"    enabled: 'yes'\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    complete_recovery_history = {**recovery_history, recovery + "V2__attempt_closure.sql": b"-- closure"}
+    check("recovery target latest applies V1 and V2", {
+        **complete_recovery_history, recovery_config: recovery_settings + b"    target: latest\n",
+    }, complete_recovery_history, None)
+    check("recovery target one excludes V2", {
+        **complete_recovery_history, recovery_config: recovery_settings + b"    target: '1'\n",
+    }, complete_recovery_history, "historical effective migration no longer applied")
+    check("nested SQL cannot silently diverge from the recovery jOOQ input", {
+        **complete_recovery_history, recovery + "nested/V3__generation.sql": b"-- generation",
+    }, complete_recovery_history, "recovery migration SQL must be flat")
+    check("nested repeatable SQL is outside the flat recovery input", {
+        **complete_recovery_history, recovery + "nested/R__refresh.sql": b"-- refresh",
+    }, complete_recovery_history, "recovery migration SQL must be flat")
+    check("explicit mapping override of a merged default is not a duplicate", {
+        **complete_recovery_history, recovery_config: (
+            b"defaults: &fallback\n  enabled: false\n" + recovery_settings
+            + b"    <<: *fallback\n    enabled: true\n"
+        ),
+    }, complete_recovery_history, None)
     harmless_second_document = recovery_settings + b"---\ncustom:\n  setting: value\n"
     check("unrelated second YAML document",
           {**recovery_history, recovery_config: harmless_second_document}, recovery_history, None)

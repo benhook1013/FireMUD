@@ -30,19 +30,19 @@ preview_retry_entry() {
       keys == ["base","count","head","image","merge","namespace","namespaceUid","nonce","repository"]
       and .repository == $repository and .namespace == $ns
       and (.count | type == "number" and . == floor and . >= 1 and . <= 3)
-      and all(.base,.head,.merge; type == "string" and test("^[a-f0-9]{40}$"))
-      and (.image | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
-      and (.namespaceUid | type == "string" and test("^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$"))
-      and (.nonce | type == "string" and test("^([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?$"));
+      and all(.base,.head,.merge; type == "string" and test("\\A[a-f0-9]{40}\\z"))
+      and (.image | type == "string" and test("\\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\\z"))
+      and (.namespaceUid | type == "string" and test("\\A([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?\\z"))
+      and (.nonce | type == "string" and test("\\A([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?\\z"));
     def tuple: [.base,.head,.merge,.image];
     def staged($repository; $ns; $uid; $rv):
       keys == ["base","count","head","holderResourceVersion","holderUid","image","merge","namespace","namespaceResourceVersion","namespaceUid",
                  "nonce","phase","predecessor","repository","stageVersion"]
         and .stageVersion == 2 and (.phase == "RESERVED" or .phase == "SEND_STARTED")
         and (.nonce != "") and .holderUid == $uid and .holderResourceVersion != $rv
-        and (.holderResourceVersion | type == "string" and test("^[A-Za-z0-9._:-]{1,128}$"))
+        and (.holderResourceVersion | type == "string" and test("\\A[A-Za-z0-9._:-]{1,128}\\z"))
         and (del(.holderResourceVersion,.holderUid,.namespaceResourceVersion,.phase,.predecessor,.stageVersion) | ordinary($repository; $ns))
-        and (.namespaceResourceVersion | type == "string" and test("^[A-Za-z0-9._:-]{0,128}$"))
+        and (.namespaceResourceVersion | type == "string" and test("\\A[A-Za-z0-9._:-]{0,128}\\z"))
         and ((.namespaceUid == "") == (.namespaceResourceVersion == ""))
         and (if .predecessor == null then .count == 1
              else (.predecessor | ordinary($repository; $ns))
@@ -99,17 +99,17 @@ legacy_preview_retry_entry() {
     | if any($keys[]; . as $key | $annotations | has($key)) then
         .metadata.uid as $uid
         | if (
-            ($repo | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+            ($repo | test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z"))
             and .metadata.name == $namespace
             and .metadata.labels["firemud.dev/preview"] == "true"
             and .metadata.labels["firemud.dev/pr-number"] == ($namespace | ltrimstr("pr-"))
-            and ($uid | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
-            and ($annotations[$keys[0]] | type == "string" and test("^[1-3]$"))
-            and all($keys[1:4][]; $annotations[.] | type == "string" and test("^[a-f0-9]{40}$"))
-            and ($annotations[$keys[4]] | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
+            and ($uid | type == "string" and test("\\A[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\\z"))
+            and ($annotations[$keys[0]] | type == "string" and test("\\A[1-3]\\z"))
+            and all($keys[1:4][]; $annotations[.] | type == "string" and test("\\A[a-f0-9]{40}\\z"))
+            and ($annotations[$keys[4]] | type == "string" and test("\\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\\z"))
             and (if $annotations | has($keys[5]) then
                 $annotations[$keys[5]] | type == "string"
-                  and test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$")
+                  and test("\\A[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\z")
               else true end)
           ) then {repository:$repo,namespace:$namespace,namespaceUid:$uid,
                   count:($annotations[$keys[0]] | tonumber),base:$annotations[$keys[1]],

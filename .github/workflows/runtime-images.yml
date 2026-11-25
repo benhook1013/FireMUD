@@ -54,12 +54,12 @@ run-name: Build Runtime Images ${{ (github.event_name == 'pull_request' || githu
 permissions:
   contents: read
 
-# Cancellation precedes admission: isolate all PR inputs by exact tuple and
-# let an existing producer finish when duplicate requests arrive.
+# Serialize each exact PR tuple without replacing a queued claim-backed receiver.
+# Duplicate trusted push deliveries also wait instead of preempting an active run.
 concurrency:
   group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)) || (github.event_name == 'repository_dispatch' && github.event.client_payload.pr_number != '' && github.event.client_payload.base_sha != '' && github.event.client_payload.head_sha != '' && github.event.client_payload.merge_sha != '' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)) || (github.event_name == 'repository_dispatch' && format('repository-dispatch-run-{0}', github.run_id)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && format('ci-pr-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') && format('branch-{0}-sha-{1}-ci-{2}-attempt-{3}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha, github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && format('ci-push-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
-  # Only duplicate delivery of the same successful push attempt can displace its branch publisher.
-  cancel-in-progress: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   image-meta:
@@ -228,33 +228,31 @@ jobs:
                 exit 1
               }
             claim_witness="$(jq -er '.client_payload.runtime_refresh_claim_witness // "" | select(type == "string")' "$GITHUB_EVENT_PATH")"
-            if [[ -n "${EVENT_RUNTIME_REFRESH_CLAIM:-}" || -n "$claim_witness" ]]; then
-              if [[ ! "$EVENT_RUNTIME_REFRESH_CLAIM" =~ ^[1-9][0-9]{0,15}$ ]] ||
-                (( EVENT_RUNTIME_REFRESH_CLAIM > 9007199254740991 )) ||
-                [[ ! "$claim_witness" =~ ^[0-9a-f]{64}$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
-                echo "Runtime PR refresh claim identity is invalid." >&2
-                exit 1
-              fi
-              base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
-              witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
-              claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
-              claim_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
-              claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
-              claim_tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
-              jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
-                --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
-                --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
-                '.sha == $sha and .tag == $claim and .object.type == "commit" and .object.sha == $merge and
-                 ((.message | fromjson) ==
-                  {pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,generation:$generation,witness_sha256:$witness_hash})' \
-                <<<"$claim_tag" >/dev/null || {
-                  echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
-                  exit 1
-                }
-              RUNTIME_REFRESH_CLAIM="$EVENT_RUNTIME_REFRESH_CLAIM"
-              RUNTIME_REFRESH_CLAIM_TAG="$claim_sha"
-              RUNTIME_REFRESH_CLAIM_ATTEMPT="$GITHUB_RUN_ATTEMPT"
+            if [[ ! "${EVENT_RUNTIME_REFRESH_CLAIM:-}" =~ ^[1-9][0-9]{0,15}$ ]] ||
+              (( EVENT_RUNTIME_REFRESH_CLAIM > 9007199254740991 )) ||
+              [[ ! "$claim_witness" =~ ^[0-9a-f]{64}$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Runtime PR refresh claim identity is invalid." >&2
+              exit 1
             fi
+            base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
+            witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
+            claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
+            claim_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
+            claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
+            claim_tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
+            jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
+              --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+              --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
+              '.sha == $sha and .tag == $claim and .object.type == "commit" and .object.sha == $merge and
+               ((.message | fromjson) ==
+                {pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,generation:$generation,witness_sha256:$witness_hash})' \
+              <<<"$claim_tag" >/dev/null || {
+                echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
+                exit 1
+              }
+            RUNTIME_REFRESH_CLAIM="$EVENT_RUNTIME_REFRESH_CLAIM"
+            RUNTIME_REFRESH_CLAIM_TAG="$claim_sha"
+            RUNTIME_REFRESH_CLAIM_ATTEMPT="$GITHUB_RUN_ATTEMPT"
             # Only the verified live same-repository PR can authorize this
             # diagnostic marker; dispatch payload labels carry no authority.
             if jq -e '(.labels | type) == "array" and any(.labels[]; .name == "canonical-play-transition")' \
@@ -2026,7 +2024,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
-      group: runtime-image-promotion-${{ needs.image-meta.outputs.head_branch }}
+      # Fixed SHA tags are shared across branches; branch alias checks remain required.
+      group: runtime-image-promotion-protected-branches
       cancel-in-progress: false
       queue: max
     permissions:

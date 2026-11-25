@@ -296,7 +296,8 @@ if wait_mode == "pull-request":
 else:
     matching_runs = []
 selectors = sys.argv[8:]
-all_candidates = selectors[-1:] == ["all"]
+all_statuses = selectors[-1:] == ["all-statuses"]
+all_candidates = all_statuses or selectors[-1:] == ["all"]
 if all_candidates:
     selectors.pop()
 polling = selectors == ["poll"]
@@ -304,7 +305,7 @@ if selectors and not polling:
     event, title = selectors
     matching_runs = [run for run in matching_runs if run.get("event") == event
                      and run.get("display_title") == title
-                     and run.get("status") == "completed" and run.get("conclusion") == "success"]
+                     and (all_statuses or (run.get("status") == "completed" and run.get("conclusion") == "success"))]
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
@@ -324,7 +325,7 @@ for run in ranked if all_candidates else ranked[:1]:
         "found\t{}\t{}\t{}\t{}".format(
             run.get("id", ""),
             run.get("status", ""),
-            run.get("conclusion", ""),
+            (run.get("conclusion") or "pending") if all_statuses else run.get("conclusion", ""),
             run.get("html_url", ""),
         )
     )
@@ -405,6 +406,8 @@ use_completed_duplicate_publication() {
   local run attempt jobs latest publisher_path default_branch repository_info
   local source_workflow source_workflow_id source_pr producer_artifact publisher_artifact expected_receipt
   local -a publisher_events=()
+  local pending_handoff=false publisher_selector=all
+  [[ "$proof_origin" != "handoff" ]] || publisher_selector=all-statuses
   IFS=$'\t' read -r state older_id _ _ _ source_event older_created <<<"$source_state"
   [[ "$state" == "found" ]] || return 1
   source="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
@@ -455,11 +458,28 @@ use_completed_duplicate_publication() {
     else
       remaining=$((lookup_deadline - SECONDS))
       (( remaining > 0 )) || break
-      inventory="$(fetch_publisher_runs "$publisher_event" "$older_created" "$upper" "$remaining")" || continue
+      if ! inventory="$(fetch_publisher_runs "$publisher_event" "$older_created" "$upper" "$remaining")"; then
+        [[ "$proof_origin" != "handoff" ]] || pending_handoff=true
+        continue
+      fi
     fi
-    publisher_lines="$(read_publisher_state "$older_id" "$source_event" "$publisher_event" "$expected_title" all <<<"$inventory")" || continue
-    [[ "$publisher_lines" != "missing" ]] || continue
+    if ! publisher_lines="$(read_publisher_state "$older_id" "$source_event" "$publisher_event" "$expected_title" "$publisher_selector" <<<"$inventory")"; then
+      [[ "$proof_origin" != "handoff" ]] || pending_handoff=true
+      continue
+    fi
+    if [[ "$publisher_lines" == "missing" ]]; then
+      [[ "$proof_origin" != "handoff" ]] || pending_handoff=true
+      continue
+    fi
     while IFS=$'\t' read -r state publisher_id publisher_status publisher_conclusion _; do
+      if [[ "$proof_origin" == "handoff" && "$state" == "found" &&
+            "$publisher_id" =~ ^[1-9][0-9]*$ ]]; then
+        case "$publisher_status/$publisher_conclusion" in
+          queued/pending|requested/pending|pending/pending|waiting/pending|in_progress/pending|completed/success)
+            pending_handoff=true
+            ;;
+        esac
+      fi
       [[ "$state" == "found" && "$publisher_id" =~ ^[1-9][0-9]*$ &&
          "$publisher_status" == "completed" && "$publisher_conclusion" == "success" ]] || continue
       (( SECONDS < lookup_deadline )) || break
@@ -527,6 +547,9 @@ use_completed_duplicate_publication() {
       return 0
     done <<<"$publisher_lines"
   done
+  # Distinguish bounded handoff waits from terminal failure. This state is
+  # never sufficient for publication acceptance.
+  [[ "$pending_handoff" != "true" ]] || return 2
   return 1
 }
 
@@ -551,11 +574,12 @@ branch_publication_attempt() {
 
 verify_branch_publication() {
   local run_id="$1" selected_state="$2" endpoint run attempt jobs latest
-  local promotion_conclusion="${3:-success}"
+  local promotion_conclusion="${3:-success}" expected_attempt="${4:-}" show_attempt="${5:-false}"
   endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
   run="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 1
   [[ "$(jq -c '{workflow_runs:[.]}' <<<"$run" | read_run_state)" == "$selected_state" ]] || return 1
   attempt="$(branch_publication_attempt "$run_id" <<<"$run")" || return 1
+  [[ -z "$expected_attempt" || "$attempt" == "$expected_attempt" ]] || return 1
   jobs="$(fetch_alternate_run_metadata "$deadline" "${endpoint}/attempts/${attempt}/jobs?per_page=100")" || return 1
   jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg conclusion "$promotion_conclusion" '
     (.jobs | type == "array") and (.total_count == (.jobs | length)) and
@@ -576,15 +600,18 @@ verify_branch_publication() {
   latest="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 1
   [[ "$(branch_publication_attempt "$run_id" <<<"$latest")" == "$attempt" &&
      "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$selected_state" ]] &&
-    (( SECONDS < deadline ))
+    (( SECONDS < deadline )) || return 1
+  if [[ "$show_attempt" == "true" ]]; then
+    printf '%s\n' "$attempt"
+  fi
 }
 
 find_earlier_branch_publication() {
   local selected_id="$1" selected_state="$2" inventory="$3"
-  local candidates candidate state candidate_id status conclusion
+  local candidates candidate state candidate_id status conclusion skipped_attempt
   # Only an authoritatively skipped exact current attempt may be bypassed.
   # Keep failures and unavailable or ambiguous proof as barriers to fallback.
-  verify_branch_publication "$selected_id" "$selected_state" skipped || return 1
+  skipped_attempt="$(verify_branch_publication "$selected_id" "$selected_state" skipped "" true)" || return 1
   candidates="$(read_run_state "" alternates <<<"$inventory")" || return 1
   while IFS= read -r candidate; do
     (( SECONDS < deadline )) || break
@@ -592,6 +619,7 @@ find_earlier_branch_publication() {
     [[ "$candidate_id" != "$selected_id" ]] || continue
     [[ "$state" == "found" && "$status" == "completed" && "$conclusion" == "success" ]] || return 1
     if verify_branch_publication "$candidate_id" "$candidate"; then
+      verify_branch_publication "$selected_id" "$selected_state" skipped "$skipped_attempt" || return 1
       printf 'Earlier trusted branch runtime-image run %s has verified promotion for %s after a newer skipped promotion.\n' \
         "$candidate_id" "$image_tag"
       return 0
@@ -609,6 +637,7 @@ wait_for_pr_publisher() {
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   local -a direct_publisher_events=()
+  local -A tracked_replacements=()
   IFS=$'\t' read -r source_state_name source_run_id source_status source_conclusion _ source_state_event source_created_at <<<"$source_state"
   if [[ "$source_state_name" != "found" || "$source_status" != "completed" || "$source_conclusion" != "success" ]]; then
     printf 'Refusing publisher wait without the selected successful runtime source state.\n' >&2
@@ -668,6 +697,12 @@ wait_for_pr_publisher() {
       "refreshing alternate runtime-image sources while waiting for publication" "$source_refresh_remaining")"; then
       active_replacement="$(read_run_state "${source_run_id}" active-alternates <<<"${refreshed_source_payload}")" ||
         active_replacement="missing"
+      local active_state active_id active_event active_created
+      while IFS=$'\t' read -r active_state active_id _ _ _ active_event active_created; do
+        if [[ "$active_state" == "found" ]]; then
+          tracked_replacements["$active_id/$active_event/$active_created"]=1
+        fi
+      done <<<"$active_replacement"
       if refreshed_alternates="$(read_run_state "${source_run_id}" alternates <<<"${refreshed_source_payload}")"; then
         if [[ "${refreshed_alternates}" == "missing" ]]; then
           alternate_sources=""
@@ -720,6 +755,22 @@ wait_for_pr_publisher() {
     fi
 
     if [[ "${run_status}" == "completed" ]]; then
+      local handoff_state handoff_id handoff_event handoff_created handoff_line handoff_status
+      local should_wait_for_handoff=false
+      while IFS= read -r handoff_line; do
+        IFS=$'\t' read -r handoff_state handoff_id _ _ _ handoff_event handoff_created <<<"$handoff_line"
+        [[ "$handoff_state" == "found" &&
+           "${tracked_replacements["$handoff_id/$handoff_event/$handoff_created"]:-}" == 1 ]] || continue
+        handoff_status=0
+        use_completed_duplicate_publication "$handoff_line" "$publisher_deadline" handoff || handoff_status=$?
+        if (( handoff_status == 0 )); then return 0; fi
+        if (( handoff_status == 2 )); then should_wait_for_handoff=true; fi
+      done <<<"$alternate_sources"
+      if [[ "$should_wait_for_handoff" == "true" ]]; then
+        printf 'Waiting for publication of a tracked exact replacement producer for %s.\n' "$image_tag"
+        sleep "${sleep_seconds}"
+        continue
+      fi
       printf 'Trusted PR image publisher %s completed with %s for %s.\n' \
         "${run_id}" "${run_conclusion}" "${image_tag}" >&2
       [[ -z "${run_url}" ]] || printf 'Workflow URL: %s\n' "${run_url}" >&2

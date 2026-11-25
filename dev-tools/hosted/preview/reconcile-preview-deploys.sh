@@ -343,7 +343,7 @@ proof_retry_namespace_matches() {
 }
 
 start_reserved_proof_retry() {
-  local holder="$1" namespace="$2" pr_number="$3" started acknowledged current current_row tuple version
+  local holder="$1" namespace="$2" pr_number="$3" started current current_row tuple
   if ! proof_retry_namespace_matches "$namespace" "$proof_retry_record"; then
     echo "Skipping PR #${pr_number}: Namespace fence changed before proof retry dispatch; reservation stays charged." >&2
     return 1
@@ -351,16 +351,17 @@ start_reserved_proof_retry() {
   started="$(jq -c 'select(.stageVersion == 2 and .phase == "RESERVED") | .phase = "SEND_STARTED"' \
     <<<"$proof_retry_record")" || return 1
   [[ -n "$started" ]] || return 1
-  if ! acknowledged="$(write_preview_retry_entry "$holder" "$namespace" "$started" true)"; then
+  if ! write_preview_retry_entry "$holder" "$namespace" "$started" true >/dev/null; then
     echo "Unable to acknowledge ownership of the proof-retry send-start for PR #${pr_number}; refusing dispatch." >&2
     dispatch_outcome_failed=true
     return 1
   fi
   proof_retry_record="$started"
-  version="$(jq -er '.metadata.resourceVersion' <<<"$acknowledged")" || return 1
+  # The acknowledged write used the holder's UID and version as a CAS fence.
+  # A later unrelated holder update does not change this exact row's custody.
   if ! current="$(read_preview_retry_holder)" ||
-    ! jq -e --arg uid "$proof_retry_holder_uid" --arg version "$version" '
-      .metadata.uid == $uid and .metadata.resourceVersion == $version
+    ! jq -e --arg uid "$proof_retry_holder_uid" '
+      .metadata.uid == $uid
     ' <<<"$current" >/dev/null ||
     ! current_row="$(preview_retry_entry "$current" "$namespace")" ||
     [[ "$current_row" != "$started" ]] ||
@@ -691,6 +692,13 @@ recent_successful_source_handoff() {
   fi
   if ! completed_default_dispatch_inventory="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")"; then
     completed_default_dispatch_inventory=""
+    echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
+    return 4
+  fi
+  # Re-observe the native inventory after refreshing the dispatch inventory.
+  # These provider reads are not atomic; the final successful read is only
+  # the observation cutoff, not a claim about changes after it.
+  if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")"; then
     echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
     return 4
   fi
@@ -1283,6 +1291,7 @@ dispatch_candidates() {
   if [[ "${dispatch_exit}" -eq 0 && "${dispatch_status_line_count}" -eq 1 &&
     "${dispatch_http_status}" == 204 ]]; then
     dispatch_sent=true
+    break
   elif [[ "${dispatch_status_line_count}" -eq 1 && "${dispatch_http_status}" =~ ^4[0-9][0-9]$ ]]; then
     dispatch_outcome_failed=true
     echo "GitHub confirmed preview dispatch rejection for PR #${pr_number} (HTTP ${dispatch_http_status})."
@@ -1307,6 +1316,7 @@ dispatch_candidates() {
     dispatch_outcome_failed=true
     echo "Preview dispatch outcome for PR #${pr_number} is ambiguous (gh=${dispatch_exit}, HTTP=${dispatch_http_status:-unknown}); proof-retry budget remains charged." >&2
     dispatch_sent=true
+    break
   fi
   done
 }

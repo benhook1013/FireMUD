@@ -581,7 +581,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "b1f827caebc7b98e47821f3516afa5472552f7404b284c736864fb4a1dc3a9b4";
+            const canonicalRuntimeWorkflowSha256 = "ad7ae1a525621952060f824752e96491c3d5b5973b29bcac7ad83c45f03ec45a";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -1648,7 +1648,7 @@ jobs:
                   try {
                     freshPrimary = await findMatchingRuntimeImagesRun(
                       pending.event, expectedDisplayTitle, currentIdentity,
-                      { allowCompletedFallback: false, fallbackFence: pending.event === matching.event ? matching : null }
+                      { allowCompletedFallback: false, fallbackFence: matching }
                     );
                   } catch (error) {
                     if (canResumeAfterOptionalGitHubError(error, pending) && await retryExactSelection(

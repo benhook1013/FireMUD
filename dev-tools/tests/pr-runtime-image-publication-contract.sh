@@ -22,11 +22,15 @@ from pathlib import Path
 
 source = Path(sys.argv[1]).read_text()
 group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
-cancel = re.search(r"^  cancel-in-progress: (.*)$", source, re.MULTILINE).group(1)
+workflow_concurrency = re.search(r"^concurrency:\n((?:^  .+\n)+)", source, re.MULTILINE).group(1)
+assert re.search(r"^  queue: max$", workflow_concurrency, re.MULTILINE)
+cancel = re.search(r"^  cancel-in-progress: (.*)$", workflow_concurrency, re.MULTILINE).group(1)
+assert cancel == "false"
 promotion = re.search(r"^  publish-runtime-images:\n((?:^    .*\n|^\n)+)", source, re.MULTILINE).group(1)
 assert re.search(
     r"^    concurrency:\n"
-    r"      group: runtime-image-promotion-\$\{\{ needs\.image-meta\.outputs\.head_branch \}\}\n"
+    r"(?:      # [^\n]*\n)*"
+    r"      group: runtime-image-promotion-protected-branches\n"
     r"      cancel-in-progress: false\n"
     r"      queue: max$", promotion, re.MULTILINE
 )
@@ -142,9 +146,6 @@ dispatch = {**base, "event_name": "repository_dispatch", "event": {
     "action": "pr-runtime-base-refresh", "client_payload": {
         "pr_number": 7, "base_sha": "base1", "head_sha": "head1", "merge_sha": "merge1"}}}
 check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
-for event in [base, dispatch, {"event_name": "workflow_dispatch"},
-              {"event_name": "workflow_run", "event": {"workflow_run": {"event": "pull_request", "head_branch": "develop"}}}]:
-    assert evaluate(event, cancel) == "False", event
 def push_callback(branch, conclusion, run_id, attempt, head_sha="older"):
     return {**base, "event_name": "workflow_run", "event": {"workflow_run": {
         "event": "push", "head_branch": branch, "head_sha": head_sha, "conclusion": conclusion,
@@ -152,18 +153,15 @@ def push_callback(branch, conclusion, run_id, attempt, head_sha="older"):
 
 for branch in ("main", "develop"):
     event = push_callback(branch, "success", 91, 2)
-    assert evaluate(event, cancel) == "True", event
     check(event, f"branch-{branch}-sha-older-ci-91-attempt-2-required")
     check(push_callback(branch, "success", 97, 1, "newer"),
           f"branch-{branch}-sha-newer-ci-97-attempt-1-required")
     for conclusion, run_id, attempt in (("failure", 92, 1), ("cancelled", 93, 2),
                                        ("timed_out", 94, 3), (None, 95, 1)):
         event = push_callback(branch, conclusion, run_id, attempt)
-        assert evaluate(event, cancel) == "False", event
         check(event, f"ci-push-run-{run_id}-attempt-{attempt}-required")
 
 nonprotected = push_callback("feature/x", "success", 96, 2)
-assert evaluate(nonprotected, cancel) == "False", nonprotected
 check(nonprotected, "ci-push-run-96-attempt-2-required")
 assert evaluate(push_callback("Develop", "success", 98, 1)).lower() != \
        evaluate(push_callback("develop", "success", 97, 1)).lower()
@@ -188,7 +186,7 @@ callback = {**base, "event_name": "workflow_run", "event": {
 check(callback, "ci-pr-run-90-attempt-2-required")
 check({**base, "event_name": "push", "event": {}, "ref": "refs/heads/develop"},
       "refs/heads/develop-required")
-print("Runtime concurrency: nonpreemptive exact PR/dispatch tuple and branch isolation passed")
+print("Runtime concurrency: non-replacing exact PR/dispatch queue and branch isolation passed")
 PY_CONCURRENCY
 
 require_contains() {
@@ -507,8 +505,10 @@ for (const publishable of ["false", "", undefined]) {
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
   const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
     .split("      - name: Validate exact PR source and artifact before registry login\n")[0];
-  const inputs = Object.fromEntries([...download.matchAll(/^          (artifact-ids|digest-mismatch|path|run-id): (.+)$/gm)]
+  const downloadInputs = (step) => Object.fromEntries([...step.matchAll(/^          (artifact-ids|digest-mismatch|name|path|run-id): (.+)$/gm)]
     .map(match => [match[1], match[2]]));
+  const inputs = downloadInputs(download);
+  assert.equal(downloadInputs(download + "\n          name: conflicting-name\n").name, "conflicting-name");
   assert.equal(inputs["artifact-ids"], "${{ needs.source.outputs.artifact_id }}");
   assert.equal(inputs["digest-mismatch"], "error");
   assert.equal(inputs.name, undefined);
@@ -745,20 +745,13 @@ def admit(current_request, current_merge, current_branch, overrides=None, event_
     script = script_template.replace("${{ github.event_name }}", event_name)
     return subprocess.run(["bash", "-c", script], env=current_env, text=True, capture_output=True)
 
-try:
-    accepted = admit(request, merge, branch)
-    assert accepted.returncode == 0, accepted.stderr
-    output = Path(env["GITHUB_OUTPUT"]).read_text()
-    assert f"merge_sha={merge['sha']}\n" in output
-    assert f"base_ref={request['base']['ref']}\n" in output
-    assert f"image_tag=pr-merge-{merge['sha']}\n" in output
-    assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
-    assert "canonical_play_transition=false\n" in output
-    assert "runtime_refresh_claim=\n" in output
+claim_sha = "d" * 40
+claim_witness = "f" * 64
+claim_tag_file = fixture / "runtime-claim-tag.json"
+
+def install_claim(request, merge, branch):
     base_ref_hash = hashlib.sha256(request["base"]["ref"].encode()).hexdigest()
     claim = f"firemud-runtime-refresh-intent/v1/pr-{request['number']}/{merge['sha']}/{base_ref_hash}/g1"
-    claim_sha = "d" * 40
-    claim_witness = "f" * 64
     claim_ref = {"ref": f"refs/tags/{claim}", "object": {"type": "tag", "sha": claim_sha}}
     claim_tag = {"sha": claim_sha, "tag": claim, "object": {"type": "commit", "sha": merge["sha"]},
                  "message": json.dumps({"pr_number": str(request["number"]), "base_ref": request["base"]["ref"],
@@ -768,15 +761,29 @@ try:
     claim_tag_file = fixture / "runtime-claim-tag.json"
     (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
     claim_tag_file.write_text(json.dumps(claim_tag))
-    claim_request = {
+    return {
         "EVENT_RUNTIME_REFRESH_CLAIM": "1",
         "TEST_RUNTIME_CLAIM_WITNESS": claim_witness,
         "EXPECTED_RUNTIME_CLAIM_REF": f"repos/benhook1013/FireMUD/git/ref/tags/{claim}",
         "EXPECTED_RUNTIME_CLAIM_TAG": f"repos/benhook1013/FireMUD/git/tags/{claim_sha}",
     }
+
+try:
+    missing_claim = admit(request, merge, branch)
+    assert missing_claim.returncode != 0
+    assert not Path(env["GITHUB_OUTPUT"]).read_text()
+    claim_request = install_claim(request, merge, branch)
+    claim_ref = json.loads((fixture / "runtime-claim-ref.json").read_text())
+    claim_tag = json.loads(claim_tag_file.read_text())
+    claim = claim_tag["tag"]
     accepted_claim = admit(request, merge, branch, claim_request)
     assert accepted_claim.returncode == 0, accepted_claim.stderr
     output = Path(env["GITHUB_OUTPUT"]).read_text()
+    assert f"merge_sha={merge['sha']}\n" in output
+    assert f"base_ref={request['base']['ref']}\n" in output
+    assert f"image_tag=pr-merge-{merge['sha']}\n" in output
+    assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
+    assert "canonical_play_transition=false\n" in output
     assert "runtime_refresh_claim=1\n" in output
     assert "runtime_refresh_claim_attempt=1\n" in output
     assert f"runtime_refresh_claim_tag={claim_sha}\n" in output
@@ -809,7 +816,7 @@ try:
     assert "runtime_refresh_claim=\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     labeled_request = json.loads(json.dumps(request))
     labeled_request["labels"] = [{"name": "canonical-play-transition"}]
-    assert admit(labeled_request, merge, branch).returncode == 0
+    assert admit(labeled_request, merge, branch, claim_request).returncode == 0
     assert "canonical_play_transition=true\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     # Event labels are a separate marker path; only typed-refresh admission may
     # export verified live-label authority through this metadata output.
@@ -817,7 +824,7 @@ try:
     assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     for labels in (None, [], [{"name": "other"}], "canonical-play-transition"):
         unlabeled_request = {**request, "labels": labels}
-        assert admit(unlabeled_request, merge, branch).returncode == 0
+        assert admit(unlabeled_request, merge, branch, claim_request).returncode == 0
         assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     assert admit(labeled_request, merge, branch, {"EVENT_ACTION": "other"}).returncode != 0
     assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
@@ -828,7 +835,8 @@ try:
         ref_request, ref_branch = json.loads(json.dumps(request)), json.loads(json.dumps(branch))
         ref_request["base"]["ref"] = base_ref
         ref_branch["ref"] = "refs/heads/" + base_ref
-        accepted_ref = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref})
+        ref_claim = install_claim(ref_request, merge, ref_branch)
+        accepted_ref = admit(ref_request, merge, ref_branch, {**ref_claim, "EVENT_BASE_REF": base_ref})
         assert accepted_ref.returncode == 0, (base_ref, accepted_ref.stderr)
         assert f"base_ref={base_ref}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
         direct_pr = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref}, event_name="pull_request")

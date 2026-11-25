@@ -4735,6 +4735,26 @@ dispatch_guard = run.index('if [[ "$dispatch_sent" == "true" ]]', eligible_guard
 namespace_snapshot = run.index('if ! namespace_json="$(\n', dispatch_guard)
 base_ref_resolution = run.index('if ! base_ref_json=', namespace_snapshot)
 assert eligible_guard < dispatch_guard < namespace_snapshot < base_ref_resolution
+
+reserve = run[run.index("start_reserved_proof_retry()") : run.index("compensate_rejected_proof_retry()")]
+assert reserve.index('write_preview_retry_entry "$holder" "$namespace" "$started" true') < reserve.index(
+    'current="$(read_preview_retry_holder)"'
+)
+assert '.metadata.uid == $uid' in reserve
+assert '[[ "$current_row" != "$started" ]]' in reserve
+assert 'proof_retry_namespace_matches "$namespace" "$started"' in reserve
+assert '.metadata.resourceVersion =' not in reserve
+
+handoff = run[run.index("recent_successful_source_handoff()") : run.index("evaluate_recent_source_handoff()")]
+refresh = handoff.index("completed_preview_inventory repository_dispatch")
+last_native = handoff.rindex("completed_preview_inventory pull_request")
+assert refresh < last_native < handoff.rindex("evaluate_recent_source_handoff")
+assert "return 4" in handoff[last_native:]
+
+post = function_body[function_body.index('"${dispatch_http_status}" == 204 ]]; then') :]
+assert "dispatch_sent=true\n    break\n  elif" in post
+assert "dispatch_sent=true\n    break\n  fi" in post
+assert "compensate_rejected_proof_retry" in post
 PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \

@@ -3,6 +3,7 @@ package net.firedevops.firemud.recovery.model;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -32,6 +33,49 @@ import tools.jackson.databind.node.ObjectNode;
 class InitialGameplayReleaseModelTest {
   private static final String DIGEST = "a".repeat(64);
   private static final UUID NIL_UUID = new UUID(0L, 0L);
+
+  @Test
+  void validatesDecodedOwnerTextWithoutRepairOrNormalization() {
+    String valid = "owner-é-😀-e\u0301";
+    assertThat(InitialGameplayReleaseModel.requiredText(valid, "owner")).isEqualTo(valid);
+    for (char unit : new char[] {Character.MIN_HIGH_SURROGATE, Character.MIN_LOW_SURROGATE}) {
+      assertThatThrownBy(() -> InitialGameplayReleaseModel.requiredText("owner-" + unit, "owner"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("well-formed UTF-16");
+    }
+  }
+
+  @Test
+  void nullProofEntriesFailValidationBeforeOrdering() {
+    assertThatThrownBy(() -> new LayoutDescriptor("layout", "r1", DIGEST, Arrays.asList(0, null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("invalid id");
+    var valid = evidence(scope(UUID.randomUUID()));
+    var layout = valid.issuerLayout();
+    assertThatThrownBy(
+            () ->
+                new IssuerLayoutProof(
+                    layout.layoutOperationId(),
+                    layout.descriptor(),
+                    layout.accountIssuerSourceIdentity(),
+                    layout.operationFence(),
+                    layout.coverageFence(),
+                    layout.inventoryRevision(),
+                    layout.inventoryDigest(),
+                    Arrays.asList(layout.acknowledgements().getFirst(), null),
+                    layout.capacityVector()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("null elements");
+    var writers = valid.writerFencing();
+    assertThatThrownBy(
+            () ->
+                new WriterFenceProof(
+                    writers.inventory(),
+                    writers.legacyWriterDisposition(),
+                    Arrays.asList(writers.writerAcknowledgements().getFirst(), null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("null elements");
+  }
 
   @Test
   void scopeKeepsKubernetesTargetSeparateFromPlayableStateNamespace() {

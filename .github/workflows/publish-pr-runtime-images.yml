@@ -121,7 +121,10 @@ jobs:
                     producer.run_id !== sourceId ||
                     (Object.hasOwn(producer, "run_attempt") && producer.run_attempt !== sourceAttempt) ||
                     producer.head_sha !== run.head_sha || producer.status !== "completed" || producer.conclusion !== "success") {
-                  throw new Error("publication requires one successful runtime image job from the exact source attempt");
+                  throw new Error(
+                    "publication requires one successful runtime image job from the exact source attempt" +
+                    ". If the current attempt lacks producer evidence after Re-run failed jobs, use Re-run all jobs on the source run while the comparison is current.",
+                  );
                 }
                 if ((producer.steps ?? []).some(step =>
                     step.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
@@ -140,7 +143,10 @@ jobs:
                     !positiveInteger(artifact.id) || artifact.name !== artifactName ||
                     artifact.expired !== false || artifact.workflow_run?.id !== sourceId ||
                     !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "")) {
-                  throw new Error("publication requires one immutable exact-attempt artifact and SHA256");
+                  throw new Error(
+                    "publication requires one immutable exact-attempt artifact and SHA256" +
+                    ". If the current attempt lacks producer evidence after Re-run failed jobs, use Re-run all jobs on the source run while the comparison is current.",
+                  );
                 }
                 core.setOutput("artifact_name", artifactName);
                 core.setOutput("artifact_id", String(artifact.id));

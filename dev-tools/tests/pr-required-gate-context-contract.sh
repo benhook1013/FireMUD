@@ -158,18 +158,34 @@ def effective_group(group, action, base_ref, workflow_name="Required Gate", *, p
         "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else f"refs/pull/{pr_number}/merge"),
     }
 
+    tokens = re.compile(
+        r"""(?P<single>'(?:''|[^'])*')|(?P<double>"(?:\\.|[^"\\])*")|"""
+        + r"(?P<context>\b(?:" + "|".join(map(re.escape, values)) + r")\b)"
+        + r"|(?P<operator>&&|\|\|)|(?P<keyword>\b(?:null|true|false)\b)"
+    )
+    translations = {"&&": " and ", "||": " or ", "null": "None", "true": "True", "false": "False"}
+
+    def translate(token):
+        value = token[0]
+        if token.lastgroup == "single":
+            return repr(value[1:-1].replace("''", "'"))
+        if token.lastgroup == "double":
+            return value
+        if token.lastgroup == "context":
+            return values[value]
+        return translations[value]
+
     def render(match):
-        body = match[1].strip()
-        for key, value in values.items():
-            body = body.replace(key, value)
-        body = body.replace("&&", " and ").replace("||", " or ")
-        body = re.sub(r"\b(null|true|false)\b", lambda token: {
-            "null": "None", "true": "True", "false": "False",
-        }[token[0]], body)
+        body = tokens.sub(translate, match[1].strip())
         tree = ast.parse(body, mode="eval")
         return str(interpret_selector(tree.body))
     return re.sub(r"\$\{\{(.*?)\}\}", render, group)
 
+
+assert effective_group("${{ 'null' == 'None' && 'failed' || 'ok' }}", None, None) == "ok"
+assert effective_group("${{ 'true && false' }}", None, None) == "true && false"
+assert effective_group("${{ 'github.ref' }}", None, None) == "github.ref"
+assert effective_group("${{ 'it''s null' }}", None, None) == "it's null"
 
 def concurrency_group_collisions(rendered_groups):
     owners = {}

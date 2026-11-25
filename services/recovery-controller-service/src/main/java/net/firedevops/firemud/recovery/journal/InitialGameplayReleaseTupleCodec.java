@@ -51,7 +51,7 @@ public final class InitialGameplayReleaseTupleCodec {
     try {
       // Digest encoding preserves full-width integer identities instead of JCS binary64 rounding.
       canonical =
-          Rfc8785CanonicalJson.canonicalizeUtf8(
+          Rfc8785CanonicalJson.canonicalizeStrictUtf8(
               digestMapper.writeValueAsString(
                   new DigestTuple("initial-gameplay-release-tuple/v2", value)));
     } catch (IOException exception) {

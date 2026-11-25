@@ -150,8 +150,16 @@ class InitialGameplayRecoverCodecTest {
     rejects(WIRE.replace("\"initial\"", "\"" + "x".repeat(1025) + "\""));
     rejects(WIRE + " ".repeat(InitialGameplayRecoverCodec.MAX_RAW_BYTES));
     rejects(WIRE + "{}");
-    assertThatThrownBy(() -> InitialGameplayRecoverCodec.decode(new byte[] {(byte) 0xc3, 0x28}))
-        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsNonUtf8ObjectWithTheDecoderDiagnostic() {
+    byte[] malformed = WIRE.getBytes(StandardCharsets.UTF_8);
+    int offset = WIRE.indexOf("\"detail\":\"initial\"") + "\"detail\":\"".length();
+    malformed[offset] = (byte) 0xc3;
+    assertThatThrownBy(() -> InitialGameplayRecoverCodec.decode(malformed))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Recover request must be valid UTF-8");
   }
 
   @Test

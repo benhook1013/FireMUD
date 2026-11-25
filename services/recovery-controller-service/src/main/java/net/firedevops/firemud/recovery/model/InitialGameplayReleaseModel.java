@@ -786,19 +786,31 @@ public final class InitialGameplayReleaseModel {
     if (value.indexOf(0) >= 0) {
       throw new IllegalArgumentException(name + " must not contain NUL");
     }
+    for (int index = 0; index < value.length(); index++) {
+      char unit = value.charAt(index);
+      if (Character.isHighSurrogate(unit)) {
+        if (++index < value.length() && Character.isLowSurrogate(value.charAt(index))) {
+          continue;
+        }
+        throw new IllegalArgumentException(name + " must contain well-formed UTF-16");
+      }
+      if (Character.isLowSurrogate(unit)) {
+        throw new IllegalArgumentException(name + " must contain well-formed UTF-16");
+      }
+    }
     return value;
   }
 
   private static List<Integer> sortedUniquePositiveIds(
       List<Integer> values, String name, boolean allowZero) {
     Objects.requireNonNull(values, name + " must not be null");
-    List<Integer> sorted = values.stream().sorted().toList();
-    if (sorted.isEmpty()) {
+    if (values.isEmpty()) {
       throw new IllegalArgumentException(name + " must not be empty");
     }
-    if (sorted.stream().anyMatch(value -> value == null || (allowZero ? value < 0 : value <= 0))) {
+    if (values.stream().anyMatch(value -> value == null || (allowZero ? value < 0 : value <= 0))) {
       throw new IllegalArgumentException(name + " contains an invalid id");
     }
+    List<Integer> sorted = values.stream().sorted().toList();
     if (sorted.stream().distinct().count() != sorted.size()) {
       throw new IllegalArgumentException(name + " contains duplicate ids");
     }
@@ -817,6 +829,9 @@ public final class InitialGameplayReleaseModel {
   private static List<PartitionAcknowledgement> sortedAcknowledgements(
       List<PartitionAcknowledgement> values) {
     Objects.requireNonNull(values, "acknowledgements must not be null");
+    if (values.stream().anyMatch(Objects::isNull)) {
+      throw new IllegalArgumentException("acknowledgements must not contain null elements");
+    }
     List<PartitionAcknowledgement> sorted =
         values.stream()
             .sorted(Comparator.comparingInt(PartitionAcknowledgement::partitionId))
@@ -831,6 +846,9 @@ public final class InitialGameplayReleaseModel {
   private static List<WriterFenceAcknowledgement> sortedWriterAcknowledgements(
       List<WriterFenceAcknowledgement> values) {
     Objects.requireNonNull(values, "writerAcknowledgements must not be null");
+    if (values.stream().anyMatch(Objects::isNull)) {
+      throw new IllegalArgumentException("writerAcknowledgements must not contain null elements");
+    }
     List<WriterFenceAcknowledgement> sorted =
         values.stream()
             .sorted(Comparator.comparing(WriterFenceAcknowledgement::writerIdentity))
