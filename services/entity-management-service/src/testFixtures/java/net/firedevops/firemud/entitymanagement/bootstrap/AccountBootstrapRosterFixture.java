@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -21,7 +22,6 @@ import net.firedevops.firemud.common.testing.PlayerCreatedPublishedPolicyFixture
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
-import net.firedevops.firemud.common.world.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterReadRequest;
