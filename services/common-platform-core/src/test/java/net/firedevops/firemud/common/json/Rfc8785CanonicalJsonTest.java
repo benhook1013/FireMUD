@@ -26,6 +26,24 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
+  void strictCanonicalizationPreservesNullAndCanonicalBytesAcrossObjectScopes() throws Exception {
+    String input = "{\"z\":{\"same\":1E30},\"same\":null,\"a\":[{\"same\":4.50}]}";
+    String expected = "{\"a\":[{\"same\":4.5}],\"same\":null,\"z\":{\"same\":1e+30}}";
+
+    assertThat(Rfc8785CanonicalJson.canonicalizeStrictUtf8(input))
+        .isEqualTo(expected.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void strictCanonicalizationRequiresUniqueNamesWithinEachObject() {
+    String malformedRecord = "{\"label\":\"example\",\"label\":\"other\",\"note\":null}";
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(malformedRecord))
+        .isInstanceOf(java.io.IOException.class)
+        .hasMessageContaining("Duplicate field 'label'");
+  }
+
+  @Test
   void sortsUnicodeObjectKeysByRawUtf16CodeUnits() throws Exception {
     String input =
         """

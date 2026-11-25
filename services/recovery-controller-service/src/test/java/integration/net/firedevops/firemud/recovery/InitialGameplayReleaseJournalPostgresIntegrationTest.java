@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.RecoveryControllerServiceApplication;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
@@ -438,6 +439,39 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isNotNull()
           .extracting(result -> result.getStatus())
           .isEqualTo(Status.UP);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void migratedPackagedDatabaseInReadOnlyModeIsNotJournalReadyButProcessIsLive()
+      throws Exception {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      try (var migration = startPackagedApplication(true)) {
+        assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
+      }
+      dsl.execute("ALTER DATABASE " + database + " SET default_transaction_read_only = on");
+      try (var application = startPackagedApplication(false);
+          var readOnly = application.getBean(DataSource.class).getConnection();
+          var statement = readOnly.prepareStatement("SHOW transaction_read_only");
+          var result = statement.executeQuery()) {
+        assertThat(result.next()).isTrue();
+        assertThat(result.getString(1)).isEqualTo("on");
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+        var health = application.getBean(HealthEndpoint.class);
+        assertThat(health.healthForPath("readiness"))
+            .isNotNull()
+            .extracting(probe -> probe.getStatus())
+            .isEqualTo(Status.DOWN);
+        assertThat(health.healthForPath("liveness"))
+            .isNotNull()
+            .extracting(probe -> probe.getStatus())
+            .isEqualTo(Status.UP);
+      }
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
