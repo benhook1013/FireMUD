@@ -171,6 +171,14 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
   }
 
   protected void bridge(boolean authorizeCapacity, int maximumRecords, long maximumBindingBytes) {
+    bridge(authorizeCapacity, maximumRecords, maximumBindingBytes, null);
+  }
+
+  protected void bridge(
+      boolean authorizeCapacity,
+      int maximumRecords,
+      long maximumBindingBytes,
+      Integer maximumRetainedRecords) {
     regionBinding =
         CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
             fixture.dsl(),
@@ -183,7 +191,8 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
     assertThat(regionBinding.owner().bridge(regionBinding.installation()).obligation())
         .isEqualTo(regionBinding.acknowledgement().obligation());
     var assignment = tags.assignmentForTransition(fixture.transitionId());
-    initializeCapacityEvidenceBudget(assignment.tenantId(), maximumRecords, maximumBindingBytes);
+    initializeCapacityEvidenceBudget(
+        assignment.tenantId(), maximumRecords, maximumBindingBytes, maximumRetainedRecords);
     // Explicit controlled Account content for this native owner component proof. The separate
     // Account composition traverses actual evaluation/commit and is the complete capacity path.
     if (controlledCapacity == null) {
@@ -235,16 +244,17 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
   }
 
   protected void initializeCapacityEvidenceBudget(
-      UUID tenantId, int maximumRecords, long maximumBindingBytes) {
+      UUID tenantId, int maximumRecords, long maximumBindingBytes, Integer maximumRetainedRecords) {
     fixture
         .dsl()
         .execute(
             "INSERT INTO game_session_capacity_evidence_budget"
-                + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
-                + " ON CONFLICT DO NOTHING",
+                + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records)"
+                + " VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
             tenantId,
             maximumRecords,
-            maximumBindingBytes);
+            maximumBindingBytes,
+            maximumRetainedRecords);
     fixture
         .dsl()
         .execute(
