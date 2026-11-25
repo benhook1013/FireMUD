@@ -52,27 +52,25 @@ class InitialGameplayReleaseModelTest {
         .hasMessageContaining("invalid id");
     var valid = evidence(scope(UUID.randomUUID()));
     var layout = valid.issuerLayout();
-    assertThatThrownBy(
-            () ->
-                new IssuerLayoutProof(
-                    layout.layoutOperationId(),
-                    layout.descriptor(),
-                    layout.accountIssuerSourceIdentity(),
-                    layout.operationFence(),
-                    layout.coverageFence(),
-                    layout.inventoryRevision(),
-                    layout.inventoryDigest(),
-                    Arrays.asList(layout.acknowledgements().getFirst(), null),
-                    layout.capacityVector()))
+    assertThatThrownBy(() ->
+            new IssuerLayoutProof(
+                layout.layoutOperationId(),
+                layout.descriptor(),
+                layout.accountIssuerSourceIdentity(),
+                layout.operationFence(),
+                layout.coverageFence(),
+                layout.inventoryRevision(),
+                layout.inventoryDigest(),
+                Arrays.asList(layout.acknowledgements().getFirst(), null),
+                layout.capacityVector()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("null elements");
     var writers = valid.writerFencing();
-    assertThatThrownBy(
-            () ->
-                new WriterFenceProof(
-                    writers.inventory(),
-                    writers.legacyWriterDisposition(),
-                    Arrays.asList(writers.writerAcknowledgements().getFirst(), null)))
+    assertThatThrownBy(() ->
+            new WriterFenceProof(
+                writers.inventory(),
+                writers.legacyWriterDisposition(),
+                Arrays.asList(writers.writerAcknowledgements().getFirst(), null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("null elements");
   }
