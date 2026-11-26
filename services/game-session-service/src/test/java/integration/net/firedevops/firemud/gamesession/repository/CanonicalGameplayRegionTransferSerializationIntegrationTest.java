@@ -224,6 +224,41 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void denialSettlementRequiresTheCurrentSelectedOwner(boolean ownerReplaced) throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      var original = proof.execution;
+      proof.precharge(original);
+      var selected =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+              original.selectedOwnerId(), original.selectedOwnerFence());
+      UUID denial = UUID.randomUUID();
+      Runnable settle =
+          () ->
+              proof
+                  .capacity(proof.sql)
+                  .settleDeniedCharge(
+                      proof.admission, original.request(), selected, denial, transferDeadline());
+      if (ownerReplaced) {
+        proof.rawReplaceOwner("denial-settlement-successor", "e".repeat(64));
+        assertThatThrownBy(settle::run).isInstanceOf(IllegalStateException.class);
+      } else {
+        settle.run();
+        settle.run();
+      }
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      original.request().admissionAttemptId())
+                  .get(0, UUID.class))
+          .isEqualTo(ownerReplaced ? null : denial);
+    }
+  }
+
   @Test
   void expiredFreshEvidenceCannotChargeButExactRetainedDenialStillReplays() throws Exception {
     try (var proof = new TransferSqlProof()) {

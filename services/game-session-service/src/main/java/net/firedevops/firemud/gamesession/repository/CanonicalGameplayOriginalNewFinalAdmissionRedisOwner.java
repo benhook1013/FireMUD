@@ -1380,14 +1380,23 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(accountBarrierKey);
       wipe(issuerBarrierKey);
       if (connection != null) {
-        try {
-          scopedClose.accept(
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
-        } catch (RuntimeException | Error closeFailure) {
-          wipe(readback);
-          throw closeFailure;
-        }
+        var acquiredConnection = connection;
+        closeReadbackOrWipe(
+            () ->
+                scopedClose.accept(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(
+                        acquiredConnection)),
+            readback);
       }
+    }
+  }
+
+  static void closeReadbackOrWipe(Runnable close, byte[] readback) {
+    try {
+      close.run();
+    } catch (RuntimeException | Error closeFailure) {
+      wipe(readback);
+      throw closeFailure;
     }
   }
 
