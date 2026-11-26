@@ -392,6 +392,7 @@ write_jooq_throttled_cause
 write_jooq_wrapper ''
 run_case game-logic-service 0
 assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :game-logic-service:check -PfullCheck --profile --info --console=plain"
 assert_output_contains "refreshed-captured-jooq-resolution"
 
 new_case captured-jooq-codegen-mixed-maven-errors
@@ -475,7 +476,7 @@ write_annotation_processor_429_cause
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
 run_case common-platform-core 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
 assert_rate_limit_delay
 
 for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinate compile-started; do
@@ -523,6 +524,7 @@ write_compile_classpath_429_cause
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath; exit 0'
 run_case account-service 0
 assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
 assert_rate_limit_delay
 assert_output_contains "refreshed-compile-classpath"
 
@@ -539,6 +541,41 @@ for mutation in auth wrong-module compile-started; do
   run_case account-service 1
   assert_no_retry
 done
+
+# A same-module cross-service test source set has its own compile classpath;
+# qualify its JavaCompile boundary without accepting a neighboring config.
+write_cross_service_test_429_cause() {
+  cat > "$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of task `:world-management-service:compileCrossServiceTestJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'
+> Could not resolve all files for configuration ':world-management-service:crossServiceTestCompileClasspath'.
+   > Could not download spring-boot-4.2.0.jar (org.springframework.boot:spring-boot:4.2.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/4.2.0/spring-boot-4.2.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/4.2.0/spring-boot-4.2.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option for the stack trace.
+LOG
+}
+
+new_case cross-service-test-classpath-maven-429
+write_cross_service_test_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-cross-service-test-classpath; exit 0'
+run_case world-management-service 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :world-management-service:check -PfullCheck --profile --info --console=plain"
+assert_rate_limit_delay
+assert_output_contains "refreshed-cross-service-test-classpath"
+
+new_case cross-service-test-classpath-maven-429-wrong-configuration
+write_cross_service_test_429_cause
+sed -i 's/:world-management-service:crossServiceTestCompileClasspath/:world-management-service:testCompileClasspath/' "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+run_case world-management-service 1
+assert_no_retry
 
 # The common-test-support failure carries multiple Maven Central JAR chains
 # under one test fixtures classpath root, before any fixture compilation.
@@ -587,7 +624,7 @@ for retry_after in absent 08; do
   run_case common-test-support 0
   assert_call_count 2
   assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
-  assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
+  assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
   if [[ "$retry_after" == absent ]]; then
     assert_rate_limit_delay
   else
@@ -933,6 +970,7 @@ fi
 echo "refreshed-http-429-resolved"; exit 0'
 run_case common-web-support 0
 assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "HTTP 429 did not observe Retry-After"
 
 # Retain the PR 3220 buildSrc configuration failure, including the plugin
@@ -985,7 +1023,7 @@ write_buildsrc_wrapper
 run_case logging-admin-service 0
 assert_call_count 2
 assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
 assert_rate_limit_delay
 assert_output_contains "buildsrc-refresh-result"
 
