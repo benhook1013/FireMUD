@@ -150,7 +150,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
       assertThat(retiredDriver).isNotNull().isSameAs(initiallyIdleDriver);
       var physicallyReleased =
           (CompletableFuture<?>)
-              ReflectionTestUtils.getField(capturedBudget.get(), "physicallyReleased");
+              java.util.Objects.requireNonNull(
+                  ReflectionTestUtils.getField(capturedBudget.get(), "physicallyReleased"));
       physicallyReleased.get(5, TimeUnit.SECONDS);
       assertThat(retiredDriver.isClosed()).isTrue();
       org.awaitility.Awaitility.await()

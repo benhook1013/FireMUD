@@ -169,7 +169,8 @@ classify_failure_body() {
         }
         next
       }
-      if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
+      if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration) ||
+           (compile_classpath_wrapper && resolved_configuration == expected_compile_configuration)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
@@ -291,6 +292,18 @@ classify_failure_body() {
         cache_cause++
         next
       }
+      # Gradle 9.9 can surface compileClasspath downloads while serializing
+      # JavaCompile.classpath. Admit only this typed, same-module wrapper.
+      if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[[:alnum:]-]+:compileJava` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultResolvableConfiguration\047$/) {
+        module = line
+        sub(/^.* of task `/, "", module)
+        sub(/:compileJava`.*$/, "", module)
+        if (compile_classpath_module != "" && compile_classpath_module != module) invalid++
+        compile_classpath_module = module
+        expected_compile_configuration = module ":compileClasspath"
+        compile_classpath_wrapper++
+        next
+      }
       if (line ~ /^Execution failed for task \047:[[:alnum:]-]+:generateJooq\047 \(registered by plugin \047net\.firedevops\.firemud\.jooq-conventions\047\)\.$/) {
         task_reference = line
         sub(/^Execution failed for task \047/, "", task_reference)
@@ -362,6 +375,7 @@ classify_failure_body() {
           configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
         }
         resolved_configuration = configuration_name
+        if (compile_classpath_wrapper && configuration_name != expected_compile_configuration) invalid++
         if (configuration_name == "classpath") buildsrc_classpath++
         if (configuration_name ~ /^:[[:alnum:]-]+:jooqCodegen$/) {
           jooq_codegen_roots++
@@ -448,11 +462,21 @@ classify_failure_body() {
              jooq_jar_resource != 1 || jooq_jar_get != 1 ||
              coordinates != 1 || repository_requests != 2 || searched ||
              jooq_wrapper_causes != 1)) ||
+          (compile_classpath_wrapper && jar_downloads &&
+            (compile_classpath_wrapper != 1 || compile_classpath_module == "" ||
+             resolver_roots != 1 || resolved_configuration != expected_compile_configuration ||
+             cache_cause > 1 || compile_task_failure || jar_downloads == 0 ||
+             coordinates != jar_downloads || transient != jar_downloads ||
+             repository_requests != 2 * jar_downloads || searched || repository_urls ||
+             other_cause_lines != 2 ||
+             buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom ||
+             mavenrepo_disabled || protoc_connect_timeout || jooq_wrapper_causes || jooq_execution_causes ||
+             wrapped_resolution_causes || fixtures_resolver)) ||
           ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
             (buildsrc_configuration != 1 || buildsrc_context == 0 ||
              resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
              cache_cause || compile_task_failure || searched)) ||
-          (cache_summary && (cache_cause == 0 || cache_cause > 2)) ||
+          (cache_summary && ((cache_cause == 0 && !compile_classpath_wrapper) || cache_cause > 2)) ||
           (compile_task_failure && compile_classpath_roots == 0) ||
           (wrapped_resolution_causes &&
             (wrapped_resolution_causes != 1 || resolver_roots != 1 ||
@@ -469,7 +493,7 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
+      if (wrapped_resolution_causes || ((compile_classpath_wrapper || fixtures_resolver) && jar_downloads)) print "before-compile"
       exit 0
     }
   ' "$log_path"
