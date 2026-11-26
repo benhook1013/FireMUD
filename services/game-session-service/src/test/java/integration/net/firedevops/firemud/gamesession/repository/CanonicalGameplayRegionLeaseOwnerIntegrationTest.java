@@ -870,6 +870,72 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void freshDeadlineReacquiresLeaseForExactRetainedTimelineWithoutCreationPermission()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var repository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          repository.prepareInitialTimeline(
+              provisionalEvidence(world.request()),
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isPresent();
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
+
+      byte[] metaKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      // Represent a retained epoch-one baseline after its lease is no longer present.
+      redis.admin().hset(metaKey, ascii("region_epoch"), ascii("1"));
+      redis.admin().hset(metaKey, ascii("current_tick_id"), ascii("-1"));
+      redis.admin().hset(metaKey, ascii("current_tick_state"), ascii("APPLIED"));
+      redis
+          .admin()
+          .hset(
+              metaKey,
+              ascii("first_timeline_operation_id"),
+              ascii(preparation.operationId().toString()));
+      redis
+          .admin()
+          .hset(metaKey, ascii("first_timeline_source_digest"), ascii(preparation.sourceDigest()));
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      var deadline = System.currentTimeMillis() + 10_000L;
+      initializeTimelineWithoutCreationPermission(
+          redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline), preparation, "exact-renewal");
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("string");
+      assertThat(redis.admin().pexpiretime(leaseKey)).isBetween(1L, deadline);
+      assertThat(redis.admin().hlen(metaKey)).isEqualTo(5L);
+      assertThat(redis.admin().hget(metaKey, ascii("first_timeline_operation_id")))
+          .containsExactly(ascii(preparation.operationId().toString()));
+      assertThat(redis.admin().hget(metaKey, ascii("first_timeline_source_digest")))
+          .containsExactly(ascii(preparation.sourceDigest()));
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();

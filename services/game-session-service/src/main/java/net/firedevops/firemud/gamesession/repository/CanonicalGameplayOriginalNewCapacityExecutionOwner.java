@@ -259,18 +259,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     within(
         deadline,
         owner -> {
+          var candidate = source.candidate();
           var assignment =
               owner.scopedTags().assignmentForTransition(request.identity().admissionId());
           owner
               .sql()
-              .transaction(configuration ->
-                  CanonicalGameplayCapacityEvidenceBudget.settleDenied(
-                      DSL.using(configuration),
-                      request,
-                      source.candidateDigest(),
-                      selected,
-                      assignment.tenantGameplayTag(),
-                      accountDenialId));
+              .transaction(configuration -> {
+                var tx = DSL.using(configuration);
+                requireSelectedOwner(tx, candidate, selected);
+                CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                    tx,
+                    request,
+                    source.candidateDigest(),
+                    selected,
+                    assignment.tenantGameplayTag(),
+                    accountDenialId);
+              });
           return null;
         });
   }
