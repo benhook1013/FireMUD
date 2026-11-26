@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -842,6 +843,69 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(proof.begin()).isEqualTo(id);
       assertThat(proof.captureAndFence(id)).isEmpty();
       assertThat(proof.physicalExecutionExists(last.execution())).isFalse();
+    }
+  }
+
+  @Test
+  void installationDoesNotReturnServingCapabilityWhenAnyCompletedMarkerIsLost() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      var secondExecution = proof.newIndependentControlledOriginExecution();
+      proof.seedUndeliveredDispatch(secondExecution);
+      UUID id = proof.begin();
+      assertThat(proof.captureAndFence(id)).hasSize(2);
+      proof.verifyPage(id);
+      boolean verificationComplete =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(verificationComplete).isTrue();
+
+      var lostAfterInstall = new AtomicBoolean();
+      var listener =
+          new DefaultExecuteListener() {
+            @Override
+            public void executeEnd(ExecuteContext context) {
+              String sql = context.sql();
+              if (sql != null
+                  && sql.stripLeading()
+                      .toLowerCase(Locale.ROOT)
+                      .startsWith("update game_session_region_runtime_status")
+                  && lostAfterInstall.compareAndSet(false, true)) {
+                // Model a retained marker disappearing after SQL installs the successor but
+                // before the coordinator can return its serving capability.
+                proof.losePhysicalExecution(secondExecution);
+              }
+            }
+          };
+      DSLContext installingSql = DSL.using(proof.sql.configuration().deriveAppending(listener));
+      var transfers = proof.transfers(installingSql);
+      var observations =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(proof.clock)
+              .receiver(transfers, proof.tags);
+      var coordinator =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              installingSql, proof.clock, transfers, proof.capacity(installingSql), observations);
+
+      assertThatThrownBy(() ->
+              coordinator.install(
+                  id,
+                  proof.scope,
+                  proof.prior,
+                  "e".repeat(64),
+                  "game-session-service",
+                  "sql-proof-successor",
+                  transferDeadline()))
+          .isInstanceOf(IllegalStateException.class);
+
+      assertThat(lostAfterInstall).isTrue();
+      assertThat(proof.currentOwner().ownerInstanceId()).isEqualTo("sql-proof-successor");
+      assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("COMPLETED");
+      assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
+      assertThat(proof.physicalExecutionExists(secondExecution)).isFalse();
+      assertThatThrownBy(() ->
+              coordinator.recoverCompleted(
+                  id, "sql-proof-successor", "e".repeat(64), transferDeadline()))
+          .isInstanceOf(IllegalStateException.class);
     }
   }
 
