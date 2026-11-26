@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
+REPEATABLE_SQL_RE = re.compile(r"^R__.+\.sql$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
@@ -249,7 +250,9 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                    for path in properties):
                 return None
             exact_guard_paths = {"spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
-                                 "spring.flyway.sqlmigrationsuffixes"}
+                                 "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
+                                 "spring.flyway.sqlmigrationseparator",
+                                 "spring.flyway.repeatablesqlmigrationprefix"}
             guard_paths = {
                 path for path in properties
                 if path in exact_guard_paths
@@ -283,7 +286,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if flyway.get("target", "latest") != "latest":
         # Qualify the complete packaged history, not a pinned migration prefix.
         return None
-    locations = flyway.get("locations", [])
+    locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
         locations = locations.split(",")
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
@@ -292,6 +295,10 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if isinstance(suffixes, str):
         suffixes = [suffixes]
     if not isinstance(suffixes, list) or suffixes != [".sql"]:
+        return None
+    if (flyway.get("sqlmigrationprefix", "V") != "V"
+            or flyway.get("sqlmigrationseparator", "__") != "__"
+            or flyway.get("repeatablesqlmigrationprefix", "R") != "R"):
         return None
     return {location.strip() for location in locations}
 
@@ -317,6 +324,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                 issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
             if "/" in path.removeprefix(recovery_sql_root):
                 issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
+            elif not (VERSION_RE.fullmatch(Path(path).name) or REPEATABLE_SQL_RE.fullmatch(Path(path).name)):
+                issues.append(f"{path}: recovery SQL must use Flyway's canonical V* or R* migration filename")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -434,6 +443,13 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    for setting, override in (("sql-migration-prefix", "M"),
+                              ("sql-migration-separator", "_"),
+                              ("repeatable-sql-migration-prefix", "Q")):
+        check(f"unsupported Flyway {setting} override", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"    {setting}: {override}\n".encode(),
+        }, recovery_history, "packaged Spring configuration must enable Flyway")
     check("packaged property override cannot qualify recovery history", {
         **recovery_history,
         recovery_config.removesuffix(".yml") + ".properties": b"spring.flyway.enabled=false\n",
@@ -479,6 +495,20 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
     }, recovery_history, "packaged Spring configuration must enable Flyway")
+    check("unrecognized recovery SQL filename is rejected", {
+        **recovery_history, recovery + "journal_extension.sql": b"-- extension",
+    }, recovery_history, "recovery SQL must use Flyway's canonical V* or R* migration filename")
+    check("canonical repeatable recovery SQL is accepted", {
+        **recovery_history, recovery + "R__refresh_journal.sql": b"-- repeatable",
+    }, recovery_history, None)
+    ordinary_without_locations = {
+        **recovery_history,
+        recovery_config: b"spring:\n  flyway:\n    enabled: true\n",
+        "services/recovery-controller-service/src/main/resources/db/migration/V1__first.sql": b"-- first",
+        "services/recovery-controller-service/src/main/resources/db/migration/V1__duplicate.sql": b"-- duplicate",
+    }
+    check("absent Flyway locations default to ordinary migration directory",
+          ordinary_without_locations, None, "duplicate version V1")
     ordinary = "services/recovery-controller-service/src/main/resources/db/migration/V2__ordinary.sql"
     combined_history = {**recovery_history, ordinary: b"-- ordinary"}
     combined_locations = recovery_settings.replace(
@@ -589,6 +619,9 @@ def run_self_test() -> None:
         check("recovery location in a profile cannot qualify the default history",
               {recovery + "V1__journal.sql": b"-- journal", profile_path: recovery_settings},
               recovery_history, "historical effective migration no longer applied")
+        check("Flyway naming override in a profile is intentionally unsupported",
+              {**recovery_history, profile_path: b"spring.flyway.sql-migration-prefix: M\n"},
+              recovery_history, "packaged Spring configuration must enable Flyway")
     for disabled in (
         recovery_settings.replace(b"    locations:", b"    enabled: false\n    locations:"),
         recovery_list_settings.replace(b"enabled: true", b'enabled: "false"'),

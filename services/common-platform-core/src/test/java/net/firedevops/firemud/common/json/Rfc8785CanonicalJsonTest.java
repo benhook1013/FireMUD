@@ -52,6 +52,14 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
+  void strictCanonicalizationRejectsOversizedStringValuesBeforeCanonicalizing() {
+    String oversizedString = "\"" + "a".repeat(20_000_001) + "\"";
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(oversizedString))
+        .isInstanceOf(java.io.IOException.class);
+  }
+
+  @Test
   void strictCanonicalizationRejectsDuplicateNamesAfterNullValues() {
     String duplicateAfterNull = "{\"label\":null,\"label\":\"other\"}";
 

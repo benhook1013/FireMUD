@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.json;
 
 import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import java.io.IOException;
@@ -43,8 +44,13 @@ public final class Rfc8785CanonicalJson {
     // Check names while streaming, before canonicalization materializes objects.
     // Retain the original input for JCS so this pass never coerces numbers or values.
     try (var parser = STRICT_PROPERTY_NAMES.createParser(json)) {
-      while (parser.nextToken() != null) {
-        // Consume every token, including nested object names.
+      var token = parser.nextToken();
+      while (token != null) {
+        if (token == JsonToken.VALUE_STRING) {
+          // Advancing past a string token can skip its contents without applying maxStringLength.
+          STRICT_INPUT_LIMITS.validateStringLength(parser.getTextLength());
+        }
+        token = parser.nextToken();
       }
     }
     var canonicalText = new JsonCanonicalizer(json).getEncodedString();
