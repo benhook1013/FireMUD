@@ -266,7 +266,9 @@ public final class InitialGameplayReleaseModel {
       String inventoryDigest) {
     public MigrationProof {
       migrationOperationId = requiredUuid(migrationOperationId, "migrationOperationId");
-      Objects.requireNonNull(disposition, "disposition must not be null");
+      if (disposition == null) {
+        throw new IllegalArgumentException("disposition must not be null");
+      }
       storageIdentity = requiredText(storageIdentity, "storageIdentity");
       inventoryRevision = requiredText(inventoryRevision, "inventoryRevision");
       inventoryDigest = requiredDigest(inventoryDigest, "inventoryDigest");

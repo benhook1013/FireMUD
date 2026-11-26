@@ -276,17 +276,24 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static InitialGameplayReleaseTupleCodec tupleCodec;
   private static InitialGameplayReleaseJournal journal;
 
-  @BeforeAll
-  static void setUp() throws Exception {
-    Flyway flyway =
+  private static Flyway journalFlyway(String jdbcUrl, String target) {
+    var configuration =
         Flyway.configure()
-            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .dataSource(jdbcUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
             .schemas(SCHEMA)
             .defaultSchema(SCHEMA)
             .table("flyway_schema_history_recovery_control")
             .placeholders(Map.of("serviceSchema", SCHEMA))
-            .locations("classpath:db/recovery-control-migration")
-            .load();
+            .locations("classpath:db/recovery-control-migration");
+    if (target != null) {
+      configuration.target(target);
+    }
+    return configuration.load();
+  }
+
+  @BeforeAll
+  static void setUp() throws Exception {
+    Flyway flyway = journalFlyway(POSTGRES.getJdbcUrl(), null);
     assertThat(flyway.info().all())
         .extracting(info -> info.getScript())
         .contains(
@@ -410,9 +417,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
-  @Test
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void migratedPackagedDatabaseWithMissingRejectionKeyIsNotReady() throws Exception {
+  void migratedPackagedDatabaseWithMissingRequiredKeyIsNotReady(boolean rejectionKey)
+      throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
@@ -422,12 +431,34 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             DriverManager.getConnection(
                 packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
-      DSL.using(connection, SQLDialect.POSTGRES)
-          .execute(
-              """
-              ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection
-              DROP CONSTRAINT initial_gameplay_release_attempt_rejection_pkey
-              """);
+      var packaged = DSL.using(connection, SQLDialect.POSTGRES);
+      if (rejectionKey) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection"
+                + " DROP CONSTRAINT initial_gameplay_release_attempt_rejection_pkey");
+      } else {
+        String lockKey =
+            packaged
+                .fetchSingle(
+                    """
+                    SELECT conname FROM pg_catalog.pg_constraint
+                    WHERE conrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
+                      AND contype = 'u'
+                      AND pg_get_constraintdef(oid) = 'UNIQUE (maintenance_lock_identity)'
+                    """)
+                .get(0, String.class);
+        packaged
+            .alterTable(DSL.name(SCHEMA, "initial_gameplay_release_operation"))
+            .dropConstraint(DSL.name(lockKey))
+            .execute();
+      }
+      assertThat(
+              DSL.using(connection, SQLDialect.POSTGRES)
+                  .fetchSingle(
+                      "SELECT count(*) FROM recovery_control.flyway_schema_history_recovery_control"
+                          + " WHERE success AND version IN ('1','2','3','4','5')")
+                  .get(0, Long.class))
+          .isEqualTo(5L);
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
       assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
           .isNotNull()
@@ -520,9 +551,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
-  @Test
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void writablePackagedDatabaseWithAutoCommitDisabledIsNotJournalReady() throws Exception {
+  void unhealthyPoolCannotQualifyWritablePackagedDatabase(boolean readOnly) throws Exception {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
     try {
@@ -530,10 +562,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
       }
       try (var application =
-              startPackagedApplication(false, "--spring.datasource.hikari.auto-commit=false");
+              startPackagedApplication(
+                  false,
+                  readOnly
+                      ? "--spring.datasource.hikari.read-only=true"
+                      : "--spring.datasource.hikari.auto-commit=false");
           var connection = application.getBean(DataSource.class).getConnection()) {
-        assertThat(connection.getAutoCommit()).isFalse();
-        assertThat(connection.isReadOnly()).isFalse();
+        assertThat(connection.getAutoCommit()).isEqualTo(readOnly);
+        assertThat(connection.isReadOnly()).isEqualTo(readOnly);
         assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
         assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
             .isNotNull()
@@ -1611,6 +1647,59 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void missingAcknowledgedDispatchTimestampDoesNotAllowNextEffectClaim() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry prepare = authorizedDispatch(base);
+    UUID operationId = prepare.effect().operationId();
+    var evidence =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(prepare, evidence, base.plusSeconds(6));
+    UUID handoffId = journal.findNextEffect(operationId).orElseThrow().effect().effectId();
+    String pendingHandoff = storedOutbox(operationId, handoffId);
+
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET last_dispatched_at = NULL WHERE outbox_id = ?",
+        prepare.outboxId());
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("no dispatch timestamp");
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("no dispatch timestamp");
+    assertThat(storedOutbox(operationId, handoffId)).isEqualTo(pendingHandoff);
+  }
+
+  @Test
+  void exactAcknowledgementReplayRequiresItsOwnRecordingTime() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry prepare = authorizedDispatch(base);
+    var evidence =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared",
+            base.plusSeconds(7));
+    journal.recordEffectReadback(prepare, evidence, base.plusSeconds(7));
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET acknowledged_at = CAST(? AS timestamptz) WHERE outbox_id = ?",
+        base.plusSeconds(6).atOffset(ZoneOffset.UTC),
+        prepare.outboxId());
+
+    assertThatThrownBy(() -> journal.recordEffectReadback(prepare, evidence, base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("after its recording time");
+  }
+
+  @Test
   void acknowledgedReadbackReplayRequiresTheEffectKindsSuccessfulStateInBothReplayBranches() {
     for (EffectKind effectKind : EffectKind.values()) {
       for (boolean exactReplay : List.of(true, false)) {
@@ -2396,16 +2485,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String canonicalUrl = POSTGRES.getJdbcUrl();
     String legacyUrl = canonicalUrl.substring(0, canonicalUrl.lastIndexOf('/') + 1) + database;
     try {
-      Flyway.configure()
-          .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
-          .schemas(SCHEMA)
-          .defaultSchema(SCHEMA)
-          .table("flyway_schema_history_recovery_control")
-          .placeholders(Map.of("serviceSchema", SCHEMA))
-          .locations("classpath:db/recovery-control-migration")
-          .target("1")
-          .load()
-          .migrate();
+      journalFlyway(legacyUrl, "1").migrate();
       try (Connection legacyConnection =
           DriverManager.getConnection(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
         DSLContext legacyDsl = DSL.using(legacyConnection, SQLDialect.POSTGRES);
@@ -2447,16 +2527,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                     "SELECT tuple_digest FROM recovery_control.initial_gameplay_release_transition WHERE operation_id=? AND verb='resume'",
                     V1_OPERATION_ID)
                 .get(0, String.class);
-        Flyway upgrade =
-            Flyway.configure()
-                .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
-                .schemas(SCHEMA)
-                .defaultSchema(SCHEMA)
-                .table("flyway_schema_history_recovery_control")
-                .placeholders(Map.of("serviceSchema", SCHEMA))
-                .locations("classpath:db/recovery-control-migration")
-                .target("2")
-                .load();
+        Flyway upgrade = journalFlyway(legacyUrl, "2");
         if (claimed) {
           assertThatThrownBy(() -> upgrade.migrate())
               .hasStackTraceContaining("requires no prior claims");
@@ -2544,16 +2615,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   ORDER BY installed_rank
                   """);
           assertThat(installedBeforeV3).hasSize(2);
-          Flyway dispatchAttemptUpgrade =
-              Flyway.configure()
-                  .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
-                  .schemas(SCHEMA)
-                  .defaultSchema(SCHEMA)
-                  .table("flyway_schema_history_recovery_control")
-                  .placeholders(Map.of("serviceSchema", SCHEMA))
-                  .locations("classpath:db/recovery-control-migration")
-                  .target("3")
-                  .load();
+          Flyway dispatchAttemptUpgrade = journalFlyway(legacyUrl, "3");
           if (malformed) {
             assertThatThrownBy(dispatchAttemptUpgrade::migrate)
                 .hasStackTraceContaining("ck_release_outbox_non_pending_attempt");
@@ -2599,16 +2661,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   WHERE success AND version IN ('1', '2', '3')
                   ORDER BY installed_rank
                   """);
-          Flyway provenanceUpgrade =
-              Flyway.configure()
-                  .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
-                  .schemas(SCHEMA)
-                  .defaultSchema(SCHEMA)
-                  .table("flyway_schema_history_recovery_control")
-                  .placeholders(Map.of("serviceSchema", SCHEMA))
-                  .locations("classpath:db/recovery-control-migration")
-                  .target("4")
-                  .load();
+          Flyway provenanceUpgrade = journalFlyway(legacyUrl, "4");
           provenanceUpgrade.migrate();
           provenanceUpgrade.validate();
           assertThat(provenanceUpgrade.info().current().getVersion().getVersion()).isEqualTo("4");
@@ -2634,16 +2687,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 assertThat(row.get("retry_provenance", String.class)).isNull();
               });
           assertThat(upgradedJournal.findNextEffect(V1_OPERATION_ID)).contains(dispatched);
-          var transportUpgrade =
-              Flyway.configure()
-                  .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
-                  .schemas(SCHEMA)
-                  .defaultSchema(SCHEMA)
-                  .table("flyway_schema_history_recovery_control")
-                  .placeholders(Map.of("serviceSchema", SCHEMA))
-                  .locations("classpath:db/recovery-control-migration")
-                  .target("5")
-                  .load();
+          var transportUpgrade = journalFlyway(legacyUrl, "5");
           transportUpgrade.migrate();
           transportUpgrade.validate();
           assertThat(transportUpgrade.info().current().getVersion().getVersion()).isEqualTo("5");

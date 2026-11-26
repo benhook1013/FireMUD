@@ -135,7 +135,9 @@ jobs:
                   const knownDoc = path => path === "README.md" || path === "AGENTS.md" || path === "mkdocs.yml" ||
                     path === "dev-tools/README.md" || (typeof path === "string" &&
                     /^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) &&
-                    !path.split("/").includes(".."));
+                    !path.split("/").includes("..")) || (typeof path === "string" &&
+                    /^services\/([a-z0-9-]+)\/README\.md$/.test(path) &&
+                    ALL_MODULES.includes(path.split("/")[1]));
                   const knownDesignDoc = path => knownDoc(path) && path.startsWith("design/");
                   const knownValidationPython = path => typeof path === "string" &&
                     /^dev-tools\/validation\/[A-Za-z0-9_./-]+\.py$/.test(path) &&
@@ -174,8 +176,8 @@ jobs:
                 validation_python_changed: scope.validationPythonChanged || fallbackPython,
                 postgres_runtime_proof_changed:
                   scope.postgresRuntimeProofChanged === undefined
-                    ? !lightweightFallback
-                    : (unqualifiedLegacyLightweight ? true : scope.postgresRuntimeProofChanged),
+                    ? (!lightweightFallback || fallbackPython)
+                    : (unqualifiedLegacyLightweight || fallbackPython ? true : scope.postgresRuntimeProofChanged),
                 lightweight_only: (moduleScopeAvailable || lightweightFallback) && scope.lightweightOnly,
               };
             } else {
@@ -416,6 +418,10 @@ jobs:
           fi
           python3 -m py_compile "${python_files[@]}"
           ruff check --force-exclude "${python_files[@]}"
+
+      - name: 🧪 Exercise Flyway checker fixtures
+        if: ${{ needs.changes.outputs.validation_python_changed == 'true' }}
+        run: python3 dev-tools/validation/check-flyway-versions.py --self-test
 
   dev-tool-contract-checks:
     name: Dev Tool Contract Checks

@@ -62,12 +62,15 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
       }
     }
   }
-  for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false] of [
-    [[{filename: "design/README.md"}], 1, true, undefined, false, true],
+  for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false,
+    expectsPostgresProof = !expected] of [
+    [[{filename: "design/README.md"}], 1, true, undefined, false, true, false],
     [[{filename: "README.md"}], 1, true],
+    [[{filename: "services/account-service/README.md"}], 1, true],
     [[{filename: "AGENTS.md"}], 1, true],
     [[{filename: "README.md", status: "renamed", previous_filename: "design/guide.md"}], 1, true, undefined, false, true],
-    [[{filename: "dev-tools/validation/check-flyway-versions.py"}], 1, true, undefined, true],
+    [[{filename: "dev-tools/validation/check-flyway-versions.py"}], 1, true, undefined, true, false, true],
+    [[{filename: "dev-tools/validation/test_validate_preview_artifact.py"}], 1, true, undefined, true, false, true],
     [[{filename: "dev-tools/validation/gradle-run-supervisor.py"}], 1, false],
     [[{filename: "services/recovery-controller-service/src/main/java/Example.java"}], 1, false],
     [[{filename: "README.md", status: "renamed", previous_filename: "services/new-service/Main.java"}], 1, false],
@@ -105,7 +108,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
       assert.equal(name, expectedClassifierPath, "workflow must not import an unexpected module");
       const classifierScope = {runAll: false, affectedModules: [],
         bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false};
-      if (drift === "head-after") classifierScope.postgresRuntimeProofChanged = false;
+      classifierScope.postgresRuntimeProofChanged = false;
       return {
         ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
         classifyGithubChangeScope: async (githubArgument, contextArgument) => {
@@ -123,8 +126,8 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.equal(outputs.python_changed, String(expectsPython));
     assert.equal(outputs.design_docs_changed, String(expectsDesignDocs));
     assert.equal(outputs.run_all, String(!expected));
-    assert.equal(outputs.postgres_runtime_proof_changed, String(!expected),
-      "an older lightweight classifier may skip PostgreSQL proof only after the complete fallback inventory is verified");
+    assert.equal(outputs.postgres_runtime_proof_changed, String(expectsPostgresProof),
+      "verified documentation may skip PostgreSQL proof, while validation Python stays conservative for stale classifiers");
     assert.deepEqual(JSON.parse(outputs.affected_modules), expected ? [] : ALL_MODULES);
     assert.deepEqual(JSON.parse(outputs.bootable_modules), expected ? [] : [...BOOTABLE_MODULES]);
   }
