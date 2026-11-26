@@ -651,7 +651,10 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       throws Exception {
     var authority = new ControlledAuthority();
     var provider = new TracedProvider(writer);
-    var contexts = client(provider, authority, 1);
+    // This successful replica-AOF composition allows fsync under shared-runner load.
+    // Short acknowledgement deadlines remain covered by the uncertain-closure cases.
+    var contexts =
+        client(provider, authority, new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000));
     var account = mock(CanonicalGameplayLoginAccountClient.class);
     var cleanup = cleanup(contexts, account);
     var owner = new InitialGameplayLoginOwner(contexts, cleanup, account);
@@ -706,6 +709,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     ownedKeys.add(InitialGameplayLoginContextRedisKeys.contextKey(original.callerContextId()));
 
     assertThat(outcome.status())
+        .as("original LOGIN physical observations: %s", provider.traces)
         .isEqualTo(InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING);
     assertThat(original.expectedAttemptFence()).isEqualTo(1L);
     assertThat(original.requestId().version()).isEqualTo(4);

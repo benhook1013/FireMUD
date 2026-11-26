@@ -101,10 +101,15 @@ else:
 
 # Exercise the reconciler's actual active-run filter, not a duplicate predicate.
 reconciler_source = reconciler_script_path.read_text(encoding="utf-8")
-active_filter = re.search(
-    r'--arg run_name [^\n]+ \'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
+active_filter_match = re.search(
+    r'--arg retry_run_suffix [^\n]+ \'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
     reconciler_source, re.S,
-).group(1)
+)
+if active_filter_match is None:
+    raise AssertionError("missing active preview filter in checked-in reconciler")
+active_filter = active_filter_match.group(1)
+
+
 def active_ids(row: dict[str, Any]) -> str:
     return subprocess.check_output([
         "jq", "-r", "--arg", "workflow_name", "PR Preview Environment",
@@ -113,6 +118,7 @@ def active_ids(row: dict[str, Any]) -> str:
         "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
         "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40,
         "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
+        "--arg", "retry_run_suffix", "pr-7-base-b-head-a-merge-c",
         "(" + active_filter + ") | [.id, .exact] | @tsv",
     ], input=json.dumps([row]), text=True).strip()
 active_run = {
