@@ -338,6 +338,10 @@ public final class InitialGameplayReleaseModel {
     public List<PartitionAcknowledgement> acknowledgements() {
       return List.copyOf(acknowledgements);
     }
+
+    public Map<Integer, Integer> capacityVector() {
+      return Collections.unmodifiableMap(new TreeMap<>(capacityVector));
+    }
   }
 
   public record WriterInventory(
