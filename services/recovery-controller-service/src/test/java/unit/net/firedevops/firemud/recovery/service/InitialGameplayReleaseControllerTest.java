@@ -358,6 +358,11 @@ class InitialGameplayReleaseControllerTest {
     assertEvidenceFailureTransition(status, false);
   }
 
+  @Test
+  void missingMigrationDispositionStillReturnsTheConcurrentRetainedResult() {
+    assertEvidenceFailureTransition(null, true);
+  }
+
   private void assertEvidenceFailureTransition(ResolutionStatus status, boolean committed) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var codec = mock(InitialGameplayReleaseTupleCodec.class);
@@ -402,7 +407,14 @@ class InitialGameplayReleaseControllerTest {
       when(changedEvidence.evidenceIdentity()).thenReturn("proof");
       when(codec.digest(changedEvidence)).thenReturn("d".repeat(64));
     }
-    when(provider.read(scope)).thenReturn(new EvidenceResolution(status, changedEvidence));
+    if (status == null) {
+      when(provider.read(scope))
+          .thenAnswer(invocation ->
+              new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.MigrationProof(
+                  UUID.randomUUID(), null, "storage", "revision", DIGEST));
+    } else {
+      when(provider.read(scope)).thenReturn(new EvidenceResolution(status, changedEvidence));
+    }
     var controller =
         new InitialGameplayReleaseController(
             journal, codec, provider, mock(InitialGameplayReleaseEffectPort.class));

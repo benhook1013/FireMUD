@@ -53,6 +53,15 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attname IN ('outbox_id', 'attempt_id')
               ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
         AND EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_index i
+          JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
+             AND a.attnum = i.indkey[0] AND NOT a.attisdropped
+          WHERE i.indrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
+            AND i.indisunique AND i.indisvalid AND i.indimmediate
+            AND i.indpred IS NULL AND i.indnkeyatts = 1
+            AND a.attname = 'maintenance_lock_identity')
+        AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'send_outcome_uncertain' AND NOT attisdropped AND NOT attnotnull
@@ -96,7 +105,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
   public Health health() {
     // Resolve the journal shape without reading journal rows or changing the database.
     try (var connection = dataSource.getConnection()) {
-      if (!connection.getAutoCommit()) {
+      if (!connection.getAutoCommit() || connection.isReadOnly()) {
         return Health.down().build();
       }
       try (var statement = connection.prepareStatement(CHECK)) {

@@ -46,6 +46,9 @@ public final class Rfc8785CanonicalJson {
     try (var parser = STRICT_PROPERTY_NAMES.createParser(json)) {
       var token = parser.nextToken();
       while (token != null) {
+        if (token == JsonToken.FIELD_NAME || token == JsonToken.VALUE_STRING) {
+          requireInteroperableCharacters(parser.getText());
+        }
         if (token == JsonToken.VALUE_STRING) {
           // Advancing past a string token can skip its contents without applying maxStringLength.
           STRICT_INPUT_LIMITS.validateStringLength(parser.getTextLength());
@@ -63,5 +66,15 @@ public final class Rfc8785CanonicalJson {
     byte[] bytes = new byte[encoded.remaining()];
     encoded.get(bytes);
     return bytes;
+  }
+
+  private static void requireInteroperableCharacters(String value) throws IOException {
+    for (int offset = 0; offset < value.length(); ) {
+      int codePoint = value.codePointAt(offset);
+      if ((codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe) {
+        throw new IOException("I-JSON names and values must not contain Unicode noncharacters");
+      }
+      offset += Character.charCount(codePoint);
+    }
   }
 }

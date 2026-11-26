@@ -49,6 +49,20 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
+  void strictCanonicalizationRejectsLiteralAndEscapedNoncharactersInNamesAndValues() {
+    for (String encoded :
+        java.util.List.of(
+            Character.toString(0xfdd0), "\\uFDD0", Character.toString(0x1ffff), "\\uD83F\\uDFFF")) {
+      for (String json :
+          java.util.List.of("{\"" + encoded + "\":1}", "{\"value\":\"" + encoded + "\"}")) {
+        assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(json))
+            .isInstanceOf(java.io.IOException.class)
+            .hasMessageContaining("Unicode noncharacters");
+      }
+    }
+  }
+
+  @Test
   void strictCanonicalizationRequiresUniqueNamesWithinEachObject() {
     String malformedRecord = "{\"label\":\"example\",\"label\":\"other\",\"note\":null}";
 

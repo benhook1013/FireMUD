@@ -254,13 +254,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                    payload_digest,
                    CASE WHEN state = 'retryable' AND retry_provenance IS NULL
                         THEN 'ambiguous' ELSE state END AS state,
-                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at, last_dispatched_at
             FROM recovery_control.initial_gameplay_release_outbox
             WHERE operation_id = ?
-              AND (state <> 'acknowledged' OR attempt_count = 0 OR last_attempt_id IS NULL
+              AND (state <> 'acknowledged' OR last_dispatched_at IS NULL
+                   OR attempt_count = 0 OR last_attempt_id IS NULL
                    OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid)
             ORDER BY CASE WHEN state <> 'pending' AND
-                               (attempt_count = 0 OR last_attempt_id IS NULL
+                               (last_dispatched_at IS NULL OR attempt_count = 0 OR last_attempt_id IS NULL
                                 OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid)
                           THEN 0 ELSE 1 END,
                      created_at, outbox_id
@@ -301,6 +302,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         requireExactClosureBeforeRetry(tx, current);
       }
       requirePhaseForEffect(operation.phase(), current.effect().kind());
+      if (tx.fetchOne(
+              "SELECT 1 FROM "
+                  + OUTBOX_TABLE
+                  + " WHERE operation_id = ? AND state = 'acknowledged' AND last_dispatched_at IS NULL LIMIT 1",
+              operationId)
+          != null) {
+        throw conflict("retained acknowledgement has no dispatch timestamp");
+      }
       int changed =
           tx.execute(
               """
@@ -553,6 +562,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           if (readbackDigest.equals(storedDigest)) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
             requireValidExactStoredReadback(readback, stored, storedDigest, current);
+            requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
@@ -696,7 +706,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
-                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at, last_dispatched_at
             FROM recovery_control.initial_gameplay_release_outbox
             WHERE operation_id = ? AND effect_kind = ?
             """,
@@ -871,7 +881,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
-                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at, last_dispatched_at
             FROM recovery_control.initial_gameplay_release_outbox
             WHERE operation_id = ? AND effect_id = ?
             """
@@ -888,6 +898,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     JSONB payload = record.get("payload", JSONB.class);
     String effectKind = record.get("effect_kind", String.class);
     Instant acknowledgedAt = toInstant(record.get("acknowledged_at", OffsetDateTime.class));
+    EffectOutboxState state =
+        EffectOutboxState.fromDatabaseValue(record.get("state", String.class));
+    if (state == EffectOutboxState.ACKNOWLEDGED && record.get("last_dispatched_at") == null) {
+      throw conflict("retained acknowledgement has no dispatch timestamp");
+    }
     TypedEffect effect = tupleCodec.readEffect(effectKind, payload.data());
     if (!effect.operationId().equals(record.get("operation_id", UUID.class))
         || !effect.effectId().equals(record.get("effect_id", UUID.class))
@@ -901,7 +916,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         record.get("outbox_id", UUID.class),
         effect,
         record.get("payload_digest", String.class),
-        EffectOutboxState.fromDatabaseValue(record.get("state", String.class)),
+        state,
         record.get("attempt_count", Integer.class),
         record.get("last_attempt_id", UUID.class),
         record.get("last_outcome_code", String.class),
@@ -1209,17 +1224,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       return false;
     }
     requireStoredReadbackIdentity(stored, acknowledged);
-    OffsetDateTime recordedAt = stored.get(recordedAtColumn, OffsetDateTime.class);
-    if (recordedAt == null) {
-      throw conflict("retained effect readback recording time is unavailable");
-    }
-    requireTerminalReplayAfterDispatch(acknowledged, stored);
-    if (acknowledged
-        .observedAt()
-        .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
-        .isAfter(recordedAt.toInstant())) {
-      throw conflict("retained effect readback observation is after its recording time");
-    }
+    requireRetainedReadbackRecordingTime(acknowledged, stored, recordedAtColumn);
     // The authenticated outcome identifies the durable closure, not the read clock.
     // A valid new observation time never replaces the first durable receipt.
     return acknowledged.equals(
@@ -1235,6 +1240,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             readback.authority(),
             readback.readbackIdentity(),
             acknowledged.observedAt()));
+  }
+
+  private void requireRetainedReadbackRecordingTime(
+      EffectReadback readback, Record stored, String recordedAtColumn) {
+    OffsetDateTime recordedAt = stored.get(recordedAtColumn, OffsetDateTime.class);
+    if (recordedAt == null) {
+      throw conflict("retained effect readback recording time is unavailable");
+    }
+    requireTerminalReplayAfterDispatch(readback, stored);
+    if (readback
+        .observedAt()
+        .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+        .isAfter(recordedAt.toInstant())) {
+      throw conflict("retained effect readback observation is after its recording time");
+    }
   }
 
   private void requireReadbackMatches(

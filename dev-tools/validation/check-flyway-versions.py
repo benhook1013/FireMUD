@@ -253,6 +253,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     profile_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-[^/]+\.ya?ml")
     profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
     flyway = {}
+    effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
         try:
             documents = list(yaml.load_all(snapshot.get(config_path, b""), Loader=UniqueKeyLoader))
@@ -267,17 +268,57 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
-            for path, value in properties.items():
-                exclusion_property = "spring.autoconfigure.exclude"
-                if not (path == exclusion_property or path.startswith(
-                        (exclusion_property + "[", exclusion_property + "."))):
-                    continue
-                excluded_auto_configurations = exclusion_names(value)
+            exclusion_property = "spring.autoconfigure.exclude"
+            exclusion_paths = {
+                path for path in properties
+                if path == exclusion_property or path.startswith(
+                    (exclusion_property + "[", exclusion_property + "."))
+            }
+            if exclusion_paths:
+                activation = properties.get("spring.config.activate")
+                legacy_profile_activation = (
+                    "spring.profiles" in properties
+                    and not isinstance(properties["spring.profiles"], dict)
+                )
+                if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
+                    path.startswith("spring.config.activate.") for path in properties
+                ) or legacy_profile_activation:
+                    return None
+                if exclusion_paths & ambiguous:
+                    return None
+                # A single YAML list/map is flattened into its base property and
+                # child paths. Prefer the base value; indexed property syntax is
+                # otherwise assembled in numeric order. Mixed representations
+                # cannot be resolved safely by this static check.
+                if exclusion_property in exclusion_paths:
+                    exclusion_value = properties[exclusion_property]
+                    descendants = exclusion_paths - {exclusion_property}
+                    if descendants:
+                        if not isinstance(exclusion_value, dict) or not all(
+                            (isinstance(key, int) and key >= 0)
+                            or (isinstance(key, str) and key.isdigit())
+                            for key in exclusion_value
+                        ):
+                            return None
+                        expected_descendants = {
+                            f"{exclusion_property}.{key}" for key in exclusion_value
+                        }
+                        if descendants != expected_descendants:
+                            return None
+                else:
+                    indexed_paths = sorted(
+                        exclusion_paths,
+                        key=lambda path: tuple(int(part) if part.isdigit() else part
+                                               for part in re.findall(r"\d+|[^.\[\]]+", path)),
+                    )
+                    if any(not re.fullmatch(r"spring\.autoconfigure\.exclude(?:\[\d+\]|\.\d+)", path)
+                           for path in indexed_paths):
+                        return None
+                    exclusion_value = [properties[path] for path in indexed_paths]
+                excluded_auto_configurations = exclusion_names(exclusion_value)
                 if excluded_auto_configurations is None:
                     return None
-                if any(name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
-                       for name in excluded_auto_configurations):
-                    return None
+                effective_exclusions = excluded_auto_configurations
             if any(path == "spring.config.import" or
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
@@ -314,6 +355,12 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
 
             for path in guard_paths:
                 flyway[path.rsplit(".", 1)[-1]] = properties[path]
+
+    if effective_exclusions is not None and any(
+        name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
+        for name in effective_exclusions
+    ):
+        return None
 
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled.lower() == "true"):
@@ -549,6 +596,18 @@ def run_self_test() -> None:
     )
     check("Redis-only autoconfiguration exclusion preserves recovery Flyway", {
         **recovery_history, recovery_config: redis_exclusion_settings,
+    }, recovery_history, None)
+    check("higher-priority Redis-only exclusion replaces root Flyway exclusion", {
+        **recovery_history,
+        recovery_config: (
+            b"spring:\n  autoconfigure:\n    exclude:\n"
+            b"      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        ),
+        recovery_config.replace("/application.yml", "/config/application.yml"): (
+            b"spring:\n  autoconfigure:\n    exclude:\n"
+            b"      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
+        ),
     }, recovery_history, None)
     for exclusion_form, exclusion_yaml in (
         ("indexed Redis-only", (
