@@ -296,6 +296,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               SET state = 'dispatched', attempt_count = attempt_count + 1,
                   last_attempt_id = ?, last_dispatched_at = CAST(? AS timestamptz), last_outcome_code = NULL,
                   readback_identity = NULL, readback_payload = NULL, readback_digest = NULL,
+                  retry_provenance = NULL,
                   updated_at = CAST(? AS timestamptz)
               WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
               """,
@@ -321,7 +322,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         dispatch,
         outcomeCode,
         EffectOutboxState.RETRYABLE,
-        source == RetrySource.OWNER_REJECTED,
+        source,
         now);
   }
 
@@ -329,14 +330,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   public boolean recordAmbiguousEffectForDispatch(
       OutboxEntry dispatch, String outcomeCode, Instant now) {
     return recordNonterminalEffectOutcome(
-        dispatch, outcomeCode, EffectOutboxState.AMBIGUOUS, false, now);
+        dispatch, outcomeCode, EffectOutboxState.AMBIGUOUS, null, now);
   }
 
   private boolean recordNonterminalEffectOutcome(
       OutboxEntry dispatch,
       String outcomeCode,
       EffectOutboxState resultState,
-      boolean ownerRejected,
+      RetrySource retrySource,
       Instant now) {
     Objects.requireNonNull(dispatch, "dispatch must not be null");
     InitialGameplayReleaseModel.requiredOutcomeCode(outcomeCode);
@@ -375,7 +376,47 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               && resultState == EffectOutboxState.RETRYABLE)) {
         throw conflict("effect is not in a dispatchable attempt");
       }
-      if (ownerRejected) {
+      if (current.state() == resultState) {
+        if (retrySource != null) {
+          Record origin =
+              tx.fetchOne(
+                  "SELECT retry_provenance FROM " + OUTBOX_TABLE + " WHERE outbox_id = ?",
+                  current.outboxId());
+          if (origin == null
+              || !retryProvenance(retrySource).equals(origin.get("retry_provenance", String.class))) {
+            throw conflict("effect retry source changed for the exact dispatch");
+          }
+          requireExactClosureBeforeRetry(tx, current);
+        }
+        return true;
+      }
+      if (retrySource == RetrySource.NOT_DISPATCHED) {
+        if (current.state() != EffectOutboxState.DISPATCHED) {
+          throw conflict("local no-send proof requires the exact currently dispatched attempt");
+        }
+        int retained =
+            tx.execute(
+                """
+                INSERT INTO recovery_control.initial_gameplay_release_attempt_local_no_send
+                    (outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at)
+                SELECT outbox_id, last_attempt_id, attempt_count, last_dispatched_at,
+                       CAST(? AS timestamptz)
+                FROM recovery_control.initial_gameplay_release_outbox
+                WHERE outbox_id = ? AND state = 'dispatched' AND last_attempt_id = ?
+                  AND attempt_count = ? AND last_dispatched_at <= CAST(? AS timestamptz)
+                  AND readback_payload IS NULL AND readback_digest IS NULL
+                  AND readback_identity IS NULL
+                """,
+                toOffsetDateTime(now),
+                current.outboxId(),
+                attemptId,
+                current.attemptCount(),
+                toOffsetDateTime(now));
+        if (retained != 1) {
+          throw conflict("local no-send proof did not match the exact dispatch");
+        }
+      }
+      if (retrySource == RetrySource.OWNER_REJECTED) {
         tx.execute(
             """
             INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
@@ -387,25 +428,35 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             attemptId,
             dispatch.attemptCount());
       }
-      if (current.state() == resultState) {
-        return true;
-      }
-      tx.execute(
+      int changed =
+          tx.execute(
           """
           UPDATE recovery_control.initial_gameplay_release_outbox
-          SET state = ?, last_outcome_code = ?, updated_at = CAST(? AS timestamptz)
+          SET state = ?, last_outcome_code = ?, retry_provenance = ?,
+              updated_at = CAST(? AS timestamptz)
           WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
               AND last_attempt_id = ?
           """,
           resultState.databaseValue(),
           outcomeCode,
+          retrySource == null ? null : retryProvenance(retrySource),
           toOffsetDateTime(now),
           operationId,
           effectId,
           attemptId);
+      if (changed != 1) {
+        throw conflict("effect outcome compare-and-set lost");
+      }
       selectOutbox(tx, operationId, effectId, false);
       return true;
     });
+  }
+
+  private static String retryProvenance(RetrySource source) {
+    return switch (source) {
+      case NOT_DISPATCHED -> "local_no_send";
+      case OWNER_REJECTED -> "owner_rejected";
+    };
   }
 
   @Override
@@ -594,12 +645,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     tx.execute(
         """
         UPDATE recovery_control.initial_gameplay_release_outbox
-        SET state = ?, last_outcome_code = ?, readback_identity = ?, readback_payload = CAST(? AS jsonb),
+        SET state = ?, last_outcome_code = ?, retry_provenance = ?, readback_identity = ?,
+            readback_payload = CAST(? AS jsonb),
             readback_digest = ?, acknowledged_at = CAST(? AS timestamptz), updated_at = CAST(? AS timestamptz)
         WHERE operation_id = ? AND effect_id = ? AND last_attempt_id = ?
         """,
         state.databaseValue(),
         readback.state().name(),
+        readback.state() == EffectReadbackState.PROVEN_NO_EFFECT ? "owner_closure" : null,
         readback.readbackIdentity(),
         JSONB.valueOf(tupleCodec.toJson(readback)),
         readbackDigest,
@@ -919,7 +972,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   private void requireExactClosureBeforeRetry(DSLContext tx, OutboxEntry current) {
     Record stored =
         tx.fetchOne(
-            "SELECT readback_payload, readback_digest, readback_identity FROM "
+            "SELECT readback_payload, readback_digest, readback_identity, retry_provenance,"
+                + " last_dispatched_at FROM "
                 + OUTBOX_TABLE
                 + " WHERE operation_id = ? AND effect_id = ?",
             current.effect().operationId(),
@@ -929,11 +983,40 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     JSONB payload = stored.get("readback_payload", JSONB.class);
     String digest = stored.get("readback_digest", String.class);
-    if (payload == null && digest == null) {
+    String provenance = stored.get("retry_provenance", String.class);
+    boolean emptyReadback =
+        payload == null && digest == null && stored.get("readback_identity", String.class) == null;
+    if ("local_no_send".equals(provenance)) {
+      OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
+      if (!emptyReadback
+          || dispatchedAt == null
+          || tx.fetchOne(
+                  """
+                  SELECT 1 FROM recovery_control.initial_gameplay_release_attempt_local_no_send
+                  WHERE outbox_id = ? AND attempt_id = ? AND attempt_ordinal = ?
+                    AND dispatched_at = CAST(? AS timestamptz)
+                  """,
+                  current.outboxId(),
+                  current.lastAttemptId(),
+                  current.attemptCount(),
+                  dispatchedAt)
+              == null
+          || hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())
+          || hasRetainedOwnerRejection(tx, current, current.lastAttemptId(), current.attemptCount())) {
+        throw conflict("retained local no-send proof does not match the exact dispatch");
+      }
       return;
     }
-    if (payload == null || digest == null) {
-      throw conflict("retained effect readback is incomplete");
+    if ("owner_rejected".equals(provenance)) {
+      if (!hasRetainedOwnerRejection(tx, current, current.lastAttemptId(), current.attemptCount())
+          || hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())
+          || (!emptyReadback && !hasValidatedUnknownReadback(stored, digest, current))) {
+        throw conflict("retained owner rejection does not match the exact dispatch");
+      }
+      return;
+    }
+    if (!"owner_closure".equals(provenance) || payload == null || digest == null) {
+      throw conflict("retained retry has no exact durable provenance");
     }
     EffectReadback saved = tupleCodec.readEffectReadback(payload.data());
     if (!digest.equals(tupleCodec.digest(saved))) {
@@ -942,9 +1025,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     requireStoredReadbackIdentity(stored, saved);
     requireReadbackMatches(
         saved, current, current.effect().operationId(), current.effect().effectId());
-    if (saved.state() == EffectReadbackState.PROVEN_NO_EFFECT) {
-      requireRetainedClosureMatchesStoredReadback(tx, current, stored, digest);
+    if (saved.state() != EffectReadbackState.PROVEN_NO_EFFECT) {
+      throw conflict("retained retry provenance does not describe definitive closure");
     }
+    requireRetainedClosureMatchesStoredReadback(tx, current, stored, digest);
   }
 
   private void requireValidExactStoredReadback(
