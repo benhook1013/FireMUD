@@ -338,6 +338,7 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             stoppingDsl, ownerClient, catalog, CLOCK, tags);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     var accountOpen = controlledAccountOpen();
     var issuerOpen = issuerOpen();
     try (var credential =
@@ -1215,6 +1216,7 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     repairAccountMember();
     bridge(!installAction);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    if (installAction) authorizeKnownAccountSend(source);
     var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
     var receiver =
         new CanonicalGameplayControlledRegionTransferObservationFixture()

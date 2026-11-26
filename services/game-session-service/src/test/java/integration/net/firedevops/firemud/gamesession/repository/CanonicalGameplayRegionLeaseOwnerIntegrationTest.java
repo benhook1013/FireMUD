@@ -1268,65 +1268,72 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         var originals =
             java.util.Collections.synchronizedMap(
                 new java.util.IdentityHashMap<Connection, Connection>());
-        var instrumentedProvider =
-            new org.jooq.ConnectionProvider() {
-              @Override
-              public Connection acquire() {
-                Connection raw = originalProvider.acquire();
-                Connection proxy =
-                    (Connection)
-                        java.lang.reflect.Proxy.newProxyInstance(
-                            Connection.class.getClassLoader(),
-                            new Class<?>[] {Connection.class},
-                            (ignored, method, arguments) -> {
-                              try {
-                                Object value = method.invoke(raw, arguments);
-                                if (value instanceof java.sql.PreparedStatement statement) {
-                                  return java.lang.reflect.Proxy.newProxyInstance(
-                                      java.sql.PreparedStatement.class.getClassLoader(),
-                                      new Class<?>[] {java.sql.PreparedStatement.class},
-                                      (unused, statementMethod, statementArguments) -> {
-                                        if (statementMethod.getName().startsWith("execute")
-                                            && block.compareAndSet(true, false)) {
-                                          entered.countDown();
-                                          boolean done = false;
-                                          long stop =
-                                              System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-                                          while (!done && System.nanoTime() < stop) {
-                                            try {
-                                              done = release.await(100, TimeUnit.MILLISECONDS);
-                                            } catch (InterruptedException ignoredInterrupt) {
-                                              /* blocked provider fixture */
-                                            }
-                                          }
-                                          if (!done)
-                                            throw new AssertionError(
-                                                "SQL fixture release not signalled");
-                                        }
+        class InstrumentedConnectionProvider
+            implements org.jooq.ConnectionProvider,
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer {
+          @Override
+          public Connection acquire() {
+            Connection raw = originalProvider.acquire();
+            Connection proxy =
+                (Connection)
+                    java.lang.reflect.Proxy.newProxyInstance(
+                        Connection.class.getClassLoader(),
+                        new Class<?>[] {Connection.class},
+                        (ignored, method, arguments) -> {
+                          try {
+                            Object value = method.invoke(raw, arguments);
+                            if (value instanceof java.sql.PreparedStatement statement) {
+                              return java.lang.reflect.Proxy.newProxyInstance(
+                                  java.sql.PreparedStatement.class.getClassLoader(),
+                                  new Class<?>[] {java.sql.PreparedStatement.class},
+                                  (unused, statementMethod, statementArguments) -> {
+                                    if (statementMethod.getName().startsWith("execute")
+                                        && block.compareAndSet(true, false)) {
+                                      entered.countDown();
+                                      boolean done = false;
+                                      long stop =
+                                          System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                                      while (!done && System.nanoTime() < stop) {
                                         try {
-                                          return statementMethod.invoke(
-                                              statement, statementArguments);
-                                        } catch (
-                                            java.lang.reflect.InvocationTargetException error) {
-                                          throw error.getCause();
+                                          done = release.await(100, TimeUnit.MILLISECONDS);
+                                        } catch (InterruptedException ignoredInterrupt) {
+                                          /* blocked provider fixture */
                                         }
-                                      });
-                                }
-                                return value;
-                              } catch (java.lang.reflect.InvocationTargetException error) {
-                                throw error.getCause();
-                              }
-                            });
-                originals.put(proxy, raw);
-                return proxy;
-              }
+                                      }
+                                      if (!done)
+                                        throw new AssertionError(
+                                            "SQL fixture release not signalled");
+                                    }
+                                    try {
+                                      return statementMethod.invoke(
+                                          statement, statementArguments);
+                                    } catch (
+                                        java.lang.reflect.InvocationTargetException error) {
+                                      throw error.getCause();
+                                    }
+                                  });
+                            }
+                            return value;
+                          } catch (java.lang.reflect.InvocationTargetException error) {
+                            throw error.getCause();
+                          }
+                        });
+            originals.put(proxy, raw);
+            return proxy;
+          }
 
-              @Override
-              public void release(Connection connection) {
-                releasedConnection.countDown();
-                originalProvider.release(originals.remove(connection));
-              }
-            };
+          @Override
+          public void release(Connection connection) {
+            releasedConnection.countDown();
+            originalProvider.release(originals.remove(connection));
+          }
+
+          @Override
+          public void retire(Connection connection) throws java.sql.SQLException {
+            retireControlledPostgresConnection(originals.get(connection));
+          }
+        }
+        var instrumentedProvider = new InstrumentedConnectionProvider();
         var instrumentedDsl =
             DSL.using(testSchema.dsl().configuration().derive(instrumentedProvider));
         var inventory = new CanonicalGameplayBindingInventoryRepository(instrumentedDsl);
@@ -2347,56 +2354,65 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               redisOwner.requireTimelineAbsent(source, incarnation),
               NOW);
       var provider = schema.dsl().configuration().connectionProvider();
-      var originals = new java.util.IdentityHashMap<Connection, Connection>();
+      var originals =
+          java.util.Collections.synchronizedMap(
+              new java.util.IdentityHashMap<Connection, Connection>());
       var fault = new java.util.concurrent.atomic.AtomicBoolean(true);
       var committed = new java.util.concurrent.atomic.AtomicBoolean();
-      var failing =
-          new org.jooq.ConnectionProvider() {
-            @Override
-            public Connection acquire() {
-              Connection raw = provider.acquire();
-              Connection wrapped =
-                  (Connection)
-                      java.lang.reflect.Proxy.newProxyInstance(
-                          Connection.class.getClassLoader(),
-                          new Class<?>[] {Connection.class},
-                          (ignored, method, args) -> {
-                            try {
-                              Object result = method.invoke(raw, args);
-                              if (method.getName().equals("commit")) {
-                                committed.set(true);
-                                if (uncertainCommit && fault.compareAndSet(true, false))
-                                  throw new java.sql.SQLException(
-                                      "controlled lost commit acknowledgement");
-                              }
-                              if (!uncertainCommit
-                                  && committed.get()
-                                  && method.getName().equals("setAutoCommit")
-                                  && Boolean.TRUE.equals(args[0])
-                                  && fault.compareAndSet(true, false)) {
-                                if (lateWorker) {
-                                  cleanupEntered.countDown();
-                                  if (!releaseCleanup.await(10, TimeUnit.SECONDS))
-                                    throw new IllegalStateException(
-                                        "controlled cleanup release timed out");
-                                }
-                                throw new java.sql.SQLException(
-                                    "controlled post-commit completion failure");
-                              }
-                              return result;
-                            } catch (java.lang.reflect.InvocationTargetException failure) {
-                              throw failure.getCause();
+      class FailingCompletionProvider
+          implements org.jooq.ConnectionProvider,
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer {
+        @Override
+        public Connection acquire() {
+          Connection raw = provider.acquire();
+          Connection wrapped =
+              (Connection)
+                  java.lang.reflect.Proxy.newProxyInstance(
+                      Connection.class.getClassLoader(),
+                      new Class<?>[] {Connection.class},
+                      (ignored, method, args) -> {
+                        try {
+                          Object result = method.invoke(raw, args);
+                          if (method.getName().equals("commit")) {
+                            committed.set(true);
+                            if (uncertainCommit && fault.compareAndSet(true, false))
+                              throw new java.sql.SQLException(
+                                  "controlled lost commit acknowledgement");
+                          }
+                          if (!uncertainCommit
+                              && committed.get()
+                              && method.getName().equals("setAutoCommit")
+                              && Boolean.TRUE.equals(args[0])
+                              && fault.compareAndSet(true, false)) {
+                            if (lateWorker) {
+                              cleanupEntered.countDown();
+                              if (!releaseCleanup.await(10, TimeUnit.SECONDS))
+                                throw new IllegalStateException(
+                                    "controlled cleanup release timed out");
                             }
-                          });
-              originals.put(wrapped, raw);
-              return wrapped;
-            }
+                            throw new java.sql.SQLException(
+                                "controlled post-commit completion failure");
+                          }
+                          return result;
+                        } catch (java.lang.reflect.InvocationTargetException failure) {
+                          throw failure.getCause();
+                        }
+                      });
+          originals.put(wrapped, raw);
+          return wrapped;
+        }
 
-            @Override
-            public void release(Connection connection) {
-              provider.release(originals.remove(connection));
-            }
-          };
+        @Override
+        public void release(Connection connection) {
+          provider.release(originals.remove(connection));
+        }
+
+        @Override
+        public void retire(Connection connection) throws java.sql.SQLException {
+          retireControlledPostgresConnection(originals.get(connection));
+        }
+      }
+      var failing = new FailingCompletionProvider();
       var faultRepository =
           new CanonicalGameplayRegionRuntimeStatusRepository(
               DSL.using(schema.dsl().configuration().derive(failing)));
@@ -2488,9 +2504,20 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         owner.releaseNoWriteRecovery(preparation.operationId(), replacement);
         assertPreparedTimelineUnchanged(schema.dsl(), repository, redis, source, preparation);
         var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
-        assertThatThrownBy(
-                () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
-            .isInstanceOf(IllegalStateException.class);
+        String currentClaim =
+            "SELECT to_jsonb(p)::text FROM game_session_region_timeline_preparation p"
+                + " WHERE initialization_operation_id = ?";
+        assertThat(retryPermit.claimOrdinal()).isEqualTo(proof.get().claimOrdinal() + 1);
+        String beforeReplay =
+            schema.dsl().fetchSingle(currentClaim, preparation.operationId()).get(0, String.class);
+        repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW);
+        assertThat(proof.get().consumedFor(preparation)).isTrue();
+        assertThat(
+                schema
+                    .dsl()
+                    .fetchSingle(currentClaim, preparation.operationId())
+                    .get(0, String.class))
+            .isEqualTo(beforeReplay);
         var identity =
             new RuntimeIdentity(
                 "game-session-service",
@@ -4632,6 +4659,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       additionalClients.forEach(client -> client.shutdown(Duration.ZERO, Duration.ofSeconds(2)));
       ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
       administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  private static void retireControlledPostgresConnection(Connection connection)
+      throws java.sql.SQLException {
+    if (connection == null)
+      throw new java.sql.SQLException("Controlled connection is no longer owned");
+    var driver = connection.unwrap(org.postgresql.jdbc.PgConnection.class);
+    driver.abort(Runnable::run);
+    if (!driver.isClosed()) {
+      throw new java.sql.SQLException("Controlled PostgreSQL connection did not close");
     }
   }
 

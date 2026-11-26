@@ -1141,6 +1141,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1438,6 +1439,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1528,6 +1530,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1900,6 +1903,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1981,6 +1985,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
