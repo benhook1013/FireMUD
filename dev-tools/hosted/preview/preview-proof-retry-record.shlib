@@ -16,6 +16,31 @@ validate_preview_retry_holder() {
   ' <<<"$1"
 }
 
+# The API marshals ConfigMap binaryData values as padded standard base64.
+# Count decoded octets without decoding them as text (jq strings are UTF-8).
+readonly preview_retry_binary_size_jq='
+  def binarybytes:
+    if (has("binaryData") | not) or .binaryData == null then 0
+    elif (.binaryData | type) != "object" then error("invalid ConfigMap binaryData")
+    else [.binaryData[] |
+      if type == "string" and (length % 4 == 0) and test("\\A[A-Za-z0-9+/]*={0,2}\\z")
+      then (length / 4 * 3) - (if endswith("==") then 2 elif endswith("=") then 1 else 0 end)
+      else error("invalid ConfigMap binaryData value") end] | (add // 0)
+    end;
+'
+
+# Local snapshot diagnostic only: never authorizes retirement or a write.
+preview_retry_holder_headroom() {
+  local snapshot
+  snapshot="$(validate_preview_retry_holder "$1")" || return 1
+  jq -ce "$preview_retry_binary_size_jq"'
+    select(.data | all(.[]; type == "string"))
+    | ((.data | map(utf8bytelength) | add) + binarybytes) as $used
+    | select($used >= 0 and $used <= 1048576)
+    | {usedBytes:$used, hardLimitBytes:1048576, remainingBytes:(1048576 - $used)}
+  ' <<<"$snapshot"
+}
+
 read_preview_retry_holder() {
   local snapshot
   snapshot="$(kubectl -n "$preview_retry_holder_namespace" get configmap "$preview_retry_holder_name" \
@@ -65,13 +90,18 @@ write_preview_retry_entry() {
   version="$(jq -er '.metadata.resourceVersion' <<<"$snapshot")" || return 1
   # Kubernetes counts stored value bytes, not JSON-over-the-wire length. Detect a
   # definitely oversized update without deleting or retargeting retained rows.
-  # Binary data and any lower provider limits still require the server's validation.
-  patch="$(jq -c --arg namespace "$namespace" --argjson replacement "$replacement" '
+  # Include the decoded binaryData lengths; provider validation remains authoritative.
+  patch="$(jq -c --arg namespace "$namespace" --argjson replacement "$replacement" "$preview_retry_binary_size_jq"'
     ($replacement | tojson) as $serialized
-    | if $replacement != null and
-         ((.data | .[$namespace] = $serialized | map(utf8bytelength) | add) > 1048576)
-      then error("preview proof-retry holder would exceed the Kubernetes 1 MiB data limit; retained records were not changed")
-      else . end
+    | if $replacement == null then .
+      else binarybytes as $binary
+      | ((.data | .[$namespace] = $serialized | map(utf8bytelength) | add) + $binary) as $prospective
+      | if $prospective > 1048576 then
+          ((try ((.data | map(utf8bytelength) | add) + $binary) catch null)) as $used
+          | (if $used == null then "unknown" else ([0, 1048576 - $used] | max | tostring) end) as $remaining
+          | error("preview proof-retry holder would exceed the Kubernetes 1 MiB data limit (current stored-value headroom: \($remaining) bytes; prospective stored values: \($prospective) bytes); retained records were not changed")
+        else . end
+      end
     | ("/data/" + $namespace) as $key
     | [
       {op:"test",path:"/metadata/uid",value:.metadata.uid},

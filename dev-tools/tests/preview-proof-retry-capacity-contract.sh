@@ -38,4 +38,20 @@ snapshot=$(holder 524287 | jq -c --arg rec "$record" '.data["pr-123"]=$rec')
 write_preview_retry_entry "$snapshot" "$ns" null > retired
 jq -e '.data["pr-123"]|not' retired >/dev/null
 test "$(wc -l <calls)" = 2
+# Account for decoded binary bytes in addition to UTF-8 stored values.
+snapshot=$(holder 30 | jq -c '.binaryData={one:"YQ==",two:"YWI=",three:"YWJj"}')
+preview_retry_holder_headroom "$snapshot" | jq -e '
+ . == {usedBytes:67,hardLimitBytes:1048576,remainingBytes:1048509}' >/dev/null
+
+# Leave exactly enough room for the replacement, then add a single binary byte.
+record_bytes=$(jq -nr --argjson record "$record" '$record | tojson | utf8bytelength')
+snapshot=$(holder 0 | jq -c --argjson bytes "$((1048576 - 1 - record_bytes))" '.data["pr-789"]=("a"*$bytes)')
+write_preview_retry_entry "$snapshot" "$ns" "$record" > boundary
+test "$(wc -l <calls)" = 3
+snapshot=$(jq -c '.binaryData={one:"YQ=="}' <<<"$snapshot")
+if write_preview_retry_entry "$snapshot" "$ns" "$record" > blocked_binary 2>diagnostic_binary; then exit 1; fi
+test ! -s blocked_binary
+test "$(wc -l <calls)" = 3
+grep -F 'prospective stored values: 1048577 bytes' diagnostic_binary >/dev/null
+
 echo "Read-only preview proof retry capacity checks passed"
