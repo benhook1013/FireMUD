@@ -66,7 +66,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountTenantCapacityRepository capacity;
   private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
-  private final TransactionTemplate denialReadTransaction;
+  private final TransactionTemplate retainedOutcomeReadTransaction;
   private final Clock clock;
   private final String namespace;
 
@@ -94,11 +94,13 @@ public final class AccountTenantCapacityOwner {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
-    denialReadTransaction = new TransactionTemplate(transactions);
-    denialReadTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    denialReadTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    denialReadTransaction.setReadOnly(true);
-    denialReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
+    retainedOutcomeReadTransaction = new TransactionTemplate(transactions);
+    retainedOutcomeReadTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    retainedOutcomeReadTransaction.setIsolationLevel(
+        TransactionDefinition.ISOLATION_READ_COMMITTED);
+    retainedOutcomeReadTransaction.setReadOnly(true);
+    retainedOutcomeReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
   }
 
   /** Reads only an exact historical quota refusal; absence does not resolve an unknown commit. */
@@ -115,7 +117,7 @@ public final class AccountTenantCapacityOwner {
         || Context.current().isCancelled()) throw unavailable();
     try {
       UUID denialId =
-          denialReadTransaction.execute(status -> {
+          retainedOutcomeReadTransaction.execute(status -> {
             if (Context.current().isCancelled()) throw unavailable();
             dsl.connection(connection -> {
               if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
@@ -126,6 +128,45 @@ public final class AccountTenantCapacityOwner {
       return TenantCapacityAdmission.uuid(denialId);
     } catch (CapacityException failure) {
       // A different original or decision is not settlement evidence on this read.
+      if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
+      throw failure;
+    } catch (IllegalArgumentException invalidEvidence) {
+      throw unavailable();
+    }
+  }
+
+  /**
+   * Reads only an exact retained positive reservation or exact retained quota denial. It neither
+   * refreshes current source evidence nor authorizes a new commit.
+   */
+  public Result readRetainedAdmissionOutcome(Request request, String authenticatedCaller) {
+    requireCaller(request, authenticatedCaller);
+    if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
+        .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
+    request.requireStructurallyValid();
+    requireSupportedShape(request);
+    if (request.capacityRearmFence() != 1 || !request.evidence().permitsCreation())
+      throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || Context.current().isCancelled()) throw unavailable();
+    try {
+      Result result =
+          retainedOutcomeReadTransaction.execute(status -> {
+            if (Context.current().isCancelled()) throw unavailable();
+            dsl.connection(connection -> {
+              if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
+            });
+            Record reservation = capacity.findForReplayReadOnly(request.identity());
+            if (reservation != null) return capacity.exactReadOnly(request, reservation);
+            UUID denialId = originDecisions.readRetainedQuotaDenial(request);
+            if (denialId == null) throw unavailable();
+            throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, denialId);
+          });
+      if (result == null) throw unavailable();
+      return result;
+    } catch (CapacityException failure) {
+      // A mismatch or any non-quota refusal is not evidence that this attempt did not commit.
       if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
       throw failure;
     } catch (IllegalArgumentException invalidEvidence) {

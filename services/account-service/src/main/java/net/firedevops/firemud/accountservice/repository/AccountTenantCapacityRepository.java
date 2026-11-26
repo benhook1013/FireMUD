@@ -93,8 +93,18 @@ public final class AccountTenantCapacityRepository {
     return find(id, FIND_RESERVATION);
   }
 
+  /** Exact outcome read uses the same replay selector inside a genuine read-only transaction. */
+  public Record findForReplayReadOnly(Identity id) {
+    return find(id, FIND_RESERVATION, true);
+  }
+
   private Record find(Identity id, String query) {
-    transaction();
+    return find(id, query, false);
+  }
+
+  private Record find(Identity id, String query, boolean readOnly) {
+    if (readOnly) readOnlyTransaction();
+    else transaction();
     return dsl.fetchOne(query, id.tenantId(), id.requestId(), id.admissionId());
   }
 
@@ -110,14 +120,27 @@ public final class AccountTenantCapacityRepository {
   }
 
   public Result exact(Request request, Record row) {
-    if (!request.mutationDigest().equals(row.get("mutation_digest", String.class))
+    requireExact(request, row, false);
+    return result(row);
+  }
+
+  /** Read-only counterpart to exact replay; digest and identity checks are shared with mutation. */
+  public Result exactReadOnly(Request request, Record row) {
+    readOnlyTransaction();
+    requireExact(request, row, true);
+    return resultReadOnly(row);
+  }
+
+  private static void requireExact(Request request, Record row, boolean unavailableOnMismatch) {
+    if (row == null
+        || !request.mutationDigest().equals(row.get("mutation_digest", String.class))
         || !request.admissionAttemptId().equals(row.get("admission_attempt_id", UUID.class))
         || request.capacityRearmFence() != number(row, "capacity_rearm_fence")
         || !Arrays.equals(
             CapacityAdmissionDigest.preimage(request), row.get("canonical_payload", byte[].class))
-        || !request.evidence().callerWorkload().equals(row.get("caller_workload", String.class)))
-      throw conflict();
-    return result(row);
+        || !request.evidence().callerWorkload().equals(row.get("caller_workload", String.class))) {
+      throw unavailableOnMismatch ? unavailable() : conflict();
+    }
   }
 
   public void requirePriorHistory(Request prior, Request next) {
@@ -201,6 +224,16 @@ public final class AccountTenantCapacityRepository {
 
   public Result result(Record row) {
     transaction();
+    return resultFromSnapshot(row);
+  }
+
+  /** Builds the exact retained positive result under the read-only transaction guard. */
+  public Result resultReadOnly(Record row) {
+    readOnlyTransaction();
+    return resultFromSnapshot(row);
+  }
+
+  private Result resultFromSnapshot(Record row) {
     Record evaluation =
         dsl.fetchOne(
             "SELECT snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
@@ -241,6 +274,11 @@ public final class AccountTenantCapacityRepository {
   public static void transaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
+  }
+
+  public static void readOnlyTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
   }
 
   public static CapacityException conflict() {

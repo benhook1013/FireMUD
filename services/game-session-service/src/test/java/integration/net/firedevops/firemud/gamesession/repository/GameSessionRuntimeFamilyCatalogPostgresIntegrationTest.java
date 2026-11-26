@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(25);
+      assertThat(catalog.catalogEpoch()).isEqualTo(26);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -218,7 +218,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.13",
               "catalog-installation:1065.0.14",
               "catalog-installation:1065.0.15",
-              "catalog-installation:1065.0.16")
+              "catalog-installation:1065.0.16",
+              "catalog-installation:1065.0.17")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -244,7 +245,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.13:")
                   || identity.contains(":1065.0.14:")
                   || identity.contains(":1065.0.15:")
-                  || identity.contains(":1065.0.16:"));
+                  || identity.contains(":1065.0.16:")
+                  || identity.contains(":1065.0.17:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -781,7 +783,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(25);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(26);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -939,7 +941,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.13",
             "1065.0.14",
             "1065.0.15",
-            "1065.0.16")) {
+            "1065.0.16",
+            "1065.0.17")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -992,7 +995,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.13",
             "1065.0.14",
             "1065.0.15",
-            "1065.0.16")) {
+            "1065.0.16",
+            "1065.0.17")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -1986,6 +1990,107 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           Map.of(),
           Map.of(),
           Map.of());
+    }
+  }
+
+  @Test
+  void genuineV1065Point0Point16UpgradeRetainsCatalogAndSealsCapacitySendBoundary() {
+    try (Fixture f = fixture("1065.0.16")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(25);
+      var rowsBefore = f.rows(f.tables());
+      rowsBefore.remove(f.history);
+      rowsBefore.remove(EPOCHS);
+      var classificationsBefore = f.classificationRows();
+      var epochsBefore =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                      + EPOCHS
+                      + " e ORDER BY catalog_epoch")
+              .getValues(0, String.class);
+      var snapshotsBefore =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(s)::text||':'||xmin::text FROM "
+                      + SNAPSHOTS
+                      + " s ORDER BY read_request_id")
+              .getValues(0, String.class);
+      var historyBefore = f.historyRows(false);
+      byte[] evidenceBefore = f.evidence(original.request());
+
+      migration(f.source, f.schema, f.history, "1065.0.17").migrate();
+
+      assertThat(f.rows(rowsBefore.keySet())).isEqualTo(rowsBefore);
+      assertThat(f.classificationRows()).isEqualTo(classificationsBefore);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                          + EPOCHS
+                          + " e WHERE catalog_epoch<=25 ORDER BY catalog_epoch")
+                  .getValues(0, String.class))
+          .isEqualTo(epochsBefore);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(s)::text||':'||xmin::text FROM "
+                          + SNAPSHOTS
+                          + " s ORDER BY read_request_id")
+                  .getValues(0, String.class))
+          .isEqualTo(snapshotsBefore);
+      assertThat(f.historyRows(false)).hasSize(historyBefore.size() + 1);
+      assertThat(f.historyRows(false).subList(0, historyBefore.size())).isEqualTo(historyBefore);
+      var installed =
+          f.dsl.fetchSingle(
+              "SELECT count(*),min(type),min(script),bool_and(success) FROM "
+                  + f.history
+                  + " WHERE version='1065.0.17'");
+      assertThat(installed.get(0, Long.class)).isEqualTo(1L);
+      assertThat(installed.get(1, String.class)).isEqualTo("SQL");
+      assertThat(installed.get(2, String.class))
+          .isEqualTo("V1065.0.17__retain_capacity_send_boundary.sql");
+      assertThat(installed.get(3, Boolean.class)).isTrue();
+      assertThat(f.evidence(original.request())).isEqualTo(evidenceBefore);
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      assertThat(
+              f.constraints()
+                  .get(
+                      "game_session_capacity_evidence_budget.gs_capacity_evidence_budget_retained_limit_required"))
+          .contains("maximum_retained_records IS NOT NULL");
+      assertThat(f.indexes().get("gs_capacity_evidence_charge_unclaimed_expiry"))
+          .contains("account_send_evidence_expires_at");
+      var sendStateConstraint =
+          f.constraints()
+              .get("game_session_capacity_evidence_charge.gs_capacity_evidence_send_state");
+      assertThat(sendStateConstraint)
+          .contains("account_send_state IS NULL")
+          .contains("UNCLAIMED")
+          .contains("MAY_HAVE_SENT")
+          .contains("RELEASED_UNSENT")
+          .contains("account_unsent_released_at IS NOT NULL");
+      assertThat(f.indexes().get("gs_capacity_evidence_charge_active"))
+          .contains("account_send_state IS DISTINCT FROM 'RELEASED_UNSENT'");
+      assertThat(f.routines().get("settle_gs_capacity_evidence_charge()"))
+          .contains(
+              "OLD.account_send_state='UNCLAIMED' AND NEW.account_send_state='RELEASED_UNSENT'")
+          .contains("Execution custody prevents capacity evidence charge changes");
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(26);
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(26) FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=26")
+                  .get(0, Boolean.class))
+          .isTrue();
+      migration(f.source, f.schema, f.history, "1065.0.17").validate();
     }
   }
 

@@ -18,6 +18,7 @@ import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.sql.Connection;
 import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
@@ -56,6 +57,18 @@ class AccountTenantCapacityGrpcServiceTest {
     ACCEPTED,
     GENERIC_NO_ACCEPT,
     WRONG_FINGERPRINT,
+    WRITABLE_CONNECTION,
+    AUTOCOMMIT_CONNECTION
+  }
+
+  private enum RetainedOutcome {
+    EXACT_POSITIVE,
+    EXACT_QUOTA_DENIAL,
+    ABSENT,
+    MISMATCHED_POSITIVE,
+    MISMATCHED_ATTEMPT,
+    MISMATCHED_CANONICAL_PAYLOAD,
+    GENERIC_NO_ACCEPT,
     WRITABLE_CONNECTION,
     AUTOCOMMIT_CONNECTION
   }
@@ -277,7 +290,7 @@ class AccountTenantCapacityGrpcServiceTest {
         new AccountTenantCapacityOwner(
             dsl, accounts, memberships, issuances, scopes, transactions, clock, "prod");
     StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
-    try (var guards = quotaDenialReader(CapacityAdmissionTestFixture.PEER)) {
+    try (var guards = retainedOutcomeReader(CapacityAdmissionTestFixture.PEER)) {
       new AccountTenantCapacityGrpcService(owner, "prod")
           .readTenantCapacityQuotaDenial(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
@@ -312,19 +325,222 @@ class AccountTenantCapacityGrpcServiceTest {
     var request = CapacityAdmissionTestFixture.playerRequest();
     var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     AccountTenantCapacityOwner owner = mock();
-    try (var guards = quotaDenialReader("spiffe://firemud/ns/prod/sa/world-management-service")) {
+    try (var guards =
+        retainedOutcomeReader("spiffe://firemud/ns/prod/sa/world-management-service")) {
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
           .readTenantCapacityQuotaDenial(wire, observer);
       assertFailure(observer, Failure.PERMISSION_DENIED);
     }
-    try (var guards = quotaDenialReader(CapacityAdmissionTestFixture.PEER)) {
+    try (var guards = retainedOutcomeReader(CapacityAdmissionTestFixture.PEER)) {
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
           .readTenantCapacityQuotaDenial(wire.toBuilder().setCapacityDelta(0).build(), observer);
       assertFailure(observer, Failure.INVALID_ARGUMENT);
     }
     verifyNoInteractions(owner);
+  }
+
+  @Test
+  void admissionOutcomeReadRejectsWrongCallerBindingAndMalformedOriginalBeforeOwner() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
+    AccountTenantCapacityOwner owner = mock();
+    try (var guards =
+        retainedOutcomeReader("spiffe://firemud/ns/prod/sa/world-management-service")) {
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .readTenantCapacityAdmissionOutcome(wire, observer);
+      assertFailure(observer, Failure.PERMISSION_DENIED);
+    }
+    try (var guards = retainedOutcomeReader(CapacityAdmissionTestFixture.PEER)) {
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .readTenantCapacityAdmissionOutcome(
+              wire.toBuilder().setCapacityDelta(0).build(), observer);
+      assertFailure(observer, Failure.INVALID_ARGUMENT);
+    }
+    verifyNoInteractions(owner);
+  }
+
+  @ParameterizedTest
+  @EnumSource(RetainedOutcome.class)
+  void admissionOutcomeReadReturnsOnlyAnExactRetainedOutcome(RetainedOutcome retainedOutcome)
+      throws Exception {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    UUID decisionId = UUID.randomUUID();
+    DSLContext dsl = mock();
+    Connection connection = mock();
+    when(connection.isReadOnly())
+        .thenReturn(retainedOutcome != RetainedOutcome.WRITABLE_CONNECTION);
+    when(connection.getAutoCommit())
+        .thenReturn(retainedOutcome == RetainedOutcome.AUTOCOMMIT_CONNECTION);
+    doAnswer(
+            invocation -> {
+              invocation.getArgument(0, ConnectionRunnable.class).run(connection);
+              return null;
+            })
+        .when(dsl)
+        .connection(any(ConnectionRunnable.class));
+
+    String reservationSql =
+        "SELECT * FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?";
+    Object[] reservationKey = {
+      request.identity().tenantId(),
+      request.identity().requestId(),
+      request.identity().admissionId()
+    };
+    Record reservation = null;
+    if (retainedOutcome == RetainedOutcome.EXACT_POSITIVE
+        || retainedOutcome == RetainedOutcome.MISMATCHED_POSITIVE
+        || retainedOutcome == RetainedOutcome.MISMATCHED_ATTEMPT
+        || retainedOutcome == RetainedOutcome.MISMATCHED_CANONICAL_PAYLOAD) {
+      reservation = mock(Record.class);
+      when(reservation.get("mutation_digest", String.class))
+          .thenReturn(
+              retainedOutcome == RetainedOutcome.MISMATCHED_POSITIVE
+                  ? "wrong-digest"
+                  : request.mutationDigest());
+      when(reservation.get("admission_attempt_id", UUID.class))
+          .thenReturn(
+              retainedOutcome == RetainedOutcome.MISMATCHED_ATTEMPT
+                  ? UUID.randomUUID()
+                  : request.admissionAttemptId());
+      when(reservation.get("capacity_rearm_fence", Long.class)).thenReturn(1L);
+      when(reservation.get("canonical_payload", byte[].class))
+          .thenReturn(
+              retainedOutcome == RetainedOutcome.MISMATCHED_CANONICAL_PAYLOAD
+                  ? new byte[] {0}
+                  : CapacityAdmissionDigest.preimage(request));
+      when(reservation.get("caller_workload", String.class))
+          .thenReturn(request.evidence().callerWorkload());
+      if (retainedOutcome == RetainedOutcome.EXACT_POSITIVE) {
+        when(reservation.get("tenant_uuid", UUID.class)).thenReturn(request.identity().tenantId());
+        when(reservation.get("request_id", UUID.class)).thenReturn(request.identity().requestId());
+        when(reservation.get("admission_id", UUID.class))
+            .thenReturn(request.identity().admissionId());
+        when(reservation.get("reservation_id", UUID.class)).thenReturn(UUID.randomUUID());
+        when(reservation.get("reservation_fence", Long.class)).thenReturn(1L);
+        when(reservation.get("expires_at", OffsetDateTime.class))
+            .thenReturn(
+                request
+                    .evidence()
+                    .expiresAt()
+                    .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+                    .atOffset(java.time.ZoneOffset.UTC));
+        when(reservation.get("state", String.class)).thenReturn("RESERVED");
+        when(reservation.get("evaluation_identity", String.class))
+            .thenReturn(request.evidence().evaluationIdentity());
+      }
+    }
+    when(dsl.fetchOne(reservationSql, reservationKey)).thenReturn(reservation);
+
+    String denialSql =
+        "SELECT * FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND capacity_rearm_fence = ?";
+    Object[] denialKey = {
+      request.identity().tenantId(),
+      request.identity().requestId(),
+      request.identity().admissionId(),
+      request.capacityRearmFence()
+    };
+    Record denial = null;
+    if (retainedOutcome == RetainedOutcome.EXACT_QUOTA_DENIAL
+        || retainedOutcome == RetainedOutcome.GENERIC_NO_ACCEPT) {
+      denial = mock(Record.class);
+      when(denial.get("admission_attempt_id", UUID.class)).thenReturn(request.admissionAttemptId());
+      when(denial.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
+      when(denial.get("canonical_payload", byte[].class))
+          .thenReturn(CapacityAdmissionDigest.preimage(request));
+      when(denial.get("decision_id", UUID.class)).thenReturn(decisionId);
+      when(denial.get("decision", String.class)).thenReturn("NO_ACCEPT");
+      when(denial.get("refusal_code", String.class))
+          .thenReturn(
+              retainedOutcome == RetainedOutcome.EXACT_QUOTA_DENIAL
+                  ? Failure.CAPACITY_QUOTA_EXCEEDED.name()
+                  : null);
+    }
+    when(dsl.fetchOne(denialSql, denialKey)).thenReturn(denial);
+
+    String evaluationSql =
+        "SELECT snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?";
+    Record evaluation = mock(Record.class);
+    when(evaluation.get("snapshot_identity", String.class))
+        .thenReturn(request.evidence().snapshotIdentity());
+    when(dsl.fetchOne(evaluationSql, request.evidence().evaluationIdentity()))
+        .thenReturn(evaluation);
+
+    PlatformTransactionManager transactions = mock();
+    when(transactions.getTransaction(any(TransactionDefinition.class)))
+        .thenAnswer(invocation -> {
+          var definition = invocation.getArgument(0, TransactionDefinition.class);
+          assertThat(definition.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getTimeout()).isEqualTo(5);
+          assertThat(definition.isReadOnly()).isTrue();
+          TransactionSynchronizationManager.setActualTransactionActive(true);
+          TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+          return new SimpleTransactionStatus();
+        });
+    var owner =
+        new AccountTenantCapacityOwner(
+            dsl,
+            mock(AccountRepository.class),
+            mock(AccountCanonicalRuntimeMembershipSnapshotRepository.class),
+            mock(AccountGameplayDelegationIssuanceRepository.class),
+            mock(AccountConnectScopeRepository.class),
+            transactions,
+            mock(Clock.class),
+            "prod");
+    StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+    try (var guards = retainedOutcomeReader(CapacityAdmissionTestFixture.PEER)) {
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .readTenantCapacityAdmissionOutcome(
+              TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
+    } finally {
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+
+    if (retainedOutcome == RetainedOutcome.EXACT_POSITIVE) {
+      var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
+      assertThat(TenantCapacityAdmissionGrpcCodec.requireResponse(request, response.getValue()))
+          .isNotNull();
+      ordered.verify(observer).onCompleted();
+      verify(dsl).fetchOne(evaluationSql, request.evidence().evaluationIdentity());
+    } else if (retainedOutcome == RetainedOutcome.EXACT_QUOTA_DENIAL) {
+      var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
+      assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
+          .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
+      ordered.verify(observer).onCompleted();
+      verify(dsl).fetchOne(denialSql, denialKey);
+    } else {
+      assertFailure(observer, Failure.ENTITLEMENT_UNAVAILABLE);
+    }
+    verify(dsl).connection(any(ConnectionRunnable.class));
+    boolean connectionRejected =
+        retainedOutcome == RetainedOutcome.WRITABLE_CONNECTION
+            || retainedOutcome == RetainedOutcome.AUTOCOMMIT_CONNECTION;
+    if (connectionRejected) verify(dsl, never()).fetchOne(reservationSql, reservationKey);
+    else verify(dsl).fetchOne(reservationSql, reservationKey);
+    if (retainedOutcome == RetainedOutcome.EXACT_POSITIVE) {
+      verify(dsl, never()).fetchOne(denialSql, denialKey);
+    } else if (!connectionRejected
+        && retainedOutcome != RetainedOutcome.MISMATCHED_POSITIVE
+        && retainedOutcome != RetainedOutcome.MISMATCHED_ATTEMPT
+        && retainedOutcome != RetainedOutcome.MISMATCHED_CANONICAL_PAYLOAD
+        && (retainedOutcome == RetainedOutcome.EXACT_QUOTA_DENIAL
+            || retainedOutcome == RetainedOutcome.ABSENT
+            || retainedOutcome == RetainedOutcome.GENERIC_NO_ACCEPT)) {
+      verify(dsl).fetchOne(denialSql, denialKey);
+    } else {
+      verify(dsl, never()).fetchOne(denialSql, denialKey);
+    }
+    verifyNoMoreInteractions(observer);
+    verifyNoMoreInteractions(dsl);
   }
 
   private static Stream<RuntimeException> ownerUnavailableFailures() {
@@ -353,11 +569,14 @@ class AccountTenantCapacityGrpcServiceTest {
             when(guard.requireAuthenticatedCaller()).thenReturn(CapacityAdmissionTestFixture.PEER));
   }
 
-  private static MockedConstruction<AccountTenantCapacityWorkloadGuard> quotaDenialReader(
+  private static MockedConstruction<AccountTenantCapacityWorkloadGuard> retainedOutcomeReader(
       String peer) {
     return mockConstruction(
         AccountTenantCapacityWorkloadGuard.class,
-        (guard, context) -> when(guard.requireQuotaDenialReader()).thenReturn(peer));
+        (guard, context) -> {
+          when(guard.requireQuotaDenialReader()).thenReturn(peer);
+          when(guard.requireAdmissionOutcomeReader()).thenReturn(peer);
+        });
   }
 
   private static void assertFailure(

@@ -263,6 +263,55 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         });
   }
 
+  net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+      authorizeAccountSend(
+          CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+          Request request,
+          CurrentOwner selected,
+          long deadline) {
+    if (budget == null) {
+      return within(
+          deadline, owner -> owner.authorizeAccountSend(source, request, selected, deadline));
+    }
+    budget.check();
+    OriginalNewCapacityExecution.requireOriginalNewRequest(request);
+    var candidate = source.candidate();
+    var assignment = scopedTags().assignmentForTransition(candidate.bindingDecisionId());
+    return sql()
+        .transactionResult(configuration -> {
+          var tx = DSL.using(configuration);
+          requireSelectedOwner(tx, candidate, selected);
+          return CanonicalGameplayCapacityEvidenceBudget.authorizeAccountSend(
+              tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
+        });
+  }
+
+  boolean hasUnsettledPossibleSend(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      long deadline) {
+    return within(
+        deadline,
+        owner -> {
+          var candidate = source.candidate();
+          var assignment =
+              owner.scopedTags().assignmentForTransition(candidate.bindingDecisionId());
+          return owner
+              .sql()
+              .transactionResult(configuration -> {
+                var tx = DSL.using(configuration);
+                requireSelectedOwner(tx, candidate, selected);
+                return CanonicalGameplayCapacityEvidenceBudget.hasUnsettledPossibleSend(
+                    tx,
+                    request,
+                    source.candidateDigest(),
+                    selected,
+                    assignment.tenantGameplayTag());
+              });
+        });
+  }
+
   void settleDeniedCharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,

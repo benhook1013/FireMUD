@@ -610,9 +610,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             "controlled-image");
     var permitConstructor =
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit.class
-            .getDeclaredConstructor(UUID.class, String.class);
+            .getDeclaredConstructor(UUID.class, String.class, long.class);
     permitConstructor.setAccessible(true);
-    var permit = permitConstructor.newInstance(operationId, sourceDigest);
+    var permit = permitConstructor.newInstance(operationId, sourceDigest, 1L);
     long handoffDeadline = CLOCK.millis() + 4000;
     Semaphore operations =
         (Semaphore)

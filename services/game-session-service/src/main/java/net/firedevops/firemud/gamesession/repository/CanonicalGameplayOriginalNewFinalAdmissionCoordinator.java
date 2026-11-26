@@ -115,7 +115,17 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       requireOriginalSource(source, originalDecision);
       var selectedOwner =
           capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
-      Currentness beforeEffects = currentness(source, privateRegionInstallation);
+      Currentness beforeEffects;
+      try {
+        beforeEffects = currentness(source, privateRegionInstallation);
+      } catch (RuntimeException failure) {
+        if (source.transitionStatus()
+                == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+            && capacityRequest.evidence().permitsCreation()) {
+          reconcileDeniedCharge(source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
+        }
+        throw failure;
+      }
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
           readSameSource(source, originalDecision, false);
       source = currentSource;
@@ -180,10 +190,20 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           }
           final TenantCapacityAdmission.Result reservation;
           try {
-            reservation =
-                recoveredConfirmation == null
-                    ? capacityClient.commit(capacityRequest, absoluteDeadlineMillis)
-                    : recoveredConfirmation.committedCapacityResult();
+            if (recoveredConfirmation != null) {
+              reservation = recoveredConfirmation.committedCapacityResult();
+            } else if (precharge) {
+              var sendSource = source;
+              reservation =
+                  capacityClient.commitWithSendBoundary(
+                      capacityRequest,
+                      absoluteDeadlineMillis,
+                      () ->
+                          capacityExecution.authorizeAccountSend(
+                              sendSource, capacityRequest, selectedOwner, absoluteDeadlineMillis));
+            } else {
+              reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
+            }
           } catch (CapacityRefusedException refusal) {
             if (precharge && refusal.durableDenialId() != null) {
               try {
@@ -308,6 +328,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       throw unavailable(uncertain);
     } finally {
       wipe(originalLeaseBytes);
+    }
+  }
+
+  private void reconcileDeniedCharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      TenantCapacityAdmission.Request request,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
+      long deadline) {
+    try {
+      if (!capacityExecution.hasUnsettledPossibleSend(source, request, selected, deadline)) return;
+      var denialId = capacityClient.readRetainedQuotaDenial(request, deadline);
+      capacityExecution.settleDeniedCharge(source, request, selected, denialId, deadline);
+    } catch (RuntimeException indeterminate) {
+      // Missing proof, changed owner or failed settlement leaves the charge held. The original
+      // currentness refusal is returned even when bookkeeping can reconcile the durable denial.
     }
   }
 

@@ -1,10 +1,13 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import java.time.Clock;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
 
@@ -39,13 +42,25 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     if (now.isBefore(request.evidence().evaluatedAt())
         || !now.isBefore(request.evidence().expiresAt().truncatedTo(ChronoUnit.MICROS)))
       throw unavailable();
+    // A fresh charge needs one slot. Retire at most one expired positively unsent
+    // charge in the tenant, even if its original region owner has since moved.
+    tx.execute(
+        "WITH candidate AS (SELECT admission_attempt_id FROM game_session_capacity_evidence_charge"
+            + " WHERE tenant_id=? AND account_send_state='UNCLAIMED'"
+            + " AND account_send_evidence_expires_at <= statement_timestamp()"
+            + " ORDER BY account_send_evidence_expires_at,admission_attempt_id LIMIT 1)"
+            + " UPDATE game_session_capacity_evidence_charge c SET account_send_state='RELEASED_UNSENT'"
+            + " FROM candidate WHERE c.admission_attempt_id=candidate.admission_attempt_id"
+            + " AND c.account_send_state='UNCLAIMED'",
+        identity.tenantId());
     try {
       int inserted =
           tx.execute(
               "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id,tenant_id,"
                   + " request_id,admission_id,capacity_rearm_fence,mutation_digest,candidate_digest,"
-                  + " selected_owner_id,selected_owner_fence,reserved_binding_bytes)"
-                  + " VALUES (?,?,?,?,?,?,?,?,?,1048576)",
+                  + " selected_owner_id,selected_owner_fence,reserved_binding_bytes,"
+                  + " account_send_state,account_send_evidence_expires_at)"
+                  + " VALUES (?,?,?,?,?,?,?,?,?,1048576,'UNCLAIMED',CAST(? AS timestamptz))",
               request.admissionAttemptId(),
               identity.tenantId(),
               identity.requestId(),
@@ -54,7 +69,9 @@ final class CanonicalGameplayCapacityEvidenceBudget {
               request.mutationDigest(),
               candidateDigest,
               selected.instanceId(),
-              selected.fence());
+              selected.fence(),
+              OffsetDateTime.ofInstant(
+                  request.evidence().expiresAt().truncatedTo(ChronoUnit.MICROS), ZoneOffset.UTC));
       if (inserted != 1) throw unavailable();
       return null;
     } catch (DataAccessException failure) {
@@ -62,6 +79,63 @@ final class CanonicalGameplayCapacityEvidenceBudget {
         throw unavailable();
       throw failure;
     }
+  }
+
+  static SendDisposition authorizeAccountSend(
+      DSLContext tx,
+      Request request,
+      String candidateDigest,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
+      String tag) {
+    lockBudget(tx, request, tag);
+    var charge = exactCharge(tx, request, candidateDigest, selected, tag);
+    if (charge == null) throw unavailable();
+    if (charge.get("account_denial_id", UUID.class) != null) return SendDisposition.READ_RETAINED;
+    String state = charge.get("account_send_state", String.class);
+    if (state == null || "MAY_HAVE_SENT".equals(state)) return SendDisposition.READ_RETAINED;
+    if (!"UNCLAIMED".equals(state) && !"RELEASED_UNSENT".equals(state)) throw unavailable();
+
+    var expiry = charge.get("account_send_evidence_expires_at", OffsetDateTime.class);
+    var sqlNow = tx.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
+    if (expiry == null) throw unavailable();
+    if (!expiry.isAfter(sqlNow)) {
+      // The tenant and region owner locks serialize this still-unsent proof against first send.
+      if ("UNCLAIMED".equals(state)) {
+        transitionSendState(tx, request.admissionAttemptId(), state, "RELEASED_UNSENT");
+      }
+      return SendDisposition.EXPIRED_UNSENT;
+    }
+    transitionSendState(tx, request.admissionAttemptId(), state, "MAY_HAVE_SENT");
+    return SendDisposition.AUTHORIZE_NEW;
+  }
+
+  private static void transitionSendState(
+      DSLContext tx, UUID attemptId, String before, String after) {
+    if (tx.execute(
+            "UPDATE game_session_capacity_evidence_charge SET account_send_state=?"
+                + " WHERE admission_attempt_id=? AND account_send_state=?",
+            after,
+            attemptId,
+            before)
+        != 1) {
+      throw unavailable();
+    }
+  }
+
+  static boolean hasUnsettledPossibleSend(
+      DSLContext tx,
+      Request request,
+      String candidateDigest,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
+      String tag) {
+    var charge = exactCharge(tx, request, candidateDigest, selected, tag);
+    if (charge == null || charge.get("account_denial_id", UUID.class) != null) return false;
+    String state = charge.get("account_send_state", String.class);
+    return (state == null || "MAY_HAVE_SENT".equals(state))
+        && tx.fetchOne(
+                "SELECT 1 FROM game_session_original_new_capacity_execution WHERE admission_attempt_id=?",
+                request.admissionAttemptId())
+            == null;
   }
 
   static void settleDenied(
@@ -121,7 +195,8 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     var prior =
         tx.fetchOne(
             "SELECT c.tenant_id,c.request_id,c.admission_id,c.capacity_rearm_fence,c.mutation_digest,"
-                + " c.candidate_digest,c.selected_owner_id,c.selected_owner_fence,t.tenant_gameplay_tag,c.account_denial_id"
+                + " c.candidate_digest,c.selected_owner_id,c.selected_owner_fence,t.tenant_gameplay_tag,"
+                + " c.account_denial_id,c.account_send_state,c.account_send_evidence_expires_at"
                 + " FROM game_session_capacity_evidence_charge c"
                 + " JOIN game_session_canonical_tenant_gameplay_tag t USING (tenant_id)"
                 + " WHERE c.admission_attempt_id=?",

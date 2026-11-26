@@ -584,7 +584,35 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       insertExecution(original, "INSTALL_DISPATCHED", null);
     }
 
+    net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+        authorizeAccountSend(OriginalNewCapacityExecution original) {
+      var assignment = tags.assignmentForTransition(original.transitionId());
+      var disposition =
+          capacity(sql)
+              .authorizeAccountSend(
+                  admission,
+                  original.request(),
+                  new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                      original.selectedOwnerId(), original.selectedOwnerFence()),
+                  transferDeadline());
+      var sendState =
+          sql.fetchSingle(
+                  "SELECT account_send_state,selected_owner_id,selected_owner_fence,candidate_digest"
+                      + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  original.request().admissionAttemptId())
+              .intoMap();
+      if ("MAY_HAVE_SENT".equals(sendState.get("account_send_state"))
+          && original.selectedOwnerId().equals(sendState.get("selected_owner_id"))
+          && Long.valueOf(original.selectedOwnerFence())
+              .equals(sendState.get("selected_owner_fence"))
+          && original.candidateDigest().equals(sendState.get("candidate_digest"))
+          && assignment.tenantId().equals(original.request().identity().tenantId()))
+        return disposition;
+      throw new IllegalStateException("Controlled known send lacks its exact positive SQL witness");
+    }
+
     void settle(OriginalNewCapacityExecution original, UUID denial) {
+      authorizeAccountSend(original);
       var assignment = tags.assignmentForTransition(original.transitionId());
       sql.transaction(configuration ->
           CanonicalGameplayCapacityEvidenceBudget.settleDenied(
@@ -611,9 +639,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
               transferDeadline());
     }
 
-    /**
-     * Exact test charge for the post-transfer raw INSERT refusal case, after source is retained.
-     */
+    /** Exact controlled charge for raw dispatch before and after region transfer. */
     void retainExactChargeForControlledSeed(OriginalNewCapacityExecution original) {
       if (!admission.candidateDigest().equals(original.candidateDigest())
           || !admission.candidate().bindingDecisionId().equals(original.transitionId()))
@@ -627,8 +653,9 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       sql.execute(
           "INSERT INTO game_session_capacity_evidence_charge"
               + " (admission_attempt_id,tenant_id,request_id,admission_id,capacity_rearm_fence,"
-              + " mutation_digest,candidate_digest,selected_owner_id,selected_owner_fence,reserved_binding_bytes)"
-              + " VALUES (?,?,?,?,?,?,?,?,?,1048576)",
+              + " mutation_digest,candidate_digest,selected_owner_id,selected_owner_fence,reserved_binding_bytes,"
+              + " account_send_state,account_send_evidence_expires_at)"
+              + " VALUES (?,?,?,?,?,?,?,?,?,1048576,'UNCLAIMED',CAST(? AS timestamptz))",
           request.admissionAttemptId(),
           identity.tenantId(),
           identity.requestId(),
@@ -637,11 +664,19 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           request.mutationDigest(),
           original.candidateDigest(),
           original.selectedOwnerId(),
-          original.selectedOwnerFence());
+          original.selectedOwnerFence(),
+          java.time.OffsetDateTime.ofInstant(
+              request.evidence().expiresAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS),
+              java.time.ZoneOffset.UTC));
     }
 
     void insertExecution(
         OriginalNewCapacityExecution original, String status, byte[] terminalReadback) {
+      var disposition = authorizeAccountSend(original);
+      if (disposition
+          == net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+              .EXPIRED_UNSENT)
+        throw new IllegalStateException("Controlled known send expired before its send witness");
       insertExecution(sql, original, status, terminalReadback);
     }
 
@@ -650,6 +685,19 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         OriginalNewCapacityExecution original,
         String status,
         byte[] terminalReadback) {
+      var sendWitness =
+          context.fetchOne(
+              "SELECT account_send_state,selected_owner_id,selected_owner_fence,candidate_digest"
+                  + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+              original.request().admissionAttemptId());
+      if (sendWitness == null
+          || !"MAY_HAVE_SENT".equals(sendWitness.get("account_send_state", String.class))
+          || !original.selectedOwnerId().equals(sendWitness.get("selected_owner_id", String.class))
+          || !Long.valueOf(original.selectedOwnerFence())
+              .equals(sendWitness.get("selected_owner_fence", Long.class))
+          || !original.candidateDigest().equals(sendWitness.get("candidate_digest", String.class)))
+        throw new IllegalStateException(
+            "Controlled execution seed requires the exact positive SQL send witness");
       context.execute(
           "INSERT INTO game_session_original_new_capacity_execution"
               + " (tenant_id,request_id,admission_id,admission_attempt_id,transition_id,capacity_rearm_fence,"

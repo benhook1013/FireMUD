@@ -273,10 +273,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                 "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id, tenant_id,"
                     + " request_id, admission_id, capacity_rearm_fence, mutation_digest,"
                     + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                    + " reserved_binding_bytes)"
+                    + " reserved_binding_bytes, account_send_state, account_send_evidence_expires_at)"
                     + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence, mutation_digest,"
                     + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                    + " reserved_binding_bytes FROM game_session_capacity_evidence_charge"
+                    + " reserved_binding_bytes, 'UNCLAIMED', clock_timestamp() + INTERVAL '10 seconds' FROM game_session_capacity_evidence_charge"
                     + " WHERE admission_attempt_id = ?",
                 otherAttempt,
                 otherRequest,
@@ -310,6 +310,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
 
     // The initial charge happened in bridge(); the exact replay is idempotent even at capacity.
     owner.precharge(source, controlledCapacity.request(), selected, deadline());
+    authorizeKnownAccountSend(source);
     var original = controlledCapacity.request();
     var unsupported =
         new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
@@ -453,6 +454,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     RedisClient failedClient = mock(RedisClient.class);
     when(failedClient.connect(ByteArrayCodec.INSTANCE))
         .thenThrow(new IllegalStateException("Controlled connection failure"));

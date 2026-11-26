@@ -176,7 +176,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
   }
 
   void bridge(boolean authorizeCapacity, int maximumRecords, long maximumBindingBytes) {
-    bridge(authorizeCapacity, maximumRecords, maximumBindingBytes, null);
+    bridge(authorizeCapacity, maximumRecords, maximumBindingBytes, maximumRecords * 2);
   }
 
   void bridge(
@@ -230,6 +230,16 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
                   controlledCapacity.selectedOwnerId(), controlledCapacity.selectedOwnerFence()),
               deadline());
       if (!authorizeCapacity) return;
+      authorizeKnownAccountSend(source);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT account_send_state FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      controlledCapacity.request().admissionAttemptId())
+                  .get(0, String.class))
+          .isEqualTo("MAY_HAVE_SENT");
       try (var credential =
               new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
           var raw = credential.template();
@@ -246,6 +256,23 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
         throw new IllegalStateException(failure);
       }
     }
+  }
+
+  void authorizeKnownAccountSend(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source) {
+    assertThat(
+            capacityOwner()
+                .authorizeAccountSend(
+                    source,
+                    controlledCapacity.request(),
+                    new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                        controlledCapacity.selectedOwnerId(),
+                        controlledCapacity.selectedOwnerFence()),
+                    deadline()))
+        .as("synthetic known send must retain the exact positive SQL send witness")
+        .isEqualTo(
+            net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+                .AUTHORIZE_NEW);
   }
 
   void initializeCapacityEvidenceBudget(
