@@ -210,6 +210,22 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
             deadline());
     var completed = receiver.observeForRegionOwnerTransfer(transferId, 0, deadline());
     assertThat(completed.regionOwnerTransferContext().controlState()).isEqualTo("COMPLETED");
+    var namespaceCustody =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT i.workload_namespace, b.entity_workload_namespace"
+                    + " FROM game_session_region_owner_transfer_item i"
+                    + " JOIN game_session_original_new_capacity_execution e"
+                    + " ON e.execution_digest=i.execution_digest"
+                    + " JOIN game_session_canonical_binding_region_bridge_obligation b"
+                    + " ON b.transition_id=e.transition_id"
+                    + " WHERE i.transfer_id=? AND b.transition_id=?",
+                transferId,
+                original.transitionId);
+    assertThat(namespaceCustody.get("workload_namespace", String.class))
+        .isNotBlank()
+        .isEqualTo(namespaceCustody.get("entity_workload_namespace", String.class));
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidate);
     assertThatThrownBy(
             () -> repository.within(deadline(), ignored -> repository.capture(transferId)))

@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(27);
+      assertThat(catalog.catalogEpoch()).isEqualTo(28);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -220,7 +220,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.15",
               "catalog-installation:1065.0.16",
               "catalog-installation:1065.0.17",
-              "catalog-installation:1065.0.18")
+              "catalog-installation:1065.0.18",
+              "catalog-installation:1065.0.19")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -248,7 +249,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.15:")
                   || identity.contains(":1065.0.16:")
                   || identity.contains(":1065.0.17:")
-                  || identity.contains(":1065.0.18:"));
+                  || identity.contains(":1065.0.18:")
+                  || identity.contains(":1065.0.19:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -785,7 +787,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(27);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(28);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -945,7 +947,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.15",
             "1065.0.16",
             "1065.0.17",
-            "1065.0.18")) {
+            "1065.0.18",
+            "1065.0.19")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -1000,7 +1003,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.15",
             "1065.0.16",
             "1065.0.17",
-            "1065.0.18")) {
+            "1065.0.18",
+            "1065.0.19")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -2117,6 +2121,23 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "dispatched.fence_dispatch_incarnation IS DISTINCT FROM i.incarnation_digest"),
               "require_gs_region_owner_transfer_custody()",
               List.of("NEW.executor_fence <= OLD.executor_fence")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void genuineV1065Point0Point18UpgradeRetainsCatalogAndSealsTransferNamespaceCustody() {
+    try (Fixture f = fixture("1065.0.18")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.19",
+          27,
+          "V1065.0.19__bind_region_transfer_workload_namespace.sql",
+          Map.of(
+              "guard_gs_region_owner_transfer_item()",
+              List.of("b.entity_workload_namespace=NEW.workload_namespace"),
+              "guard_gs_region_owner_transfer()",
+              List.of("i.workload_namespace IS DISTINCT FROM b.entity_workload_namespace")),
           Map.of());
     }
   }
