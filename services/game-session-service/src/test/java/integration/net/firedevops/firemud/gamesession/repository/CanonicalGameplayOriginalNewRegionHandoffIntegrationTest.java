@@ -806,6 +806,14 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
                     firstTransferId)
                 .get(0, String.class))
         .isEqualTo("COMPLETED");
+    String retainedFenceSql =
+        "SELECT fence_dispatch_id,fence_readback,incarnation_digest"
+            + " FROM game_session_region_owner_transfer_item"
+            + " WHERE transfer_id=? AND execution_digest=?";
+    var firstFence =
+        fixture.dsl().fetchSingle(retainedFenceSql, firstTransferId, controlledCapacity.digest());
+    assertThat(firstFence.get("fence_dispatch_id", UUID.class)).isNotNull();
+    assertThat(firstFence.get("fence_readback", byte[].class)).isNotEmpty();
 
     UUID secondTransferId =
         repository.within(
@@ -845,6 +853,24 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         .containsExactly(originalCandidate.canonicalBytes());
 
     byte[] candidateBytes = admin.get(ascii(installation.sessionKey()));
+    var changedStorage =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags, "replacement-storage");
+    var changedTransfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), changedStorage);
+    assertThatThrownBy(() ->
+            changedTransfer.resume(
+                frozenOriginal, firstSuccessor.source, firstSuccessor.status, deadline()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Normal region owner transfer is held")
+        .hasStackTraceContaining("CanonicalGameplayRegionOwnerTransferRepository.fenceDispatch");
+    var heldFence =
+        fixture.dsl().fetchSingle(retainedFenceSql, secondTransferId, controlledCapacity.digest());
+    assertThat(heldFence.get("fence_dispatch_id", UUID.class)).isNull();
+    assertThat(heldFence.get("fence_readback", byte[].class)).isNull();
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidateBytes);
+
     var thirdIdentity =
         new net.firedevops.firemud.common.runtime.RuntimeIdentity(
             "game-session-service",
@@ -874,6 +900,18 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     var secondSuccessor =
         thirdOwner.installForTransition(
             null, firstSuccessor.transitionId, firstSuccessor.worldRequest, transfer, deadline());
+    var secondFence =
+        fixture.dsl().fetchSingle(retainedFenceSql, secondTransferId, controlledCapacity.digest());
+    assertThat(secondFence.get("fence_dispatch_id", UUID.class)).isNull();
+    assertThat(secondFence.get("fence_readback", byte[].class))
+        .containsExactly(firstFence.get("fence_readback", byte[].class));
+    assertThat(secondFence.get("incarnation_digest", String.class))
+        .isEqualTo(firstFence.get("incarnation_digest", String.class));
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(retainedFenceSql, firstTransferId, controlledCapacity.digest()))
+        .isEqualTo(firstFence);
     assertThat(secondSuccessor.status.ownerInstanceId()).isEqualTo("third-owner-handoff");
     assertThat(secondSuccessor.status.executorFence())
         .isGreaterThan(firstSuccessor.status.executorFence());
