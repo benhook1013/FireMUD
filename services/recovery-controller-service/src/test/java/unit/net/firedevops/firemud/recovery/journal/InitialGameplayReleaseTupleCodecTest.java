@@ -62,6 +62,27 @@ class InitialGameplayReleaseTupleCodecTest {
   }
 
   @ParameterizedTest
+  @ValueSource(strings = {"0", "0.25", "true"})
+  void persistedReadbackIdentityRequiresAString(String replacement) {
+    var readback =
+        new EffectReadback(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1,
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            "a".repeat(64),
+            "b".repeat(64),
+            EffectReadbackState.PREPARED_FENCED,
+            EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+            "owner-receipt",
+            Instant.EPOCH);
+    String altered = codec.toJson(readback).replace("\"owner-receipt\"", replacement);
+    assertThatThrownBy(() -> codec.readEffectReadback(altered))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @ParameterizedTest
   @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
   void persistedReadbackEnumsRequireTextualNames(String replacement) {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();

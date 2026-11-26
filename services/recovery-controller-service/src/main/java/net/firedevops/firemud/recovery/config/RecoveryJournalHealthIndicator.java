@@ -39,6 +39,19 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           'recovery_control.initial_gameplay_release_attempt_closure', 'INSERT')
         AND has_table_privilege(
           'recovery_control.initial_gameplay_release_attempt_rejection', 'INSERT')
+        AND EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_constraint c
+          JOIN pg_catalog.pg_index i ON i.indexrelid = c.conindid
+          WHERE c.conrelid = 'recovery_control.initial_gameplay_release_attempt_rejection'::regclass
+            AND c.contype = 'p' AND c.convalidated AND NOT c.condeferrable
+            AND i.indisvalid AND i.indimmediate
+            AND c.conkey = ARRAY(
+              SELECT a.attnum
+              FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
+                AND a.attname IN ('outbox_id', 'attempt_id')
+              ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
         AND NOT EXISTS (
           SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
                  peer_storage_binding, scope_payload, evidence_ref, scope_digest,

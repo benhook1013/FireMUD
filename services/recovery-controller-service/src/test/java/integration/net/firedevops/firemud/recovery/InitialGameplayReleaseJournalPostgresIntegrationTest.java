@@ -410,6 +410,34 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void migratedPackagedDatabaseWithMissingRejectionKeyIsNotReady() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true);
+        var connection =
+            DriverManager.getConnection(
+                packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      DSL.using(connection, SQLDialect.POSTGRES)
+          .execute(
+              """
+              ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection
+              DROP CONSTRAINT initial_gameplay_release_attempt_rejection_pkey
+              """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.UP);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -695,6 +723,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(scope.operationId(), prepareEffectId)).isEqualTo(retainedPrepare);
     UUID preparedEffectId = prepare.effect().effectId();
     String retainedAcknowledgement = storedOutbox(scope.operationId(), preparedEffectId);
+    EffectReadback earlierObservation =
+        readbackFor(
+            prepare,
+            prepareAttempt,
+            EffectReadbackState.PREPARED_FENCED,
+            prepareReadback.readbackIdentity(),
+            base.plusSeconds(5));
+    assertThat(journal.recordEffectReadback(prepare, earlierObservation, base.plusSeconds(5)))
+        .isEqualTo(releasing);
+    assertThat(storedOutbox(scope.operationId(), preparedEffectId))
+        .isEqualTo(retainedAcknowledgement);
     EffectReadback laterObservation =
         readbackFor(
             prepare,
@@ -1077,7 +1116,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     } else if (variant.equals("dispatch")) {
       dsl.execute(
           "UPDATE recovery_control.initial_gameplay_release_attempt_closure SET dispatched_at=CAST(? AS timestamptz) WHERE outbox_id=?",
-          base.plusSeconds(6).atOffset(ZoneOffset.UTC),
+          base.plusSeconds(3).atOffset(ZoneOffset.UTC),
           dispatch.outboxId());
     } else if (variant.equals("outbox-observation")) {
       EffectReadback altered =
@@ -1835,6 +1874,60 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                     second.outboxId())
                 .get(0, Integer.class))
         .isEqualTo(1);
+  }
+
+  @Test
+  void dispatchClaimRefusesCallerOwnedJooqTransaction() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
+        .isTrue();
+    String retained = storedOutbox(operationId, effectId);
+    UUID newAttempt = UUID.randomUUID();
+
+    dsl.transaction(configuration -> {
+      var transactionBoundJournal =
+          new JooqInitialGameplayReleaseJournal(DSL.using(configuration), tupleCodec);
+      assertThatThrownBy(() ->
+              transactionBoundJournal.claimEffect(
+                  operationId, effectId, newAttempt, base.plusSeconds(6)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("requires its own transaction");
+    });
+
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(journal.claimEffect(operationId, effectId, newAttempt, base.plusSeconds(6)))
+        .extracting(OutboxEntry::lastAttemptId)
+        .isEqualTo(newAttempt);
+  }
+
+  @Test
+  void aLocallyUnsentRetryRequiresACertainRetainedTransportOutcome() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
+        .isTrue();
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_outbox"
+                    + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
+                dispatched.outboxId()))
+        .isEqualTo(1);
+
+    String retained = storedOutbox(operationId, effectId);
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(6)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained local no-send proof does not match");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
   }
 
   @Test
