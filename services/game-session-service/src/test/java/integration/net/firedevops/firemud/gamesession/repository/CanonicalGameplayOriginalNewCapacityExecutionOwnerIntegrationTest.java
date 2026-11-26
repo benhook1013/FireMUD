@@ -11,6 +11,10 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.grpc.Context;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.event.command.CommandListener;
+import io.lettuce.core.event.command.CommandStartedEvent;
+import io.lettuce.core.event.command.CommandSucceededEvent;
+import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -294,6 +298,23 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(admin.type(key)).isEqualTo("none");
     String rows = sqlImage();
     var physical = physicalImage();
+    var finalResult = new AtomicReference<Object>();
+    var finalCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var finalObserver =
+        new CommandListener() {
+          @Override
+          public void commandStarted(CommandStartedEvent event) {
+            if (event.getCommand().getType() == CommandType.EVALSHA) finalCalls.incrementAndGet();
+          }
+
+          @Override
+          public void commandSucceeded(CommandSucceededEvent event) {
+            if (event.getCommand().getType() == CommandType.EVALSHA) {
+              finalResult.set(event.getCommand().getOutput().get());
+            }
+          }
+        };
+    ownerClient.addListener(finalObserver);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -303,8 +324,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                       ownerClient, catalog, CLOCK, tags)
                   .finalizeOriginalNewOnce(
                       source, bound, account, issuer, controlledCapacity, deadline()))
-          .isInstanceOf(IllegalStateException.class);
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Original NEW final admission Redis readback is unavailable");
+    } finally {
+      ownerClient.removeListener(finalObserver);
     }
+    assertThat(finalCalls).as("FINAL Redis EVALSHA dispatch").hasValue(1);
+    assertThat(finalResult).as("FINAL missing-state Redis result").hasValue(-1L);
     assertThat(admin.type(key)).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);

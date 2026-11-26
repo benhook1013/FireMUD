@@ -206,9 +206,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     fixture.completeEvaluation();
     when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
     var close = new CompletableFuture<Void>();
+    var closeAttempted = new java.util.concurrent.CountDownLatch(1);
     var contextRef = new AtomicReference<io.grpc.Context.CancellableContext>();
     when(fixture.connection.closeAsync())
         .thenAnswer(ignored -> {
+          closeAttempted.countDown();
           contextRef.get().cancel(new TimeoutException("controlled close-phase expiry"));
           return close;
         });
@@ -236,6 +238,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
         org.awaitility.Awaitility.await()
             .atMost(2, TimeUnit.SECONDS)
             .untilAsserted(() -> assertThat(fixture.evaluationSubmissions).hasValue(1));
+        assertThat(closeAttempted.await(2, TimeUnit.SECONDS))
+            .as("the owner attempted asynchronous connection close before refusing")
+            .isTrue();
         caller.get(2, TimeUnit.SECONDS);
         assertThat(close).isNotDone();
         verify(fixture.connection, never()).close();

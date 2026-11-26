@@ -520,6 +520,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         });
     tokenRegistry.requireExactOriginalNewActiveRecord(confirmed.genesis());
     if (!confirmationDigest.equals(confirmed.genesis().confirmationReadbackSha256())
+        || clock.millis() >= finalReadback.continuityExpiresAtMillis()
         || (committedCapacityRequest != null && Context.current().isCancelled())) {
       throw unavailable();
     }

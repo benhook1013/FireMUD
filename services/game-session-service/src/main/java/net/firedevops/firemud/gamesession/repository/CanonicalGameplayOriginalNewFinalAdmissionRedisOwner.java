@@ -555,7 +555,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
           template.canonicalSessionDurationMillis(),
           canonicalJson(accountOpen.exactFields()),
           issuerMetadataJson(prepared.issuerValue()),
-          deadline,
+          Math.min(deadline, accountOpen.expiresAtEpochMillis()),
           issuerOpen.exactPhysicalPayload(),
           execution,
           action);

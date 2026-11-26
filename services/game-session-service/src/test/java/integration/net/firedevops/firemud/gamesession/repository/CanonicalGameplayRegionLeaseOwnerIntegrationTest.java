@@ -925,11 +925,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .admin()
           .hset(metaKey, ascii("first_timeline_source_digest"), ascii(preparation.sourceDigest()));
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
-      var deadline = System.currentTimeMillis() + 10_000L;
+      var initializationNow = Instant.now();
+      var initializationClock = Clock.fixed(initializationNow, ZoneOffset.UTC);
+      var deadline = initializationNow.toEpochMilli() + 10_000L;
+      var redisCutoff = initializationNow.toEpochMilli() + 5_000L;
       initializeTimelineWithoutCreationPermission(
-          redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline), preparation, "exact-renewal");
+          redisOwner.forHandoffDeadline(initializationClock, deadline),
+          preparation,
+          "exact-renewal");
       assertThat(redis.admin().type(leaseKey)).isEqualTo("string");
-      assertThat(redis.admin().pexpiretime(leaseKey)).isBetween(1L, deadline);
+      assertThat(redis.admin().pexpiretime(leaseKey)).isEqualTo(redisCutoff);
       assertThat(redis.admin().hlen(metaKey)).isEqualTo(5L);
       assertThat(redis.admin().hget(metaKey, ascii("first_timeline_operation_id")))
           .containsExactly(ascii(preparation.operationId().toString()));
@@ -1012,6 +1017,29 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       }
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      for (CommandType write : List.of(CommandType.HSET, CommandType.SET)) {
+        redis.setOwnerWriteAllowed(write, false);
+        try {
+          assertThatThrownBy(() ->
+                  deadlineBoundRedisOwner.prepareTimelineInitialization(
+                      preparation,
+                      Duration.ofSeconds(30),
+                      new RuntimeIdentity(
+                          "game-session-service",
+                          "write-denied-during-probe",
+                          "localhost",
+                          NOW,
+                          "controlled-test",
+                          "controlled-sha",
+                          "controlled-image")))
+              .isInstanceOf(IllegalStateException.class);
+          assertPreparedTimelineUnchanged(
+              testSchema.dsl(), statusRepository, redis, source, preparation);
+        } finally {
+          redis.setOwnerWriteAllowed(write, true);
+        }
+      }
 
       var missingDescriptorOwner =
           owner(
@@ -1688,7 +1716,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
       }
       if (mode == 5) {
-        // The exact committed PREPARED state becomes usable only after physical cleanup completes.
+        // The blocked provider return kept the transaction call in flight. Once that call
+        // finishes, the owner can reconcile the exact committed PREPARED state.
         org.awaitility.Awaitility.await()
             .atMost(Duration.ofSeconds(3))
             .ignoreExceptions()
@@ -3325,6 +3354,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
     void setOwnerTimeAllowed(boolean allowed) {
       admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, true, allowed));
+    }
+
+    void setOwnerWriteAllowed(CommandType command, boolean allowed) {
+      var args = new AclSetuserArgs();
+      if (allowed) args.addCommand(command);
+      else args.removeCommand(command);
+      admin.aclSetuser(PRINCIPAL, args);
     }
 
     private static AclSetuserArgs ownerArguments(String password, boolean allowScriptLoad) {

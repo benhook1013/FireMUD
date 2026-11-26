@@ -1177,11 +1177,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       int available = permits.availablePermits();
       var rollbackFailure = new AtomicReference<Throwable>();
       var autoCommitFailure = new AtomicReference<Throwable>();
+      var logicalFinishes = new AtomicInteger();
       try {
         assertThatThrownBy(() ->
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
                     CLOCK,
                     Long.MAX_VALUE,
+                    null,
                     budget -> {
                       captured.set(budget);
                       var scoped =
@@ -1196,8 +1198,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                           org.assertj.core.api.Assertions.catchThrowable(
                               () -> proxy.setAutoCommit(true)));
                       return true;
-                    }))
+                    },
+                    logicalFinishes::incrementAndGet))
             .isInstanceOf(IllegalStateException.class);
+        assertThat(logicalFinishes).hasValue(1);
         assertThat(rollbackFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(autoCommitFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(
@@ -1266,12 +1270,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     logger.addAppender(events);
     CompletableFuture<Void> late = new CompletableFuture<>();
     CompletableFuture<Void> cancelled = new CompletableFuture<>();
+    var operationsEntered = new AtomicInteger();
     try {
       assertThatThrownBy(() ->
               CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
                   CLOCK,
                   Long.MAX_VALUE,
                   budget -> {
+                    operationsEntered.incrementAndGet();
                     budget.awaitAsyncClose(
                         CompletableFuture.failedFuture(
                             new IllegalStateException(
@@ -1286,6 +1292,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           budget -> {
             budget.retainUntilAsyncClose(cancelled);
             budget.retainUntilAsyncClose(late);
+            operationsEntered.incrementAndGet();
             return true;
           });
       assertThat(events.list).hasSize(1);
@@ -1311,9 +1318,79 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       cancelled.complete(null);
       logger.detachAppender(events);
       events.stop();
-      operations.release(priorOperations - operations.availablePermits());
-      background.release(priorBackground - background.availablePermits());
-      retained.set(priorRetained);
+      // Both runBackground calls have returned, so their resource workers have finished; neither
+      // operation acquired SQL resources or started a cancellation worker. The terminal failed
+      // and cancelled close futures therefore retain exactly the admitted operation count. Undo
+      // only that test-created retained state after proving it still exists.
+      int retainedOperationPermits = priorOperations - operations.availablePermits();
+      int retainedBackgroundPermits = priorBackground - background.availablePermits();
+      assertThat(operationsEntered.get()).isEqualTo(2);
+      assertThat(retainedOperationPermits).isEqualTo(operationsEntered.get());
+      assertThat(retainedBackgroundPermits).isEqualTo(operationsEntered.get());
+      assertThat(retainedOperationPermits).isBetween(0, operationsEntered.get());
+      assertThat(retainedBackgroundPermits).isEqualTo(retainedOperationPermits);
+      operations.release(retainedOperationPermits);
+      background.release(retainedBackgroundPermits);
+      retained.addAndGet(priorRetained - retained.get());
+      Metrics.removeRegistry(registry);
+      registry.close();
+    }
+  }
+
+  @Test
+  void timedOutRedisDisposalRetainsAndThenReleasesTheBudgetOnce() {
+    var registry = new SimpleMeterRegistry();
+    Metrics.addRegistry(registry);
+    var retained =
+        (AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS"));
+    var operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    var background =
+        (Semaphore)
+            (java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS")));
+    int priorOperations = operations.availablePermits();
+    int priorBackground = background.availablePermits();
+    int priorRetained = retained.get();
+    var close = new CompletableFuture<Void>();
+    try {
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  CLOCK,
+                  CLOCK.millis() + 1_000,
+                  budget -> {
+                    budget.awaitAsyncClose(close);
+                    return true;
+                  }))
+          .isExactlyInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+
+      assertThat(close).isNotDone();
+      assertThat(operations.availablePermits()).isEqualTo(priorOperations - 1);
+      assertThat(background.availablePermits()).isEqualTo(priorBackground - 1);
+      assertThat(retained).hasValue(priorRetained + 1);
+      assertThat(
+              registry
+                  .get("original_new_capacity_redis_close_failure_retained_operations")
+                  .gauge()
+                  .value())
+          .isEqualTo(priorRetained + 1);
+
+      assertThat(close.complete(null)).isTrue();
+      assertThat(operations.availablePermits()).isEqualTo(priorOperations);
+      assertThat(background.availablePermits()).isEqualTo(priorBackground);
+      assertThat(retained).hasValue(priorRetained);
+    } finally {
+      close.complete(null);
       Metrics.removeRegistry(registry);
       registry.close();
     }
@@ -1329,13 +1406,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(statement.execute()).thenReturn(true);
     CountDownLatch returned = new CountDownLatch(1), finish = new CountDownLatch(1);
     CountDownLatch cancellationWorkerFinished = new CountDownLatch(1);
-    doAnswer(
-            invocation -> {
-              returned.countDown();
-              return null;
-            })
-        .when(delegate)
-        .release(connection);
     DSLContext dsl = source(provider);
     try (var context = Context.current().withCancellation();
         var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -1348,6 +1418,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                             Long.MAX_VALUE,
                             budget -> {
                               execute(budget.sql(dsl));
+                              // Execute returns only after the scoped provider returned the
+                              // connection; cancellation below must happen after that custody
+                              // transition, while the operation remains active at finish.
+                              returned.countDown();
                               awaitUninterruptibly(finish);
                               return true;
                             },

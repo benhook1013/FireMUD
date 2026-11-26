@@ -915,13 +915,25 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.9",
             "1065.0.10",
             "1065.0.11")) {
-      for (String change :
-          List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
-        try (Fixture f = fixture(null)) {
-          f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version=?", version);
-          assertThatThrownBy(() -> f.owner().capture(request()))
-              .hasMessageContaining("No durable Game Session catalog epoch");
-          assertThat(f.count(SNAPSHOTS)).isZero();
+      try (Fixture f = fixture(null)) {
+        var original =
+            f.dsl.fetchSingle(
+                "SELECT success,script,type FROM " + f.history + " WHERE version=?", version);
+        for (String change :
+            List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
+          try {
+            f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version=?", version);
+            assertThatThrownBy(() -> f.owner().capture(request()))
+                .hasMessageContaining("No durable Game Session catalog epoch");
+            assertThat(f.count(SNAPSHOTS)).isZero();
+          } finally {
+            f.dsl.execute(
+                "UPDATE " + f.history + " SET success=?,script=?,type=? WHERE version=?",
+                original.get("success", Boolean.class),
+                original.get("script", String.class),
+                original.get("type", String.class),
+                version);
+          }
         }
       }
       try (Fixture f = fixture(null)) {
