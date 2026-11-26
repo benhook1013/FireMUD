@@ -1027,6 +1027,65 @@ assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UT
 assert_rate_limit_delay
 assert_output_contains "buildsrc-refresh-result"
 
+# Current Gradle reports buildSrc's pinned plugin JAR as a complete resolver
+# chain: Plugin Portal resource, Maven Central GET, then HTTP 429. The selected
+# JAR may be the regular artifact or a Gradle-version-specific variant.
+write_current_buildsrc_429_cause() {
+  local jar="$1"
+  local coordinate="$2"
+  local group artifact version jar_path
+  IFS=: read -r group artifact version <<< "$coordinate"
+  jar_path="${group//./\/}/$artifact/$version/$jar"
+  cat > "$CASE_DIR/buildsrc-current-cause.log" <<EOF_LOG
+FAILURE: Build failed with an exception.
+* What went wrong:
+A problem occurred configuring project ':buildSrc'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not download $jar ($coordinate)
+      > Could not get resource 'https://plugins.gradle.org/m2/$jar_path'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/$jar_path'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 39s
+EOF_LOG
+}
+
+for variant in regular gradle; do
+  new_case "buildsrc-current-$variant-jar-429"
+  if [[ "$variant" == regular ]]; then
+    current_jar='kotlin-stdlib-2.4.21.jar'
+    current_coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.21'
+  else
+    current_jar='kotlin-gradle-plugin-api-2.4.21-gradle96.jar'
+    current_coordinate='org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.21'
+  fi
+  write_current_buildsrc_429_cause "$current_jar" "$current_coordinate"
+  # Supply this shape directly; the legacy fixture writer remains unchanged.
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/buildsrc-current-cause.log"; exit 1; fi; echo current-buildsrc-retry-result; exit 0'
+  run_case logging-admin-service 0
+  assert_call_count 2
+  assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+  assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+  assert_rate_limit_delay
+  assert_output_contains "current-buildsrc-retry-result"
+done
+
+# A mismatched Maven GET URL, a non-429 response, or substantive buildSrc
+# work alongside the resolver failure must remain final.
+for mutation in divergent-get forbidden mixed-work; do
+  new_case "buildsrc-current-reject-$mutation"
+  write_current_buildsrc_429_cause 'kotlin-stdlib-2.4.21.jar' 'org.jetbrains.kotlin:kotlin-stdlib:2.4.21'
+  case "$mutation" in
+    divergent-get) sed -i 's|https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/|https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/|' "$CASE_DIR/buildsrc-current-cause.log" ;;
+    forbidden) sed -i 's/status code 429/status code 403/' "$CASE_DIR/buildsrc-current-cause.log" ;;
+    mixed-work) sed -i '/A problem occurred configuring/i > Task :buildSrc:compileKotlin' "$CASE_DIR/buildsrc-current-cause.log" ;;
+  esac
+  write_wrapper 'cat "$CASE_DIR/buildsrc-current-cause.log"; exit 1'
+  run_case logging-admin-service 1
+  assert_no_retry
+done
+
 # Auth, policy and conflict responses remain final, including mixed failures
 # where the other dependency really did encounter a retryable HTTP 429.
 for status in 401 403 409; do

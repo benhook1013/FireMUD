@@ -158,16 +158,16 @@ classify_failure_body() {
         next
       }
 
-      # Require each pre-compile Maven Central JAR download to report the
-      # complete matching 429 chain, not just a coordinate or status line.
+      # Require the complete matching coordinate, repository path and 429 chain.
       if (jar_download_step) {
-        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_url quote ".") {
+        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_resource_url quote ".") {
           jar_download_step = 2
         } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
           jar_download_step = 3
         } else if (jar_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
           jar_download_step = 0
           jar_downloads++
+          if (buildsrc_jar) buildsrc_jar_downloads++
           coordinates++
           repository_requests += 2
           transient++
@@ -176,7 +176,8 @@ classify_failure_body() {
         }
         next
       }
-      if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration) ||
+      if (((buildsrc_configuration == 1 && buildsrc_classpath == 1 && resolved_configuration == "classpath") ||
+           fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration) ||
            (compile_classpath_wrapper && resolved_configuration == expected_compile_configuration) ||
            (jooq_throttled && jooq_wrapper_causes == 1 && jooq_module != "" && jooq_root_module == jooq_module)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
@@ -197,15 +198,22 @@ classify_failure_body() {
           if (jar_name == "guava-" jre_version ".jar") jar_version = jre_version
         }
         jar_stem = jar_coordinate[2] "-" jar_version
+        buildsrc_jar = buildsrc_configuration == 1 && buildsrc_classpath == 1
+        # The Plugin Portal may select a Kotlin variant for the running Gradle.
+        gradle_variant_jar = buildsrc_jar && jar_coordinate[1] == "org.jetbrains.kotlin" &&
+          index(jar_name, jar_stem "-") == 1 &&
+          substr(jar_name, length(jar_stem) + 2) ~ /^gradle[0-9]+\.jar$/
         # Fixture classpaths can resolve platform-specific classifier JARs.
         classified_fixture_jar = fixtures_resolver && index(jar_name, jar_stem "-") == 1 &&
           substr(jar_name, length(jar_stem) + 2) ~ /^[[:alnum:]][[:alnum:]_.-]*\.jar$/
-        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar) ||
-            (fixtures_resolver && (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
+        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar && !gradle_variant_jar) ||
+            ((fixtures_resolver || buildsrc_jar) && (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
           invalid++
         }
         gsub(/\./, "/", jar_coordinate[1])
-        jar_url = "https://repo.maven.apache.org/maven2/" jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
+        jar_path = jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
+        jar_url = "https://repo.maven.apache.org/maven2/" jar_path
+        jar_resource_url = buildsrc_jar ? "https://plugins.gradle.org/m2/" jar_path : jar_url
         jar_download_step = 1
         next
       }
@@ -481,7 +489,14 @@ classify_failure_body() {
              buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom ||
              mavenrepo_disabled || protoc_connect_timeout || jooq_wrapper_causes || jooq_execution_causes ||
              wrapped_resolution_causes || fixtures_resolver)) ||
-          ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
+          (buildsrc_jar_downloads &&
+            (buildsrc_configuration != 1 || buildsrc_classpath != 1 || resolver_roots != 1 ||
+             buildsrc_jar_downloads != jar_downloads || other_cause_lines != 2 ||
+             buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429 ||
+             cache_cause || compile_task_failure || jooq_wrapper_causes ||
+             jooq_execution_causes || wrapped_resolution_causes || fixtures_resolver)) ||
+          (!buildsrc_jar_downloads &&
+            (buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
             (buildsrc_configuration != 1 || buildsrc_context == 0 ||
              resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
              cache_cause || compile_task_failure || searched)) ||
@@ -506,7 +521,7 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (wrapped_resolution_causes ||
+      if (wrapped_resolution_causes || buildsrc_jar_downloads ||
           ((compile_classpath_wrapper || fixtures_resolver || (jooq_throttled && jooq_wrapper_causes)) && jar_downloads)) {
         print "before-compile"
       }
