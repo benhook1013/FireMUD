@@ -35,6 +35,20 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
+  void strictCanonicalizationRejectsUnpairedSurrogatesWithoutReplacingValidUnicode()
+      throws Exception {
+    String prefix = "{\"value\":\"";
+    String suffix = "\"}";
+    String malformed = prefix + Character.MIN_HIGH_SURROGATE + suffix;
+    String supplementary = prefix + Character.toString(0x1f680) + suffix;
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(malformed))
+        .isInstanceOf(java.io.IOException.class);
+    assertThat(Rfc8785CanonicalJson.canonicalizeStrictUtf8(supplementary))
+        .isEqualTo(supplementary.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
   void strictCanonicalizationRequiresUniqueNamesWithinEachObject() {
     String malformedRecord = "{\"label\":\"example\",\"label\":\"other\",\"note\":null}";
 
