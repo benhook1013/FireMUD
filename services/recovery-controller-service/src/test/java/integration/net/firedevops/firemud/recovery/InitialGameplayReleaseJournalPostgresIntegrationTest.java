@@ -1770,8 +1770,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID effectId = first.effect().effectId();
     UUID attemptId = first.lastAttemptId();
 
-    assertThat(journal.recordRetryableEffectForDispatch(
-            first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
         .isTrue();
     var firstReceipt = localNoSendReceipts(first);
     assertThat(firstReceipt).hasSize(1);
@@ -1780,19 +1781,22 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     var reopened = new JooqInitialGameplayReleaseJournal(dsl, tupleCodec);
     String firstStored = storedOutbox(operationId, effectId);
-    assertThat(reopened.recordRetryableEffectForDispatch(
-            first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(6)))
+    assertThat(
+            reopened.recordRetryableEffectForDispatch(
+                first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(6)))
         .isTrue();
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(firstStored);
     assertThat(localNoSendReceipts(first)).isEqualTo(firstReceipt);
 
-    OutboxEntry second = reopened.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7));
+    OutboxEntry second =
+        reopened.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7));
     assertThat(second.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(second.lastAttemptId()).isEqualTo(attemptId);
     assertThat(second.attemptCount()).isEqualTo(first.attemptCount() + 1);
     assertThat(storedOutbox(operationId, effectId)).contains("\"retry_provenance\":null");
-    assertThat(reopened.recordRetryableEffectForDispatch(
-            second, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(8)))
+    assertThat(
+            reopened.recordRetryableEffectForDispatch(
+                second, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(8)))
         .isTrue();
     assertThat(localNoSendReceipts(second)).hasSize(2).startsWith(firstReceipt.getFirst());
     assertThat(
@@ -1817,8 +1821,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID operationId = dispatched.effect().operationId();
     UUID effectId = dispatched.effect().effectId();
     UUID attemptId = dispatched.lastAttemptId();
-    assertThat(journal.recordRetryableEffectForDispatch(
-            dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(5)))
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(5)))
         .isTrue();
     assertThat(storedOutbox(operationId, effectId))
         .contains("\"retry_provenance\":\"owner_rejected\"");
@@ -1837,8 +1842,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     var reopened = new JooqInitialGameplayReleaseJournal(dsl, tupleCodec);
     String rejected = storedOutbox(operationId, effectId);
-    assertThat(reopened.recordRetryableEffectForDispatch(
-            dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(6)))
+    assertThat(
+            reopened.recordRetryableEffectForDispatch(
+                dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(6)))
         .isTrue();
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(rejected);
     assertThatThrownBy(
@@ -2175,11 +2181,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       FROM recovery_control.initial_gameplay_release_outbox o WHERE outbox_id=?
                       """,
                       V1_OUTBOX_ID))
-              .satisfies(
-                  row -> {
-                    assertThat(row.get("old_shape", String.class)).isEqualTo(outboxBeforeV3);
-                    assertThat(row.get("retry_provenance", String.class)).isNull();
-                  });
+              .satisfies(row -> {
+                assertThat(row.get("old_shape", String.class)).isEqualTo(outboxBeforeV3);
+                assertThat(row.get("retry_provenance", String.class)).isNull();
+              });
           assertThat(upgradedJournal.findNextEffect(V1_OPERATION_ID)).contains(dispatched);
         }
       }

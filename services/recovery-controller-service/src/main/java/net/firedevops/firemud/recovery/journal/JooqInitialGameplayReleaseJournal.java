@@ -319,11 +319,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       OutboxEntry dispatch, RetrySource source, String outcomeCode, Instant now) {
     Objects.requireNonNull(source, "retry source must not be null");
     return recordNonterminalEffectOutcome(
-        dispatch,
-        outcomeCode,
-        EffectOutboxState.RETRYABLE,
-        source,
-        now);
+        dispatch, outcomeCode, EffectOutboxState.RETRYABLE, source, now);
   }
 
   @Override
@@ -383,7 +379,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   "SELECT retry_provenance FROM " + OUTBOX_TABLE + " WHERE outbox_id = ?",
                   current.outboxId());
           if (origin == null
-              || !retryProvenance(retrySource).equals(origin.get("retry_provenance", String.class))) {
+              || !retryProvenance(retrySource)
+                  .equals(origin.get("retry_provenance", String.class))) {
             throw conflict("effect retry source changed for the exact dispatch");
           }
           requireExactClosureBeforeRetry(tx, current);
@@ -430,20 +427,20 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       int changed =
           tx.execute(
-          """
-          UPDATE recovery_control.initial_gameplay_release_outbox
-          SET state = ?, last_outcome_code = ?, retry_provenance = ?,
-              updated_at = CAST(? AS timestamptz)
-          WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
-              AND last_attempt_id = ?
-          """,
-          resultState.databaseValue(),
-          outcomeCode,
-          retrySource == null ? null : retryProvenance(retrySource),
-          toOffsetDateTime(now),
-          operationId,
-          effectId,
-          attemptId);
+              """
+              UPDATE recovery_control.initial_gameplay_release_outbox
+              SET state = ?, last_outcome_code = ?, retry_provenance = ?,
+                  updated_at = CAST(? AS timestamptz)
+              WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
+                  AND last_attempt_id = ?
+              """,
+              resultState.databaseValue(),
+              outcomeCode,
+              retrySource == null ? null : retryProvenance(retrySource),
+              toOffsetDateTime(now),
+              operationId,
+              effectId,
+              attemptId);
       if (changed != 1) {
         throw conflict("effect outcome compare-and-set lost");
       }
@@ -1002,7 +999,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   dispatchedAt)
               == null
           || hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())
-          || hasRetainedOwnerRejection(tx, current, current.lastAttemptId(), current.attemptCount())) {
+          || hasRetainedOwnerRejection(
+              tx, current, current.lastAttemptId(), current.attemptCount())) {
         throw conflict("retained local no-send proof does not match the exact dispatch");
       }
       return;
