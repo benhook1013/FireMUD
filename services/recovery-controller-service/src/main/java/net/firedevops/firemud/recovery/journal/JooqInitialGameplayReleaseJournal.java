@@ -404,10 +404,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
         return true;
       }
+      OffsetDateTime recordedAt = toOffsetDateTime(now);
       if (retrySource == RetrySource.NOT_DISPATCHED) {
         Record stored =
             tx.fetchOne(
-                "SELECT send_outcome_uncertain, readback_payload, readback_digest, readback_identity"
+                "SELECT send_outcome_uncertain, last_dispatched_at,"
+                    + " readback_payload, readback_digest, readback_identity"
                     + " FROM "
                     + OUTBOX_TABLE
                     + " WHERE outbox_id = ?",
@@ -422,6 +424,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                     || stored.get("readback_identity", String.class) != null)) {
           throw conflict("local no-send proof requires the exact currently dispatched attempt");
         }
+        OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
+        if (dispatchedAt == null) {
+          throw conflict("effect dispatch timestamp is unavailable");
+        }
+        if (recordedAt.isBefore(dispatchedAt)) {
+          recordedAt = dispatchedAt;
+        }
         int retained =
             tx.execute(
                 """
@@ -434,11 +443,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   AND attempt_count = ? AND last_dispatched_at <= CAST(? AS timestamptz)
                   AND send_outcome_uncertain = false
                 """,
-                toOffsetDateTime(now),
+                recordedAt,
                 current.outboxId(),
                 attemptId,
                 current.attemptCount(),
-                toOffsetDateTime(now));
+                recordedAt);
         if (retained != 1) {
           throw conflict("local no-send proof did not match the exact dispatch");
         }
@@ -469,7 +478,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               outcomeCode,
               retrySource == null ? null : retryProvenance(retrySource),
               resultState == EffectOutboxState.AMBIGUOUS,
-              toOffsetDateTime(now),
+              recordedAt,
               operationId,
               effectId,
               attemptId);
@@ -1163,15 +1172,19 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   private void requireTerminalReplayWithinAttempt(
       EffectReadback readback, Record stored, Instant now) {
+    requireTerminalReplayAfterDispatch(readback, stored);
+    if (readback.observedAt().isAfter(now)) {
+      throw conflict("effect readback observation is in the future");
+    }
+  }
+
+  private void requireTerminalReplayAfterDispatch(EffectReadback readback, Record stored) {
     OffsetDateTime dispatchTime = stored.get("last_dispatched_at", OffsetDateTime.class);
     if (dispatchTime == null) {
       throw conflict("effect dispatch timestamp is unavailable");
     }
     if (readback.observedAt().isBefore(dispatchTime.toInstant())) {
       throw conflict("effect readback is stale");
-    }
-    if (readback.observedAt().isAfter(now)) {
-      throw conflict("effect readback observation is in the future");
     }
   }
 
@@ -1190,7 +1203,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (recordedAt == null) {
       throw conflict("retained effect readback recording time is unavailable");
     }
-    requireTerminalReplayWithinAttempt(acknowledged, stored, recordedAt.toInstant());
+    requireTerminalReplayAfterDispatch(acknowledged, stored);
+    if (acknowledged
+        .observedAt()
+        .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+        .isAfter(recordedAt.toInstant())) {
+      throw conflict("retained effect readback observation is after its recording time");
+    }
     // The authenticated outcome identifies the durable closure, not the read clock.
     // A valid new observation time never replaces the first durable receipt.
     return acknowledged.equals(

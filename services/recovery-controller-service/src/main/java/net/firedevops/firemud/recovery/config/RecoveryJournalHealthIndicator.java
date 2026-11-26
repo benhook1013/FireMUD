@@ -52,6 +52,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
                 AND a.attname IN ('outbox_id', 'attempt_id')
               ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'send_outcome_uncertain' AND NOT attisdropped
+            AND atttypid = 'pg_catalog.bool'::regtype)
         AND NOT EXISTS (
           SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
                  peer_storage_binding, scope_payload, evidence_ref, scope_digest,
@@ -90,11 +95,15 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
   @Override
   public Health health() {
     // Resolve the journal shape without reading journal rows or changing the database.
-    try (var connection = dataSource.getConnection();
-        var statement = connection.prepareStatement(CHECK)) {
-      statement.setQueryTimeout(2);
-      try (var rows = statement.executeQuery()) {
-        return rows.next() && rows.getBoolean(1) ? Health.up().build() : Health.down().build();
+    try (var connection = dataSource.getConnection()) {
+      if (!connection.getAutoCommit()) {
+        return Health.down().build();
+      }
+      try (var statement = connection.prepareStatement(CHECK)) {
+        statement.setQueryTimeout(2);
+        try (var rows = statement.executeQuery()) {
+          return rows.next() && rows.getBoolean(1) ? Health.up().build() : Health.down().build();
+        }
       }
     } catch (SQLException unavailable) {
       // The driver exception can contain private configuration.

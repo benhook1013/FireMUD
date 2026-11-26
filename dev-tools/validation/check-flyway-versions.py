@@ -198,6 +198,29 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
 
 
 def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | None:
+    def exclusion_names(value: object) -> list[str] | None:
+        if isinstance(value, str):
+            return value.split(",")
+        if isinstance(value, list):
+            names = []
+            for child in value:
+                child_names = exclusion_names(child)
+                if child_names is None:
+                    return None
+                names.extend(child_names)
+            return names
+        if isinstance(value, dict) and all(
+                (isinstance(key, int) and key >= 0)
+                or (isinstance(key, str) and key.isdigit()) for key in value):
+            names = []
+            for child in value.values():
+                child_names = exclusion_names(child)
+                if child_names is None:
+                    return None
+                names.extend(child_names)
+            return names
+        return None
+
     def flatten_properties(
         value: object,
         prefix: tuple[str, ...],
@@ -244,14 +267,17 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
-            excluded_auto_configurations = properties.get("spring.autoconfigure.exclude", [])
-            if isinstance(excluded_auto_configurations, str):
-                excluded_auto_configurations = excluded_auto_configurations.split(",")
-            if (not isinstance(excluded_auto_configurations, list)
-                    or not all(isinstance(name, str) for name in excluded_auto_configurations)
-                    or any(name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
-                           for name in excluded_auto_configurations)):
-                return None
+            for path, value in properties.items():
+                exclusion_property = "spring.autoconfigure.exclude"
+                if not (path == exclusion_property or path.startswith(
+                        (exclusion_property + "[", exclusion_property + "."))):
+                    continue
+                excluded_auto_configurations = exclusion_names(value)
+                if excluded_auto_configurations is None:
+                    return None
+                if any(name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
+                       for name in excluded_auto_configurations):
+                    return None
             if any(path == "spring.config.import" or
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
@@ -330,6 +356,12 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     recovery_sql_root = (
         "services/recovery-controller-service/src/main/resources" + RECOVERY_MIGRATION_DIR
     )
+    recovery_java_root = (
+        "services/recovery-controller-service/src/main/java/db/recovery-control-migration/"
+    )
+    for path in sorted(current):
+        if path.startswith(recovery_java_root):
+            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
     for path in sorted(current):
         if path.startswith(recovery_sql_root) and path.lower().endswith(".sql"):
             if not path.endswith(".sql"):
@@ -511,6 +543,20 @@ def run_self_test() -> None:
     check("Redis-only autoconfiguration exclusion preserves recovery Flyway", {
         **recovery_history, recovery_config: redis_exclusion_settings,
     }, recovery_history, None)
+    for exclusion_form, exclusion_yaml in (
+        ("indexed Redis-only", (
+            b"spring.autoconfigure.exclude[0]: org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
+            + recovery_settings
+        )),
+        ("nested Redis-only", (
+            b"spring:\n  autoconfigure:\n    exclude:\n"
+            b"      0: org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        )),
+    ):
+        check(f"{exclusion_form} autoconfiguration exclusion preserves recovery Flyway", {
+            **recovery_history, recovery_config: exclusion_yaml,
+        }, recovery_history, None)
     check("excluding Flyway autoconfiguration cannot qualify recovery history", {
         **recovery_history,
         recovery_config: (
@@ -519,6 +565,21 @@ def run_self_test() -> None:
             b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
         ),
     }, recovery_history, "packaged Spring configuration must enable Flyway")
+    for exclusion_form, exclusion_yaml in (
+        ("indexed", (
+            b"spring.autoconfigure.exclude[0]: org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
+            + recovery_settings
+        )),
+        ("nested numeric", (
+            b"spring:\n  autoconfigure:\n    exclude:\n"
+            b"      0: org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        )),
+    ):
+        check(f"{exclusion_form} Flyway autoconfiguration exclusion cannot qualify recovery history", {
+            **recovery_history,
+            recovery_config: exclusion_yaml,
+        }, recovery_history, "packaged Spring configuration must enable Flyway")
     check("Flyway SQL suffix override cannot disconnect the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
@@ -537,6 +598,10 @@ def run_self_test() -> None:
     check("repeatable recovery SQL is unsupported until Flyway and jOOQ ordering agree", {
         **recovery_history, recovery + "R__refresh_journal.sql": b"-- repeatable",
     }, recovery_history, "recovery SQL must use Flyway's canonical versioned V* migration filename")
+    check("Java recovery migrations are unsupported by the SQL-only packaged schema path", {
+        **recovery_history,
+        "services/recovery-controller-service/src/main/java/db/recovery-control-migration/V2__journal.java": b"// java migration",
+    }, recovery_history, "Recovery migration sources must be SQL-only")
     ordinary_without_locations = {
         **recovery_history,
         recovery_config: b"spring:\n  flyway:\n    enabled: true\n",

@@ -491,6 +491,56 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @Test
   @ResourceLock("packaged-recovery-control-fixture-database")
+  void uncertaintyColumnMustBeBooleanForJournalReadiness() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true);
+        var connection =
+            DriverManager.getConnection(
+                packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      DSL.using(connection, SQLDialect.POSTGRES)
+          .execute(
+              """
+              ALTER TABLE recovery_control.initial_gameplay_release_outbox
+                ALTER COLUMN send_outcome_uncertain TYPE integer
+                USING (send_outcome_uncertain::integer)
+              """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void writablePackagedDatabaseWithAutoCommitDisabledIsNotJournalReady() throws Exception {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      try (var migration = startPackagedApplication(true)) {
+        assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
+      }
+      try (var application =
+              startPackagedApplication(false, "--spring.datasource.hikari.auto-commit=false");
+          var connection = application.getBean(DataSource.class).getConnection()) {
+        assertThat(connection.getAutoCommit()).isFalse();
+        assertThat(connection.isReadOnly()).isFalse();
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+        assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
+            .isNotNull()
+            .extracting(result -> result.getStatus())
+            .isEqualTo(Status.UP);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
   void migratedPackagedDatabaseInReadOnlyModeIsNotJournalReadyButProcessIsLive() throws Exception {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
@@ -525,7 +575,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     return context.getBean("recoveryJournalHealthIndicator", HealthIndicator.class);
   }
 
-  private static ConfigurableApplicationContext startPackagedApplication(boolean migrate) {
+  private static ConfigurableApplicationContext startPackagedApplication(
+      boolean migrate, String... overrides) {
     var environment = new StandardEnvironment();
     // Keep ambient datasource overrides out of the context before Flyway migrates.
     environment
@@ -555,6 +606,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     if (!migrate) {
       args.add("--spring.flyway.enabled=false");
     }
+    args.addAll(List.of(overrides));
     return builder.run(args.toArray(String[]::new));
   }
 
@@ -1374,6 +1426,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(retained).contains(tupleCodec.digest(closure));
       assertThat(journal.recordEffectReadback(dispatched, closure, base.plusSeconds(6)))
           .isEqualTo(recorded);
+      EffectReadback laterObservation =
+          readbackFor(
+              dispatched,
+              dispatched.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              closure.readbackIdentity(),
+              base.plusSeconds(5));
+      assertThat(journal.recordEffectReadback(dispatched, laterObservation, base.plusSeconds(6)))
+          .isEqualTo(recorded);
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
       UUID replacementAttempt = UUID.randomUUID();
       assertThat(
@@ -1903,6 +1964,35 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.claimEffect(operationId, effectId, newAttempt, base.plusSeconds(6)))
         .extracting(OutboxEntry::lastAttemptId)
         .isEqualTo(newAttempt);
+  }
+
+  @Test
+  void exactLocalNoSendCanBeRetainedAfterTheClockMovesBackward() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(base);
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(3)))
+        .isTrue();
+    assertThat(
+            dsl.fetchSingle(
+                    """
+                    SELECT recorded_at = dispatched_at AS at_dispatch
+                    FROM recovery_control.initial_gameplay_release_attempt_local_no_send
+                    WHERE outbox_id = ?
+                    """,
+                    dispatched.outboxId())
+                .get("at_dispatch", Boolean.class))
+        .isTrue();
+    UUID replacementAttempt = UUID.randomUUID();
+    assertThat(
+            journal.claimEffect(
+                dispatched.effect().operationId(),
+                dispatched.effect().effectId(),
+                replacementAttempt,
+                base.plusSeconds(5)))
+        .extracting(OutboxEntry::lastAttemptId)
+        .isEqualTo(replacementAttempt);
   }
 
   @Test

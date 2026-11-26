@@ -95,14 +95,15 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     await execute(name => {
       if (name === "node:fs") return {existsSync: () => true};
       assert.equal(name, expectedClassifierPath, "workflow must not import an unexpected module");
+      const classifierScope = {runAll: false, affectedModules: [],
+        bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false};
+      if (drift === "head-after") classifierScope.postgresRuntimeProofChanged = false;
       return {
         ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
         classifyGithubChangeScope: async (githubArgument, contextArgument) => {
         assert.equal(githubArgument, githubClient);
         assert.equal(contextArgument, eventContext);
-        return ({runAll: false, affectedModules: [],
-          bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false,
-          postgresRuntimeProofChanged: false});
+        return classifierScope;
       },
       };
     }, githubClient, eventContext,
