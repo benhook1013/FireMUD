@@ -1297,8 +1297,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                         && block.compareAndSet(true, false)) {
                                       entered.countDown();
                                       boolean done = false;
-                                      long stop =
-                                          System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                                      long stop = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
                                       while (!done && System.nanoTime() < stop) {
                                         try {
                                           done = release.await(100, TimeUnit.MILLISECONDS);
@@ -1311,10 +1310,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                             "SQL fixture release not signalled");
                                     }
                                     try {
-                                      return statementMethod.invoke(
-                                          statement, statementArguments);
-                                    } catch (
-                                        java.lang.reflect.InvocationTargetException error) {
+                                      return statementMethod.invoke(statement, statementArguments);
+                                    } catch (java.lang.reflect.InvocationTargetException error) {
                                       throw error.getCause();
                                     }
                                   });

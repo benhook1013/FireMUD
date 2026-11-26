@@ -2113,7 +2113,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "NEW.incarnation_digest IS DISTINCT FROM parent.incarnation_digest",
                   "dispatched.fence_dispatch_incarnation IS DISTINCT FROM NEW.incarnation_digest"),
               "guard_gs_region_owner_transfer()",
-              List.of("dispatched.fence_dispatch_incarnation IS DISTINCT FROM i.incarnation_digest"),
+              List.of(
+                  "dispatched.fence_dispatch_incarnation IS DISTINCT FROM i.incarnation_digest"),
               "require_gs_region_owner_transfer_custody()",
               List.of("NEW.executor_fence <= OLD.executor_fence")),
           Map.of());

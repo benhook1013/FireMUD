@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
@@ -1696,7 +1698,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                     id);
               }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasMessageContaining("gs_region_fence_receipt_dispatch_incarnation");
+          .hasMessageContaining("Transfer receipt differs from the bound parent incarnation");
       assertThat(proof.itemImage(id)).isEqualTo(dispatched);
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       assertThat(
@@ -1736,6 +1738,18 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                   "UPDATE game_session_region_runtime_status SET owner_service=?"
                       + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
                   "other-owner-service",
+                  proof.scope.tenantId(),
+                  proof.scope.gameInstanceId(),
+                  proof.scope.regionId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Region owner replacement requires an advancing executor fence");
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_runtime_status"
+                      + " SET owner_service=?, executor_fence=?"
+                      + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+                  "other-owner-service",
+                  proof.prior.executorFence().longValueExact() + 1,
                   proof.scope.tenantId(),
                   proof.scope.gameInstanceId(),
                   proof.scope.regionId()))
