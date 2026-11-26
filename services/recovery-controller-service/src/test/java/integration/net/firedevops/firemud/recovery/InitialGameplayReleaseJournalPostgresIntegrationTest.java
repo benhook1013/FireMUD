@@ -290,7 +290,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .extracting(info -> info.getScript())
         .contains(
             "V1__initial_gameplay_release_journal.sql",
-            "V2__retain_initial_gameplay_release_attempt_closure.sql");
+            "V2__retain_initial_gameplay_release_attempt_closure.sql",
+            "V3__require_dispatch_attempt_for_non_pending_effects.sql",
+            "V4__retain_typed_retry_provenance.sql");
     flyway.migrate();
     connection =
         DriverManager.getConnection(
@@ -313,6 +315,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     dsl.execute(
         "TRUNCATE TABLE recovery_control.initial_gameplay_release_attempt_closure, "
             + "recovery_control.initial_gameplay_release_attempt_rejection, "
+            + "recovery_control.initial_gameplay_release_attempt_local_no_send, "
             + "recovery_control.initial_gameplay_release_outbox, "
             + "recovery_control.initial_gameplay_release_transition, "
             + "recovery_control.initial_gameplay_release_operation");
@@ -343,7 +346,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   .getValues(0, String.class))
           .contains(
               "V1__initial_gameplay_release_journal.sql",
-              "V2__retain_initial_gameplay_release_attempt_closure.sql");
+              "V2__retain_initial_gameplay_release_attempt_closure.sql",
+              "V3__require_dispatch_attempt_for_non_pending_effects.sql",
+              "V4__retain_typed_retry_provenance.sql");
+      assertValidatedDispatchAttemptConstraint(packagedDsl);
 
       InitialGameplayReleaseJournal injected =
           application.getBean(InitialGameplayReleaseJournal.class);
@@ -402,7 +408,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"last_dispatched_at", "last_outcome_code"})
+  @ValueSource(strings = {"last_dispatched_at", "last_outcome_code", "retry_provenance"})
   @ResourceLock("packaged-recovery-control-fixture-database")
   void migratedPackagedDatabaseWithMissingOutboxColumnIsNotReady(String column) throws Exception {
     String database = "firemud_recovery_control";
@@ -420,6 +426,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               + switch (column) {
                 case "last_dispatched_at" -> "last_dispatched_at";
                 case "last_outcome_code" -> "last_outcome_code";
+                case "retry_provenance" -> "retry_provenance";
                 default -> throw new AssertionError("Unexpected test fixture column");
               }
               + " TO fixture_missing_column");
@@ -427,9 +434,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               packagedDsl
                   .fetchSingle(
                       "SELECT count(*) FROM recovery_control.flyway_schema_history_recovery_control"
-                          + " WHERE success AND version IN ('1', '2')")
+                          + " WHERE success AND version IN ('1', '2', '3', '4')")
                   .get(0, Long.class))
-          .isEqualTo(2L);
+          .isEqualTo(4L);
       var health = application.getBean(HealthEndpoint.class);
       assertThat(health.healthForPath("readiness"))
           .isNotNull()
@@ -1756,6 +1763,99 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void localNoSendPersistsTwoGenerationsOfTheSameAttemptWithoutRewritingReceipts() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry first = authorizedDispatch(base);
+    UUID operationId = first.effect().operationId();
+    UUID effectId = first.effect().effectId();
+    UUID attemptId = first.lastAttemptId();
+
+    assertThat(journal.recordRetryableEffectForDispatch(
+            first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
+        .isTrue();
+    var firstReceipt = localNoSendReceipts(first);
+    assertThat(firstReceipt).hasSize(1);
+    assertThat(storedOutbox(operationId, effectId))
+        .contains("\"retry_provenance\":\"local_no_send\"");
+
+    var reopened = new JooqInitialGameplayReleaseJournal(dsl, tupleCodec);
+    String firstStored = storedOutbox(operationId, effectId);
+    assertThat(reopened.recordRetryableEffectForDispatch(
+            first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(6)))
+        .isTrue();
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(firstStored);
+    assertThat(localNoSendReceipts(first)).isEqualTo(firstReceipt);
+
+    OutboxEntry second = reopened.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7));
+    assertThat(second.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+    assertThat(second.lastAttemptId()).isEqualTo(attemptId);
+    assertThat(second.attemptCount()).isEqualTo(first.attemptCount() + 1);
+    assertThat(storedOutbox(operationId, effectId)).contains("\"retry_provenance\":null");
+    assertThat(reopened.recordRetryableEffectForDispatch(
+            second, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(8)))
+        .isTrue();
+    assertThat(localNoSendReceipts(second)).hasSize(2).startsWith(firstReceipt.getFirst());
+    assertThat(
+            dsl.fetchSingle(
+                    """
+                    SELECT count(*)
+                    FROM recovery_control.initial_gameplay_release_attempt_local_no_send p
+                    JOIN recovery_control.initial_gameplay_release_outbox o USING (outbox_id)
+                    WHERE p.outbox_id = ? AND p.attempt_id = o.last_attempt_id
+                      AND p.attempt_ordinal = o.attempt_count
+                      AND p.dispatched_at = o.last_dispatched_at
+                    """,
+                    second.outboxId())
+                .get(0, Integer.class))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void exactOwnerRejectionPersistsDifferentAuthorityAndRequiresAFreshAttemptId() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    UUID attemptId = dispatched.lastAttemptId();
+    assertThat(journal.recordRetryableEffectForDispatch(
+            dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(5)))
+        .isTrue();
+    assertThat(storedOutbox(operationId, effectId))
+        .contains("\"retry_provenance\":\"owner_rejected\"");
+    assertThat(localNoSendReceipts(dispatched)).isEmpty();
+    assertThat(
+            dsl.fetchSingle(
+                    """
+                    SELECT attempt_ordinal
+                    FROM recovery_control.initial_gameplay_release_attempt_rejection
+                    WHERE outbox_id = ? AND attempt_id = ?
+                    """,
+                    dispatched.outboxId(),
+                    attemptId)
+                .get(0, Integer.class))
+        .isEqualTo(dispatched.attemptCount());
+
+    var reopened = new JooqInitialGameplayReleaseJournal(dsl, tupleCodec);
+    String rejected = storedOutbox(operationId, effectId);
+    assertThat(reopened.recordRetryableEffectForDispatch(
+            dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(6)))
+        .isTrue();
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(rejected);
+    assertThatThrownBy(
+            () -> reopened.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("a retry must use a new effect attempt identity");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(rejected);
+    UUID freshAttempt = UUID.randomUUID();
+    OutboxEntry replacement =
+        reopened.claimEffect(operationId, effectId, freshAttempt, base.plusSeconds(8));
+    assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+    assertThat(replacement.lastAttemptId()).isEqualTo(freshAttempt);
+    assertThat(replacement.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
+    assertThat(localNoSendReceipts(dispatched)).isEmpty();
+  }
+
+  @Test
   void delayedTransportOnlyGenerationCannotMutateSameIdRetry() {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry original = authorizedDispatch(base);
@@ -1979,19 +2079,135 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       .get(0, String.class))
               .isEqualTo(payloadBefore);
           UUID freshAttempt = UUID.randomUUID();
-          OutboxEntry dispatched =
-              upgradedJournal.claimEffect(
-                  V1_OPERATION_ID, pending.effect().effectId(), freshAttempt, base);
+          // Model one valid V2 row in a disposable fixture without running the V4 writer
+          // against a pre-V4 schema. This is historical row shape, not a dispatch.
+          assertThat(
+                  legacyDsl.execute(
+                      """
+                      UPDATE recovery_control.initial_gameplay_release_outbox
+                      SET state='dispatched', last_attempt_id=?, attempt_count=1,
+                          last_dispatched_at=CAST(? AS timestamptz)
+                      WHERE outbox_id=? AND state='pending' AND attempt_count=0
+                      """,
+                      freshAttempt,
+                      base.atOffset(ZoneOffset.UTC),
+                      V1_OUTBOX_ID))
+              .isEqualTo(1);
+          OutboxEntry dispatched = upgradedJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
           assertThat(dispatched.outboxId()).isEqualTo(V1_OUTBOX_ID);
           assertThat(dispatched.effect()).isEqualTo(pending.effect());
           assertThat(dispatched.state()).isEqualTo(EffectOutboxState.DISPATCHED);
           assertThat(dispatched.lastAttemptId()).isEqualTo(freshAttempt);
           assertThat(dispatched.attemptCount()).isEqualTo(1);
+
+          String outboxBeforeV3 = retainedOutboxRow(legacyDsl);
+          var installedBeforeV3 =
+              legacyDsl.fetch(
+                  """
+                  SELECT version, script, checksum
+                  FROM recovery_control.flyway_schema_history_recovery_control
+                  WHERE success AND version IN ('1', '2')
+                  ORDER BY installed_rank
+                  """);
+          assertThat(installedBeforeV3).hasSize(2);
+          Flyway dispatchAttemptUpgrade =
+              Flyway.configure()
+                  .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                  .schemas(SCHEMA)
+                  .defaultSchema(SCHEMA)
+                  .table("flyway_schema_history_recovery_control")
+                  .placeholders(Map.of("serviceSchema", SCHEMA))
+                  .locations("classpath:db/recovery-control-migration")
+                  .target("3")
+                  .load();
+          dispatchAttemptUpgrade.migrate();
+          dispatchAttemptUpgrade.validate();
+          assertThat(dispatchAttemptUpgrade.info().current().getVersion().getVersion())
+              .isEqualTo("3");
+          assertValidatedDispatchAttemptConstraint(legacyDsl);
+          assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(outboxBeforeV3);
+          assertThat(upgradedJournal.findNextEffect(V1_OPERATION_ID)).contains(dispatched);
+          assertThat(
+                  legacyDsl.fetch(
+                      """
+                      SELECT version, script, checksum
+                      FROM recovery_control.flyway_schema_history_recovery_control
+                      WHERE success AND version IN ('1', '2')
+                      ORDER BY installed_rank
+                      """))
+              .containsExactlyElementsOf(installedBeforeV3);
+
+          var installedBeforeV4 =
+              legacyDsl.fetch(
+                  """
+                  SELECT version, script, checksum
+                  FROM recovery_control.flyway_schema_history_recovery_control
+                  WHERE success AND version IN ('1', '2', '3')
+                  ORDER BY installed_rank
+                  """);
+          Flyway provenanceUpgrade =
+              Flyway.configure()
+                  .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                  .schemas(SCHEMA)
+                  .defaultSchema(SCHEMA)
+                  .table("flyway_schema_history_recovery_control")
+                  .placeholders(Map.of("serviceSchema", SCHEMA))
+                  .locations("classpath:db/recovery-control-migration")
+                  .target("4")
+                  .load();
+          provenanceUpgrade.migrate();
+          provenanceUpgrade.validate();
+          assertThat(provenanceUpgrade.info().current().getVersion().getVersion()).isEqualTo("4");
+          assertThat(
+                  legacyDsl.fetch(
+                      """
+                      SELECT version, script, checksum
+                      FROM recovery_control.flyway_schema_history_recovery_control
+                      WHERE success AND version IN ('1', '2', '3')
+                      ORDER BY installed_rank
+                      """))
+              .containsExactlyElementsOf(installedBeforeV4);
+          assertThat(
+                  legacyDsl.fetchSingle(
+                      """
+                      SELECT (to_jsonb(o) - 'retry_provenance')::text AS old_shape,
+                             retry_provenance
+                      FROM recovery_control.initial_gameplay_release_outbox o WHERE outbox_id=?
+                      """,
+                      V1_OUTBOX_ID))
+              .satisfies(
+                  row -> {
+                    assertThat(row.get("old_shape", String.class)).isEqualTo(outboxBeforeV3);
+                    assertThat(row.get("retry_provenance", String.class)).isNull();
+                  });
+          assertThat(upgradedJournal.findNextEffect(V1_OPERATION_ID)).contains(dispatched);
         }
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
+  }
+
+  private static String retainedOutboxRow(DSLContext fixtureDsl) {
+    return fixtureDsl
+        .fetchSingle(
+            "SELECT to_jsonb(o)::text FROM recovery_control.initial_gameplay_release_outbox o"
+                + " WHERE outbox_id=?",
+            V1_OUTBOX_ID)
+        .get(0, String.class);
+  }
+
+  private static void assertValidatedDispatchAttemptConstraint(DSLContext fixtureDsl) {
+    assertThat(
+            fixtureDsl
+                .fetchSingle(
+                    """
+                    SELECT convalidated FROM pg_constraint
+                    WHERE conrelid='recovery_control.initial_gameplay_release_outbox'::regclass
+                      AND conname='ck_release_outbox_non_pending_attempt'
+                    """)
+                .get(0, Boolean.class))
+        .isTrue();
   }
 
   private static void assertImmutableV1Payloads(
@@ -2158,6 +2374,19 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         handoff.effect().effectId(),
         UUID.randomUUID(),
         base.plusSeconds(6));
+  }
+
+  private static List<String> localNoSendReceipts(OutboxEntry dispatch) {
+    return dsl.fetch(
+            """
+            SELECT row_to_json(p)::text || ':' || p.xmin::text AS row_json
+            FROM recovery_control.initial_gameplay_release_attempt_local_no_send p
+            WHERE outbox_id = ? AND attempt_id = ?
+            ORDER BY attempt_ordinal
+            """,
+            dispatch.outboxId(),
+            dispatch.lastAttemptId())
+        .getValues("row_json", String.class);
   }
 
   private static String storedClosure(OutboxEntry dispatch) {
