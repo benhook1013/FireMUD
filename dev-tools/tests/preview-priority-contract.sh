@@ -253,6 +253,12 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     -f "${FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER:-}" ]]; then
     proof_complete=true
   fi
+  if [[ "${FAKE_PR_901_PROOF_COMPLETES_ON_FRESH_REFRESH:-false}" == true && "$count" -gt 2 ]]; then
+    proof_complete=true
+  fi
+  if [[ "${FAKE_PR_901_PROOF_REMOVED_ON_FRESH_REFRESH:-false}" == true && "$count" -gt 2 ]]; then
+    proof_complete=false
+  fi
   if [[ "$proof_complete" == true ]]; then
     snapshot_proof_base="$snapshot_base"
     snapshot_proof_head="$snapshot_head"
@@ -1400,6 +1406,16 @@ run_proof_retry_contract() (
          nonce:$nonce,count:$count,base:$base,head:$head,merge:$merge,image:$base} | tojson)}}' > "$FAKE_RETRY_HOLDER"
   }
 
+  seed_reserved_holder_with_old_namespace_version() {
+    seed_retry_holder 1
+    jq -c '.data["pr-901"] |= (fromjson
+      | . + {stageVersion:2,phase:"RESERVED",predecessor:null,
+             namespaceResourceVersion:"rv-before-metadata-update",
+             holderUid:"uid-holder",holderResourceVersion:"0"}
+      | tojson)' "$FAKE_RETRY_HOLDER" > "$FAKE_RETRY_HOLDER.next"
+    mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
+  }
+
   fixture_reconcile() (
     cd "$ROOT_DIR"
     FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
@@ -1420,6 +1436,44 @@ run_proof_retry_contract() (
   test ! -e "$FAKE_ANNOTATE_LOG"
   jq -se 'length == 2 and .[0][0].value == "uid-holder" and .[0][1].value == "1"
     and (.[0][2].value|fromjson|.phase=="RESERVED") and (.[1][2].value|fromjson|.phase=="SEND_STARTED")' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  # A same-UID, same-deployment metadata update can refresh a proven unsent
+  # reservation's Namespace fence without allocating a new nonce or charge.
+  reset_case
+  seed_reserved_holder_with_old_namespace_version
+  original_reserved="$(jq -c '.data["pr-901"] | fromjson' "$FAKE_RETRY_HOLDER")"
+  fixture_reconcile >"$case_output"
+  grep -Fq 'Refreshed Namespace resource-version fence for retained proof-retry reservation' "$case_output"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
+  jq -se --argjson original "$original_reserved" '
+    length == 2
+    and ([ (.[0][2].value | fromjson), (.[1][2].value | fromjson) ] as [$refreshed,$started]
+      | $refreshed.phase == "RESERVED"
+       and $refreshed.nonce == $original.nonce
+       and $refreshed.count == $original.count
+       and $refreshed.predecessor == $original.predecessor
+       and $refreshed.namespaceUid == $original.namespaceUid
+       and $refreshed.namespaceResourceVersion == "rv-901"
+       and ($refreshed | del(.namespaceResourceVersion)) == ($original | del(.namespaceResourceVersion))
+       and $started.phase == "SEND_STARTED")
+  ' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+  assert_retry_count 1
+
+  reset_case
+  seed_reserved_holder_with_old_namespace_version
+  FAKE_PR_901_PROOF_REMOVED_ON_FRESH_REFRESH=true fixture_reconcile >"$case_output"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  jq -e '.data["pr-901"] | fromjson | .phase == "SEND_STARTED"' "$FAKE_RETRY_HOLDER" >/dev/null
+
+  reset_case
+  seed_reserved_holder_with_old_namespace_version
+  FAKE_PR_901_PROOF_COMPLETE=false FAKE_PR_901_PROOF_COMPLETES_ON_FRESH_REFRESH=true \
+    fixture_reconcile >"$case_output"
+  grep -Fq 'Released proof-retry reservation' "$case_output"
+  test ! -e "$FAKE_DISPATCH_LOG"
+  jq -e '.data["pr-901"] == null' "$FAKE_RETRY_HOLDER" >/dev/null
+  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
 
   reset_case
   seed_retry_holder 2

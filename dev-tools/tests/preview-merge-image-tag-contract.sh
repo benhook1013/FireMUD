@@ -159,7 +159,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|publisher_replacement_handoff|publisher_stale_receipt|publisher_exact_retry)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|publisher_replacement_handoff|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -172,7 +172,7 @@ case "${GH_FIXTURE:-}" in
       publisher_title+=" source-run-101"
     fi
     source_attempt=1 publisher_id=102 recorded_attempt=1
-    [[ "$GH_FIXTURE" != publisher_stale_receipt ]] || source_attempt=2
+    [[ "$GH_FIXTURE" != publisher_stale_receipt* ]] || source_attempt=2
     if [[ "$GH_FIXTURE" == publisher_exact_retry ]]; then
       source_attempt=2 publisher_id=103 recorded_attempt=2
     fi
@@ -218,8 +218,15 @@ PY_RECEIPT
         printf '%s' '{"id":50,"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml"}'
         ;;
       *actions/runs/101/artifacts?*)
+        if [[ "$GH_FIXTURE" == publisher_missing_producer || "$GH_FIXTURE" == publisher_stale_receipt_missing_producer ]]; then
+          printf '%s' '{"total_count":0,"artifacts":[]}'
+          exit
+        fi
+        expired=false
+        [[ "$GH_FIXTURE" != publisher_expired_producer ]] || expired=true
         jq -cn --arg name "pr-runtime-images-pr-merge-${merge_sha}-attempt-${source_attempt}" \
-          --argjson attempt "$source_attempt" '{total_count:1,artifacts:[{name:$name,id:(300+$attempt),expired:false,workflow_run:{id:101},digest:("sha256:"+("8"*64))}]}'
+          --argjson attempt "$source_attempt" --argjson expired "$expired" \
+          '{total_count:1,artifacts:[{name:$name,id:(300+$attempt),expired:$expired,workflow_run:{id:101},digest:("sha256:"+("8"*64))}]}'
         ;;
       *actions/runs/103/artifacts?*)
         if [[ "$GH_FIXTURE" != publisher_replacement_handoff ]]; then
@@ -428,8 +435,14 @@ GH_FIXTURE=publisher_exact_retry \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-exact-retry.out"
 grep -Fq 'Trusted PR image publisher 103 succeeded' "$TEMP_DIR/publisher-exact-retry.out"
 
+for publisher_fixture in publisher_expired_producer publisher_missing_producer; do
+  GH_FIXTURE="$publisher_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+    timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$publisher_fixture.out"
+  grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/$publisher_fixture.out"
+done
 
-for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent publisher_stale_receipt; do
+for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent publisher_stale_receipt publisher_stale_receipt_missing_producer; do
   publisher_status=0
   publisher_output="$(
     GH_FIXTURE="$publisher_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \

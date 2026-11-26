@@ -246,10 +246,55 @@ prepare_preview_dispatch() {
     if ! jq -e --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" \
         --arg image "$image_tag" --arg uid "$namespace_uid" --arg rv "$namespace_resource_version" '
       .base == $base and .head == $head and .merge == $merge and .image == $image
-      and .namespaceUid == $uid and .namespaceResourceVersion == $rv
+      and .namespaceUid == $uid
+      and (if $uid == "" then $rv == "" and .namespaceResourceVersion == ""
+           else ($uid | length) > 0
+             and (.namespaceResourceVersion | type == "string" and length > 0) end)
     ' <<<"$prior" >/dev/null; then
       echo "Retained proof-retry reservation for PR #${pr_number} lacks current custody; leaving it charged." >&2
       return 1
+    fi
+    if ! jq -e --arg rv "$namespace_resource_version" '.namespaceResourceVersion == $rv' \
+        <<<"$prior" >/dev/null; then
+      if [[ -z "$namespace_uid" || -z "$namespace_resource_version" ]]; then
+        echo "Retained proof-retry reservation for PR #${pr_number} lacks a refreshable Namespace fence; leaving it charged." >&2
+        return 1
+      fi
+      local fresh_namespace_json fresh_namespace_tuple fresh_base fresh_head fresh_merge fresh_image
+      local fresh_proof_base fresh_proof_head fresh_proof_merge fresh_proof_image fresh_proof_uid
+      local fresh_uid fresh_rv
+      if ! fresh_namespace_json="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" ||
+        [[ -z "$fresh_namespace_json" ]] ||
+        ! fresh_namespace_tuple="$(parse_namespace_tuple "$fresh_namespace_json")"; then
+        echo "Unable to refresh Namespace fence for retained proof-retry reservation for PR #${pr_number}; leaving it charged." >&2
+        return 1
+      fi
+      IFS='|' read -r fresh_base fresh_head fresh_merge fresh_image _ _ _ _ \
+        fresh_proof_base fresh_proof_head fresh_proof_merge fresh_proof_image fresh_proof_uid fresh_uid fresh_rv \
+        <<<"$fresh_namespace_tuple"
+      if ! jq -e --arg namespace "$namespace" --arg uid "$namespace_uid" --arg rv "$fresh_rv" '
+        .metadata.name == $namespace and .metadata.uid == $uid and .metadata.resourceVersion == $rv
+        and .metadata.deletionTimestamp == null
+      ' <<<"$fresh_namespace_json" >/dev/null ||
+        [[ "$fresh_uid" != "$namespace_uid" || -z "$fresh_rv" ||
+          "$fresh_base|$fresh_head|$fresh_merge|$fresh_image" != "$base_sha|$head_sha|$merge_sha|$image_tag" ]]; then
+        echo "Fresh Namespace fence does not match retained proof-retry reservation for PR #${pr_number}; leaving it charged." >&2
+        return 1
+      fi
+      if [[ "$fresh_proof_base|$fresh_proof_head|$fresh_proof_merge|$fresh_proof_image|$fresh_proof_uid" == \
+          "$base_sha|$head_sha|$merge_sha|$image_tag|$namespace_uid" ]]; then
+        proof_completed=true
+      else
+        proof_completed=false
+      fi
+      local refreshed
+      refreshed="$(jq -c --arg rv "$fresh_rv" '.namespaceResourceVersion = $rv' <<<"$prior")" || return 1
+      if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$refreshed")"; then
+        echo "Unable to refresh retained proof-retry Namespace fence for PR #${pr_number}; leaving it charged." >&2
+        return 1
+      fi
+      prior="$(preview_retry_entry "$holder" "$namespace")" || return 1
+      echo "Refreshed Namespace resource-version fence for retained proof-retry reservation for PR #${pr_number}."
     fi
     proof_retry_record="$prior"
     proof_retry_prior_record="$(jq -c '.predecessor' <<<"$prior")" || return 1

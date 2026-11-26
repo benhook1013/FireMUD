@@ -339,20 +339,22 @@ fetch_alternate_run_metadata() {
   timeout --signal=KILL "$remaining" gh api "$2"
 }
 
-# Resolve exactly one retained Actions artifact on its authenticated run endpoint.
+# Resolve exactly one unexpired artifact. Producer proof can retain the ID and
+# digest of an expired row or use the authenticated publisher's receipt when
+# GitHub no longer lists the producer artifact.
 read_exact_run_artifact() {
-  local deadline="$1" run_id="$2" name="$3"
+  local deadline="$1" run_id="$2" name="$3" producer="${4:-false}"
   fetch_alternate_run_metadata "$deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?name=${name}&per_page=100" |
-    jq -cer --argjson run "$run_id" --arg name "$name" '
-      select(.total_count == 1 and (.artifacts | type == "array" and length == 1))
-      | .artifacts[0]
-      | select(.name == $name and .workflow_run.id == $run)
-      | select(.id | type == "number" and floor == . and . > 0)
-      | select(.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
-      | if .expired == false then {id, digest}
-        elif .expired == true and ($name | startswith("pr-runtime-images-")) then
-          "Exact producer artifact has expired; publication proof remains unverified" | debug | empty
-        else empty end'
+    jq -cer --argjson run "$run_id" --arg name "$name" --argjson producer "$producer" '
+      select((.artifacts | type == "array") and .total_count == (.artifacts | length))
+      | if $producer and .total_count == 0 then {id:null, digest:null}
+        else select(.total_count == 1) | .artifacts[0]
+          | select(.name == $name and .workflow_run.id == $run)
+          | select(.id | type == "number" and floor == . and . > 0)
+          | select(.digest | type == "string" and test("\\Asha256:[0-9a-f]{64}\\z"))
+          | select(.expired == false or ($producer and .expired == true))
+          | {id, digest}
+        end'
 }
 
 verify_exact_publication_receipt() {
@@ -364,6 +366,7 @@ verify_exact_publication_receipt() {
 import hashlib
 import io
 import json
+import re
 import sys
 import zipfile
 
@@ -388,7 +391,20 @@ try:
             raise ValueError("invalid receipt size")
     receipt = json.loads(payload, object_pairs_hook=closed_object)
     expected = json.loads(sys.argv[2])
-    if type(receipt) is not dict or set(receipt) != set(expected) or any(
+    if type(receipt) is not dict or set(receipt) != set(expected):
+        raise ValueError("invalid receipt inventory")
+    # In the confirmed-empty producer inventory case the publisher receipt
+    # retains the artifact identity. When metadata exists, require equality.
+    if expected["producerArtifactId"] is None and expected["producerArtifactDigest"] is None:
+        artifact_id = receipt["producerArtifactId"]
+        artifact_digest = receipt["producerArtifactDigest"]
+        if (type(artifact_id) is not int or artifact_id <= 0
+                or type(artifact_digest) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest) is None):
+            raise ValueError("invalid producer artifact identity")
+        expected["producerArtifactId"] = artifact_id
+        expected["producerArtifactDigest"] = artifact_digest
+    if any(
             type(receipt[key]) != type(value) or receipt[key] != value
             for key, value in expected.items()):
         raise ValueError("invalid exact attempt receipt")
@@ -434,7 +450,7 @@ use_completed_duplicate_publication() {
     return 1
   fi
   source_pr="${BASH_REMATCH[1]}"
-  producer_artifact="$(read_exact_run_artifact "$lookup_deadline" "$older_id" "pr-runtime-images-${image_tag}-attempt-${source_attempt}")" || return 1
+  producer_artifact="$(read_exact_run_artifact "$lookup_deadline" "$older_id" "pr-runtime-images-${image_tag}-attempt-${source_attempt}" true)" || return 1
   if [[ "$source_event" == "pull_request" ]]; then
     publisher_events=(workflow_run)
   else
