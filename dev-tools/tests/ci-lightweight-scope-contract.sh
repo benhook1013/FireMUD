@@ -101,6 +101,8 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.equal(outputs.python_changed, String(expectsPython));
     assert.equal(outputs.design_docs_changed, String(expectsDesignDocs));
     assert.equal(outputs.run_all, String(!expected));
+    assert.equal(outputs.postgres_runtime_proof_changed, String(!expected),
+      "an older lightweight classifier may skip PostgreSQL proof only after the complete fallback inventory is verified");
     assert.deepEqual(JSON.parse(outputs.affected_modules), expected ? [] : ALL_MODULES);
     assert.deepEqual(JSON.parse(outputs.bootable_modules), expected ? [] : [...BOOTABLE_MODULES]);
   }
