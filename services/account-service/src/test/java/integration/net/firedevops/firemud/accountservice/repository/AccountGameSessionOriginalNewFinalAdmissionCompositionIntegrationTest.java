@@ -150,8 +150,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         String capacity = session.capacityImage();
         String decisions = session.capacityDecisionImage();
         var physical = new java.util.TreeMap<>(session.gs.capacityStateImage());
-        // The current region owner can renew its lease independently of admission replay.
-        physical.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+        var physicalLeases = session.gs.capacityLeaseOwnerImage();
+        var physicalWithoutLeaseValues = withoutLeaseValues(physical);
+        var regionFences = regionFenceImage(session);
         session.stopCapacityServer();
         session.restartAccount();
         var retry = session.complete();
@@ -161,8 +162,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         assertThat(session.capacityImage()).isEqualTo(capacity);
         assertThat(session.capacityDecisionImage()).isEqualTo(decisions);
         var replayedPhysical = new java.util.TreeMap<>(session.gs.capacityStateImage());
-        replayedPhysical.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
-        assertThat(replayedPhysical).isEqualTo(physical);
+        assertThat(withoutLeaseValues(replayedPhysical)).isEqualTo(physicalWithoutLeaseValues);
+        assertThat(session.gs.capacityLeaseOwnerImage()).isEqualTo(physicalLeases);
+        assertThat(regionFenceImage(session)).isEqualTo(regionFences);
         try (OriginalNewCredential replay = session.issue()) {
           assertSameCredential(before, replay, handle);
         }
@@ -657,8 +659,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   .get(0, Long.class))
           .isZero();
       var settledState = new java.util.TreeMap<>(session.gs.capacityStateImage());
-      // The exact current owner can renew its ordinary private region lease during replay.
-      settledState.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+      var settledLeases = session.gs.capacityLeaseOwnerImage();
+      var settledWithoutLeaseValues = withoutLeaseValues(settledState);
+      var regionFences = regionFenceImage(session);
       assertThat(settledState.keySet())
           .noneMatch(key -> key.startsWith("redis:session:game:capacity-execution:"));
 
@@ -670,8 +673,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       assertThat(session.gsReceiptImage()).isEqualTo(transitionBefore);
       var replayState = new java.util.TreeMap<>(session.gs.capacityStateImage());
-      replayState.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
-      assertThat(replayState).isEqualTo(settledState);
+      assertThat(withoutLeaseValues(replayState)).isEqualTo(settledWithoutLeaseValues);
+      assertThat(session.gs.capacityLeaseOwnerImage()).isEqualTo(settledLeases);
+      assertThat(regionFenceImage(session)).isEqualTo(regionFences);
       assertThat(session.gs.finalReadCalls()).isZero();
       assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
       assertThat(session.genesis().confirmedAdmissionAtMillis()).isNull();
@@ -1088,6 +1092,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.gs.finalReadCalls()).isOne();
       assertProvisionalUnchanged(session, firstCandidate);
 
+      session.stopCapacityServer();
+      var replayAfterSlotReuse =
+          assertThrows(CapacityRefusedException.class, () -> session.complete(first));
+      assertThat(replayAfterSlotReuse.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      assertThat(replayAfterSlotReuse.durableDenialId()).isEqualTo(denialId);
+
       var charges =
           session
               .gs
@@ -1235,6 +1245,23 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                     session.gs.decisionId())
                 .get(0, String.class))
         .isEqualTo("PROVISIONAL");
+  }
+
+  private static java.util.Map<String, String> withoutLeaseValues(
+      java.util.Map<String, String> image) {
+    var result = new java.util.TreeMap<>(image);
+    result.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+    return result;
+  }
+
+  private static java.util.List<Long> regionFenceImage(Session session) {
+    return session
+        .gs
+        .dsl()
+        .fetch(
+            "SELECT executor_fence FROM game_session_region_runtime_status"
+                + " ORDER BY tenant_id, game_instance_id, region_id")
+        .getValues("executor_fence", Long.class);
   }
 
   private static void assertCapacityFailure(

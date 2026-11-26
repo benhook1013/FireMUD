@@ -188,7 +188,11 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
                       proof.admission, original.request(), selected, denial, transferDeadline());
       if (ownerReplaced) {
         proof.rawReplaceOwner("denial-settlement-successor", "e".repeat(64));
-        assertThatThrownBy(settle::run).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(settle::run)
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity execution is indeterminate")
+            .hasStackTraceContaining(
+                "CanonicalGameplayOriginalNewCapacityExecutionOwner.requireSelectedOwner");
       } else {
         settle.run();
         settle.run();
@@ -337,49 +341,50 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
         var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
       var first = proof.newIndependentControlledOriginExecution();
       var second = proof.newIndependentControlledOriginExecution();
-      var ready = new java.util.concurrent.CountDownLatch(2);
-      var start = new java.util.concurrent.CountDownLatch(1);
       var assignment =
           proof.tags.assignmentForTransition(proof.admission.candidate().bindingDecisionId());
       var selected =
           new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
               proof.execution.selectedOwnerId(), proof.execution.selectedOwnerFence());
-      java.util.function.Function<
-              OriginalNewCapacityExecution, java.util.concurrent.Future<Boolean>>
-          compete =
-              attempt ->
-                  callers.submit(() -> {
-                    ready.countDown();
-                    if (!start.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                      throw new IllegalStateException("Concurrent proof start unavailable");
-                    }
-                    try {
-                      proof.sql.transaction(configuration ->
-                          CanonicalGameplayCapacityEvidenceBudget.precharge(
-                              DSL.using(configuration),
-                              attempt.request(),
-                              attempt.candidateDigest(),
-                              selected,
-                              assignment.tenantGameplayTag(),
-                              Clock.fixed(
-                                  attempt.request().evidence().evaluatedAt(),
-                                  java.time.ZoneOffset.UTC)));
-                      return true;
-                    } catch (IllegalStateException refused) {
-                      assertThat(refused)
-                          .hasMessage("Original NEW capacity evidence budget is unavailable");
-                      return false;
-                    }
-                  });
-      var firstResult = compete.apply(first);
-      var secondResult = compete.apply(second);
-      assertThat(ready.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      start.countDown();
-      assertThat(
-              List.of(
-                  firstResult.get(5, java.util.concurrent.TimeUnit.SECONDS),
-                  secondResult.get(5, java.util.concurrent.TimeUnit.SECONDS)))
-          .containsExactlyInAnyOrder(true, false);
+      java.util.function.BiConsumer<DSLContext, OriginalNewCapacityExecution> precharge =
+          (tx, attempt) ->
+              CanonicalGameplayCapacityEvidenceBudget.precharge(
+                  tx,
+                  attempt.request(),
+                  attempt.candidateDigest(),
+                  selected,
+                  assignment.tenantGameplayTag(),
+                  Clock.fixed(
+                      attempt.request().evidence().evaluatedAt(), java.time.ZoneOffset.UTC));
+      var winnerPid = new java.util.concurrent.CompletableFuture<Integer>();
+      var allowCommit = new CountDownLatch(1);
+      Future<?> winner =
+          callers.submit(() ->
+              proof.sql.transaction(configuration -> {
+                DSLContext tx = DSL.using(configuration);
+                precharge.accept(tx, first);
+                winnerPid.complete(tx.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                if (!allowCommit.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Concurrent proof commit was not released");
+                }
+              }));
+      Future<?> loser;
+      try {
+        int pid = winnerPid.get(5, TimeUnit.SECONDS);
+        loser =
+            callers.submit(() ->
+                assertThatThrownBy(() ->
+                        proof.sql.transaction(
+                            configuration -> precharge.accept(DSL.using(configuration), second)))
+                    .isExactlyInstanceOf(IllegalStateException.class)
+                    .hasMessage("Original NEW capacity evidence budget is unavailable"));
+        assertDatabaseWaitsFor(proof.sql, pid);
+        assertThat(loser.isDone()).isFalse();
+      } finally {
+        allowCommit.countDown();
+      }
+      winner.get(10, TimeUnit.SECONDS);
+      loser.get(10, TimeUnit.SECONDS);
       assertThat(
               proof
                   .sql

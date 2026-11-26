@@ -162,19 +162,31 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
       contextRef.set(context);
-      var previous = context.attach();
+      var caller =
+          CompletableFuture.runAsync(() -> {
+            var previous = context.attach();
+            try {
+              assertThatThrownBy(() ->
+                      new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                              fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                          .closeCapacityExecutionOnce(
+                              fixture.execution,
+                              fixture.candidate,
+                              fixture.assignment,
+                              fixture.deadline))
+                  .isInstanceOf(IllegalStateException.class);
+            } finally {
+              context.detach(previous);
+            }
+          });
       try {
-        assertThatThrownBy(() ->
-                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                        fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
-                    .closeCapacityExecutionOnce(
-                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
-            .isInstanceOf(IllegalStateException.class);
-        assertThat(entered.getCount()).isZero();
+        assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(release.getCount()).isEqualTo(1);
         verifyNoInteractions(fixture.whoami, fixture.scriptLoad, fixture.evaluation);
       } finally {
-        context.detach(previous);
         release.countDown();
+        caller.get(2, TimeUnit.SECONDS);
       }
       assertThat(disposed.await(2, TimeUnit.SECONDS)).isTrue();
       verify(fixture.connection, never()).async();
@@ -203,20 +215,33 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
       contextRef.set(context);
-      var previous = context.attach();
+      var caller =
+          CompletableFuture.runAsync(() -> {
+            var previous = context.attach();
+            try {
+              assertThatThrownBy(() ->
+                      new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                              fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                          .closeCapacityExecutionOnce(
+                              fixture.execution,
+                              fixture.candidate,
+                              fixture.assignment,
+                              fixture.deadline))
+                  .isInstanceOf(IllegalStateException.class);
+            } finally {
+              context.detach(previous);
+            }
+          });
       try {
-        assertThatThrownBy(() ->
-                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                        fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
-                    .closeCapacityExecutionOnce(
-                        fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
-            .isInstanceOf(IllegalStateException.class);
+        org.awaitility.Awaitility.await()
+            .atMost(2, TimeUnit.SECONDS)
+            .untilAsserted(() -> assertThat(fixture.evaluationSubmissions).hasValue(1));
+        caller.get(2, TimeUnit.SECONDS);
         assertThat(close).isNotDone();
-        assertThat(fixture.evaluationSubmissions).hasValue(1);
         verify(fixture.connection, never()).close();
       } finally {
-        context.detach(previous);
         close.complete(null);
+        caller.get(2, TimeUnit.SECONDS);
       }
     } finally {
       close.complete(null);
