@@ -71,6 +71,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   void committedCapacityWithoutExecutionCustodyRemainsIndeterminate() throws Exception {
     repairAccountMember();
     bridge(false);
+    authorizeKnownAccountSend(inventory.readOriginalNewFinalAdmissionSource(decision));
     var before = physicalImage();
     assertThat(
             fixture
@@ -428,10 +429,12 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                     "INSERT INTO game_session_capacity_evidence_charge"
                         + " (admission_attempt_id, tenant_id, request_id, admission_id,"
                         + " capacity_rearm_fence, mutation_digest, candidate_digest,"
-                        + " selected_owner_id, selected_owner_fence, reserved_binding_bytes)"
+                        + " selected_owner_id, selected_owner_fence, reserved_binding_bytes,"
+                        + " account_send_state, account_send_evidence_expires_at)"
                         + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence,"
                         + " mutation_digest, candidate_digest, selected_owner_id,"
-                        + " selected_owner_fence, reserved_binding_bytes"
+                        + " selected_owner_fence, reserved_binding_bytes,"
+                        + " 'UNCLAIMED', clock_timestamp() + INTERVAL '5 seconds'"
                         + " FROM game_session_capacity_evidence_charge"
                         + " WHERE admission_attempt_id = ?",
                     distinctAttempt,
@@ -697,6 +700,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -727,6 +731,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
