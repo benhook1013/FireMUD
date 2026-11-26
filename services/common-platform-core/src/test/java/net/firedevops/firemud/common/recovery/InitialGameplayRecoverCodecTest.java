@@ -103,6 +103,28 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void rejectsUnicodeWhitespaceOnlyAndBoundaryTextButKeepsInternalWhitespace() {
+    for (String whitespace : List.of("\u00a0", "\u0085")) {
+      rejects(WIRE.replace("\"detail\":\"initial\"", "\"detail\":\"" + whitespace + "\""));
+      rejects(WIRE.replace("\"detail\":\"initial\"", "\"detail\":\"" + whitespace + "initial\""));
+      rejects(WIRE.replace("\"detail\":\"initial\"", "\"detail\":\"initial" + whitespace + "\""));
+    }
+
+    // NEXT LINE remains a forbidden control character inside text.
+    rejects(WIRE.replace("\"initial\"", "\"in\u0085ternal\""));
+    for (String whitespace : List.of("\u00a0", "\u2003")) {
+      var internalWhitespace =
+          decode(WIRE.replace("\"initial\"", "\"in" + whitespace + "ternal\""));
+      assertThat(internalWhitespace.auditReason().detail()).isEqualTo("in" + whitespace + "ternal");
+      assertThat(
+              new String(
+                  InitialGameplayRecoverCodec.mutationPreimage(internalWhitespace),
+                  StandardCharsets.UTF_8))
+          .contains("in" + whitespace + "ternal");
+    }
+  }
+
+  @Test
   void rejectsUnknownDuplicateMissingAndOutOfOrderFields() {
     rejects(WIRE.replace("\"scope\":", "\"unknown\":\"x\",\"scope\":"));
     rejects(

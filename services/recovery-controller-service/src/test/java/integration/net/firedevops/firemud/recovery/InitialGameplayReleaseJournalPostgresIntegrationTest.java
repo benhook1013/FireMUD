@@ -418,9 +418,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
+  @ValueSource(strings = {"rejection_key", "maintenance_lock", "outbox_dispatch"})
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void migratedPackagedDatabaseWithMissingRequiredKeyIsNotReady(boolean rejectionKey)
+  void migratedPackagedDatabaseWithMissingRequiredConstraintIsNotReady(String missing)
       throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
@@ -432,10 +432,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
       var packaged = DSL.using(connection, SQLDialect.POSTGRES);
-      if (rejectionKey) {
+      if ("rejection_key".equals(missing)) {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection"
                 + " DROP CONSTRAINT initial_gameplay_release_attempt_rejection_pkey");
+      } else if ("outbox_dispatch".equals(missing)) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
+                + " DROP CONSTRAINT ck_release_outbox_non_pending_attempt");
       } else {
         String lockKey =
             packaged
@@ -460,6 +464,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   .get(0, Long.class))
           .isEqualTo(5L);
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      assertThat(application.getBean(HealthEndpoint.class).healthForPath("readiness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.DOWN);
       assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
           .isNotNull()
           .extracting(result -> result.getStatus())
@@ -1674,6 +1682,71 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("no dispatch timestamp");
     assertThat(storedOutbox(operationId, handoffId)).isEqualTo(pendingHandoff);
+  }
+
+  @Test
+  void missingDispatchedTimestampRefusesRetainedEffectBeforeOwnerCall() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET last_dispatched_at = NULL WHERE outbox_id = ?",
+        dispatch.outboxId());
+    String malformed = storedOutbox(operationId, effectId);
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("no dispatch timestamp");
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("no dispatch timestamp");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(malformed);
+  }
+
+  @Test
+  void handoffClaimRequiresTheExactRetainedPreparationReadback() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry prepare = authorizedDispatch(base);
+    UUID operationId = prepare.effect().operationId();
+    var readback =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared",
+            base.plusSeconds(5));
+    Operation releasing = journal.recordEffectReadback(prepare, readback, base.plusSeconds(6));
+    OutboxEntry handoff = journal.findNextEffect(operationId).orElseThrow();
+    UUID handoffId = handoff.effect().effectId();
+    String pendingHandoff = storedOutbox(operationId, handoffId);
+
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET readback_payload = NULL, readback_digest = NULL, readback_identity = NULL"
+            + " WHERE outbox_id = ?",
+        prepare.outboxId());
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("preparation readback is incomplete");
+    assertThat(storedOutbox(operationId, handoffId)).isEqualTo(pendingHandoff);
+    assertThat(journal.find(operationId)).contains(releasing);
+
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET readback_payload = CAST(? AS jsonb), readback_digest = ?, readback_identity = ?"
+            + " WHERE outbox_id = ?",
+        tupleCodec.toJson(readback),
+        tupleCodec.digest(readback),
+        readback.readbackIdentity(),
+        prepare.outboxId());
+    assertThat(
+            journal
+                .claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(8))
+                .state())
+        .isEqualTo(EffectOutboxState.DISPATCHED);
   }
 
   @Test
