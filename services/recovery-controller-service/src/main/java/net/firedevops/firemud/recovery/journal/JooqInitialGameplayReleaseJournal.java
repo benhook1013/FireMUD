@@ -246,11 +246,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   public Optional<OutboxEntry> findNextEffect(UUID operationId) {
     // Surface an incomplete retained dispatch to the typed row validator before normal work.
     // The operation key bounds this selection; valid acknowledged rows still do not queue work.
+    // A retry without typed provenance may ask the exact owner for evidence, but cannot claim.
     Record record =
         dsl.fetchOne(
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
-                   payload_digest, state,
+                   payload_digest,
+                   CASE WHEN state = 'retryable' AND retry_provenance IS NULL
+                        THEN 'ambiguous' ELSE state END AS state,
                    attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
             FROM recovery_control.initial_gameplay_release_outbox
             WHERE operation_id = ?
@@ -296,7 +299,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               SET state = 'dispatched', attempt_count = attempt_count + 1,
                   last_attempt_id = ?, last_dispatched_at = CAST(? AS timestamptz), last_outcome_code = NULL,
                   readback_identity = NULL, readback_payload = NULL, readback_digest = NULL,
-                  retry_provenance = NULL,
+                  retry_provenance = NULL, send_outcome_uncertain = false,
                   updated_at = CAST(? AS timestamptz)
               WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
               """,
@@ -373,14 +376,23 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("effect is not in a dispatchable attempt");
       }
       if (current.state() == resultState) {
+        if (resultState == EffectOutboxState.AMBIGUOUS) {
+          tx.execute(
+              "UPDATE " + OUTBOX_TABLE + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
+              current.outboxId());
+        }
         if (retrySource != null) {
           Record origin =
               tx.fetchOne(
                   "SELECT retry_provenance FROM " + OUTBOX_TABLE + " WHERE outbox_id = ?",
                   current.outboxId());
-          if (origin == null
-              || !retryProvenance(retrySource)
-                  .equals(origin.get("retry_provenance", String.class))) {
+          String retainedSource =
+              origin == null ? null : origin.get("retry_provenance", String.class);
+          if (retrySource == RetrySource.OWNER_REJECTED && "owner_closure".equals(retainedSource)) {
+            requireExactClosureBeforeRetry(tx, current);
+            return false;
+          }
+          if (!retryProvenance(retrySource).equals(retainedSource)) {
             throw conflict("effect retry source changed for the exact dispatch");
           }
           requireExactClosureBeforeRetry(tx, current);
@@ -388,7 +400,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         return true;
       }
       if (retrySource == RetrySource.NOT_DISPATCHED) {
-        if (current.state() != EffectOutboxState.DISPATCHED) {
+        Record stored =
+            tx.fetchOne(
+                "SELECT send_outcome_uncertain, readback_payload, readback_digest, readback_identity"
+                    + " FROM "
+                    + OUTBOX_TABLE
+                    + " WHERE outbox_id = ?",
+                current.outboxId());
+        if (stored == null
+            || !Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
+            || (current.state() == EffectOutboxState.AMBIGUOUS
+                ? !hasValidatedUnknownReadback(
+                    stored, stored.get("readback_digest", String.class), current)
+                : stored.get("readback_payload", JSONB.class) != null
+                    || stored.get("readback_digest", String.class) != null
+                    || stored.get("readback_identity", String.class) != null)) {
           throw conflict("local no-send proof requires the exact currently dispatched attempt");
         }
         int retained =
@@ -399,10 +425,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 SELECT outbox_id, last_attempt_id, attempt_count, last_dispatched_at,
                        CAST(? AS timestamptz)
                 FROM recovery_control.initial_gameplay_release_outbox
-                WHERE outbox_id = ? AND state = 'dispatched' AND last_attempt_id = ?
+                WHERE outbox_id = ? AND state IN ('dispatched', 'ambiguous') AND last_attempt_id = ?
                   AND attempt_count = ? AND last_dispatched_at <= CAST(? AS timestamptz)
-                  AND readback_payload IS NULL AND readback_digest IS NULL
-                  AND readback_identity IS NULL
+                  AND send_outcome_uncertain = false
                 """,
                 toOffsetDateTime(now),
                 current.outboxId(),
@@ -430,6 +455,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               """
               UPDATE recovery_control.initial_gameplay_release_outbox
               SET state = ?, last_outcome_code = ?, retry_provenance = ?,
+                  send_outcome_uncertain = CASE WHEN ? THEN true ELSE send_outcome_uncertain END,
                   updated_at = CAST(? AS timestamptz)
               WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
                   AND last_attempt_id = ?
@@ -437,6 +463,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               resultState.databaseValue(),
               outcomeCode,
               retrySource == null ? null : retryProvenance(retrySource),
+              resultState == EffectOutboxState.AMBIGUOUS,
               toOffsetDateTime(now),
               operationId,
               effectId,
@@ -497,7 +524,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           || current.state() == EffectOutboxState.RETRYABLE) {
         Record stored =
             tx.fetchOne(
-                "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at FROM "
+                "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at, retry_provenance FROM "
                     + OUTBOX_TABLE
                     + " WHERE operation_id = ? AND effect_id = ?",
                 operationId,
@@ -522,12 +549,20 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           requireValidExactStoredReadback(readback, stored, storedDigest, current);
           requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
           requireTerminalReplayWithinAttempt(readback, stored, now);
+          recoverOwnerClosureProvenance(tx, current);
           return operation;
         }
         if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
             && stored != null
             && sameRetainedOutcome(readback, stored, storedDigest, now)) {
           requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
+          requireTerminalReplayWithinAttempt(readback, stored, now);
+          recoverOwnerClosureProvenance(tx, current);
+          return operation;
+        }
+        if (stored != null
+            && stored.get("retry_provenance", String.class) == null
+            && readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
           requireTerminalReplayWithinAttempt(readback, stored, now);
           return operation;
         }
@@ -613,6 +648,15 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     return dispatch.outboxId().equals(current.outboxId())
         && dispatch.effect().equals(current.effect())
         && dispatch.payloadDigest().equals(current.payloadDigest());
+  }
+
+  private void recoverOwnerClosureProvenance(DSLContext tx, OutboxEntry current) {
+    tx.execute(
+        "UPDATE "
+            + OUTBOX_TABLE
+            + " SET retry_provenance = 'owner_closure'"
+            + " WHERE outbox_id = ? AND retry_provenance IS NULL",
+        current.outboxId());
   }
 
   @Override
@@ -970,7 +1014,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record stored =
         tx.fetchOne(
             "SELECT readback_payload, readback_digest, readback_identity, retry_provenance,"
-                + " last_dispatched_at FROM "
+                + " last_dispatched_at, send_outcome_uncertain FROM "
                 + OUTBOX_TABLE
                 + " WHERE operation_id = ? AND effect_id = ?",
             current.effect().operationId(),
@@ -985,7 +1029,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         payload == null && digest == null && stored.get("readback_identity", String.class) == null;
     if ("local_no_send".equals(provenance)) {
       OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
-      if (!emptyReadback
+      if ((!emptyReadback
+              && (!Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
+                  || !hasValidatedUnknownReadback(stored, digest, current)))
           || dispatchedAt == null
           || tx.fetchOne(
                   """

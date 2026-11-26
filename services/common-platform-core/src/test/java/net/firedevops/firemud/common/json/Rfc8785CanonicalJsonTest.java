@@ -44,6 +44,22 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
+  void strictCanonicalizationRejectsNumbersBeyondItsDocumentedInputLimit() {
+    String oversizedNumber = "1." + "0".repeat(1_000);
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(oversizedNumber))
+        .isInstanceOf(java.io.IOException.class);
+  }
+
+  @Test
+  void strictCanonicalizationRejectsDuplicateNamesAfterNullValues() {
+    String duplicateAfterNull = "{\"label\":null,\"label\":\"other\"}";
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(duplicateAfterNull))
+        .isInstanceOf(java.io.IOException.class);
+  }
+
+  @Test
   void sortsUnicodeObjectKeysByRawUtf16CodeUnits() throws Exception {
     String input =
         """

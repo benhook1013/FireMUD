@@ -741,6 +741,10 @@ public final class InitialGameplayReleaseModel {
       if (lastAttemptId != null) {
         lastAttemptId = requiredUuid(lastAttemptId, "lastAttemptId");
       }
+      if (state == EffectOutboxState.PENDING && (attemptCount != 0 || lastAttemptId != null)) {
+        throw new IllegalArgumentException(
+            "pending outbox states must not retain a dispatch attempt");
+      }
       if (state != EffectOutboxState.PENDING && (attemptCount == 0 || lastAttemptId == null)) {
         throw new IllegalArgumentException("dispatched outbox states require an attempt identity");
       }
@@ -782,7 +786,9 @@ public final class InitialGameplayReleaseModel {
   }
 
   public static String requiredText(String value, String name) {
-    Objects.requireNonNull(value, name + " must not be null");
+    if (value == null) {
+      throw new IllegalArgumentException(name + " must not be null");
+    }
     if (value.isBlank()) {
       throw new IllegalArgumentException(name + " must not be blank");
     }
