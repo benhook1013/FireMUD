@@ -24,6 +24,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.CommittedCapacityRequest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -174,18 +175,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   /** Checks the caller's complete original request against the execution linked by the receipt. */
-  void requireCommittedRequest(
+  CommittedCapacitySource requireCommittedRequest(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       long deadline) {
     if (budget == null) {
-      within(
-          deadline,
-          owner -> {
-            owner.requireCommittedRequest(source, request, deadline);
-            return null;
-          });
-      return;
+      return within(deadline, owner -> owner.requireCommittedRequest(source, request, deadline));
     }
     budget.check();
     OriginalNewCapacityExecution.requireOriginalNewRequest(request);
@@ -193,14 +188,17 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     var row =
         sql()
             .fetchOne(
-                "SELECT e.canonical_execution, e.execution_digest,"
-                    + " convert_from(e.canonical_execution, 'UTF8')::jsonb ->> 'canonicalAttemptPayload' AS attempt_payload"
+                "SELECT e.canonical_execution, e.execution_digest, e.reservation_id, e.reservation_fence,"
+                    + " convert_from(e.canonical_execution, 'UTF8')::jsonb ->> 'canonicalAttemptPayload' AS attempt_payload,"
+                    + " convert_from(e.canonical_execution, 'UTF8')::jsonb ->> 'reservationId' AS bound_reservation_id,"
+                    + " convert_from(e.canonical_execution, 'UTF8')::jsonb ->> 'reservationFence' AS bound_reservation_fence"
                     + " FROM "
                     + TABLE
                     + " e JOIN game_session_canonical_binding_transition t"
                     + " ON t.transition_id=e.transition_id"
                     + " AND t.original_new_capacity_execution_digest=e.execution_digest"
-                    + " WHERE t.status='COMMITTED' AND e.tenant_id=? AND e.request_id=?"
+                    + " WHERE t.status='COMMITTED' AND e.status IN ('AUTHORIZED','COMMITTED')"
+                    + " AND e.tenant_id=? AND e.request_id=?"
                     + " AND e.admission_id=? AND e.admission_attempt_id=?"
                     + " AND e.transition_id=? AND t.original_new_candidate_digest=?",
                 identity.tenantId(),
@@ -216,11 +214,23 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             .encodeToString(
                 net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
                     request));
+    UUID reservationId = row.get("reservation_id", UUID.class);
+    Long reservationFence = row.get("reservation_fence", Long.class);
+    String executionDigest = row.get("execution_digest", String.class);
     if (canonical == null
-        || !("sha256:" + OriginalNewCapacityExecution.sha256(canonical))
-            .equals(row.get("execution_digest", String.class))
-        || !requestPayload.equals(row.get("attempt_payload", String.class))) throw unavailable();
+        || !("sha256:" + OriginalNewCapacityExecution.sha256(canonical)).equals(executionDigest)
+        || !requestPayload.equals(row.get("attempt_payload", String.class))
+        || reservationId == null
+        || !reservationId.toString().equals(row.get("bound_reservation_id", String.class))
+        || reservationFence == null
+        || !reservationFence.toString().equals(row.get("bound_reservation_fence", String.class))) {
+      throw unavailable();
+    }
+    return new CommittedCapacitySource(
+        new CommittedCapacityRequest(request, reservationId, reservationFence), executionDigest);
   }
+
+  record CommittedCapacitySource(CommittedCapacityRequest selector, String executionDigest) {}
 
   /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
   UUID precharge(
