@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.pool.ProxyConnection;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.lettuce.core.api.StatefulConnection;
@@ -29,13 +31,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import javax.sql.DataSource;
 import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultTransactionProvider;
+import org.postgresql.jdbc.PgConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.datasource.ConnectionProxy;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 
 /** Resource boundary only for original-NEW capacity execution, never a shared datasource policy. */
 final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
@@ -47,6 +54,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   static final int MAX_BACKGROUND_OPERATIONS = 2;
   private static final Semaphore BACKGROUND_OPERATIONS = new Semaphore(MAX_BACKGROUND_OPERATIONS);
   private static final AtomicInteger RELEASE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
+  private static final AtomicInteger RETIRE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
   private static final AtomicInteger REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
 
   static {
@@ -55,6 +63,12 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
             RELEASE_FAILURE_RETAINED_OPERATIONS,
             AtomicInteger::get)
         .description("Capacity SQL operation permits retained after an uncertain provider release")
+        .register(Metrics.globalRegistry);
+    Gauge.builder(
+            "original_new_capacity_sql_retire_failure_retained_operations",
+            RETIRE_FAILURE_RETAINED_OPERATIONS,
+            AtomicInteger::get)
+        .description("Capacity SQL operation permits retained after unproved connection retirement")
         .register(Metrics.globalRegistry);
     Gauge.builder(
             "original_new_capacity_redis_close_failure_retained_operations",
@@ -67,6 +81,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final ThreadFactory cancellationThreads;
   private final boolean background;
   private final AtomicBoolean releaseFailureRecorded = new AtomicBoolean();
+  private final AtomicBoolean retireFailureRecorded = new AtomicBoolean();
   private boolean redisCloseFailureRecorded;
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final AtomicLong jdbcCommitInvocations = new AtomicLong();
@@ -474,6 +489,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         () -> {
           try {
             synchronized (resources) {
+              for (OwnedConnection connection : new ArrayList<>(connections.values())) {
+                try {
+                  connection.retire();
+                } catch (RuntimeException ignored) {
+                  // Unproved retirement leaves the connection owned and this operation admitted.
+                }
+              }
               if (active != null) {
                 try {
                   active.cancel();
@@ -533,12 +555,78 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     }
   }
 
+  private void recordRetirementFailure(Throwable failure) {
+    if (retireFailureRecorded.compareAndSet(false, true)) {
+      RETIRE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+      LOG.warn(
+          "Original NEW SQL connection retirement is unproved; operation permit retained (category={})",
+          sqlRetirementFailureCategory(failure));
+    }
+  }
+
+  private static String sqlRetirementFailureCategory(Throwable failure) {
+    if (failure instanceof SQLException) return "sql-exception";
+    if (failure instanceof Error) return "error";
+    return "exception";
+  }
+
+  /** Package-private test seam; production uses the pinned Spring/Hikari/PostgreSQL chain below. */
+  interface ConnectionRetirer {
+    void retire(Connection connection) throws SQLException;
+  }
+
+  private static void retireConfiguredConnection(ConnectionProvider provider, Connection raw)
+      throws SQLException {
+    if (provider instanceof ConnectionRetirer testRetirer) {
+      testRetirer.retire(raw);
+      return;
+    }
+    if (!(provider instanceof DataSourceConnectionProvider dataSourceProvider)) {
+      throw new SQLException("Unsupported capacity SQL connection provider");
+    }
+    HikariDataSource pool = requireHikariDataSource(dataSourceProvider.dataSource());
+    Connection pooled = raw;
+    if (raw instanceof ConnectionProxy springProxy) {
+      pooled = springProxy.getTargetConnection();
+    }
+    if (!(pooled instanceof ProxyConnection)
+        || !pooled
+            .getClass()
+            .getName()
+            .startsWith("com.zaxxer.hikari.pool.HikariProxyConnection")) {
+      throw new SQLException("Unsupported capacity SQL pooled connection");
+    }
+    PgConnection driver = pooled.unwrap(PgConnection.class);
+    driver.abort(Runnable::run);
+    if (!driver.isClosed()) {
+      throw new SQLException("PostgreSQL connection remained open after abort");
+    }
+    // Hikari's proxy abort delegates to PostgreSQL but does not evict its PoolEntry. Evict only
+    // after the driver confirms its executor/socket is closed, and before this connection can be
+    // released to the pool or a delayed statement invocation can resume.
+    pool.evictConnection(pooled);
+  }
+
+  private static HikariDataSource requireHikariDataSource(DataSource source) throws SQLException {
+    DataSource current = source;
+    while (current instanceof DelegatingDataSource delegating) {
+      current = delegating.getTargetDataSource();
+      if (current == null) throw new SQLException("Capacity SQL datasource target is unavailable");
+    }
+    if (!(current instanceof HikariDataSource hikari)) {
+      throw new SQLException("Unsupported capacity SQL datasource");
+    }
+    return hikari;
+  }
+
   private final class OwnedConnection {
     private final ConnectionProvider provider;
     private final Connection raw;
     private final Connection proxy;
     private boolean returned;
     private boolean releaseAttempted;
+    private boolean retired;
+    private boolean retirementFailed;
 
     OwnedConnection(ConnectionProvider provider, Connection raw) {
       this.provider = provider;
@@ -636,6 +724,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // Detach cancellation before pool return, serialized against a cancellation already running.
       synchronized (resources) {
         if (returned || releaseAttempted) return;
+        if (cancelled.get() && !retired) {
+          try {
+            retire();
+          } catch (RuntimeException unproved) {
+            throw unproved;
+          }
+        }
         releaseAttempted = true;
         if (activeConnection == this) {
           active = null;
@@ -652,6 +747,29 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         }
         returned = true;
         if (connections.remove(proxy) != null) outstandingConnections.decrementAndGet();
+      }
+    }
+
+    /**
+     * Must run under resources so cancellation and pool return retain single connection custody.
+     */
+    void retire() {
+      synchronized (resources) {
+        if (retired) return;
+        if (retirementFailed) throw unavailable();
+        if (returned || releaseAttempted) {
+          retirementFailed = true;
+          recordRetirementFailure(new SQLException("Connection custody already transferred"));
+          throw unavailable();
+        }
+        try {
+          retireConfiguredConnection(provider, raw);
+          retired = true;
+        } catch (SQLException | RuntimeException | Error unproved) {
+          retirementFailed = true;
+          recordRetirementFailure(unproved);
+          throw unavailable();
+        }
       }
     }
   }

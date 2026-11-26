@@ -7,13 +7,28 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.zaxxer.hikari.HikariDataSource;
+import io.grpc.Context;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.codec.ByteArrayCodec;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
 import org.junit.jupiter.api.Test;
+import org.postgresql.jdbc.PgConnection;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
@@ -51,6 +66,90 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                     org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
         .isZero();
     assertThat(physicalImage()).isEqualTo(before);
+  }
+
+  @Test
+  void deadlineRetiresPostgresDriverAndHikariReplacesBorrowedPoolEntry() throws Exception {
+    HikariDataSource pool = new HikariDataSource();
+    pool.setPoolName("capacity-retirement-" + UUID.randomUUID());
+    pool.setDriverClassName("org.postgresql.Driver");
+    pool.setJdbcUrl(POSTGRES.getJdbcUrl());
+    pool.setUsername(POSTGRES.getUsername());
+    pool.setPassword(POSTGRES.getPassword());
+    pool.setMaximumPoolSize(1);
+    pool.setMinimumIdle(1);
+    pool.setAutoCommit(true);
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    try {
+      DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(pool), SQLDialect.POSTGRES);
+      assertThat(dsl.configuration().connectionProvider())
+          .isInstanceOf(DataSourceConnectionProvider.class);
+      var configuredDataSource =
+          ((DataSourceConnectionProvider) dsl.configuration().connectionProvider()).dataSource();
+      assertThat(configuredDataSource).isInstanceOf(TransactionAwareDataSourceProxy.class);
+      assertThat(((TransactionAwareDataSourceProxy) configuredDataSource).getTargetDataSource())
+          .isSameAs(pool);
+      PgConnection initiallyIdleDriver;
+      try (Connection connection = pool.getConnection()) {
+        initiallyIdleDriver = connection.unwrap(PgConnection.class);
+      }
+      org.awaitility.Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(
+              () -> assertThat(pool.getHikariPoolMXBean().getIdleConnections()).isEqualTo(1));
+
+      var capturedBudget =
+          new AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget>();
+      var executingDriver = new AtomicReference<PgConnection>();
+      Context deadline = Context.current().withDeadlineAfter(300, TimeUnit.MILLISECONDS, scheduler);
+      assertThatThrownBy(() ->
+              deadline.call(() ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK,
+                      Long.MAX_VALUE,
+                      budget -> {
+                        capturedBudget.set(budget);
+                        return budget
+                            .sql(dsl)
+                            .connectionResult(connection -> {
+                              executingDriver.set(connection.unwrap(PgConnection.class));
+                              try (Statement statement = connection.createStatement()) {
+                                statement.execute("SELECT pg_sleep(30)");
+                                return true;
+                              }
+                            });
+                      })))
+          .isInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+
+      PgConnection retiredDriver = executingDriver.get();
+      assertThat(retiredDriver).isNotNull().isSameAs(initiallyIdleDriver);
+      var physicallyReleased =
+          (CompletableFuture<?>)
+              ReflectionTestUtils.getField(capturedBudget.get(), "physicallyReleased");
+      physicallyReleased.get(5, TimeUnit.SECONDS);
+      assertThat(retiredDriver.isClosed()).isTrue();
+      org.awaitility.Awaitility.await()
+          .atMost(5, TimeUnit.SECONDS)
+          .untilAsserted(() -> {
+            assertThat(pool.getHikariPoolMXBean().getActiveConnections()).isZero();
+            assertThat(pool.getHikariPoolMXBean().getIdleConnections()).isEqualTo(1);
+          });
+
+      try (Connection replacement = pool.getConnection()) {
+        PgConnection replacementDriver = replacement.unwrap(PgConnection.class);
+        assertThat(replacementDriver).isNotSameAs(retiredDriver);
+        assertThat(replacementDriver.isClosed()).isFalse();
+        try (Statement statement = replacement.createStatement();
+            var rows = statement.executeQuery("SELECT 1")) {
+          assertThat(rows.next()).isTrue();
+          assertThat(rows.getInt(1)).isEqualTo(1);
+        }
+      }
+    } finally {
+      scheduler.shutdownNow();
+      pool.close();
+    }
   }
 
   @org.junit.jupiter.params.ParameterizedTest

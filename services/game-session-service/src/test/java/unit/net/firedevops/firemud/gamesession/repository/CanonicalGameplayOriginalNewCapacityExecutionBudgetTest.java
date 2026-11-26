@@ -843,7 +843,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       release.countDown();
       verify(provider, timeout(2000)).release(connection);
       verifyNoInteractions(connection, redis);
-      assertThat(dsl.configuration().connectionProvider()).isSameAs(provider);
+      assertThat(dsl.configuration().connectionProvider())
+          .isInstanceOf(ControlledConnectionProvider.class);
     } finally {
       scheduler.shutdownNow();
     }
@@ -913,6 +914,137 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(provider, timeout(2000)).release(connection);
       verify(statement).cancel();
       verify(statement).setQueryTimeout(anyInt());
+    }
+  }
+
+  @Test
+  void cancellationRetiresBeforeDelayedDriverWorkResumes() throws Exception {
+    ConnectionProvider delegate = mock();
+    var provider = new ControlledConnectionProvider(delegate);
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(delegate.acquire()).thenReturn(connection);
+    CountDownLatch insideDriver = new CountDownLatch(1), resumeDriver = new CountDownLatch(1);
+    when(statement.execute())
+        .thenAnswer(invocation -> {
+          insideDriver.countDown();
+          awaitUninterruptibly(resumeDriver);
+          if (provider.retired(connection)) throw new java.sql.SQLException("retired connection");
+          return true;
+        });
+    DSLContext dsl = source(provider);
+    Semaphore permits = operationPermits();
+    int availableBefore = permits.availablePermits();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() ->
+                  assertThatThrownBy(() ->
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                              CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(dsl))))
+                      .isInstanceOf(
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable
+                              .class)));
+      try {
+        assertThat(insideDriver.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(provider.retirementAttempted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(provider.retired(connection)).isTrue();
+        assertThat(permits.availablePermits()).isEqualTo(availableBefore - 1);
+        verify(delegate, never()).release(connection);
+
+        resumeDriver.countDown();
+        verify(delegate, timeout(2000)).release(connection);
+        assertThat(
+                permits.tryAcquire(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS,
+                    2,
+                    TimeUnit.SECONDS))
+            .isTrue();
+        permits.release(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS);
+      } finally {
+        resumeDriver.countDown();
+      }
+    }
+  }
+
+  @Test
+  void failedConnectionRetirementKeepsConnectionAndOperationPermit() throws Exception {
+    ConnectionProvider delegate = mock();
+    var provider = new ControlledConnectionProvider(delegate);
+    provider.failRetirement = true;
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(delegate.acquire()).thenReturn(connection);
+    CountDownLatch insideDriver = new CountDownLatch(1), resumeDriver = new CountDownLatch(1);
+    when(statement.execute())
+        .thenAnswer(invocation -> {
+          insideDriver.countDown();
+          awaitUninterruptibly(resumeDriver);
+          return true;
+        });
+    DSLContext dsl = source(provider);
+    AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
+        new AtomicReference<>();
+    Semaphore permits = operationPermits();
+    AtomicInteger retained =
+        (AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "RETIRE_FAILURE_RETAINED_OPERATIONS"));
+    int beforeRetained = retained.get();
+    int availableBefore = permits.availablePermits();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() ->
+                  assertThatThrownBy(() ->
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                              CLOCK,
+                              Long.MAX_VALUE,
+                              budget -> {
+                                captured.set(budget);
+                                return execute(budget.sql(dsl));
+                              }))
+                      .isInstanceOf(
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable
+                              .class)));
+      try {
+        assertThat(insideDriver.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(provider.retirementAttempted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(provider.retired(connection)).isFalse();
+        resumeDriver.countDown();
+        var budget = captured.get();
+        org.awaitility.Awaitility.await()
+            .atMost(2, TimeUnit.SECONDS)
+            .untilAsserted(() ->
+                assertThat(ReflectionTestUtils.getField(budget, "workerDone")).isEqualTo(true));
+        assertThat(permits.availablePermits()).isEqualTo(availableBefore - 1);
+        assertThat(retained.get()).isEqualTo(beforeRetained + 1);
+        assertThat((AtomicInteger) ReflectionTestUtils.getField(budget, "outstandingConnections"))
+            .hasValue(1);
+        assertThat(ReflectionTestUtils.getField(budget, "released")).isEqualTo(false);
+        verify(delegate, never()).release(connection);
+      } finally {
+        resumeDriver.countDown();
+        if (retained.get() == beforeRetained + 1) retained.decrementAndGet();
+        if (permits.availablePermits() == availableBefore - 1) permits.release();
+        var budget = captured.get();
+        if (budget != null) {
+          synchronized (
+              java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "resources"))) {
+            ((java.util.Map<?, ?>) ReflectionTestUtils.getField(budget, "connections")).clear();
+            ((AtomicInteger) ReflectionTestUtils.getField(budget, "outstandingConnections")).set(0);
+          }
+        }
+      }
     }
   }
 
@@ -1582,7 +1714,53 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   private static DSLContext source(ConnectionProvider provider) {
-    return DSL.using(new DefaultConfiguration().set(SQLDialect.POSTGRES).set(provider));
+    ConnectionProvider scoped =
+        provider instanceof CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer
+            ? provider
+            : new ControlledConnectionProvider(provider);
+    return DSL.using(new DefaultConfiguration().set(SQLDialect.POSTGRES).set(scoped));
+  }
+
+  private static Semaphore operationPermits() {
+    return (Semaphore)
+        java.util.Objects.requireNonNull(
+            ReflectionTestUtils.getField(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+  }
+
+  private static final class ControlledConnectionProvider
+      implements ConnectionProvider,
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer {
+    private final ConnectionProvider delegate;
+    private final java.util.Set<Connection> retired =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final CountDownLatch retirementAttempted = new CountDownLatch(1);
+    private volatile boolean failRetirement;
+
+    private ControlledConnectionProvider(ConnectionProvider delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public Connection acquire() {
+      return delegate.acquire();
+    }
+
+    @Override
+    public void release(Connection connection) {
+      delegate.release(connection);
+    }
+
+    @Override
+    public synchronized void retire(Connection connection) throws java.sql.SQLException {
+      retirementAttempted.countDown();
+      if (failRetirement) throw new java.sql.SQLException("controlled retirement uncertainty");
+      retired.add(connection);
+    }
+
+    private synchronized boolean retired(Connection connection) {
+      return retired.contains(connection);
+    }
   }
 
   private static boolean execute(DSLContext sql) {
