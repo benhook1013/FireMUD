@@ -1939,7 +1939,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
-  void heldUntypedRetryRecordsExactOwnerSuccessWhenNoNegativeProofExists() {
+  void heldUntypedRetryRequiresDefinitiveEvidenceNewerThanTheRetainedPartialReadback() {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry dispatch = authorizedDispatch(base);
     UUID operationId = dispatch.effect().operationId();
@@ -1955,14 +1955,39 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThatThrownBy(() ->
             journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
-    EffectReadback receipt =
+    EffectReadback delayed =
         readbackFor(
             dispatch,
             dispatch.lastAttemptId(),
             EffectReadbackState.PREPARED_FENCED,
-            "legacy-qualification",
+            "delayed-qualification",
             base.plusSeconds(5));
-    assertThat(journal.recordEffectReadback(held, receipt, base.plusSeconds(6)).phase())
+    EffectReadback partial =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "newer-partial",
+            base.plusSeconds(6));
+    assertThat(journal.recordEffectReadback(held, partial, base.plusSeconds(6)).phase())
+        .isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(partial));
+    assertThatThrownBy(() -> journal.recordEffectReadback(held, delayed, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(journal.findNextEffect(operationId))
+        .get()
+        .extracting(OutboxEntry::state)
+        .isEqualTo(EffectOutboxState.AMBIGUOUS);
+    assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isEmpty();
+    EffectReadback fresh =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "fresh-qualification",
+            base.plusSeconds(7));
+    assertThat(journal.recordEffectReadback(held, fresh, base.plusSeconds(8)).phase())
         .isEqualTo(Phase.RELEASING);
     assertThat(journal.findEffect(operationId, dispatch.effect().kind()))
         .get()

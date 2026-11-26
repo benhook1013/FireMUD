@@ -171,7 +171,7 @@ jobs:
                 design_docs_changed: scope.designDocsChanged || fallbackDesignDocs,
                 validation_python_changed: scope.validationPythonChanged || fallbackPython,
                 postgres_runtime_proof_changed:
-                  scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,
+                  scope.postgresRuntimeProofChanged === undefined ? !lightweightFallback : scope.postgresRuntimeProofChanged,
                 lightweight_only: (moduleScopeAvailable || lightweightFallback) && scope.lightweightOnly,
               };
             } else {

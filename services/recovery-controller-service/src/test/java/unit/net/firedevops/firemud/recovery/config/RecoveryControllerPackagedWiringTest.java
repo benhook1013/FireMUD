@@ -13,50 +13,55 @@ import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.BeanWrapperImpl;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.ApplicationContext;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.util.ClassUtils;
 
-@SpringBootTest(
-    classes = RecoveryControllerServiceApplication.class,
-    webEnvironment = SpringBootTest.WebEnvironment.NONE,
-    properties = {
-      "FIREMUD_RECOVERY_CONTROL_DB_HOST=recovery-control.invalid",
-      "FIREMUD_RECOVERY_CONTROL_DB_PORT=5432",
-      "FIREMUD_RECOVERY_CONTROL_DB_USER=recovery",
-      "FIREMUD_RECOVERY_CONTROL_DB_PASSWORD=test-only",
-      "firemud.auth.jwt-secret=fixture-only-4c5f8d93e7ad4f58a8d81235cb7521b0d8439508",
-      "spring.jooq.sql-dialect=POSTGRES",
-      "spring.flyway.enabled=false",
-      "spring.grpc.server.enabled=false",
-      "spring.ssl.bundle.pem.firemud-grpc.keystore.certificate=classpath:certs/dev-cert.pem",
-      "spring.ssl.bundle.pem.firemud-grpc.keystore.private-key=classpath:certs/dev-key.pem",
-      "spring.ssl.bundle.pem.firemud-grpc.truststore.certificate=classpath:certs/dev-ca.pem"
-    })
 class RecoveryControllerPackagedWiringTest {
-  @Autowired private ApplicationContext context;
-
   @Test
   void packagedApplicationDiscoversDeniedOwnerAndIsolatedJournalWithoutRedis() {
-    assertThat(context.getBean(InitialGameplayReleaseEvidenceProvider.class))
-        .isInstanceOf(DeniedInitialGameplayReleaseEvidenceProvider.class);
-    assertThat(context.getBean(InitialGameplayReleaseEffectPort.class))
-        .isInstanceOf(DeniedInitialGameplayReleaseEffectPort.class);
-    assertThat(context.getBean(InitialGameplayReleaseJournal.class))
-        .isInstanceOf(JooqInitialGameplayReleaseJournal.class);
-    assertThat(context.getBeansOfType(InitialGameplayReleaseController.class)).hasSize(1);
-    assertThat(context.getBeansOfType(DataSource.class)).hasSize(1);
-    assertThat(new BeanWrapperImpl(context.getBean(DataSource.class)).getPropertyValue("jdbcUrl"))
-        .isEqualTo("jdbc:postgresql://recovery-control.invalid:5432/firemud_recovery_control");
-    String redisConnectionFactory =
-        "org.springframework.data.redis.connection.RedisConnectionFactory";
-    ClassLoader loader = context.getClassLoader();
-    // common-data-runtime puts Redis on the runtime classpath, not the test compile classpath.
-    if (ClassUtils.isPresent(redisConnectionFactory, loader)) {
-      assertThat(
-              context.getBeansOfType(ClassUtils.resolveClassName(redisConnectionFactory, loader)))
-          .isEmpty();
+    var environment = new StandardEnvironment();
+    // Isolate datasource settings before Boot runs the packaged environment guard.
+    var propertySources = environment.getPropertySources();
+    propertySources.remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+    propertySources.remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
+    try (var context =
+        new SpringApplicationBuilder(RecoveryControllerServiceApplication.class)
+            .environment(environment)
+            .web(WebApplicationType.NONE)
+            .run(
+                "--spring.config.location=classpath:/application.yml",
+                "--FIREMUD_RECOVERY_CONTROL_DB_HOST=recovery-control.invalid",
+                "--FIREMUD_RECOVERY_CONTROL_DB_PORT=5432",
+                "--FIREMUD_RECOVERY_CONTROL_DB_USER=recovery",
+                "--FIREMUD_RECOVERY_CONTROL_DB_PASSWORD=test-only",
+                "--firemud.auth.jwt-secret=fixture-only-4c5f8d93e7ad4f58a8d81235cb7521b0d8439508",
+                "--spring.jooq.sql-dialect=POSTGRES",
+                "--spring.flyway.enabled=false",
+                "--spring.grpc.server.enabled=false",
+                "--spring.ssl.bundle.pem.firemud-grpc.keystore.certificate=classpath:certs/dev-cert.pem",
+                "--spring.ssl.bundle.pem.firemud-grpc.keystore.private-key=classpath:certs/dev-key.pem",
+                "--spring.ssl.bundle.pem.firemud-grpc.truststore.certificate=classpath:certs/dev-ca.pem")) {
+      assertThat(context.getBean(InitialGameplayReleaseEvidenceProvider.class))
+          .isInstanceOf(DeniedInitialGameplayReleaseEvidenceProvider.class);
+      assertThat(context.getBean(InitialGameplayReleaseEffectPort.class))
+          .isInstanceOf(DeniedInitialGameplayReleaseEffectPort.class);
+      assertThat(context.getBean(InitialGameplayReleaseJournal.class))
+          .isInstanceOf(JooqInitialGameplayReleaseJournal.class);
+      assertThat(context.getBeansOfType(InitialGameplayReleaseController.class)).hasSize(1);
+      assertThat(context.getBeansOfType(DataSource.class)).hasSize(1);
+      assertThat(new BeanWrapperImpl(context.getBean(DataSource.class)).getPropertyValue("jdbcUrl"))
+          .isEqualTo("jdbc:postgresql://recovery-control.invalid:5432/firemud_recovery_control");
+      String redisConnectionFactory =
+          "org.springframework.data.redis.connection.RedisConnectionFactory";
+      ClassLoader loader = context.getClassLoader();
+      // common-data-runtime puts Redis on the runtime classpath, not the test compile classpath.
+      if (ClassUtils.isPresent(redisConnectionFactory, loader)) {
+        assertThat(
+                context.getBeansOfType(ClassUtils.resolveClassName(redisConnectionFactory, loader)))
+            .isEmpty();
+      }
     }
   }
 }

@@ -562,10 +562,6 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
         boolean heldUntyped =
             stored != null && stored.get("retry_provenance", String.class) == null;
-        if (heldUntyped && readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
-          requireTerminalReplayWithinAttempt(readback, stored, now);
-          return operation;
-        }
         boolean hasStoredReadback =
             stored != null
                 && (storedDigest != null
@@ -580,8 +576,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                     || hasRetainedOwnerRejection(tx, current, readback.attemptId(), null)))) {
           throw conflict("effect readback changed after definitive no effect");
         }
-        // A held retry can record a definitive result, but cannot claim a new dispatch.
-        // Keep normal attempt and observation fences before retaining that receipt.
+        // A held retry keeps the same attempt and observation fences as an ambiguous dispatch.
+        // Record partial evidence so a delayed definitive observation cannot advance it.
       }
       if (readback.observedAt().isAfter(now)) {
         throw conflict("effect readback observation is in the future");
