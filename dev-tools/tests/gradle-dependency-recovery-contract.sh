@@ -456,6 +456,51 @@ for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinat
   assert_no_retry
 done
 
+# Gradle 9.9 can wrap compileClasspath Maven Central 429 downloads in the
+# JavaCompile.classpath configuration-cache serialization failure.
+write_compile_classpath_429_cause() {
+  cat > "$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of task `:account-service:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'
+> Could not resolve all files for configuration ':account-service:compileClasspath'.
+   > Could not download spring-boot-4.2.0.jar (org.springframework.boot:spring-boot:4.2.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/4.2.0/spring-boot-4.2.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/4.2.0/spring-boot-4.2.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download spring-data-commons-4.1.0.jar (org.springframework.data:spring-data-commons:4.1.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-commons/4.1.0/spring-data-commons-4.1.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-commons/4.1.0/spring-data-commons-4.1.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case compile-classpath-429
+write_compile_classpath_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath; exit 0'
+run_case account-service 0
+assert_call_count 2
+assert_rate_limit_delay
+assert_output_contains "refreshed-compile-classpath"
+
+for mutation in auth wrong-module compile-started; do
+  new_case "compile-classpath-429-$mutation"
+  write_compile_classpath_429_cause
+  case "$mutation" in
+    auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-module) sed -i 's/:account-service:compileClasspath/:common-platform-core:compileClasspath/' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :account-service:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case account-service 1
+  assert_no_retry
+done
+
 # The common-test-support failure carries multiple Maven Central JAR chains
 # under one test fixtures classpath root, before any fixture compilation.
 write_test_fixtures_429_cause() {

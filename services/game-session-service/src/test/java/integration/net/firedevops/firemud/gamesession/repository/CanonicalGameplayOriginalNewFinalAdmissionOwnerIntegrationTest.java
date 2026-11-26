@@ -45,25 +45,31 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     var acquiring = new java.util.concurrent.CountDownLatch(1);
     var allowAcquisition = new java.util.concurrent.CountDownLatch(1);
     var returnedConnection = new java.util.concurrent.CountDownLatch(1);
-    var provider = fixture.dsl().configuration().connectionProvider();
-    var delayedProvider =
-        new org.jooq.ConnectionProvider() {
+    var provider =
+        (org.jooq.impl.DataSourceConnectionProvider)
+            fixture.dsl().configuration().connectionProvider();
+    var delayedDataSource =
+        new org.springframework.jdbc.datasource.DelegatingDataSource(provider.dataSource()) {
           @Override
-          public java.sql.Connection acquire() {
+          public java.sql.Connection getConnection() throws java.sql.SQLException {
             acquiring.countDown();
             try {
-              if (!allowAcquisition.await(10, java.util.concurrent.TimeUnit.SECONDS))
-                throw new IllegalStateException("Controlled acquisition latch did not open");
+              if (!allowAcquisition.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new java.sql.SQLException("Controlled acquisition latch did not open");
+              }
             } catch (InterruptedException interrupted) {
               Thread.currentThread().interrupt();
-              throw new IllegalStateException(interrupted);
+              throw new java.sql.SQLException(interrupted);
             }
-            return provider.acquire();
+            return super.getConnection();
           }
-
+        };
+    // Retain the production DataSource provider and Hikari retirement chain while delaying borrow.
+    var delayedProvider =
+        new org.jooq.impl.DataSourceConnectionProvider(delayedDataSource) {
           @Override
           public void release(java.sql.Connection connection) {
-            provider.release(connection);
+            super.release(connection);
             returnedConnection.countDown();
           }
         };
