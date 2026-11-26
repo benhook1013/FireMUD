@@ -1061,7 +1061,7 @@ for variant in regular gradle; do
     current_coordinate='org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.21'
   fi
   write_current_buildsrc_429_cause "$current_jar" "$current_coordinate"
-  # Supply this shape directly; the legacy fixture writer remains unchanged.
+  # shellcheck disable=SC2016 # These variables belong to the generated wrapper.
   write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/buildsrc-current-cause.log"; exit 1; fi; echo current-buildsrc-retry-result; exit 0'
   run_case logging-admin-service 0
   assert_call_count 2
@@ -1071,16 +1071,17 @@ for variant in regular gradle; do
   assert_output_contains "current-buildsrc-retry-result"
 done
 
-# A mismatched Maven GET URL, a non-429 response, or substantive buildSrc
-# work alongside the resolver failure must remain final.
+# A mismatched Maven GET URL, a non-429 response, or completed module
+# compilation before this failure must remain final.
 for mutation in divergent-get forbidden mixed-work; do
   new_case "buildsrc-current-reject-$mutation"
   write_current_buildsrc_429_cause 'kotlin-stdlib-2.4.21.jar' 'org.jetbrains.kotlin:kotlin-stdlib:2.4.21'
   case "$mutation" in
     divergent-get) sed -i 's|https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/|https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/|' "$CASE_DIR/buildsrc-current-cause.log" ;;
     forbidden) sed -i 's/status code 429/status code 403/' "$CASE_DIR/buildsrc-current-cause.log" ;;
-    mixed-work) sed -i '/A problem occurred configuring/i > Task :buildSrc:compileKotlin' "$CASE_DIR/buildsrc-current-cause.log" ;;
+    mixed-work) sed -i '/^FAILURE:/i > Task :logging-admin-service:compileJava' "$CASE_DIR/buildsrc-current-cause.log" ;;
   esac
+  # shellcheck disable=SC2016 # The generated wrapper expands CASE_DIR.
   write_wrapper 'cat "$CASE_DIR/buildsrc-current-cause.log"; exit 1'
   run_case logging-admin-service 1
   assert_no_retry
