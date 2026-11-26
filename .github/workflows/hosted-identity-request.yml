@@ -1,6 +1,6 @@
 name: Trusted Hosted Identity Request
 
-run-name: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title || format('Trusted Hosted Identity Request pr-{0}', github.event.pull_request.number) }}
+run-name: ${{ github.event_name == 'workflow_run' && (startsWith(github.event.workflow_run.display_title, 'Preview retry ') && format('{0} source-run-{1}-attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt) || github.event.workflow_run.display_title) || format('Trusted Hosted Identity Request pr-{0}', github.event.pull_request.number) }}
 
 on:
   workflow_run:
@@ -132,6 +132,19 @@ jobs:
             }
             SOURCE_RUN_ID="$WORKFLOW_RUN_ID"
             workflow_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
+            SOURCE_RUN_ATTEMPT="$(jq -r '.run_attempt // empty' <<<"$workflow_run_json")"
+            SOURCE_DISPLAY_TITLE="$(jq -r '.display_title | select(type == "string")' <<<"$workflow_run_json")"
+            if [[ "$SOURCE_DISPLAY_TITLE" =~ ^Preview\ retry\ ([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\ pr-([1-9][0-9]*)-base-([a-f0-9]{40})-head-([a-f0-9]{40})-merge-([a-f0-9]{40})$ ]]; then
+              SOURCE_RETRY_NONCE="${BASH_REMATCH[1]}"
+              SOURCE_RETRY_PR="${BASH_REMATCH[2]}"
+              SOURCE_RETRY_BASE="${BASH_REMATCH[3]}"
+              SOURCE_RETRY_HEAD="${BASH_REMATCH[4]}"
+              SOURCE_RETRY_MERGE="${BASH_REMATCH[5]}"
+              [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
+                emit_no_action "Ignoring retry source without a canonical current attempt."
+            else
+              SOURCE_RETRY_NONCE=""
+            fi
             SOURCE_EVENT="$(jq -r '.event // empty' <<<"$workflow_run_json")"
             source_path="$(jq -r '.path // empty' <<<"$workflow_run_json")"
             source_path_pr=""
@@ -208,6 +221,24 @@ jobs:
               fi
               ARTIFACT_BASE_SHA="$(jq -er '.baseSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               ARTIFACT_MERGE_SHA="$(jq -er '.mergeSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              if [[ "$SOURCE_EVENT" == repository_dispatch && -n "$SOURCE_RETRY_NONCE" ]] || \
+                jq -e 'has("sourceRunAttempt")' "$ARTIFACT_DIRECTORY/preview-metadata.json" >/dev/null; then
+                metadata_source_attempt="$(jq -er '.sourceRunAttempt | select(type == "number" and . > 0 and . == floor)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+                [[ "$metadata_source_attempt" == "$SOURCE_RUN_ATTEMPT" ]] || emit_no_action \
+                  "Ignoring render metadata not bound to the current source attempt."
+              fi
+              if [[ "$SOURCE_EVENT" == repository_dispatch && -n "$SOURCE_RETRY_NONCE" ]]; then
+                metadata_retry_nonce="$(jq -er '.proofRetryNonce | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+                metadata_retry_uid="$(jq -er '.proofRetryNamespaceUid | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+                [[ "$metadata_retry_nonce" == "$SOURCE_RETRY_NONCE" && -n "$metadata_retry_uid" &&
+                  "$PR_NUMBER" == "$SOURCE_RETRY_PR" && "$ARTIFACT_BASE_SHA" == "$SOURCE_RETRY_BASE" &&
+                  "$EXPECTED_HEAD_SHA" == "$SOURCE_RETRY_HEAD" && "$ARTIFACT_MERGE_SHA" == "$SOURCE_RETRY_MERGE" ]] || emit_no_action \
+                  "Ignoring retry render not bound to its exact reservation nonce and Namespace UID."
+              elif [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
+                if jq -e 'has("proofRetryNonce")' "$ARTIFACT_DIRECTORY/preview-metadata.json" >/dev/null; then
+                  emit_no_action "Ignoring retry nonce without a nonce-bound source title."
+                fi
+              fi
             else
               require_exact_files "preview-intent.json"
               intent_output="$(python3 ./dev-tools/hosted/preview/validate-preview-intent.py \

@@ -1416,6 +1416,15 @@ run_proof_retry_contract() (
     mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
   }
 
+  seed_started_holder() {
+    seed_retry_holder 1
+    jq -c '.data["pr-901"] |= (fromjson as $prior
+      | $prior + {count:2,stageVersion:2,phase:"SEND_STARTED",predecessor:$prior,
+        namespaceResourceVersion:"rv-901",holderUid:"uid-holder",holderResourceVersion:"0"}
+      | tojson)' "$FAKE_RETRY_HOLDER" >"$FAKE_RETRY_HOLDER.next"
+    mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
+  }
+
   fixture_reconcile() (
     cd "$ROOT_DIR"
     FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
@@ -1573,6 +1582,76 @@ run_proof_retry_contract() (
     grep -Fq 'no guarded rejection; leaving it charged' "$case_output"
     test ! -e "$FAKE_DISPATCH_LOG"
   done
+
+  # An exact terminal no-op receiver preserves the old charge while allowing
+  # the next reservation to proceed through the ordinary cap and CAS path.
+  reset_case
+  seed_started_holder
+  local old_nonce retry_title source_jobs source_latest source_inventory
+  old_nonce="$(jq -er '.data["pr-901"] | fromjson | .nonce' "$FAKE_RETRY_HOLDER")"
+  retry_title="Preview retry ${old_nonce} pr-901-base-${base}-head-${head}-merge-${merge}"
+  source_jobs="$(jq -cn --arg head "$base" '
+    def step($name): {name:$name,status:"completed",conclusion:"success"};
+    {total_count:2,jobs:[
+      {name:"Preview Plan",run_id:5255,run_attempt:1,head_sha:$head,status:"completed",conclusion:"success",
+       steps:[step("Explain preview skip")]},
+      {name:"Render Sanitized Preview Artifact",run_id:5255,run_attempt:1,head_sha:$head,status:"completed",conclusion:"skipped",steps:[]}
+    ]}')"
+  source_latest="$(jq -cn --arg title "$retry_title" --arg head "$base" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    {id:5255,run_attempt:1,head_sha:$head,event:"repository_dispatch",workflow_id:173511323,
+     name:"PR Preview Environment",display_title:$title,head_branch:"develop",
+     repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+     path:".github/workflows/preview.yml",status:"completed",conclusion:"success",updated_at:$now}')"
+  source_inventory="$(jq -cn --arg title "$retry_title" --arg head "$base" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    {total_count:1,workflow_runs:[{id:5255,run_attempt:1,head_sha:$head,event:"repository_dispatch",
+     workflow_id:173511323,status:"completed",conclusion:"success",name:"PR Preview Environment",
+     display_title:$title,head_branch:"develop",path:".github/workflows/preview.yml",
+     repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+     updated_at:$now}]}')"
+  FAKE_PREVIEW_DISPATCH_JOBS_JSON="$source_jobs" \
+    FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
+    FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+    fixture_reconcile >"$case_output"
+  test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 3
+  jq -se --arg old_nonce "$old_nonce" --argjson old_count 2 --argjson next_count 3 '
+    select(length == 3) as $patches
+    | ($patches[0][2].value | fromjson) as $settled
+    | ($settled.count == $old_count and $settled.nonce == $old_nonce
+       and ($settled | has("phase") | not))
+      and (($patches[1][2].value | fromjson).count == $next_count)
+      and (($patches[2][2].value | fromjson).phase == "SEND_STARTED")
+      and (($patches[2][2].value | fromjson).nonce != $old_nonce)
+  ' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+  jq -e --argjson count 3 --arg old_nonce "$old_nonce" \
+    '(.data["pr-901"] | fromjson) | .count == $count and .phase == "SEND_STARTED" and .nonce != $old_nonce' \
+    "$FAKE_RETRY_HOLDER" >/dev/null
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+
+  # A terminal-looking inventory row with a different nonce cannot release the
+  # original staged charge or authorize a replacement dispatch.
+  reset_case
+  seed_started_holder
+  old_nonce="$(jq -er '.data["pr-901"] | fromjson | .nonce' "$FAKE_RETRY_HOLDER")"
+  retry_title="Preview retry 12345678-1234-4234-8234-123456789abc pr-901-base-${base}-head-${head}-merge-${merge}"
+  source_latest="$(jq -cn --arg title "$retry_title" --arg head "$base" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    {id:5255,run_attempt:1,head_sha:$head,event:"repository_dispatch",workflow_id:173511323,
+     name:"PR Preview Environment",display_title:$title,head_branch:"develop",
+     repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
+     path:".github/workflows/preview.yml",status:"completed",conclusion:"success",updated_at:$now}')"
+  source_inventory="$(jq -cn --arg title "$retry_title" --arg head "$base" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    {total_count:1,workflow_runs:[{id:5255,run_attempt:1,head_sha:$head,event:"repository_dispatch",
+     workflow_id:173511323,status:"completed",conclusion:"success",name:"PR Preview Environment",
+     display_title:$title,head_branch:"develop",path:".github/workflows/preview.yml",
+     repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},updated_at:$now}]}')"
+  FAKE_PREVIEW_DISPATCH_JOBS_JSON="$source_jobs" \
+    FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
+    FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+    fixture_reconcile >"$case_output" 2>&1
+  jq -e --arg nonce "$old_nonce" \
+    '(.data["pr-901"] | fromjson) | .phase == "SEND_STARTED" and .nonce == $nonce and .count == 2' \
+    "$FAKE_RETRY_HOLDER" >/dev/null
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
 
   for custody in exact updated changed; do
     reset_case
@@ -4770,7 +4849,7 @@ grep -Fq -- '.workflow_id == $workflow_id' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the literal jq head repository check.
 grep -Fq -- '.head_repository.full_name == $repository' "$RECONCILER_RUN"
 grep -Fq 'Skipping proof retry for PR #' "$RECONCILER_RUN"
-grep -Fq "run-name: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title" "$trusted_workflow"
+grep -Fq "startsWith(github.event.workflow_run.display_title, 'Preview retry ')" "$trusted_workflow"
 # shellcheck disable=SC2016 # Assert one fail-closed JSON snapshot feeds each namespace decision.
 grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
   "$RECONCILER_RUN"
@@ -4847,6 +4926,12 @@ post = function_body[function_body.index('"${dispatch_http_status}" == 204 ]]; t
 assert "dispatch_sent=true\n    break\n  elif" in post
 assert "dispatch_sent=true\n    break\n  fi" in post
 assert "compensate_rejected_proof_retry" in post
+assert 'client_payload[proof_retry_nonce]' in run
+assert 'settle_terminal_preview_retry' in run
+assert 'validate-preview-artifact.py retry-receipt' in run
+assert 'and .status == "completed" and .conclusion == "success"' in run[run.index("trusted_consumer_has_tuple()") :]
+assert 'source-run-${run_id}-attempt-${attempt}' in run
+assert 'Preview retry ${nonce}' in run
 PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \

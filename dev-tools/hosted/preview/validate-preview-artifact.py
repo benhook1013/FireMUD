@@ -2066,6 +2066,21 @@ def validate_metadata(
         ):
             fail("metadata proofRetryNamespaceUid must be a canonical Namespace UID")
         allowed_fields.add("proofRetryNamespaceUid")
+    if "proofRetryNonce" in metadata:
+        retry_nonce = metadata["proofRetryNonce"]
+        if not isinstance(retry_nonce, str) or re.fullmatch(
+            r"[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}",
+            retry_nonce,
+        ) is None:
+            fail("metadata proofRetryNonce must be a canonical reservation UUID")
+        if "proofRetryNamespaceUid" not in allowed_fields or "sourceRunAttempt" not in metadata:
+            fail("retry metadata must bind its Namespace UID and exact source run attempt")
+        allowed_fields.add("proofRetryNonce")
+    if "sourceRunAttempt" in metadata:
+        attempt = metadata["sourceRunAttempt"]
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+            fail("metadata sourceRunAttempt must be a positive integer")
+        allowed_fields.add("sourceRunAttempt")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
         fail(f"metadata contains unsupported fields: {sorted(unexpected_fields)}")
@@ -2082,6 +2097,41 @@ def validate_metadata(
         hostname,
         certificate_identity_mode,
     )
+
+
+def validate_retry_receipt(
+    metadata_path: Path,
+    repository: str,
+    source_run_id: str,
+    source_run_attempt: str,
+    pr_number: str,
+    base_sha: str,
+    head_sha: str,
+    merge_sha: str,
+    image_tag: str,
+    namespace_uid: str,
+    nonce: str,
+) -> None:
+    metadata = _require_mapping(json.loads(metadata_path.read_text(encoding="utf-8")), "metadata")
+    expected = {
+        "event": "repository_dispatch",
+        "action": "deploy",
+        "repository": repository,
+        "sourceWorkflow": ".github/workflows/preview.yml",
+        "sourceRunId": int(source_run_id),
+        "sourceRunAttempt": int(source_run_attempt),
+        "prNumber": int(pr_number),
+        "baseSha": base_sha,
+        "headSha": head_sha,
+        "mergeSha": merge_sha,
+        "imageTag": image_tag,
+        "proofRetryNamespaceUid": namespace_uid,
+        "proofRetryNonce": nonce,
+    }
+    for key, value in expected.items():
+        actual = metadata.get(key)
+        if type(actual) is not type(value) or actual != value:
+            fail(f"retry receipt metadata {key} does not match the retained reservation")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2128,6 +2178,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"preview exposure mode rejected: {exc}", file=sys.stderr)
             return 1
         return 0
+    if command == "retry-receipt" and len(args) == 13:
+        try:
+            validate_retry_receipt(Path(args[2]), *args[3:])
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            print(f"preview retry receipt rejected: {exc}", file=sys.stderr)
+            return 1
+        return 0
     if len(args) != 12:
         print(
             "usage: validate-preview-artifact.py <metadata> <manifest> <repository> "
@@ -2136,7 +2193,8 @@ def main(argv: list[str] | None = None) -> int:
             "       validate-preview-artifact.py sanitize <render> <output>\n"
             "       validate-preview-artifact.py inject <render> <output> <namespace> <port> <standalone|hosted-controller> <private|public>\n"
             "       validate-preview-artifact.py runtime-target <render> <namespace> <port> <standalone|hosted-controller> <private|public>\n"
-            "       validate-preview-artifact.py exposure-mode <render> <standalone|hosted-controller>",
+            "       validate-preview-artifact.py exposure-mode <render> <standalone|hosted-controller>\n"
+            "       validate-preview-artifact.py retry-receipt <metadata> <repository> <run-id> <run-attempt> <pr> <base> <head> <merge> <image> <namespace-uid> <nonce>",
             file=sys.stderr,
         )
         return 2

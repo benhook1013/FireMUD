@@ -307,8 +307,15 @@ prepare_preview_dispatch() {
     start_reserved_proof_retry "$holder" "$namespace" "$pr_number"
     return $?
   elif [[ "$phase" == SEND_STARTED ]]; then
-    echo "Retained proof-retry send-start for PR #${pr_number} has no guarded rejection; leaving it charged."
-    return 1
+    local settled
+    if ! settled="$(settle_terminal_preview_retry "$namespace" "$pr_number" "$prior")"; then
+      echo "Retained proof-retry send-start for PR #${pr_number} has no guarded rejection; leaving it charged without positive terminal receiver evidence."
+      return 1
+    fi
+    holder="$(read_preview_retry_holder)" || return 1
+    prior="$(preview_retry_entry "$holder" "$namespace")" || return 1
+    jq -en --argjson current "$prior" --argjson settled "$settled" '$current == $settled' >/dev/null || return 1
+    phase=""
   fi
   if [[ "$proof_completed" == true ]]; then
     echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
@@ -490,9 +497,12 @@ preview_source_uploaded_render() {
 }
 
 automatic_preview_has_tuple() {
-  local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" jobs latest jobs_available=true
+  local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" nonce="${7:-}" jobs latest jobs_available=true
   local dispatch_tuple="${tuple#Preview resolved tuple }"
   local dispatch_title="Preview dispatch ${dispatch_tuple// /-}"
+  if [[ -n "$nonce" ]]; then
+    dispatch_title="Preview retry ${nonce} ${dispatch_tuple// /-}"
+  fi
   # 0: exact active tuple, 1: proven nonmatch, 2: unavailable proof, 3: completed upload.
   jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
   latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
@@ -559,6 +569,15 @@ automatic_preview_has_tuple() {
       ' <<<"$jobs" >/dev/null; then
       preview_source_skipped_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
       # A completed, successful, explicitly explained no-op cannot still hand off a render.
+      if [[ -n "$nonce" ]] && jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
+        [.jobs[] | select(.name == "Render Sanitized Preview Artifact")] as $renders
+        | ($renders | length) == 1
+          and all($renders[]; .run_id == $id
+            and ((has("run_attempt") | not) or .run_attempt == $attempt)
+            and .head_sha == $head and .status == "completed" and .conclusion == "skipped")
+      ' <<<"$jobs" >/dev/null; then
+        return 4
+      fi
       return 1
     fi
     preview_source_uploaded_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
@@ -630,6 +649,148 @@ automatic_preview_has_tuple() {
     # Defer one cycle after an exact successful source completion.
     return 3
   fi
+}
+
+settle_terminal_preview_retry() {
+  local namespace="$1" pr_number="$2" row="$3"
+  local nonce base head merge image uid inventory title matches run_id attempt run_head tuple_step
+  local source_status=0 consumer_inventory consumer_title consumer_matches consumer_id consumer_attempt consumer_head
+  local source_latest consumer_latest
+  nonce="$(jq -er '.nonce | select(type == "string" and length > 0)' <<<"$row")" || return 1
+  base="$(jq -er '.base' <<<"$row")" || return 1
+  head="$(jq -er '.head' <<<"$row")" || return 1
+  merge="$(jq -er '.merge' <<<"$row")" || return 1
+  image="$(jq -er '.image' <<<"$row")" || return 1
+  uid="$(jq -er '.namespaceUid' <<<"$row")" || return 1
+  title="Preview retry ${nonce} pr-${pr_number}-base-${base}-head-${head}-merge-${merge}"
+  tuple_step="Preview resolved tuple pr-${pr_number} base-${base} head-${head} merge-${merge}"
+  inventory="$(completed_preview_inventory repository_dispatch "branch=${DEFAULT_BRANCH}")" || {
+    echo "Unable to establish completed preview receiver inventory for PR #${pr_number}; reservation stays charged." >&2
+    return 1
+  }
+  if ! matches="$(jq -ce --arg title "$title" --arg repo "$GITHUB_REPOSITORY" --arg branch "$DEFAULT_BRANCH" \
+    --arg workflow "$preview_workflow_name" --argjson workflow_id "$preview_workflow_id" '
+      [.workflow_runs[] | select(.workflow_id == $workflow_id and .event == "repository_dispatch"
+        and .status == "completed" and .display_title == $title
+        and (.name == $workflow or .name == .display_title)
+        and .repository.full_name == $repo and .head_repository.full_name == $repo
+        and .head_branch == $branch
+        and (.path | IN(".github/workflows/preview.yml", ".github/workflows/preview.yml@" + $branch,
+          ".github/workflows/preview.yml@refs/heads/" + $branch)))]
+      | select(length == 1) | .[0]
+    ' <<<"$inventory")"; then
+    echo "No unique exact terminal preview receiver is available for PR #${pr_number}; reservation stays charged." >&2
+    return 1
+  fi
+  run_id="$(jq -er '.id' <<<"$matches")" || return 1
+  attempt="$(jq -er '.run_attempt' <<<"$matches")" || return 1
+  run_head="$(jq -er '.head_sha' <<<"$matches")" || return 1
+  automatic_preview_has_tuple "$run_id" "$attempt" "$run_head" "$tuple_step" "$pr_number" repository_dispatch "$nonce" || source_status=$?
+  if [[ "$source_status" == 2 || "$source_status" == 0 || "$source_status" == 1 ]]; then
+    echo "Exact preview receiver ${run_id}/${attempt} is not positively terminal; reservation stays charged." >&2
+    return 1
+  fi
+  if [[ "$source_status" == 3 ]]; then
+    local receipt_dir metadata_path artifact_name receipt_files source_created
+    source_created="$(jq -er '.created_at | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' <<<"$matches")" || return 1
+    receipt_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/preview-retry-receipt.XXXXXX")" || return 1
+    artifact_name="preview-render-pr-${pr_number}-${head}"
+    if ! timeout 30s gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact_name" --dir "$receipt_dir" >/dev/null 2>&1; then
+      rm -rf -- "$receipt_dir"
+      echo "Exact preview receiver artifact is unavailable for PR #${pr_number}; reservation stays charged." >&2
+      return 1
+    fi
+    metadata_path="$receipt_dir/preview-metadata.json"
+    receipt_files="$(find "$receipt_dir" -type f -printf '%P\n' | sort)" || {
+      rm -rf -- "$receipt_dir"
+      return 1
+    }
+    if [[ "$receipt_files" != $'preview-metadata.json\npreview-rendered-sanitized.yaml' || ! -f "$metadata_path" ]] || \
+      ! python3 ./dev-tools/hosted/preview/validate-preview-artifact.py retry-receipt \
+      "$metadata_path" "$GITHUB_REPOSITORY" "$run_id" "$attempt" "$pr_number" "$base" "$head" "$merge" "$image" "$uid" "$nonce"; then
+      rm -rf -- "$receipt_dir"
+      echo "Exact preview receiver artifact does not prove the retained retry tuple for PR #${pr_number}; reservation stays charged." >&2
+      return 1
+    fi
+    rm -rf -- "$receipt_dir"
+    consumer_title="${title} source-run-${run_id}-attempt-${attempt}"
+    if ! consumer_inventory="$(timeout 30s gh api --method GET --paginate --slurp \
+      "repos/${GITHUB_REPOSITORY}/actions/workflows/${consumer_workflow_id}/runs" \
+      -f event=workflow_run -f status=completed -f "branch=${DEFAULT_BRANCH}" -f "created=>=${source_created}" -f per_page=100)" ||
+      ! jq -e --argjson workflow_id "$consumer_workflow_id" '. as $pages
+        | [$pages[].workflow_runs[]] as $runs
+        | ($pages | type == "array" and length > 0)
+          and ($pages | all(.[]; type == "object"
+            and (.total_count | type == "number" and . >= 0 and . < 1000 and . == floor)
+            and (.workflow_runs | type == "array" and length <= 100)))
+          and ($pages | all(.total_count == $pages[0].total_count))
+          and ($pages[0].total_count == ($runs | length))
+          and all($runs[]; type == "object" and (.id | type == "number" and . > 0 and . == floor)
+            and (.run_attempt | type == "number" and . > 0 and . == floor)
+            and .workflow_id == $workflow_id and .event == "workflow_run" and .status == "completed"
+            and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+            and (.display_title | type == "string") and (.head_branch | type == "string")
+            and (.path | type == "string") and (.repository.full_name | type == "string")
+            and (.head_repository.full_name | type == "string"))' <<<"$consumer_inventory" >/dev/null ||
+      ! consumer_matches="$(jq -ce --arg title "$consumer_title" --arg repo "$GITHUB_REPOSITORY" --arg branch "$DEFAULT_BRANCH" \
+        --argjson workflow_id "$consumer_workflow_id" '
+          [.[].workflow_runs[] | select(.workflow_id == $workflow_id and .event == "workflow_run"
+            and .status == "completed" and .display_title == $title
+            and .repository.full_name == $repo and .head_repository.full_name == $repo
+            and .head_branch == $branch
+            and (.path | IN(".github/workflows/hosted-identity-request.yml",
+              ".github/workflows/hosted-identity-request.yml@" + $branch,
+              ".github/workflows/hosted-identity-request.yml@refs/heads/" + $branch)))]
+          | select(length == 1) | .[0]
+        ' <<<"$consumer_inventory")"; then
+      echo "No unique exact terminal trusted consumer is available for preview receiver ${run_id}/${attempt}; reservation stays charged." >&2
+      return 1
+    fi
+    consumer_id="$(jq -er '.id' <<<"$consumer_matches")" || return 1
+    consumer_attempt="$(jq -er '.run_attempt' <<<"$consumer_matches")" || return 1
+    consumer_head="$(jq -er '.head_sha' <<<"$consumer_matches")" || return 1
+    local consumer_status=0
+    trusted_consumer_has_tuple "$consumer_id" "$consumer_attempt" "$consumer_head" \
+      "Trusted preview deploy tuple pr-${pr_number} base-${base} head-${head} merge-${merge}" "$consumer_title" ||
+      consumer_status=$?
+    if [[ "$consumer_status" != 3 ]]; then
+      if [[ "$consumer_status" == 2 ]]; then
+        echo "Exact trusted consumer ${consumer_id}/${consumer_attempt} is indeterminate; reservation stays charged." >&2
+      else
+        echo "Exact trusted consumer ${consumer_id}/${consumer_attempt} did not positively validate the tuple; reservation stays charged." >&2
+      fi
+      return 1
+    fi
+  elif [[ "$source_status" != 4 ]]; then
+    echo "Exact preview receiver ${run_id}/${attempt} did not prove a terminal no-handoff or rendered handoff; reservation stays charged." >&2
+    return 1
+  fi
+
+  source_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 1
+  jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg title "$title" \
+    --argjson workflow_id "$preview_workflow_id" --arg repo "$GITHUB_REPOSITORY" \
+    --arg branch "$DEFAULT_BRANCH" --arg head "$run_head" '
+      .id == $id and .run_attempt == $attempt and .workflow_id == $workflow_id
+      and .display_title == $title and .head_sha == $head and .status == "completed"
+      and .event == "repository_dispatch" and .head_branch == $branch
+      and .repository.full_name == $repo and .head_repository.full_name == $repo
+      and (.path | IN(".github/workflows/preview.yml", ".github/workflows/preview.yml@" + $branch,
+        ".github/workflows/preview.yml@refs/heads/" + $branch))
+    ' <<<"$source_latest" >/dev/null || return 1
+  if [[ "$source_status" == 3 ]]; then
+    consumer_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${consumer_id}")" || return 1
+    jq -e --argjson id "$consumer_id" --argjson attempt "$consumer_attempt" --arg title "$consumer_title" \
+      '.id == $id and .run_attempt == $attempt and .display_title == $title
+        and .status == "completed"' <<<"$consumer_latest" >/dev/null || return 1
+  fi
+
+  local holder current replacement
+  holder="$(read_preview_retry_holder)" || return 1
+  current="$(preview_retry_entry "$holder" "$namespace")" || return 1
+  jq -en --argjson current "$current" --argjson row "$row" '$current == $row' >/dev/null || return 1
+  replacement="$(jq -c 'del(.stageVersion,.phase,.predecessor,.holderUid,.holderResourceVersion,.namespaceResourceVersion)' <<<"$row")" || return 1
+  write_preview_retry_entry "$holder" "$namespace" "$replacement" true >/dev/null || return 1
+  printf '%s\n' "$replacement"
 }
 
 parse_completed_preview_pages() {
@@ -908,13 +1069,13 @@ evaluate_recent_source_handoff() {
 }
 
 trusted_consumer_has_tuple() {
-  local run_id="$1" attempt="$2" run_head="$3" tuple="$4" jobs latest jobs_available=true
-  # A workflow_run display title is inherited from its source. Use the
-  # trusted validator's completed attempt evidence to bind the tuple.
+  local run_id="$1" attempt="$2" run_head="$3" tuple="$4" expected_title="${5:-}" jobs latest jobs_available=true
+  local current status
   jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
   latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
   jq -e --argjson id "$run_id" --argjson workflow_id "$consumer_workflow_id" \
-    --arg repository "$GITHUB_REPOSITORY" --arg default_branch "$DEFAULT_BRANCH" --arg head "$run_head" '
+    --arg repository "$GITHUB_REPOSITORY" --arg default_branch "$DEFAULT_BRANCH" --arg head "$run_head" \
+    --arg expected_title "$expected_title" '
     .id == $id and .workflow_id == $workflow_id and .event == "workflow_run" and .head_sha == $head
     and (.run_attempt | type == "number" and . > 0 and . == floor)
     and .repository.full_name == $repository and .head_repository.full_name == $repository
@@ -922,9 +1083,12 @@ trusted_consumer_has_tuple() {
     and (.path | IN(".github/workflows/hosted-identity-request.yml",
       ".github/workflows/hosted-identity-request.yml@" + $default_branch,
       ".github/workflows/hosted-identity-request.yml@refs/heads/" + $default_branch))
+    and ($expected_title == "" or .display_title == $expected_title)
     and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
   ' <<<"$latest" >/dev/null || return 2
-  if jq -e '.status == "completed"' <<<"$latest" >/dev/null; then return 1; fi
+  if [[ -z "$expected_title" ]] && jq -e '.status == "completed"' <<<"$latest" >/dev/null; then
+    return 1
+  fi
   [[ "$jobs_available" == true ]] || return 2
   jq -e --argjson attempt "$attempt" '.run_attempt == $attempt' <<<"$latest" >/dev/null || return 2
   jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$run_head" '
@@ -941,6 +1105,17 @@ trusted_consumer_has_tuple() {
       ([.steps[]? | select(.name | startswith("Trusted preview deploy tuple "))] | length) == 1
       and any(.steps[]?; .name == $tuple and .status == "completed" and .conclusion == "success"))
   ' <<<"$jobs" >/dev/null || return 1
+  [[ -n "$expected_title" ]] || return 0
+  current="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
+  jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$run_head" \
+    --arg title "$expected_title" '
+    .id == $id and .run_attempt == $attempt and .head_sha == $head
+    and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
+    and ($title == "" or .display_title == $title)
+  ' <<<"$current" >/dev/null || return 2
+  status="$(jq -r '.status' <<<"$current")"
+  if [[ "$status" == completed ]]; then return 3; fi
+  return 0
 }
 
 dispatch_candidates() {
@@ -1146,7 +1321,8 @@ dispatch_candidates() {
       --arg pr_title "PR preview ${pr_number}" \
       --argjson pr_number "$pr_number" \
       --arg head_sha "$head_sha" \
-      --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
+      --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" \
+      --arg retry_run_suffix "pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
           if type != "array" then
             error("workflow runs are not an array")
           else
@@ -1175,7 +1351,8 @@ dispatch_candidates() {
                 and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
                 and (.path == ".github/workflows/preview.yml" or .path == (".github/workflows/preview.yml@" + $default_branch)
                   or .path == (".github/workflows/preview.yml@refs/heads/" + $default_branch))
-                and .display_title == $run_name;
+                and (.display_title == $run_name or
+                  ((.display_title | startswith("Preview retry ")) and (.display_title | endswith($retry_run_suffix))));
               def provisional_pr:
                 native_preview and (.event == "pull_request" or .event == "pull_request_target")
                 and (.path == ".github/workflows/preview.yml"
@@ -1311,7 +1488,13 @@ dispatch_candidates() {
       dispatch_outcome_failed=true
       continue
     fi
-    proof_retry_payload=(-f "client_payload[proof_retry_namespace_uid]=${started_retry_uid}")
+    proof_retry_nonce="$(jq -er '.nonce | select(type == "string" and test("^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"))' <<<"$proof_retry_record")" || {
+      echo "Unable to verify the reservation nonce for PR #${pr_number}; refusing dispatch." >&2
+      dispatch_outcome_failed=true
+      continue
+    }
+    proof_retry_payload=(-f "client_payload[proof_retry_namespace_uid]=${started_retry_uid}" \
+      -f "client_payload[proof_retry_nonce]=${proof_retry_nonce}")
   fi
   if dispatch_response="$(gh api --include \
     --method POST \

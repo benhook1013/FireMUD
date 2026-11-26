@@ -5016,6 +5016,29 @@ fi
 grep -Fxq \
   'preview artifact rejected: Deployment/account-service.spec.template is not an object' \
   "$null_template_error"
+
+# A proof-retry receipt must bind the native source run attempt to the complete
+# retained tuple, including the Namespace UID fence and unique reservation.
+retry_receipt="$TEMP_DIR/preview-retry-receipt.json"
+cat >"$retry_receipt" <<'JSON'
+{"event":"repository_dispatch","action":"deploy","repository":"example/FireMUD","sourceWorkflow":".github/workflows/preview.yml","sourceRunId":42,"sourceRunAttempt":2,"prNumber":42,"baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mergeSha":"cccccccccccccccccccccccccccccccccccccccc","imageTag":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","proofRetryNamespaceUid":"uid-pr-42","proofRetryNonce":"01234567-0123-4123-8123-0123456789ab"}
+JSON
+python3 "$artifact_validator" retry-receipt "$retry_receipt" example/FireMUD 42 2 42 \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  uid-pr-42 01234567-0123-4123-8123-0123456789ab
+retry_receipt_error="$TEMP_DIR/preview-retry-receipt-mismatch-error"
+if python3 "$artifact_validator" retry-receipt "$retry_receipt" example/FireMUD 42 3 42 \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  uid-pr-42 01234567-0123-4123-8123-0123456789ab \
+  >"$TEMP_DIR/preview-retry-receipt-mismatch-output" 2>"$retry_receipt_error"; then
+  echo "preview retry receipt validator accepted a different source attempt" >&2
+  exit 1
+fi
+grep -Fxq \
+  'preview retry receipt rejected: retry receipt metadata sourceRunAttempt does not match the retained reservation' \
+  "$retry_receipt_error"
 test ! -e "$null_template_output"
 
 null_template_metadata="$TEMP_DIR/null-template-metadata.json"
