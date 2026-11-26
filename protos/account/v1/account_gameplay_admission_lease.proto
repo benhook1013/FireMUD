@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package account.v1;
 
+import "account/v1/tenant_capacity_admission.proto";
 import "game-session/v1/canonical_gameplay_admission_decision_read.proto";
 
 option java_package = "net.firedevops.firemud.account.v1";
@@ -82,6 +83,10 @@ message ConfirmOriginalNewGameplayAdmissionRequest {
   repeated uint32 schema_version = 1;
   repeated string presented_initial_gsa_compact_jwt = 2;
   repeated bytes original_lease_evidence_utf8 = 3;
+  // Present only for a retained Game Session COMMITTED replay. This is a read selector.
+  repeated CommitTenantCapacityAdmissionRequest committed_capacity_request = 4;
+  repeated string expected_reservation_uuid = 5;
+  repeated string expected_reservation_fence = 6;
 }
 
 message OriginalNewAdmissionConfirmationResponse {
@@ -92,6 +97,8 @@ message OriginalNewAdmissionConfirmationResponse {
   repeated string admission_at_ms = 5;
   repeated string continuity_expires_at_ms = 6;
   repeated string confirmation_readback_sha256 = 7;
+  // Present exactly when committed_capacity_request was supplied and qualified.
+  repeated CommitTenantCapacityAdmissionResponse committed_capacity_result = 8;
 }
 
 enum AccountGameplayAdmissionLeaseState {

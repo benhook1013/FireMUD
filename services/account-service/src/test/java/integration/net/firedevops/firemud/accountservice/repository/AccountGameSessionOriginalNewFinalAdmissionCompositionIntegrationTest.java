@@ -147,11 +147,22 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         byte[] sessionBytes = session.gs.physicalSession();
         assertPhysicalSession(sessionBytes, first);
         String rows = session.durableImage();
+        String capacity = session.capacityImage();
+        String decisions = session.capacityDecisionImage();
+        var physical = new java.util.TreeMap<>(session.gs.capacityStateImage());
+        // The current region owner can renew its lease independently of admission replay.
+        physical.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+        session.stopCapacityServer();
         session.restartAccount();
         var retry = session.complete();
         assertThat(retry).isEqualTo(first);
         assertThat(MessageDigest.isEqual(session.gs.physicalSession(), sessionBytes)).isTrue();
         assertThat(session.durableImage()).isEqualTo(rows);
+        assertThat(session.capacityImage()).isEqualTo(capacity);
+        assertThat(session.capacityDecisionImage()).isEqualTo(decisions);
+        var replayedPhysical = new java.util.TreeMap<>(session.gs.capacityStateImage());
+        replayedPhysical.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+        assertThat(replayedPhysical).isEqualTo(physical);
         try (OriginalNewCredential replay = session.issue()) {
           assertSameCredential(before, replay, handle);
         }

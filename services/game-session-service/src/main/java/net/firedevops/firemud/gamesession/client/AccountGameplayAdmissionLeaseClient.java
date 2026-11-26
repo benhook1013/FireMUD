@@ -14,6 +14,7 @@ import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrp
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.CommittedCapacityRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OperationEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmationRequest;
@@ -284,10 +285,19 @@ public final class AccountGameplayAdmissionLeaseClient
       String presentedInitialGsACompactJwt,
       byte[] originalLeaseEvidenceUtf8,
       Deadline operationDeadline) {
+    return confirmOriginalNewGameplayAdmission(
+        presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, operationDeadline, null);
+  }
+
+  public OriginalFinalAdmissionConfirmation confirmOriginalNewGameplayAdmission(
+      String presentedInitialGsACompactJwt,
+      byte[] originalLeaseEvidenceUtf8,
+      Deadline operationDeadline,
+      CommittedCapacityRequest committedCapacityRequest) {
     requireNoAmbientSql("Original-new admission confirmation requires no ambient SQL");
     var wireRequest =
         AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
-            presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8);
+            presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, committedCapacityRequest);
     OriginalFinalAdmissionConfirmationRequest expected =
         AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionRequest(
             wireRequest);
