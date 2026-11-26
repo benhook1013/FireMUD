@@ -302,13 +302,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         requireExactClosureBeforeRetry(tx, current);
       }
       requirePhaseForEffect(operation.phase(), current.effect().kind());
-      if (tx.fetchOne(
-              "SELECT 1 FROM "
-                  + OUTBOX_TABLE
-                  + " WHERE operation_id = ? AND state = 'acknowledged' AND last_dispatched_at IS NULL LIMIT 1",
-              operationId)
-          != null) {
-        throw conflict("retained acknowledgement has no dispatch timestamp");
+      if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF) {
+        requireAcknowledgedPreparation(tx, operation, now);
       }
       int changed =
           tx.execute(
@@ -900,8 +895,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Instant acknowledgedAt = toInstant(record.get("acknowledged_at", OffsetDateTime.class));
     EffectOutboxState state =
         EffectOutboxState.fromDatabaseValue(record.get("state", String.class));
-    if (state == EffectOutboxState.ACKNOWLEDGED && record.get("last_dispatched_at") == null) {
-      throw conflict("retained acknowledgement has no dispatch timestamp");
+    if (state != EffectOutboxState.PENDING && record.get("last_dispatched_at") == null) {
+      throw conflict("retained effect has no dispatch timestamp");
     }
     TypedEffect effect = tupleCodec.readEffect(effectKind, payload.data());
     if (!effect.operationId().equals(record.get("operation_id", UUID.class))
@@ -960,6 +955,42 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !effect.operationTupleDigest().equals(operationTupleDigest(operation))) {
       throw conflict("retained effect does not match the operation-owned tuple");
     }
+  }
+
+  private void requireAcknowledgedPreparation(DSLContext tx, Operation operation, Instant now) {
+    UUID operationId = operation.scope().operationId();
+    Record stored =
+        tx.fetchOne(
+            """
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
+                   payload_digest, state, attempt_count, last_attempt_id, last_outcome_code,
+                   acknowledged_at, last_dispatched_at, readback_identity, readback_payload, readback_digest
+            FROM recovery_control.initial_gameplay_release_outbox
+            WHERE operation_id = ? AND effect_kind = ?
+            FOR UPDATE
+            """,
+            operationId,
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED.databaseValue());
+    if (stored == null) throw conflict("retained preparation is missing");
+    OutboxEntry preparation = toOutboxEntry(stored);
+    requireEffectMatchesOperation(preparation.effect(), operation);
+    if (preparation.state() != EffectOutboxState.ACKNOWLEDGED
+        || preparation.acknowledgedAt().isAfter(now)) {
+      throw conflict("retained preparation acknowledgement is unavailable");
+    }
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    String digest = stored.get("readback_digest", String.class);
+    if (payload == null || digest == null) {
+      throw conflict("retained preparation readback is incomplete");
+    }
+    EffectReadback readback = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(readback))) {
+      throw conflict("retained preparation readback digest does not match");
+    }
+    requireStoredReadbackIdentity(stored, readback);
+    requireReadbackMatches(readback, preparation, operationId, preparation.effect().effectId());
+    requireSuccessfulReadbackState(readback, preparation.effect().kind());
+    requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
   }
 
   private void requireTransitionMatchesOperation(PublicTransitionTuple tuple, Operation operation) {

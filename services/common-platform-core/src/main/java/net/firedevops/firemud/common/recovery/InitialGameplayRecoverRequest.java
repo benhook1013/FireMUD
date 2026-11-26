@@ -147,13 +147,29 @@ public record InitialGameplayRecoverRequest(
       throw new IllegalArgumentException("Raw text exceeds family limit");
     }
     String normalized = Normalizer.normalize(value, Normalizer.Form.NFC);
-    if (normalized.isBlank()
-        || !normalized.equals(normalized.strip())
+    if (isUnicodeWhitespaceOnly(normalized)
+        || hasUnicodeWhitespaceBoundary(normalized)
         || normalized.codePoints().anyMatch(Character::isISOControl)
         || GameTenantCreationDigest.utf8ByteLength(normalized) > limit) {
       throw new IllegalArgumentException("Text must be bounded nonblank Unicode without controls");
     }
     return normalized;
+  }
+
+  private static boolean isUnicodeWhitespaceOnly(String value) {
+    return value.codePoints().allMatch(InitialGameplayRecoverRequest::isUnicodeWhitespace);
+  }
+
+  private static boolean hasUnicodeWhitespaceBoundary(String value) {
+    return isUnicodeWhitespace(value.codePointAt(0))
+        || isUnicodeWhitespace(value.codePointBefore(value.length()));
+  }
+
+  private static boolean isUnicodeWhitespace(int codePoint) {
+    // Java splits Unicode White_Space across these methods and omits NEXT LINE from both.
+    return Character.isWhitespace(codePoint)
+        || Character.isSpaceChar(codePoint)
+        || codePoint == 0x0085;
   }
 
   static String namespace(String value) {
