@@ -55,7 +55,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-            AND attname = 'send_outcome_uncertain' AND NOT attisdropped
+            AND attname = 'send_outcome_uncertain' AND NOT attisdropped AND NOT attnotnull
             AND atttypid = 'pg_catalog.bool'::regtype)
         AND NOT EXISTS (
           SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
