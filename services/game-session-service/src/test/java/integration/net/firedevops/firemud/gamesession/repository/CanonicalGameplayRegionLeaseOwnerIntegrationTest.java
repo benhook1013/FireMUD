@@ -387,6 +387,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .requireCurrent(org.mockito.ArgumentMatchers.any());
       assertThatThrownBy(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
+      byte[] leaseTokenAfterLostCompletion = redis.admin().get(redisKey);
+      long leaseExpiryAfterLostCompletion = redis.admin().pexpiretime(redisKey);
+      assertThat(leaseTokenAfterLostCompletion).isNotNull();
+      assertThat(leaseExpiryAfterLostCompletion).isPositive();
       var retainedFirstOwner = statusRepository.find(qualifiedSource).orElseThrow();
       assertThat(statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow().phase())
           .isEqualTo(
@@ -399,6 +403,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .isEqualTo(retainedFirstOwner);
       incarnationSource.restoreStorageGeneration();
       var firstInstallation = firstOwner.installForTransition(TRANSITION_ID, world.request());
+      assertThat(redis.admin().get(redisKey)).containsExactly(leaseTokenAfterLostCompletion);
+      assertThat(redis.admin().pexpiretime(redisKey)).isEqualTo(leaseExpiryAfterLostCompletion);
       assertThat(statusRepository.find(qualifiedSource).orElseThrow())
           .isEqualTo(retainedFirstOwner);
       var firstStatus = statusRepository.find(qualifiedSource).orElseThrow();

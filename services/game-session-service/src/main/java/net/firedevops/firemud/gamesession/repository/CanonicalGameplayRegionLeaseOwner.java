@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
@@ -108,10 +109,11 @@ final class CanonicalGameplayRegionLeaseOwner {
 
   /** Cleanup has no admission authority and remains possible after the binding was aborted. */
   void recoverRetainedNoWriteForTransition(UUID transitionId) {
-    recoverRetainedNoWriteForTransition(transitionId, Long.MAX_VALUE);
+    recoverRetainedNoWriteForTransition(transitionId, Long.MAX_VALUE, null);
   }
 
-  private void recoverRetainedNoWriteForTransition(UUID transitionId, long absoluteDeadlineMillis) {
+  private void recoverRetainedNoWriteForTransition(
+      UUID transitionId, long absoluteDeadlineMillis, Deadline monotonicDeadline) {
     Objects.requireNonNull(transitionId, "transitionId");
     RetainedNoWriteRecovery selected = null;
     synchronized (noWriteRecoveries) {
@@ -132,7 +134,9 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (absoluteDeadlineMillis == Long.MAX_VALUE) {
         recoverNoWrite(selected.preparation, selected);
       } else {
-        recoverNoWrite(selected.preparation, selected, clock, absoluteDeadlineMillis);
+        // This pre-install wait belongs to the new caller's budget, not the prior operation.
+        recoverNoWrite(
+            selected.preparation, selected, clock, absoluteDeadlineMillis, monotonicDeadline);
       }
     } finally {
       releaseNoWriteRecovery(selected.preparation.operationId(), selected);
@@ -144,7 +148,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       RetainedNoWriteRecovery retained) {
     io.grpc.Context previous = io.grpc.Context.ROOT.attach();
     try {
-      recoverNoWrite(preparation, retained, Clock.systemUTC(), Long.MAX_VALUE);
+      recoverNoWrite(preparation, retained, Clock.systemUTC(), Long.MAX_VALUE, null);
     } finally {
       io.grpc.Context.ROOT.detach(previous);
     }
@@ -154,7 +158,8 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       RetainedNoWriteRecovery retained,
       Clock cleanupClock,
-      long cleanupDeadline) {
+      long cleanupDeadline,
+      Deadline monotonicDeadline) {
     CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
     synchronized (noWriteRecoveries) {
       proof = retained.proof;
@@ -163,16 +168,15 @@ final class CanonicalGameplayRegionLeaseOwner {
       retained.cleanupActive = true;
     }
     var cleanupSucceeded = new java.util.concurrent.atomic.AtomicBoolean();
-    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-        cleanupClock,
-        cleanupDeadline,
+    Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, Void> cleanupWork =
         cleanup -> {
           this.statusRepository
               .forBudget(cleanup)
               .releaseInitialTimelineNoWrite(preparation, proof, clock.instant());
           cleanupSucceeded.set(true);
           return null;
-        },
+        };
+    Runnable release =
         () -> {
           synchronized (noWriteRecoveries) {
             if (cleanupSucceeded.get()) retained.proof = null;
@@ -181,7 +185,14 @@ final class CanonicalGameplayRegionLeaseOwner {
               noWriteRecoveries.remove(preparation.operationId(), retained);
             }
           }
-        });
+        };
+    if (monotonicDeadline == null) {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          cleanupClock, cleanupDeadline, cleanupWork, release);
+    } else {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
+          cleanupClock, cleanupDeadline, monotonicDeadline, cleanupWork, release);
+    }
   }
 
   CanonicalGameplayRegionLeaseOwner(
@@ -258,7 +269,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     if (!deadlineBoundInstallation || transferOwner != null) {
-      recoverRetainedNoWriteForTransition(transitionId, absoluteDeadlineMillis);
+      recoverRetainedNoWriteForTransition(transitionId, absoluteDeadlineMillis, null);
       return installForTransition(
           existingRegionInstallation,
           transitionId,
@@ -271,17 +282,13 @@ final class CanonicalGameplayRegionLeaseOwner {
           null);
     }
     long maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
-    var monotonicDeadline =
-        io.grpc.Deadline.after(maximum, java.util.concurrent.TimeUnit.MILLISECONDS);
+    Deadline monotonicDeadline = Deadline.after(maximum, TimeUnit.MILLISECONDS);
     long installationDeadline = Math.min(absoluteDeadlineMillis, deadlineAfter(clock, maximum));
-    recoverRetainedNoWriteForTransition(transitionId, installationDeadline);
-    // A separate cleanup resource worker must not give the subsequent install a fresh window.
-    long remainingMillis =
-        monotonicDeadline.timeRemaining(java.util.concurrent.TimeUnit.MILLISECONDS);
-    long remainingDeadline = Math.min(installationDeadline, deadlineAfter(clock, remainingMillis));
-    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+    recoverRetainedNoWriteForTransition(transitionId, installationDeadline, monotonicDeadline);
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
         clock,
-        remainingDeadline,
+        installationDeadline,
+        monotonicDeadline,
         budget ->
             installForTransition(
                 existingRegionInstallation,
@@ -292,7 +299,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                 bindingInventory.forBudget(budget),
                 statusRepository.forBudget(budget),
                 redisOwner.forInstallation(clock, budget),
-                budget.operationDeadline()));
+                budget.operationDeadline()),
+        null);
   }
 
   private static long deadlineAfter(Clock clock, long millis) {
@@ -481,7 +489,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         var retained = reserveNoWriteRecovery(preparation.operationId());
         try {
           if (transferOwner == null) recoverNoWrite(preparation, retained);
-          else recoverNoWrite(preparation, retained, clock, handoffDeadline);
+          else recoverNoWrite(preparation, retained, clock, handoffDeadline, null);
           var initializationPreparation = preparation;
           Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
               permit =
@@ -732,7 +740,15 @@ final class CanonicalGameplayRegionLeaseOwner {
         transferOwner == null
             ? handoffDeadline
             : renewedGrantDeadline(clock.millis(), leaseTtl, handoffDeadline);
-    if (!recoveringInitialGrant) handoffRedisOwner.renew(grant, leaseTtl);
+    if (!recoveringInitialGrant) {
+      if (transferOwner == null && prior == null && admittedDeadline != null) {
+        // Redis begins renewal after this observation, so its earliest expiry must
+        // cover the entire bounded initial SQL installation.
+        Deadline guaranteedRenewal = Deadline.after(leaseTtl.toMillis(), TimeUnit.MILLISECONDS);
+        if (!admittedDeadline.isBefore(guaranteedRenewal)) throw unavailable();
+      }
+      handoffRedisOwner.renew(grant, leaseTtl);
+    }
     handoffRedisOwner.requireCurrent(grant);
     requireSameIncarnation(
         incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));

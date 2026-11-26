@@ -248,7 +248,11 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                       proof.admission, original.request(), selected, denial, transferDeadline());
       if (ownerReplaced) {
         proof.rawReplaceOwner("denial-settlement-successor", "e".repeat(64));
-        assertThatThrownBy(settle::run).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(settle::run)
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity execution is indeterminate")
+            .hasStackTraceContaining(
+                "CanonicalGameplayOriginalNewCapacityExecutionOwner.requireSelectedOwner");
       } else {
         settle.run();
         settle.run();

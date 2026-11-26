@@ -137,8 +137,15 @@ failure_body() {
 
 classify_failure_body() {
   local log_path="$1"
+  local jooq_throttled=0
 
-  awk '
+  # Select the strict download-chain parser for cache-wrapped jOOQ throttling.
+  # The parser still requires every artifact, repository URL and HTTP result to match.
+  if grep -Eq '^[[:space:]]*> Received status code 429 from server: Too Many Requests$' "$log_path"; then
+    jooq_throttled=1
+  fi
+
+  awk -v jooq_throttled="$jooq_throttled" '
     BEGIN { quote = sprintf("%c", 39) }
     function trim(s) {
       sub(/^[[:space:]]+/, "", s)
@@ -170,7 +177,8 @@ classify_failure_body() {
         next
       }
       if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration) ||
-           (compile_classpath_wrapper && resolved_configuration == expected_compile_configuration)) &&
+           (compile_classpath_wrapper && resolved_configuration == expected_compile_configuration) ||
+           (jooq_throttled && jooq_wrapper_causes == 1 && jooq_module != "" && jooq_root_module == jooq_module)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
@@ -486,6 +494,10 @@ classify_failure_body() {
           (jooq_wrapper_causes &&
             (jooq_wrapper_causes != 1 || jooq_codegen_roots != 1 || resolver_roots != 1 ||
              cache_cause != 1 || jooq_execution_causes || jooq_module == "" || jooq_root_module != jooq_module)) ||
+          (jooq_throttled && jooq_wrapper_causes &&
+            (jar_downloads == 0 || other_cause_lines != 2 || jooq_jar_downloads ||
+             jooq_tls_context || jooq_tls_terminated || wrapped_resolution_causes ||
+             compile_classpath_wrapper || fixtures_resolver || compile_task_failure)) ||
           (jooq_execution_causes &&
             (jooq_execution_causes != 1 || jooq_codegen_roots != 1 || resolver_roots != 1 ||
              cache_cause != 0 || jooq_execution_module == "" || jooq_root_module != jooq_execution_module)) ||
@@ -493,7 +505,10 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (wrapped_resolution_causes || ((compile_classpath_wrapper || fixtures_resolver) && jar_downloads)) print "before-compile"
+      if (wrapped_resolution_causes ||
+          ((compile_classpath_wrapper || fixtures_resolver || (jooq_throttled && jooq_wrapper_causes)) && jar_downloads)) {
+        print "before-compile"
+      }
       exit 0
     }
   ' "$log_path"

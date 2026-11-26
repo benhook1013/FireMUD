@@ -368,6 +368,45 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
 assert_output_contains "refreshed-captured-jooq-resolution"
 
+# The same pre-generator boundary can return HTTP 429 for multiple JARs.
+write_jooq_throttled_cause() {
+  write_jooq_captured_cause
+  sed -i '/^> Could not find /,$d' "$CASE_DIR/jooq-cause.log"
+  cat >> "$CASE_DIR/jooq-cause.log" <<'LOG'
+> Could not download jooq-codegen-3.21.10.jar (org.jooq:jooq-codegen:3.21.10)
+   > Could not get resource 'https://repo.maven.apache.org/maven2/org/jooq/jooq-codegen/3.21.10/jooq-codegen-3.21.10.jar'.
+      > Could not GET 'https://repo.maven.apache.org/maven2/org/jooq/jooq-codegen/3.21.10/jooq-codegen-3.21.10.jar'.
+         > Received status code 429 from server: Too Many Requests
+> Could not download jooq-meta-3.21.10.jar (org.jooq:jooq-meta:3.21.10)
+   > Could not get resource 'https://repo.maven.apache.org/maven2/org/jooq/jooq-meta/3.21.10/jooq-meta-3.21.10.jar'.
+      > Could not GET 'https://repo.maven.apache.org/maven2/org/jooq/jooq-meta/3.21.10/jooq-meta-3.21.10.jar'.
+         > Received status code 429 from server: Too Many Requests
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case captured-jooq-codegen-maven-429
+write_jooq_throttled_cause
+write_jooq_wrapper ''
+run_case game-logic-service 0
+assert_call_count 2
+assert_output_contains "refreshed-captured-jooq-resolution"
+
+new_case captured-jooq-codegen-mixed-maven-errors
+write_jooq_throttled_cause
+sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/jooq-cause.log"
+write_jooq_wrapper ''
+run_case game-logic-service 1
+assert_call_count 1
+
+new_case captured-jooq-codegen-maven-429-after-start
+write_jooq_throttled_cause
+write_jooq_wrapper '> Task :account-service:generateJooq FAILED'
+run_case game-logic-service 1
+assert_call_count 1
+
 # Gradle 9.9 can fail before source compilation while resolving inputs for the
 # protobuf plugin's registered extraction task or while serializing a forked
 # compiler's annotation processor path. Both shapes refresh once only when

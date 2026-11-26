@@ -423,16 +423,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
         .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
     var retained =
         capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
-    // Controlled physical retirement only. The existing genuine never-admitted owner accepts
-    // untouched PREPARED attempts, not this already-acknowledged PROVISIONAL candidate.
-    controlledRemoveServingKeys(source, assignment);
-    var replay =
-        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
-    assertThat(replay.canonicalReadback()).containsExactly(retained.canonicalReadback());
-    assertThat(replay.currentOwnerId()).isEqualTo(retained.currentOwnerId());
-    assertThat(replay.currentOwnerFence()).isEqualTo(retained.currentOwnerFence());
-    assertThat(replay.execution().selectedOwnerFence())
-        .isEqualTo(controlledCapacity.selectedOwnerFence());
+    byte[] candidateBefore = admin.dump(ascii(installation.sessionKey()));
+    assertThat(candidateBefore).isNotNull();
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template()) {
@@ -444,6 +436,17 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     }
     assertThat(admin.hget(ascii(capacityKey(assignment)), ascii("state")))
         .containsExactly(ascii("CLOSED"));
+    assertThat(admin.dump(ascii(installation.sessionKey()))).containsExactly(candidateBefore);
+    // Controlled physical retirement only. The existing genuine never-admitted owner accepts
+    // untouched PREPARED attempts, not this already-acknowledged PROVISIONAL candidate.
+    controlledRemoveServingKeys(source, assignment);
+    var replay =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(replay.canonicalReadback()).containsExactly(retained.canonicalReadback());
+    assertThat(replay.currentOwnerId()).isEqualTo(retained.currentOwnerId());
+    assertThat(replay.currentOwnerFence()).isEqualTo(retained.currentOwnerFence());
+    assertThat(replay.execution().selectedOwnerFence())
+        .isEqualTo(controlledCapacity.selectedOwnerFence());
     assertThat(admin.type(ascii(installation.sessionKey()))).isEqualTo("none");
     assertThat(
             capacityOwner()

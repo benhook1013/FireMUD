@@ -83,7 +83,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS))
         .as("resource and cancellation workers restore all operation permits")
         .isTrue();
-    permits.release(maximum);
+    try {
+      assertThat(permits.availablePermits())
+          .as("operation teardown has exactly the configured permits")
+          .isZero();
+    } finally {
+      permits.release(maximum);
+    }
     Semaphore background =
         (Semaphore)
             java.util.Objects.requireNonNull(
@@ -95,7 +101,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThat(background.tryAcquire(maximumBackground, 2, TimeUnit.SECONDS))
         .as("background admission follows the same cleanup lifecycle")
         .isTrue();
-    background.release(maximumBackground);
+    try {
+      assertThat(background.availablePermits())
+          .as("background teardown has exactly the configured permits")
+          .isZero();
+    } finally {
+      background.release(maximumBackground);
+    }
   }
 
   @Test
@@ -274,20 +286,64 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
   @Test
   void manualFactoryEnablesPerInstallationDeadline() {
-    var owner =
-        CanonicalGameplayRegionLeaseOwnerFactory.compose(
-            mock(DSLContext.class),
-            mock(RedisClient.class),
-            RedisURI.create("redis://localhost:6379"),
-            mock(RedisScriptCatalog.class),
-            mock(CanonicalGameplayRegionIncarnationSource.class),
-            mock(
-                net.firedevops.firemud.gamesession.service
-                    .CanonicalInitialPlayerLocationRegionResolver.class),
-            mock(RuntimeIdentity.class),
-            Duration.ofSeconds(30),
-            CLOCK);
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var owner = composeManualLeaseOwner(client, Duration.ofSeconds(30));
     assertThat(ReflectionTestUtils.getField(owner, "deadlineBoundInstallation")).isEqualTo(true);
+  }
+
+  @Test
+  void manualFactoryRejectsReconnectEnabledCoordinationClient() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, Duration.ofSeconds(30)))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("coordinationRedis requires autoReconnect=false");
+  }
+
+  @Test
+  void manualFactoryRequiresLeaseToCoverTheInstallationWindow() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var installationWindow =
+        Duration.ofMillis(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS);
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, installationWindow))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("leaseTtl must exceed the bounded installation window");
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner composeManualLeaseOwner(
+      RedisClient client, Duration leaseTtl) {
+    return CanonicalGameplayRegionLeaseOwnerFactory.compose(
+        mock(DSLContext.class),
+        client,
+        RedisURI.create("redis://localhost:6379"),
+        mock(RedisScriptCatalog.class),
+        mock(CanonicalGameplayRegionIncarnationSource.class),
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
+                .class),
+        mock(RuntimeIdentity.class),
+        leaseTtl,
+        CLOCK);
+  }
+
+  @Test
+  void exhaustedInstallationWindowRefusesCleanupEvenWithFrozenWallClock() {
+    Clock frozen = Clock.fixed(CLOCK.instant(), java.time.ZoneOffset.UTC);
+    var cleanup = new AtomicBoolean();
+    var released = new AtomicBoolean();
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
+                frozen,
+                frozen.millis() + 5_000,
+                io.grpc.Deadline.after(0, TimeUnit.NANOSECONDS),
+                budget -> cleanup.getAndSet(true),
+                () -> released.set(true)))
+        .isExactlyInstanceOf(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+    assertThat(cleanup.get()).isFalse();
+    assertThat(released.get()).isTrue();
   }
 
   @Test
@@ -1192,23 +1248,61 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         org.awaitility.Awaitility.await()
             .atMost(2, TimeUnit.SECONDS)
             .untilAsserted(() ->
-                assertThat(ReflectionTestUtils.getField(budget, "workerDone")).isEqualTo(true));
+                assertThat(
+                        java.util.Objects.requireNonNull(
+                            ReflectionTestUtils.getField(budget, "workerDone")))
+                    .isEqualTo(true));
         assertThat(permits.availablePermits()).isEqualTo(availableBefore - 1);
         assertThat(retained.get()).isEqualTo(beforeRetained + 1);
-        assertThat((AtomicInteger) ReflectionTestUtils.getField(budget, "outstandingConnections"))
+        assertThat(
+                (AtomicInteger)
+                    java.util.Objects.requireNonNull(
+                        ReflectionTestUtils.getField(budget, "outstandingConnections")))
             .hasValue(1);
-        assertThat(ReflectionTestUtils.getField(budget, "released")).isEqualTo(false);
+        assertThat(
+                java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "released")))
+            .isEqualTo(false);
         verify(delegate, never()).release(connection);
       } finally {
         resumeDriver.countDown();
-        if (retained.get() == beforeRetained + 1) retained.decrementAndGet();
-        if (permits.availablePermits() == availableBefore - 1) permits.release();
         var budget = captured.get();
         if (budget != null) {
-          synchronized (
-              java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "resources"))) {
-            ((java.util.Map<?, ?>) ReflectionTestUtils.getField(budget, "connections")).clear();
-            ((AtomicInteger) ReflectionTestUtils.getField(budget, "outstandingConnections")).set(0);
+          Object lifecycle =
+              java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "lifecycle"));
+          org.awaitility.Awaitility.await()
+              .atMost(2, TimeUnit.SECONDS)
+              .until(() -> {
+                synchronized (lifecycle) {
+                  return Boolean.TRUE.equals(ReflectionTestUtils.getField(budget, "workerDone"))
+                      && (!Boolean.TRUE.equals(
+                              ReflectionTestUtils.getField(budget, "cancellationStarted"))
+                          || Boolean.TRUE.equals(
+                              ReflectionTestUtils.getField(budget, "cancellationDone")));
+                }
+              });
+          synchronized (lifecycle) {
+            synchronized (
+                java.util.Objects.requireNonNull(
+                    ReflectionTestUtils.getField(budget, "resources"))) {
+              var connections =
+                  (java.util.Map<?, ?>)
+                      java.util.Objects.requireNonNull(
+                          ReflectionTestUtils.getField(budget, "connections"));
+              var outstanding =
+                  (AtomicInteger)
+                      java.util.Objects.requireNonNull(
+                          ReflectionTestUtils.getField(budget, "outstandingConnections"));
+              if (Boolean.FALSE.equals(ReflectionTestUtils.getField(budget, "released"))
+                  && connections.size() == 1
+                  && outstanding.get() == 1) {
+                // This operation owns only the one disposable mock connection.
+                assertThat(retained.get()).isEqualTo(beforeRetained + 1);
+                connections.clear();
+                outstanding.set(0);
+                retained.decrementAndGet();
+                ReflectionTestUtils.invokeMethod(budget, "releaseIfFinished");
+              }
+            }
           }
         }
       }
@@ -1394,10 +1488,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
   @Test
   void cancellationAfterPoolReturnCannotCancelAReusedConnectionStatement() throws Exception {
-    ConnectionProvider provider = mock();
+    ConnectionProvider delegate = mock();
+    var provider = new ControlledConnectionProvider(delegate);
     PreparedStatement statement = mock();
     Connection connection = preparedConnection(statement);
-    when(provider.acquire()).thenReturn(connection);
+    when(delegate.acquire()).thenReturn(connection);
     when(statement.execute()).thenReturn(true);
     CountDownLatch returned = new CountDownLatch(1), finish = new CountDownLatch(1);
     CountDownLatch cancellationWorkerFinished = new CountDownLatch(1);
@@ -1406,7 +1501,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
               returned.countDown();
               return null;
             })
-        .when(provider)
+        .when(delegate)
         .release(connection);
     DSLContext dsl = source(provider);
     try (var context = Context.current().withCancellation();
@@ -1446,6 +1541,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThat(cancellationWorkerFinished.await(2, TimeUnit.SECONDS)).isTrue();
     awaitResourceAndCancellationWorkerCleanup();
     verify(statement, never()).cancel();
+    assertThat(provider.retirementAttempted.getCount())
+        .as("a returned connection is no longer in cancellation custody")
+        .isEqualTo(1);
+    assertThat(provider.retired(connection)).isFalse();
   }
 
   @Test

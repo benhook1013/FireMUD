@@ -107,7 +107,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private Runnable onPhysicalRelease;
 
   private CanonicalGameplayOriginalNewCapacityExecutionBudget(
-      Clock clock, long explicitDeadline, ThreadFactory cancellationThreads, boolean background) {
+      Clock clock,
+      long explicitDeadline,
+      ThreadFactory cancellationThreads,
+      boolean background,
+      Deadline enclosingDeadline) {
     this.background = background;
     this.clock = clock;
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
@@ -116,6 +120,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     long nanos = TimeUnit.MILLISECONDS.toNanos(MAX_OPERATION_MILLIS);
     if (caller.getDeadline() != null)
       nanos = Math.min(nanos, caller.getDeadline().timeRemaining(TimeUnit.NANOSECONDS));
+    if (enclosingDeadline != null)
+      nanos = Math.min(nanos, enclosingDeadline.timeRemaining(TimeUnit.NANOSECONDS));
     if (explicitDeadline != Long.MAX_VALUE) {
       long remaining;
       try {
@@ -135,6 +141,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       throw unavailable();
     }
     Deadline local = Deadline.after(nanos, TimeUnit.NANOSECONDS);
+    if (enclosingDeadline != null) local = local.minimum(enclosingDeadline);
     deadline = caller.getDeadline() == null ? local : local.minimum(caller.getDeadline());
   }
 
@@ -187,6 +194,23 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         Objects.requireNonNull(onPhysicalRelease));
   }
 
+  static <T> T runBackgroundWithin(
+      Clock clock,
+      long explicitDeadline,
+      Deadline enclosingDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      Runnable onPhysicalRelease) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        true,
+        null,
+        onPhysicalRelease,
+        Objects.requireNonNull(enclosingDeadline));
+  }
+
   /** A result with private resources transfers ownership only after the caller's deadline check. */
   static <T> T runOwned(
       Clock clock,
@@ -211,11 +235,31 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       boolean background,
       Consumer<T> disposeAbandoned,
       Runnable onPhysicalRelease) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        cancellationThreads,
+        background,
+        disposeAbandoned,
+        onPhysicalRelease,
+        null);
+  }
+
+  private static <T> T run(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      ThreadFactory cancellationThreads,
+      boolean background,
+      Consumer<T> disposeAbandoned,
+      Runnable onPhysicalRelease,
+      Deadline enclosingDeadline) {
     final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
     try {
       budget =
           new CanonicalGameplayOriginalNewCapacityExecutionBudget(
-              clock, explicitDeadline, cancellationThreads, background);
+              clock, explicitDeadline, cancellationThreads, background, enclosingDeadline);
       // Background reads and transfer work share the same four-operation ceiling, but cannot
       // consume the two slots reserved for final admission. Neither class waits in a queue.
       if (background && !BACKGROUND_OPERATIONS.tryAcquire()) throw unavailable();

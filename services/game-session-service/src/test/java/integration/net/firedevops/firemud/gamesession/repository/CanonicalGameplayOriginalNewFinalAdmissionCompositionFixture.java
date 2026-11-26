@@ -1047,6 +1047,20 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return java.util.Map.copyOf(result);
   }
 
+  /** Exact owner tokens for this isolated fixture's region lease keys, excluding renewal TTL. */
+  public java.util.Map<String, String> capacityLeaseOwnerImage() {
+    var result = new java.util.TreeMap<String, String>();
+    var commands = administration.sync();
+    for (byte[] key : commands.keys("tick-executor-lease:*")) {
+      byte[] token = commands.get(key);
+      if (token == null)
+        throw new IllegalStateException("Region lease disappeared during owner readback");
+      result.put(
+          new String(key, StandardCharsets.UTF_8), new String(token, StandardCharsets.US_ASCII));
+    }
+    return java.util.Map.copyOf(result);
+  }
+
   /** Controlled TTL-only fault used to prove the composition image observes absolute expiry. */
   public String setPhysicalSessionExpiryForFault() {
     var commands = administration.sync();
@@ -1071,15 +1085,15 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             .get(0, String.class);
     if (!"COMMITTED".equals(state))
       throw new IllegalStateException("Immutable actual outcome must precede this fixture fault");
-    administration
-        .sync()
-        .del(
-            new byte[][] {
-              ascii(candidateInstallation.sessionKey()),
-                  ascii(candidateInstallation.characterIndexKey()),
-              ascii(candidateInstallation.accountTenantIndexKey()),
-                  ascii(candidateInstallation.tenantIndexKey())
-            });
+    var commands = administration.sync();
+    byte[] sessionId = ascii(candidateInstallation.candidate().bindingIdentity().sessionId());
+    commands.del(
+        new byte[][] {
+          ascii(candidateInstallation.sessionKey()),
+          ascii(candidateInstallation.characterIndexKey())
+        });
+    commands.srem(ascii(candidateInstallation.accountTenantIndexKey()), sessionId);
+    commands.srem(ascii(candidateInstallation.tenantIndexKey()), sessionId);
   }
 
   public void removeInitialBarrierForFault() {
