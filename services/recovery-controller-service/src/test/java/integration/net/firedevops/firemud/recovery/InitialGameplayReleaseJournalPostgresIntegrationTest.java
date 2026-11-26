@@ -411,7 +411,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"last_dispatched_at", "last_outcome_code", "retry_provenance"})
+  @ValueSource(
+      strings = {
+        "last_dispatched_at",
+        "last_outcome_code",
+        "retry_provenance",
+        "send_outcome_uncertain"
+      })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void migratedPackagedDatabaseWithMissingOutboxColumnIsNotReady(String column) throws Exception {
     String database = "firemud_recovery_control";
@@ -430,6 +436,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 case "last_dispatched_at" -> "last_dispatched_at";
                 case "last_outcome_code" -> "last_outcome_code";
                 case "retry_provenance" -> "retry_provenance";
+                case "send_outcome_uncertain" -> "send_outcome_uncertain";
                 default -> throw new AssertionError("Unexpected test fixture column");
               }
               + " TO fixture_missing_column");
@@ -1182,6 +1189,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 "LATE_OWNER_REJECTION",
                 base.plusSeconds(7)))
         .isFalse();
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                dispatched, RetrySource.NOT_DISPATCHED, "LATE_NO_SEND", base.plusSeconds(7)))
+        .isFalse();
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(closed);
     String retained = storedOutbox(operationId, effectId);
     assertThat(retained).contains(tupleCodec.digest(closure));
@@ -1889,8 +1900,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
   }
 
-  @Test
-  void partialReadbackDoesNotEraseAnUncertainTransportOutcome() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void partialReadbackDoesNotEraseAnUncertainTransportOutcome(boolean uncertaintyFirst) {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry dispatch = authorizedDispatch(base);
     var observation =
@@ -1900,20 +1912,62 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.UNKNOWN_OR_PARTIAL,
             "partial",
             base.plusSeconds(5));
+    if (uncertaintyFirst) {
+      assertThat(
+              journal.recordAmbiguousEffectForDispatch(
+                  dispatch, "TRANSPORT_UNCERTAIN", base.plusSeconds(5)))
+          .isTrue();
+    }
     journal.recordEffectReadback(dispatch, observation, base.plusSeconds(6));
-    assertThat(
-            journal.recordAmbiguousEffectForDispatch(
-                dispatch, "TRANSPORT_UNCERTAIN", base.plusSeconds(7)))
-        .isTrue();
+    if (!uncertaintyFirst) {
+      assertThat(
+              journal.recordAmbiguousEffectForDispatch(
+                  dispatch, "TRANSPORT_UNCERTAIN", base.plusSeconds(7)))
+          .isTrue();
+    }
     assertThatThrownBy(() ->
             journal.recordRetryableEffectForDispatch(
                 dispatch, RetrySource.NOT_DISPATCHED, "CONFLICTING_NO_SEND", base.plusSeconds(8)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(localNoSendReceipts(dispatch)).isEmpty();
+    assertThat(storedOutbox(dispatch.effect().operationId(), dispatch.effect().effectId()))
+        .contains(tupleCodec.digest(observation), "\"send_outcome_uncertain\":true");
     assertThat(journal.findNextEffect(dispatch.effect().operationId()))
         .get()
         .extracting(OutboxEntry::state)
         .isEqualTo(EffectOutboxState.AMBIGUOUS);
+  }
+
+  @Test
+  void heldUntypedRetryRecordsExactOwnerSuccessWhenNoNegativeProofExists() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_outbox SET state = 'retryable'"
+                    + " WHERE outbox_id = ?",
+                dispatch.outboxId()))
+        .isEqualTo(1);
+    OutboxEntry held = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    EffectReadback receipt =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "legacy-qualification",
+            base.plusSeconds(5));
+    assertThat(journal.recordEffectReadback(held, receipt, base.plusSeconds(6)).phase())
+        .isEqualTo(Phase.RELEASING);
+    assertThat(journal.findEffect(operationId, dispatch.effect().kind()))
+        .get()
+        .extracting(OutboxEntry::state)
+        .isEqualTo(EffectOutboxState.ACKNOWLEDGED);
   }
 
   @Test
@@ -2341,6 +2395,46 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 assertThat(row.get("retry_provenance", String.class)).isNull();
               });
           assertThat(upgradedJournal.findNextEffect(V1_OPERATION_ID)).contains(dispatched);
+          var transportUpgrade =
+              Flyway.configure()
+                  .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                  .schemas(SCHEMA)
+                  .defaultSchema(SCHEMA)
+                  .table("flyway_schema_history_recovery_control")
+                  .placeholders(Map.of("serviceSchema", SCHEMA))
+                  .locations("classpath:db/recovery-control-migration")
+                  .target("5")
+                  .load();
+          transportUpgrade.migrate();
+          transportUpgrade.validate();
+          assertThat(transportUpgrade.info().current().getVersion().getVersion()).isEqualTo("5");
+          assertThat(
+                  legacyDsl
+                      .fetchSingle(
+                          "SELECT send_outcome_uncertain FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                          V1_OUTBOX_ID)
+                      .get(0))
+              .isNull();
+          assertThatThrownBy(() ->
+                  upgradedJournal.recordRetryableEffectForDispatch(
+                      dispatched,
+                      RetrySource.NOT_DISPATCHED,
+                      "UNPROVED_LEGACY_SEND",
+                      base.plusSeconds(1)))
+              .isInstanceOf(InitialGameplayReleaseConflictException.class);
+          assertThat(upgradedJournal.findNextEffect(V1_OPERATION_ID)).contains(dispatched);
+          EffectReadback closure =
+              readbackFor(
+                  dispatched,
+                  dispatched.lastAttemptId(),
+                  EffectReadbackState.PROVEN_NO_EFFECT,
+                  "legacy-dispatch-owner-closure",
+                  base.plusSeconds(2));
+          upgradedJournal.recordEffectReadback(dispatched, closure, base.plusSeconds(3));
+          var replacement =
+              upgradedJournal.claimEffect(
+                  V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), base.plusSeconds(4));
+          assertThat(replacement.attemptCount()).isEqualTo(2);
         }
       }
     } finally {

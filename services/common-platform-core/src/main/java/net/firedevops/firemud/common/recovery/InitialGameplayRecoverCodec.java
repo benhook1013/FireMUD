@@ -37,11 +37,6 @@ public final class InitialGameplayRecoverCodec {
 
   public static final int MAX_DECODED_STRING_UTF16_UNITS = 4096;
 
-  /**
-   * @deprecated This historically named limit measures decoded text, not raw JSON token bytes.
-   */
-  @Deprecated public static final int MAX_RAW_STRING_CHARACTERS = MAX_DECODED_STRING_UTF16_UNITS;
-
   private static final int MAX_DECODED_STRING_UTF8_BYTES = 4096;
   public static final int MAX_DEPTH = 4;
   public static final int MAX_OBJECT_MEMBERS = 8;

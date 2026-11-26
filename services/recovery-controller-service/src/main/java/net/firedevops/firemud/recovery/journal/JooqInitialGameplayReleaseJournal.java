@@ -388,7 +388,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   current.outboxId());
           String retainedSource =
               origin == null ? null : origin.get("retry_provenance", String.class);
-          if (retrySource == RetrySource.OWNER_REJECTED && "owner_closure".equals(retainedSource)) {
+          if ("owner_closure".equals(retainedSource)) {
             requireExactClosureBeforeRetry(tx, current);
             return false;
           }
@@ -560,19 +560,27 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           recoverOwnerClosureProvenance(tx, current);
           return operation;
         }
-        if (stored != null
-            && stored.get("retry_provenance", String.class) == null
-            && readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+        boolean heldUntyped =
+            stored != null && stored.get("retry_provenance", String.class) == null;
+        if (heldUntyped && readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
           requireTerminalReplayWithinAttempt(readback, stored, now);
           return operation;
         }
-        if (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
-            || ((storedDigest != null
-                    || (stored != null && stored.get("readback_payload", JSONB.class) != null))
-                && !hasValidatedUnknownReadback(stored, storedDigest, current))) {
+        boolean hasStoredReadback =
+            stored != null
+                && (storedDigest != null
+                    || stored.get("readback_payload", JSONB.class) != null
+                    || stored.get("readback_identity", String.class) != null);
+        boolean conflictsWithRetainedOutcome =
+            hasStoredReadback && !hasValidatedUnknownReadback(stored, storedDigest, current);
+        if (conflictsWithRetainedOutcome
+            || (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
+                && (!heldUntyped
+                    || hasRetainedClosure(tx, current, readback.attemptId(), null)
+                    || hasRetainedOwnerRejection(tx, current, readback.attemptId(), null)))) {
           throw conflict("effect readback changed after definitive no effect");
         }
-        // A definitive apply rejection may precede its first durable closure receipt.
+        // A held retry can record a definitive result, but cannot claim a new dispatch.
         // Keep normal attempt and observation fences before retaining that receipt.
       }
       if (readback.observedAt().isAfter(now)) {

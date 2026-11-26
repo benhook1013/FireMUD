@@ -30,13 +30,19 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     [true, ALL_MODULES, true],
   ]) {
     const outputs = {};
+    const githubClient = {};
+    const eventContext = {};
     await execute(name => name === "node:fs" ? {existsSync: () => available} : {
       ALL_MODULES: modules,
-      classifyGithubChangeScope: async () => ({
+      classifyGithubChangeScope: async (githubArgument, contextArgument) => {
+        assert.equal(githubArgument, githubClient);
+        assert.equal(contextArgument, eventContext);
+        return ({
         runAll: false, affectedModules: ["account-service"], bootableModules: ["account-service"],
         affectedServices: ["account-service"], lightweightOnly: true,
-      }),
-    }, {}, {}, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+        });
+      },
+    }, githubClient, eventContext, {setOutput: (name, value) => outputs[name] = value, warning() {}});
     assert.equal(outputs.run_all, String(!compatible));
     assert.equal(outputs.lightweight_only, String(compatible));
     assert.deepEqual(JSON.parse(outputs.affected_modules), compatible ? ["account-service"] : ALL_MODULES);
@@ -70,20 +76,25 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true, undefined, false, true],
   ]) {
     const outputs = {};
-    await execute(name => name === "node:fs" ? {existsSync: () => true} : {
-      ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
-      classifyGithubChangeScope: async () => ({runAll: false, affectedModules: [],
-        bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false}),
-    }, {rest: {pulls: {listFiles() {}, get: (() => {
+    const githubClient = {rest: {pulls: {listFiles() {}, get: (() => {
       let calls = 0;
       return async () => { const call = calls++; return ({data: {number: 42, changed_files: count,
         head: {sha: (drift === "head-before" || (drift === "head-after" && call > 0)) ? "c".repeat(40) : "a".repeat(40)},
         base: {sha: drift === "base-after" && call > 0 ? "c".repeat(40) : "b".repeat(40)},
       }}); };
-    })()}}, paginate: async () => entries.map(entry => ({status: "modified", ...entry}))},
-    {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
+    })()}}, paginate: async () => entries.map(entry => ({status: "modified", ...entry}))};
+    const eventContext = {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
       payload: {pull_request: {number: 42, changed_files: count,
-        head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}},
+        head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}};
+    await execute(name => name === "node:fs" ? {existsSync: () => true} : {
+      ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
+      classifyGithubChangeScope: async (githubArgument, contextArgument) => {
+        assert.equal(githubArgument, githubClient);
+        assert.equal(contextArgument, eventContext);
+        return ({runAll: false, affectedModules: [],
+          bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false});
+      },
+    }, githubClient, eventContext,
     {setOutput: (name, value) => outputs[name] = value, warning() {}});
     assert.equal(outputs.lightweight_only, String(expected));
     assert.equal(outputs.validation_python_changed, String(expectsPython));
