@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(24);
+      assertThat(catalog.catalogEpoch()).isEqualTo(25);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -182,6 +182,11 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   && fact.identity()
                       .equals(
                           "game_session_region_owner_transfer.gs_region_transfer_exact_successor"))
+          .anyMatch(fact ->
+              fact.kind() == FactKind.TRIGGER
+                  && fact.identity()
+                      .equals(
+                          "game_session_region_timeline_preparation.gs_timeline_no_write_release_guard"))
           .anyMatch(fact -> fact.kind() == FactKind.SEQUENCE);
       assertThat(
               catalog.schemaFacts().stream()
@@ -212,7 +217,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.12",
               "catalog-installation:1065.0.13",
               "catalog-installation:1065.0.14",
-              "catalog-installation:1065.0.15")
+              "catalog-installation:1065.0.15",
+              "catalog-installation:1065.0.16")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -237,7 +243,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.12:")
                   || identity.contains(":1065.0.13:")
                   || identity.contains(":1065.0.14:")
-                  || identity.contains(":1065.0.15:"));
+                  || identity.contains(":1065.0.15:")
+                  || identity.contains(":1065.0.16:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -774,7 +781,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(24);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(25);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -931,7 +938,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.12",
             "1065.0.13",
             "1065.0.14",
-            "1065.0.15")) {
+            "1065.0.15",
+            "1065.0.16")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -983,7 +991,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.12",
             "1065.0.13",
             "1065.0.14",
-            "1065.0.15")) {
+            "1065.0.15",
+            "1065.0.16")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "

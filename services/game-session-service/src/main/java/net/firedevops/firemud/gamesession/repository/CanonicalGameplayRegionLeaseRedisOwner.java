@@ -512,6 +512,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.permit = permit;
     }
 
+    long claimOrdinal() {
+      return permit.claimOrdinal();
+    }
+
     void restoreAfterConfirmedRollback() {
       consumed.set(false);
     }

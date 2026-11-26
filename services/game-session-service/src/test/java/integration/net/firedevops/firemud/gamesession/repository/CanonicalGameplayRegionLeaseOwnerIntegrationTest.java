@@ -2296,7 +2296,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void ambiguousReleaseCommitNeverRestoresProofEvenAfterRollbackReturns() throws Exception {
+  void lostReleaseAcknowledgementReconcilesExactClaimAfterTheNextClaim() throws Exception {
     assertKnownNoWriteRecovery(3);
   }
 
@@ -2766,6 +2766,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           assertThat(concurrentRelease.get()).isNotNull();
                           concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
                           assertThat(
+                                  testSchema
+                                      .dsl()
+                                      .fetchSingle(
+                                          "SELECT no_write_released_through"
+                                              + " FROM game_session_region_timeline_preparation"
+                                              + " WHERE initialization_operation_id = ?",
+                                          preparation.operationId())
+                                      .get(0, Long.class))
+                              .isZero();
+                          assertThat(
                                   repository.findTimelinePreparation(source).orElseThrow().phase())
                               .isEqualTo(
                                   CanonicalGameplayRegionRuntimeStatusRepository
@@ -2816,18 +2826,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         }
       }
       assertThat(proof.get()).isNotNull();
-      if (mode == 3) {
-        // The commit reached PREPARED but its caller saw failure. The owner retains the
-        // consumed capability and reconciles durable state without restoring mutation authority.
-        assertThat(proof.get().consumedFor(preparation)).isTrue();
-        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), recoverySlot);
-        var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
-        assertThat(retry).isSameAs(recoverySlot);
-        recoveryOwner.recoverNoWrite(preparation, retry);
-        assertThat(retry.proof).isNull();
-        assertThat(proof.get().consumedFor(preparation)).isTrue();
-        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
-      }
       if (mode == 4) {
         assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
             .isEqualTo(
@@ -2856,12 +2854,33 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         assertThat(proof.get().consumedFor(preparation)).isTrue();
       }
       assertPreparedTimelineUnchanged(testSchema.dsl(), repository, redis, source, preparation);
-      var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
-      // A stale proof cannot release the next claim, and a previously dispatched creation permit
-      // cannot be replayed through a different Redis session after PREPARED is restored.
-      assertThatThrownBy(
-              () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
-          .isInstanceOf(IllegalStateException.class);
+      var laterOwner = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var retryPermit = laterOwner.beginInitialTimeline(preparation, NOW).orElseThrow();
+      assertThat(retryPermit.claimOrdinal()).isEqualTo(permit.claimOrdinal() + 1);
+      String claimImage =
+          "SELECT to_jsonb(p)::text FROM game_session_region_timeline_preparation p"
+              + " WHERE initialization_operation_id = ?";
+      String beforeReplay =
+          testSchema.dsl().fetchSingle(claimImage, preparation.operationId()).get(0, String.class);
+      assertThat(proof.get().consumedFor(preparation)).isTrue();
+      if (mode == 3) {
+        // Reconcile the original owner's lost acknowledgement after the later owner claims.
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), recoverySlot);
+        var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
+        assertThat(retry).isSameAs(recoverySlot);
+        recoveryOwner.recoverNoWrite(preparation, retry);
+        assertThat(retry.proof).isNull();
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
+      } else {
+        repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW);
+      }
+      assertThat(proof.get().consumedFor(preparation)).isTrue();
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(claimImage, preparation.operationId())
+                  .get(0, String.class))
+          .isEqualTo(beforeReplay);
       assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
           .isEqualTo(
               CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
