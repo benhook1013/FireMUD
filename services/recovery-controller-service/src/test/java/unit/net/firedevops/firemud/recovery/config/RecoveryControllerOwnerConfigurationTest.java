@@ -97,6 +97,13 @@ class RecoveryControllerOwnerConfigurationTest {
   void dedicatedDatasourceOwnsFlywayAndJooq() {
     new ApplicationContextRunner()
         .withInitializer(context -> {
+          var sources = context.getEnvironment().getPropertySources();
+          sources.remove(
+              org.springframework.core.env.StandardEnvironment
+                  .SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+          sources.remove(
+              org.springframework.core.env.StandardEnvironment
+                  .SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
           try {
             for (var source :
                 new YamlPropertySourceLoader()

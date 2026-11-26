@@ -82,16 +82,24 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true, undefined, false, true],
   ]) {
     const outputs = {};
+    const callOrder = [];
+    const eventPullRequest = {number: 42, changed_files: count,
+      head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}};
+    const serverPullRequest = structuredClone(eventPullRequest);
+    if (drift === "head-before") serverPullRequest.head.sha = "c".repeat(40);
     const githubClient = {rest: {pulls: {listFiles() {}, get: (() => {
-      let calls = 0;
-      return async () => { const call = calls++; return ({data: {number: 42, changed_files: count,
-        head: {sha: (drift === "head-before" || (drift === "head-after" && call > 0)) ? "c".repeat(40) : "a".repeat(40)},
-        base: {sha: drift === "base-after" && call > 0 ? "c".repeat(40) : "b".repeat(40)},
-      }}); };
-    })()}}, paginate: async () => entries.map(entry => ({status: "modified", ...entry}))};
+      return async () => {
+        callOrder.push("get");
+        return {data: structuredClone(serverPullRequest)};
+      };
+    })()}}, paginate: async () => {
+      callOrder.push("paginate");
+      if (drift === "head-after") serverPullRequest.head.sha = "c".repeat(40);
+      if (drift === "base-after") serverPullRequest.base.sha = "c".repeat(40);
+      return entries.map(entry => ({status: "modified", ...entry}));
+    }};
     const eventContext = {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
-      payload: {pull_request: {number: 42, changed_files: count,
-        head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}};
+      payload: {pull_request: eventPullRequest}};
     await execute(name => {
       if (name === "node:fs") return {existsSync: () => true};
       assert.equal(name, expectedClassifierPath, "workflow must not import an unexpected module");
@@ -108,6 +116,8 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
       };
     }, githubClient, eventContext,
     {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.deepEqual(callOrder, ["get", "paginate", "get"],
+      "fallback must verify the same PR tuple before and after complete pagination");
     assert.equal(outputs.lightweight_only, String(expected));
     assert.equal(outputs.validation_python_changed, String(expectsPython));
     assert.equal(outputs.python_changed, String(expectsPython));

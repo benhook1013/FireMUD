@@ -286,7 +286,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
-                                 "spring.flyway.skipdefaultresolvers"}
+                                 "spring.flyway.skipdefaultresolvers",
+                                 "spring.flyway.skipexecutingmigrations"}
             guard_paths = {
                 path for path in properties
                 if path in exact_guard_paths
@@ -338,6 +339,10 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if skip_default_resolvers is not False and not (
             isinstance(skip_default_resolvers, str) and skip_default_resolvers.lower() == "false"):
         return None
+    skip_executing_migrations = flyway.get("skipexecutingmigrations", False)
+    if skip_executing_migrations is not False and not (
+            isinstance(skip_executing_migrations, str) and skip_executing_migrations.lower() == "false"):
+        return None
     return {location.strip() for location in locations}
 
 
@@ -370,6 +375,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                 issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
             elif not VERSION_RE.fullmatch(Path(path).name):
                 issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+        if path.startswith(recovery_sql_root) and path.lower().endswith(".java"):
+            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -592,6 +599,14 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"    skip-default-resolvers: false\n",
     }, recovery_history, None)
+    check("skipping Flyway execution cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    skip-executing-migrations: true\n",
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
+    check("explicitly executing Flyway migrations qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    skip-executing-migrations: false\n",
+    }, recovery_history, None)
     check("unrecognized recovery SQL filename is rejected", {
         **recovery_history, recovery + "journal_extension.sql": b"-- extension",
     }, recovery_history, "recovery SQL must use Flyway's canonical versioned V* migration filename")
@@ -601,6 +616,10 @@ def run_self_test() -> None:
     check("Java recovery migrations are unsupported by the SQL-only packaged schema path", {
         **recovery_history,
         "services/recovery-controller-service/src/main/java/db/recovery-control-migration/V2__journal.java": b"// java migration",
+    }, recovery_history, "Recovery migration sources must be SQL-only")
+    check("Java migrations in the recovery resource root are not effective Flyway SQL", {
+        **recovery_history,
+        recovery + "V2__journal.java": b"// java migration",
     }, recovery_history, "Recovery migration sources must be SQL-only")
     ordinary_without_locations = {
         **recovery_history,

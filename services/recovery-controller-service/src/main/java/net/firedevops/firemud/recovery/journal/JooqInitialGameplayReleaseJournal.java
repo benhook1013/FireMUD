@@ -289,6 +289,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("a retry must use a new effect attempt identity");
       }
       if (current.state() == EffectOutboxState.DISPATCHED
+          && attemptId.equals(current.lastAttemptId())) {
+        throw conflict("effect attempt is already claimed; read back the existing dispatch");
+      }
+      if (current.state() == EffectOutboxState.DISPATCHED
           || current.state() == EffectOutboxState.AMBIGUOUS
           || current.state() == EffectOutboxState.ACKNOWLEDGED) {
         return current;
@@ -576,8 +580,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           recoverOwnerClosureProvenance(tx, current);
           return operation;
         }
-        boolean heldUntyped =
-            stored != null && stored.get("retry_provenance", String.class) == null;
+        String provenance = stored == null ? null : stored.get("retry_provenance", String.class);
+        if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
+            && "local_no_send".equals(provenance)) {
+          requireTerminalReplayWithinAttempt(readback, stored, now);
+          requireExactClosureBeforeRetry(tx, current);
+          return operation;
+        }
+        boolean heldUntyped = stored != null && provenance == null;
         boolean hasStoredReadback =
             stored != null
                 && (storedDigest != null

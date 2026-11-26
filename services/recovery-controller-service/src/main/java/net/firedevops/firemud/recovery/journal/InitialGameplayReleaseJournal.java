@@ -33,9 +33,10 @@ public interface InitialGameplayReleaseJournal {
   /**
    * Uses a fresh attempt identity for each invocation, including retries after an uncertain claim
    * outcome. An existing dispatched or ambiguous result is for exact owner readback, not permission
-   * to send again. Reuse is intentional only after a proven local NOT_DISPATCHED outcome; it
-   * creates a new dispatch ordinal. A durable owner rejection or closure permanently retires that
-   * identity.
+   * to send again. A request for the already dispatched identity is rejected so a caller cannot
+   * mistake a replay for a new claim. Reuse is intentional only after a proven local NOT_DISPATCHED
+   * outcome and creates a new dispatch ordinal. A durable owner rejection or closure permanently
+   * retires that identity.
    */
   OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now);
 
