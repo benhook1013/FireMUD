@@ -351,7 +351,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       long deadline) {
     noSql();
     if (budget == null) {
-      var privateTemplate = Objects.requireNonNull(template).copyForBoundedFinal();
+      if (template == null) throw unavailable();
+      var privateTemplate = template.copyForBoundedFinal();
       var templateClaimed = new java.util.concurrent.atomic.AtomicBoolean();
       try {
         within(
