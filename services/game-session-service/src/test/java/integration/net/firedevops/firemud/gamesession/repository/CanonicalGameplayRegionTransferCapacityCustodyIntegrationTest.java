@@ -1420,20 +1420,30 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       proof.seedUndeliveredDispatch(proof.execution);
       UUID id = proof.insertRawFrozenTransfer(proof.sql);
       proof.insertRawTransferItem(proof.sql, id, 0);
+      String dispatchSql =
+          "UPDATE game_session_region_owner_transfer_item"
+              + " SET fence_dispatch_id=?,fence_dispatch_incarnation=? WHERE transfer_id=?";
+      UUID dispatch = UUID.randomUUID();
+      String observed = "sha256:" + "a".repeat(64);
+      String changed = "sha256:" + "b".repeat(64);
+      assertThatThrownBy(() -> proof.sql.execute(dispatchSql, dispatch, observed, id))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("exact bound incarnation");
       proof.sql.execute(
-          "UPDATE game_session_region_owner_transfer_item SET fence_dispatch_id=?,fence_dispatch_incarnation=? WHERE transfer_id=?",
-          UUID.randomUUID(),
-          "sha256:" + "a".repeat(64),
+          "UPDATE game_session_region_owner_transfer SET incarnation_digest=? WHERE transfer_id=?",
+          observed,
           id);
+      assertThatThrownBy(() -> proof.sql.execute(dispatchSql, dispatch, changed, id))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("exact bound incarnation");
+      assertThat(proof.sql.execute(dispatchSql, dispatch, observed, id)).isEqualTo(1);
       String dispatched = proof.itemImage(id);
       assertThatThrownBy(() ->
               proof.sql.transaction(configuration -> {
                 var transaction = DSL.using(configuration);
-                var changed = "sha256:" + "b".repeat(64);
                 var round = UUID.randomUUID();
                 transaction.execute(
-                    "UPDATE game_session_region_owner_transfer SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
-                    changed,
+                    "UPDATE game_session_region_owner_transfer SET verification_round=? WHERE transfer_id=?",
                     round,
                     id);
                 transaction.execute(
@@ -1457,6 +1467,47 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                       id)
                   .get(0, String.class))
           .isEqualTo("FROZEN");
+    }
+  }
+
+  @Test
+  void terminalTransferCompletionRequiresItsExactInstalledSuccessor() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      UUID id = proof.insertRawFrozenTransfer(proof.sql);
+      String frozen = proof.transferImage(id);
+      String successor = "terminal-successor";
+      String lease = "e".repeat(64);
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration ->
+                  CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
+                      DSL.using(configuration),
+                      proof.prior,
+                      successor,
+                      proof.prior.executorFence().longValueExact() + 1,
+                      lease)))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining(
+              "Region transfer completion requires its exact installed successor");
+      assertThat(proof.transferImage(id)).isEqualTo(frozen);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_runtime_status SET owner_service=?"
+                      + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+                  "other-owner-service",
+                  proof.scope.tenantId(),
+                  proof.scope.gameInstanceId(),
+                  proof.scope.regionId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Region transfer must complete with owner installation");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+
+      var installed = proof.rawCompleteAndInstall(id, successor, lease);
+      assertThat(installed.ownerService()).isEqualTo("game-session-service");
+      assertThat(installed.ownerInstanceId()).isEqualTo(successor);
+      assertThat(installed.leaseTokenCorrelation()).isEqualTo(lease);
+      assertThat(proof.currentOwner()).isEqualTo(installed);
     }
   }
 
