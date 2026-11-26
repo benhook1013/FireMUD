@@ -415,11 +415,20 @@ test('admission rereads the pinned comparison after the producer lookup before f
   }
 });
 
-test('an active run from a different repository cannot suppress the repair', async () => {
-  const f = admissionFixture();
-  f.runs.push(f.makeRun({head_repository: {full_name: 'example/Other'}}));
-  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.equal(f.sent.length, 1);
+test('only a same-repository exact native producer can suppress the repair', async () => {
+  const matched = admissionFixture();
+  matched.runs.push(matched.makePullRequestRun());
+  assert.equal(await admitRuntimeRefresh(matched.admission), 'already-active');
+  assert.deepEqual(matched.state.producerReads, [300, 300]);
+  assert.deepEqual(matched.sent, []);
+
+  const foreign = admissionFixture();
+  foreign.runs.push(foreign.makePullRequestRun({
+    head_repository: {full_name: 'example/Other'},
+  }));
+  assert.equal(await admitRuntimeRefresh(foreign.admission), 'dispatched-observed');
+  assert.deepEqual(foreign.state.producerReads, []);
+  assert.equal(foreign.sent.length, 1);
 });
 
 test('indeterminate dispatch visibility does not silently consume a repair or cause an immediate duplicate', async () => {

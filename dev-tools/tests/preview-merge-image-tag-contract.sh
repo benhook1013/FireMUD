@@ -546,4 +546,6 @@ grep -Fq 'pr-merge-${MERGE_SHA}' "$ROOT_DIR/.github/workflows/preview.yml"
 grep -Fq '"$merge_sha" "$PR_NUMBER" "$base_sha"' "$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 grep -Fq 'needs.validate-target.outputs.merge_sha' "$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 
+bash "$ROOT_DIR/dev-tools/tests/preview-publication-expired-artifact-contract.sh" "$WAITER"
+
 echo "preview merge image tag contract passed"

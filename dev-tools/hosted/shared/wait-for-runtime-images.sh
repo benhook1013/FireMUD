@@ -346,10 +346,13 @@ read_exact_run_artifact() {
     jq -cer --argjson run "$run_id" --arg name "$name" '
       select(.total_count == 1 and (.artifacts | type == "array" and length == 1))
       | .artifacts[0]
-      | select(.name == $name and .expired == false and .workflow_run.id == $run)
+      | select(.name == $name and .workflow_run.id == $run)
       | select(.id | type == "number" and floor == . and . > 0)
       | select(.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
-      | {id, digest}'
+      | if .expired == false then {id, digest}
+        elif .expired == true and ($name | startswith("pr-runtime-images-")) then
+          "Exact producer artifact has expired; publication proof remains unverified" | debug | empty
+        else empty end'
 }
 
 verify_exact_publication_receipt() {
