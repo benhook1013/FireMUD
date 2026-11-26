@@ -42,6 +42,13 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.deepEqual(JSON.parse(outputs.affected_modules), compatible ? ["account-service"] : ALL_MODULES);
     assert.deepEqual(JSON.parse(outputs.bootable_modules),
       compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
+    if (!compatible) {
+      const otherModuleRows = JSON.parse(outputs.other_module_check_matrix);
+      for (const module of ["recovery-controller-service", "common-redis-contracts"]) {
+        assert.equal(otherModuleRows.filter(row => row.module === module && row.partition === "full").length, 1,
+          `fallback matrix must schedule exactly one full check for ${module}`);
+      }
+    }
   }
   for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false] of [
     [[{filename: "design/README.md"}], 1, true, undefined, false, true],

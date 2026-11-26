@@ -54,6 +54,54 @@ class InitialGameplayReleaseModelTest {
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("well-formed UTF-16");
     }
+    assertThatThrownBy(() -> InitialGameplayReleaseModel.requiredText(null, "owner"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("owner must not be null");
+  }
+
+  @Test
+  void pendingOutboxEntryCannotRetainPriorDispatchIdentityOrCount() {
+    Scope scope = scope(UUID.randomUUID());
+    var effect =
+        new InitialGameplayReleaseModel.PreparePlayableStateFencedEffect(
+            scope.operationId(), UUID.randomUUID(), UUID.randomUUID(), scope, DIGEST, "evidence");
+    UUID attemptId = UUID.randomUUID();
+
+    assertThat(
+            new InitialGameplayReleaseModel.OutboxEntry(
+                UUID.randomUUID(),
+                effect,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectOutboxState.PENDING,
+                0,
+                null,
+                null,
+                null))
+        .isNotNull();
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.OutboxEntry(
+                UUID.randomUUID(),
+                effect,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectOutboxState.PENDING,
+                1,
+                attemptId,
+                null,
+                null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("pending outbox states must not retain a dispatch attempt");
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.OutboxEntry(
+                UUID.randomUUID(),
+                effect,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectOutboxState.PENDING,
+                1,
+                null,
+                null,
+                null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("pending outbox states must not retain a dispatch attempt");
   }
 
   @Test

@@ -180,10 +180,16 @@ def saga_adopters(snapshot: Snapshot) -> set[str]:
 
 def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], list[MigrationFile]]:
     migrations = discover_migration_files(snapshot)
+    recovery_locations = recovery_flyway_locations(snapshot, "recovery-controller-service")
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
-        if RECOVERY_MIGRATION_DIR in item.path and not recovery_location_configured(snapshot, item.project):
-            continue
+        if item.project == "recovery-controller-service":
+            if recovery_locations is None:
+                continue
+            if RECOVERY_MIGRATION_DIR in item.path and "classpath:db/recovery-control-migration" not in recovery_locations:
+                continue
+            if RECOVERY_MIGRATION_DIR not in item.path and "classpath:db/migration" not in recovery_locations:
+                continue
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
     for adopter in saga_adopters(snapshot):
@@ -191,7 +197,7 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
     return grouped, migrations
 
 
-def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
+def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | None:
     def flatten_properties(
         value: object,
         prefix: tuple[str, ...],
@@ -215,7 +221,7 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
     # check qualifies only the configuration sources it can evaluate completely.
     properties_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.properties")
     if any(properties_pattern.fullmatch(path) for path in snapshot):
-        return False
+        return None
     # Config in the packaged config/ directory takes precedence over the root.
     # Within a location Spring Boot gives .yml precedence over .yaml.
     base_paths = [f"{directory}/application.{extension}"
@@ -234,15 +240,16 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
             if document is None:
                 continue
             if not isinstance(document, dict):
-                return False
+                return None
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
             if any(path == "spring.config.import" or
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
-                return False
-            exact_guard_paths = {"spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target"}
+                return None
+            exact_guard_paths = {"spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
+                                 "spring.flyway.sqlmigrationsuffixes"}
             guard_paths = {
                 path for path in properties
                 if path in exact_guard_paths
@@ -253,7 +260,7 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
                 # affect this static qualification.
                 continue
             if guard_paths & ambiguous or not guard_paths <= exact_guard_paths:
-                return False
+                return None
 
             activation = properties.get("spring.config.activate")
             legacy_profile_activation = (
@@ -265,23 +272,33 @@ def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
             ) or legacy_profile_activation:
                 # The active profile/cloud environment is unknown, so the checker
                 # cannot qualify an activation-dependent override of these guards.
-                return False
+                return None
 
             for path in guard_paths:
                 flyway[path.rsplit(".", 1)[-1]] = properties[path]
 
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled.lower() == "true"):
-        return False
+        return None
     if flyway.get("target", "latest") != "latest":
         # Qualify the complete packaged history, not a pinned migration prefix.
-        return False
+        return None
     locations = flyway.get("locations", [])
     if isinstance(locations, str):
         locations = locations.split(",")
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
-        return False
-    return any(location.strip() == "classpath:db/recovery-control-migration" for location in locations)
+        return None
+    suffixes = flyway.get("sqlmigrationsuffixes", [".sql"])
+    if isinstance(suffixes, str):
+        suffixes = [suffixes]
+    if not isinstance(suffixes, list) or suffixes != [".sql"]:
+        return None
+    return {location.strip() for location in locations}
+
+
+def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
+    locations = recovery_flyway_locations(snapshot, project)
+    return locations is not None and "classpath:db/recovery-control-migration" in locations
 
 
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
@@ -295,8 +312,11 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
         "services/recovery-controller-service/src/main/resources" + RECOVERY_MIGRATION_DIR
     )
     for path in sorted(current):
-        if path.startswith(recovery_sql_root) and path.endswith(".sql") and "/" in path.removeprefix(recovery_sql_root):
-            issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
+        if path.startswith(recovery_sql_root) and path.lower().endswith(".sql"):
+            if not path.endswith(".sql"):
+                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
+            if "/" in path.removeprefix(recovery_sql_root):
+                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -455,6 +475,22 @@ def run_self_test() -> None:
             b"locations: classpath:db/migration,classpath:db/recovery-control-migration",
         ),
     }, recovery_history, None)
+    check("Flyway SQL suffix override cannot disconnect the recovery journal", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
+    ordinary = "services/recovery-controller-service/src/main/resources/db/migration/V2__ordinary.sql"
+    combined_history = {**recovery_history, ordinary: b"-- ordinary"}
+    combined_locations = recovery_settings.replace(
+        b"locations: classpath:db/recovery-control-migration",
+        b"locations: [classpath:db/migration, classpath:db/recovery-control-migration]",
+    )
+    combined_parent = {**combined_history, recovery_config: combined_locations}
+    check("combined recovery and ordinary Flyway locations qualify both roots",
+          combined_parent, combined_parent, None)
+    recovery_only = {**combined_history, recovery_config: recovery_settings}
+    check("removing ordinary Flyway location removes that effective history",
+          recovery_only, combined_parent, "historical effective migration no longer applied")
     dotted_recovery_settings = (
         b"spring.flyway.enabled: true\n"
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
@@ -497,6 +533,9 @@ def run_self_test() -> None:
     check("nested repeatable SQL is outside the flat recovery input", {
         **complete_recovery_history, recovery + "nested/R__refresh.sql": b"-- refresh",
     }, complete_recovery_history, "recovery migration SQL must be flat")
+    check("nested uppercase SQL is detected and rejected as noncanonical", {
+        **complete_recovery_history, recovery + "nested/V3__generation.SQL": b"-- generation",
+    }, complete_recovery_history, "recovery migration SQL must use the canonical lowercase .sql suffix")
     check("explicit mapping override of a merged default is not a duplicate", {
         **complete_recovery_history, recovery_config: (
             b"defaults: &fallback\n  enabled: false\n" + recovery_settings
