@@ -14,7 +14,6 @@ from pathlib import Path
 import yaml
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
-REPEATABLE_SQL_RE = re.compile(r"^R__.+\.sql$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
@@ -245,6 +244,14 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
+            excluded_auto_configurations = properties.get("spring.autoconfigure.exclude", [])
+            if isinstance(excluded_auto_configurations, str):
+                excluded_auto_configurations = excluded_auto_configurations.split(",")
+            if (not isinstance(excluded_auto_configurations, list)
+                    or not all(isinstance(name, str) for name in excluded_auto_configurations)
+                    or any(name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
+                           for name in excluded_auto_configurations)):
+                return None
             if any(path == "spring.config.import" or
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
@@ -252,7 +259,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             exact_guard_paths = {"spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
-                                 "spring.flyway.repeatablesqlmigrationprefix"}
+                                 "spring.flyway.repeatablesqlmigrationprefix",
+                                 "spring.flyway.skipdefaultresolvers"}
             guard_paths = {
                 path for path in properties
                 if path in exact_guard_paths
@@ -300,12 +308,16 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             or flyway.get("sqlmigrationseparator", "__") != "__"
             or flyway.get("repeatablesqlmigrationprefix", "R") != "R"):
         return None
+    skip_default_resolvers = flyway.get("skipdefaultresolvers", False)
+    if skip_default_resolvers is not False and not (
+            isinstance(skip_default_resolvers, str) and skip_default_resolvers.lower() == "false"):
+        return None
     return {location.strip() for location in locations}
 
 
 def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
     locations = recovery_flyway_locations(snapshot, project)
-    return locations is not None and "classpath:db/recovery-control-migration" in locations
+    return locations == {"classpath:db/recovery-control-migration"}
 
 
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
@@ -324,8 +336,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                 issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
             if "/" in path.removeprefix(recovery_sql_root):
                 issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
-            elif not (VERSION_RE.fullmatch(Path(path).name) or REPEATABLE_SQL_RE.fullmatch(Path(path).name)):
-                issues.append(f"{path}: recovery SQL must use Flyway's canonical V* or R* migration filename")
+            elif not VERSION_RE.fullmatch(Path(path).name):
+                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -484,23 +496,47 @@ def run_self_test() -> None:
             b"      - path: classpath:db/migration\n"
         ),
     }, recovery_history, "historical effective migration no longer applied")
-    check("comma-separated scalar locations still qualify", {
+    check("mixed comma-separated locations cannot qualify the isolated recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings.replace(
             b"locations: classpath:db/recovery-control-migration",
             b"locations: classpath:db/migration,classpath:db/recovery-control-migration",
         ),
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
+    redis_exclusion_settings = (
+        b"spring:\n  autoconfigure:\n    exclude:\n"
+        b"      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
+        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+    )
+    check("Redis-only autoconfiguration exclusion preserves recovery Flyway", {
+        **recovery_history, recovery_config: redis_exclusion_settings,
     }, recovery_history, None)
+    check("excluding Flyway autoconfiguration cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config: (
+            b"spring:\n  autoconfigure:\n    exclude:\n"
+            b"      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        ),
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
     check("Flyway SQL suffix override cannot disconnect the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
     }, recovery_history, "packaged Spring configuration must enable Flyway")
+    check("default Flyway SQL resolvers remain enabled for the recovery journal", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    skip-default-resolvers: true\n",
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
+    check("explicitly retaining Flyway SQL resolvers qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    skip-default-resolvers: false\n",
+    }, recovery_history, None)
     check("unrecognized recovery SQL filename is rejected", {
         **recovery_history, recovery + "journal_extension.sql": b"-- extension",
-    }, recovery_history, "recovery SQL must use Flyway's canonical V* or R* migration filename")
-    check("canonical repeatable recovery SQL is accepted", {
+    }, recovery_history, "recovery SQL must use Flyway's canonical versioned V* migration filename")
+    check("repeatable recovery SQL is unsupported until Flyway and jOOQ ordering agree", {
         **recovery_history, recovery + "R__refresh_journal.sql": b"-- repeatable",
-    }, recovery_history, None)
+    }, recovery_history, "recovery SQL must use Flyway's canonical versioned V* migration filename")
     ordinary_without_locations = {
         **recovery_history,
         recovery_config: b"spring:\n  flyway:\n    enabled: true\n",
@@ -516,8 +552,9 @@ def run_self_test() -> None:
         b"locations: [classpath:db/migration, classpath:db/recovery-control-migration]",
     )
     combined_parent = {**combined_history, recovery_config: combined_locations}
-    check("combined recovery and ordinary Flyway locations qualify both roots",
-          combined_parent, combined_parent, None)
+    check("Recovery history requires the isolated location alone",
+          combined_parent, combined_parent,
+          "packaged Spring configuration must enable Flyway")
     recovery_only = {**combined_history, recovery_config: recovery_settings}
     check("removing ordinary Flyway location removes that effective history",
           recovery_only, combined_parent, "historical effective migration no longer applied")

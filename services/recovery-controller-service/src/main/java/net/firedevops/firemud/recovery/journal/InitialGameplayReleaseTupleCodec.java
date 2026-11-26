@@ -34,6 +34,13 @@ public final class InitialGameplayReleaseTupleCodec {
             .withCoercionConfig(
                 LogicalType.Integer,
                 config -> config.setCoercion(CoercionInputShape.String, CoercionAction.Fail))
+            .withCoercionConfig(
+                LogicalType.Textual,
+                config ->
+                    config
+                        .setCoercion(CoercionInputShape.Integer, CoercionAction.Fail)
+                        .setCoercion(CoercionInputShape.Float, CoercionAction.Fail)
+                        .setCoercion(CoercionInputShape.Boolean, CoercionAction.Fail))
             .build();
     this.digestMapper = this.objectMapper.writer().with(JsonWriteFeature.WRITE_NUMBERS_AS_STRINGS);
   }

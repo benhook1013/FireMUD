@@ -49,6 +49,10 @@ public final class Rfc8785CanonicalJson {
         if (token == JsonToken.VALUE_STRING) {
           // Advancing past a string token can skip its contents without applying maxStringLength.
           STRICT_INPUT_LIMITS.validateStringLength(parser.getTextLength());
+        } else if (token == JsonToken.VALUE_NUMBER_INT) {
+          STRICT_INPUT_LIMITS.validateIntegerLength(parser.getTextLength());
+        } else if (token == JsonToken.VALUE_NUMBER_FLOAT) {
+          STRICT_INPUT_LIMITS.validateFPLength(parser.getTextLength());
         }
         token = parser.nextToken();
       }

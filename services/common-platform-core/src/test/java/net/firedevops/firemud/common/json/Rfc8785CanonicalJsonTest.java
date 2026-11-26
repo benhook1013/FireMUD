@@ -44,19 +44,24 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
-  void strictCanonicalizationRejectsNumbersBeyondItsDocumentedInputLimit() {
-    String oversizedNumber = "1." + "0".repeat(1_000);
+  void strictCanonicalizationRejectsNumbersBeyondItsDocumentedInputLimit() throws Exception {
+    String atLimit = "{\"value\":1." + "0".repeat(998) + "}";
+    String oversizedNumber = "{\"value\":1." + "0".repeat(999) + "}";
 
+    assertThat(Rfc8785CanonicalJson.canonicalizeStrictUtf8(atLimit))
+        .isEqualTo("{\"value\":1}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(oversizedNumber))
-        .isInstanceOf(java.io.IOException.class);
+        .isInstanceOf(com.fasterxml.jackson.core.exc.StreamConstraintsException.class)
+        .hasMessageContaining("Number value length (1001)");
   }
 
   @Test
   void strictCanonicalizationRejectsOversizedStringValuesBeforeCanonicalizing() {
-    String oversizedString = "\"" + "a".repeat(20_000_001) + "\"";
+    String oversizedString = "{\"value\":\"" + "a".repeat(20_000_001) + "\"}";
 
     assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(oversizedString))
-        .isInstanceOf(java.io.IOException.class);
+        .isInstanceOf(com.fasterxml.jackson.core.exc.StreamConstraintsException.class)
+        .hasMessageContaining("String value length");
   }
 
   @Test

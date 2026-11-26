@@ -274,6 +274,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   public OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now) {
     Objects.requireNonNull(attemptId, "attemptId must not be null");
     Objects.requireNonNull(now, "now must not be null");
+    // A journal bound to a caller's jOOQ or JDBC transaction can only release a savepoint.
+    // The owner call must wait for the claim's own commit.
+    if (!dsl.connectionResult(connection -> connection.getAutoCommit())) {
+      throw conflict("effect dispatch claim requires its own transaction");
+    }
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
       Operation operation = selectOperation(tx, operationId, true);
@@ -524,7 +529,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           || current.state() == EffectOutboxState.RETRYABLE) {
         Record stored =
             tx.fetchOne(
-                "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at, retry_provenance FROM "
+                "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at,"
+                    + " retry_provenance, updated_at, acknowledged_at FROM "
                     + OUTBOX_TABLE
                     + " WHERE operation_id = ? AND effect_id = ?",
                 operationId,
@@ -537,7 +543,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
-          if (stored != null && sameRetainedOutcome(readback, stored, storedDigest, now)) {
+          if (stored != null
+              && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
@@ -554,7 +561,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
         if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
             && stored != null
-            && sameRetainedOutcome(readback, stored, storedDigest, now)) {
+            && sameRetainedOutcome(readback, stored, storedDigest, "updated_at")) {
           requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
           requireTerminalReplayWithinAttempt(readback, stored, now);
           recoverOwnerClosureProvenance(tx, current);
@@ -1033,9 +1040,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         payload == null && digest == null && stored.get("readback_identity", String.class) == null;
     if ("local_no_send".equals(provenance)) {
       OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
-      if ((!emptyReadback
-              && (!Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
-                  || !hasValidatedUnknownReadback(stored, digest, current)))
+      if (!Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
+          || (!emptyReadback && !hasValidatedUnknownReadback(stored, digest, current))
           || dispatchedAt == null
           || tx.fetchOne(
                   """
@@ -1170,7 +1176,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   private boolean sameRetainedOutcome(
-      EffectReadback readback, Record stored, String storedDigest, Instant now) {
+      EffectReadback readback, Record stored, String storedDigest, String recordedAtColumn) {
     JSONB payload = stored.get("readback_payload", JSONB.class);
     if (payload == null || storedDigest == null) {
       return false;
@@ -1180,7 +1186,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       return false;
     }
     requireStoredReadbackIdentity(stored, acknowledged);
-    requireTerminalReplayWithinAttempt(acknowledged, stored, now);
+    OffsetDateTime recordedAt = stored.get(recordedAtColumn, OffsetDateTime.class);
+    if (recordedAt == null) {
+      throw conflict("retained effect readback recording time is unavailable");
+    }
+    requireTerminalReplayWithinAttempt(acknowledged, stored, recordedAt.toInstant());
     // The authenticated outcome identifies the durable closure, not the read clock.
     // A valid new observation time never replaces the first durable receipt.
     return acknowledged.equals(

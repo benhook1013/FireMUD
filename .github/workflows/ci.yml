@@ -160,6 +160,8 @@ jobs:
                   // Missing or incomplete native evidence keeps the full fallback.
                 }
               }
+              const unqualifiedLegacyLightweight =
+                !moduleScopeAvailable && scope.lightweightOnly === true && !lightweightFallback;
               outputs = {
                 run_all: scope.runAll || (!moduleScopeAvailable && !lightweightFallback),
                 affected_services: scope.affectedServices,
@@ -171,7 +173,9 @@ jobs:
                 design_docs_changed: scope.designDocsChanged || fallbackDesignDocs,
                 validation_python_changed: scope.validationPythonChanged || fallbackPython,
                 postgres_runtime_proof_changed:
-                  scope.postgresRuntimeProofChanged === undefined ? !lightweightFallback : scope.postgresRuntimeProofChanged,
+                  scope.postgresRuntimeProofChanged === undefined
+                    ? !lightweightFallback
+                    : (unqualifiedLegacyLightweight ? true : scope.postgresRuntimeProofChanged),
                 lightweight_only: (moduleScopeAvailable || lightweightFallback) && scope.lightweightOnly,
               };
             } else {

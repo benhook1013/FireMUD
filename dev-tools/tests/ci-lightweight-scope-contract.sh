@@ -11,7 +11,7 @@ MODULE_CHECK_WRAPPER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
 
 node --test "$ROOT_DIR/.github/scripts/classify-change-scope.test.cjs"
 
-node - "$CI_WORKFLOW" "$CLASSIFIER" <<'JS_SCOPE'
+GITHUB_WORKSPACE="$ROOT_DIR" node - "$CI_WORKFLOW" "$CLASSIFIER" <<'JS_SCOPE'
 const assert = require("node:assert/strict");
 const {execFileSync} = require("node:child_process");
 const workflow = JSON.parse(execFileSync("python3", ["-c",
@@ -19,6 +19,8 @@ const workflow = JSON.parse(execFileSync("python3", ["-c",
   process.argv[2]], {encoding: "utf8"}));
 const compute = workflow.jobs.changes.steps.find(step => step.id === "compute").with.script;
 const {ALL_MODULES, BOOTABLE_MODULES, classifyChangeScope} = require(process.argv[3]);
+const expectedClassifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+assert.equal(process.argv[3], expectedClassifierPath, "test classifier must be the exact required workflow import");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const execute = new AsyncFunction("require", "github", "context", "core", compute);
 (async () => {
@@ -32,16 +34,20 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     const outputs = {};
     const githubClient = {};
     const eventContext = {};
-    await execute(name => name === "node:fs" ? {existsSync: () => available} : {
-      ALL_MODULES: modules,
-      classifyGithubChangeScope: async (githubArgument, contextArgument) => {
+    await execute(name => {
+      if (name === "node:fs") return {existsSync: () => available};
+      assert.equal(name, expectedClassifierPath, "workflow must not import an unexpected module");
+      return {
+        ALL_MODULES: modules,
+        classifyGithubChangeScope: async (githubArgument, contextArgument) => {
         assert.equal(githubArgument, githubClient);
         assert.equal(contextArgument, eventContext);
         return ({
-        runAll: false, affectedModules: ["account-service"], bootableModules: ["account-service"],
-        affectedServices: ["account-service"], lightweightOnly: true,
+          runAll: false, affectedModules: ["account-service"], bootableModules: ["account-service"],
+          affectedServices: ["account-service"], lightweightOnly: true,
         });
       },
+      };
     }, githubClient, eventContext, {setOutput: (name, value) => outputs[name] = value, warning() {}});
     assert.equal(outputs.run_all, String(!compatible));
     assert.equal(outputs.lightweight_only, String(compatible));
@@ -86,14 +92,19 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     const eventContext = {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
       payload: {pull_request: {number: 42, changed_files: count,
         head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}};
-    await execute(name => name === "node:fs" ? {existsSync: () => true} : {
-      ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
-      classifyGithubChangeScope: async (githubArgument, contextArgument) => {
+    await execute(name => {
+      if (name === "node:fs") return {existsSync: () => true};
+      assert.equal(name, expectedClassifierPath, "workflow must not import an unexpected module");
+      return {
+        ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
+        classifyGithubChangeScope: async (githubArgument, contextArgument) => {
         assert.equal(githubArgument, githubClient);
         assert.equal(contextArgument, eventContext);
         return ({runAll: false, affectedModules: [],
-          bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false});
+          bootableModules: [], affectedServices: [], lightweightOnly: true, designDocsChanged: false,
+          postgresRuntimeProofChanged: false});
       },
+      };
     }, githubClient, eventContext,
     {setOutput: (name, value) => outputs[name] = value, warning() {}});
     assert.equal(outputs.lightweight_only, String(expected));
