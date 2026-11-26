@@ -186,13 +186,8 @@ final class CanonicalGameplayRegionLeaseOwner {
             }
           }
         };
-    if (monotonicDeadline == null) {
-      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-          cleanupClock, cleanupDeadline, cleanupWork, release);
-    } else {
-      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
-          cleanupClock, cleanupDeadline, monotonicDeadline, cleanupWork, release);
-    }
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
+        cleanupClock, cleanupDeadline, monotonicDeadline, cleanupWork, release);
   }
 
   CanonicalGameplayRegionLeaseOwner(

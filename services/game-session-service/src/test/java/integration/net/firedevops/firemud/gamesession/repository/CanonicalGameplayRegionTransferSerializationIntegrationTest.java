@@ -317,9 +317,6 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
               proof.sql.transaction(configuration -> {
                 DSLContext transaction = DSL.using(configuration);
                 transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-                transaction.fetchSingle(
-                    "SELECT 1 FROM game_session_capacity_evidence_budget WHERE tenant_id=? FOR UPDATE",
-                    original.request().identity().tenantId());
                 proof.insertExecution(transaction, original, "INSTALL_DISPATCHED", null);
                 blockerPid.set(
                     transaction.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));

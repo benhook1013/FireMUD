@@ -351,12 +351,23 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       long deadline) {
     noSql();
     if (budget == null) {
-      within(
-          deadline,
-          owner -> {
-            owner.authorize(source, template, accountOpen, issuerOpen, execution, deadline);
-            return null;
-          });
+      var privateTemplate = Objects.requireNonNull(template).copyForBoundedFinal();
+      var templateClaimed = new java.util.concurrent.atomic.AtomicBoolean();
+      try {
+        within(
+            deadline,
+            owner -> {
+              if (!templateClaimed.compareAndSet(false, true)) throw unavailable();
+              try (privateTemplate) {
+                owner.authorize(
+                    source, privateTemplate, accountOpen, issuerOpen, execution, deadline);
+                return null;
+              }
+            });
+      } finally {
+        // A caller that returned before worker admission still owns the unused copy.
+        if (templateClaimed.compareAndSet(false, true)) privateTemplate.close();
+      }
       return;
     }
     budget.check();

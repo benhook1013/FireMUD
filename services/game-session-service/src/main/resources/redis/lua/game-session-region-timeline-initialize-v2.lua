@@ -83,8 +83,24 @@ local metaType = redis.call('TYPE', metaKey).ok
 if (leaseType ~= 'none' and leaseType ~= 'string')
   or (metaType ~= 'none' and metaType ~= 'hash') then return -2 end
 
+local function canCreateMeta()
+  return redis.acl_check_cmd('HSET', metaKey,
+    'region_epoch', expectedEpoch,
+    'current_tick_id', '-1',
+    'current_tick_state', 'APPLIED',
+    'first_timeline_operation_id', operationId,
+    'first_timeline_source_digest', sourceDigest)
+end
+
+local function canCreateLease()
+  return redis.acl_check_cmd('SET', leaseKey, token, 'PX', ttl, 'NX')
+end
+
 if action == 'PROBE' then
-  if leaseType == 'none' and metaType == 'none' then return 1 end
+  if leaseType == 'none' and metaType == 'none' then
+    if not canCreateMeta() or not canCreateLease() then return -4 end
+    return 1
+  end
   return 0
 end
 
@@ -98,6 +114,8 @@ end
 
 if metaType == 'none' then
   if leaseType ~= 'none' or mayCreate ~= '1' then return 0 end
+  -- Validate both writes before either key changes.
+  if not canCreateMeta() or not canCreateLease() then return -4 end
   redis.call('HSET', metaKey,
     'region_epoch', expectedEpoch,
     'current_tick_id', '-1',

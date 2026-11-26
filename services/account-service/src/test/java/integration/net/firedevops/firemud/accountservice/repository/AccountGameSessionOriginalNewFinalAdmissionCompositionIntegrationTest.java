@@ -707,18 +707,24 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var request = session.retainControlledEvaluation(true, "0");
       byte[] candidate = session.gs.physicalSession();
       var sql = session.gs.dsl();
+      sql.execute("CREATE SEQUENCE controlled_settlement_rollback_attempt");
       sql.execute(
           "CREATE FUNCTION controlled_settlement_rollback() RETURNS trigger LANGUAGE plpgsql"
-              + " AS $$ BEGIN RAISE EXCEPTION 'controlled settlement rollback'; END; $$");
+              + " AS $$ BEGIN PERFORM nextval('controlled_settlement_rollback_attempt');"
+              + " RAISE EXCEPTION 'controlled settlement rollback'; END; $$");
       sql.execute(
           "CREATE TRIGGER controlled_settlement_rollback BEFORE UPDATE"
               + " ON game_session_capacity_evidence_charge FOR EACH ROW"
-              + " WHEN (NEW.account_denial_id IS DISTINCT FROM OLD.account_denial_id)"
+              + " WHEN (OLD.account_denial_id IS NULL AND NEW.account_denial_id IS NOT NULL)"
               + " EXECUTE FUNCTION controlled_settlement_rollback()");
       UUID denialId;
       try {
         var refusal = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
         denialId = assertExactAccountQuotaDenial(session, request, refusal);
+        assertThat(
+                sql.fetchSingle("SELECT is_called FROM controlled_settlement_rollback_attempt")
+                    .get(0, Boolean.class))
+            .isTrue();
         assertThat(
                 sql.fetchSingle(
                         "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE"
@@ -735,6 +741,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         sql.execute(
             "DROP TRIGGER controlled_settlement_rollback ON game_session_capacity_evidence_charge");
         sql.execute("DROP FUNCTION controlled_settlement_rollback()");
+        sql.execute("DROP SEQUENCE controlled_settlement_rollback_attempt");
       }
       var beforeRetry = session.capacityDecisionImage();
       if (openExpired) {

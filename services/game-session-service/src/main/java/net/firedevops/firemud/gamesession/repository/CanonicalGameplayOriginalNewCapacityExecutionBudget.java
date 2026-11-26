@@ -74,7 +74,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
             "original_new_capacity_redis_close_failure_retained_operations",
             REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS,
             AtomicInteger::get)
-        .description("Capacity operation permits retained after unproved Redis disposal")
+        .description(
+            "Capacity operation permits retained after failed or over-deadline Redis disposal")
         .register(Metrics.globalRegistry);
   }
 
@@ -211,6 +212,25 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         Objects.requireNonNull(enclosingDeadline));
   }
 
+  /** A cleanup claim ends when its logical work can no longer issue writes. */
+  static <T> T runBackgroundCleanup(
+      Clock clock,
+      long explicitDeadline,
+      Deadline enclosingDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      Runnable onLogicalFinish) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        true,
+        null,
+        null,
+        enclosingDeadline,
+        Objects.requireNonNull(onLogicalFinish));
+  }
+
   /** A result with private resources transfers ownership only after the caller's deadline check. */
   static <T> T runOwned(
       Clock clock,
@@ -255,6 +275,28 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       Consumer<T> disposeAbandoned,
       Runnable onPhysicalRelease,
       Deadline enclosingDeadline) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        cancellationThreads,
+        background,
+        disposeAbandoned,
+        onPhysicalRelease,
+        enclosingDeadline,
+        null);
+  }
+
+  private static <T> T run(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      ThreadFactory cancellationThreads,
+      boolean background,
+      Consumer<T> disposeAbandoned,
+      Runnable onPhysicalRelease,
+      Deadline enclosingDeadline,
+      Runnable onLogicalFinish) {
     final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
     try {
       budget =
@@ -268,6 +310,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         throw unavailable();
       }
     } catch (RuntimeException | Error refusal) {
+      if (onLogicalFinish != null) onLogicalFinish.run();
       if (onPhysicalRelease != null) onPhysicalRelease.run();
       throw refusal;
     }
@@ -289,7 +332,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
               failure = unavailable;
             } finally {
               try {
-                budget.releaseOutstandingConnections();
+                try {
+                  if (onLogicalFinish != null) onLogicalFinish.run();
+                } finally {
+                  budget.releaseOutstandingConnections();
+                }
               } catch (RuntimeException | Error cleanupFailure) {
                 if (failure == null) failure = cleanupFailure;
                 else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
@@ -314,6 +361,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       try {
         Thread.ofVirtual().name("original-new-capacity-resource").start(resource);
       } catch (RuntimeException | Error startupFailure) {
+        if (onLogicalFinish != null) onLogicalFinish.run();
         synchronized (budget.lifecycle) {
           budget.workerDone = true;
           budget.releaseIfFinished();
@@ -418,27 +466,21 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       outstandingAsyncCloses++;
     }
     closeAttempt.whenComplete((ignored, failure) -> {
-      boolean reportFailure = false;
-      synchronized (lifecycle) {
-        if (failure == null) {
-          outstandingAsyncCloses--;
-          releaseIfFinished();
-        } else if (!redisCloseFailureRecorded) {
-          redisCloseFailureRecorded = true;
-          REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
-          reportFailure = true;
-        }
+      if (failure != null) {
+        recordRedisCloseRetained(redisCloseFailureCategory(failure));
+        return;
       }
-      if (reportFailure) {
-        // This local diagnostic must not emit throwable messages, command data, or selectors.
-        LOG.warn(
-            "Original NEW Redis close failed; operation permit retained (category={})",
-            redisCloseFailureCategory(failure));
+      synchronized (lifecycle) {
+        outstandingAsyncCloses--;
+        if (outstandingAsyncCloses == 0 && redisCloseFailureRecorded) {
+          redisCloseFailureRecorded = false;
+          REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.decrementAndGet();
+        }
+        releaseIfFinished();
       }
     });
   }
 
-  /** Actual worker exit, including SQL resource cleanup; never the caller timeout. */
   /** Keeps this operation's permits until borrowed work has actually exited. */
   void retainUntilCompletion(CompletableFuture<?> work) {
     Objects.requireNonNull(work);
@@ -451,6 +493,16 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         releaseIfFinished();
       }
     });
+  }
+
+  private void recordRedisCloseRetained(String category) {
+    synchronized (lifecycle) {
+      if (outstandingAsyncCloses == 0 || redisCloseFailureRecorded) return;
+      redisCloseFailureRecorded = true;
+      REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+    }
+    // Keep command data and selectors out of the diagnostic.
+    LOG.warn("Original NEW Redis close failed; operation permit retained (category={})", category);
   }
 
   private static String redisCloseFailureCategory(Throwable failure) {
@@ -477,7 +529,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     } catch (java.util.concurrent.ExecutionException
         | java.util.concurrent.CancellationException failedClose) {
       throw unavailable();
-    } catch (java.util.concurrent.TimeoutException expired) {
+    } catch (java.util.concurrent.TimeoutException | BudgetUnavailable expired) {
+      if (!closeAttempt.isDone()) recordRedisCloseRetained("timeout");
       throw unavailable();
     }
   }
