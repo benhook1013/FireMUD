@@ -17,16 +17,18 @@ except ModuleNotFoundError as error:
     if error.name != "yaml":
         raise
     raise SystemExit(
-        "Flyway migration sanity check requires PyYAML. From the repository root, install the pinned "
-        "YAML profile in the active Python environment with: "
-        "python3 -m pip install --require-hashes -r config/python/yaml-requirements.txt"
+        "Flyway migration sanity check requires PyYAML. Follow Python Dependencies for Gradle "
+        "Checks in DEVELOPER_SETUP.md to install the pinned dependencies and activate the virtual "
+        "environment."
     ) from None
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(migration|recovery-control-migration)/")
 RECOVERY_PROJECT = "recovery-controller-service"
 RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
-RECOVERY_SQL_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources/db/recovery-control-migration/"
+RECOVERY_RESOURCE_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources"
+RECOVERY_CONFIG_DIRECTORY = f"{RECOVERY_RESOURCE_ROOT}/config"
+RECOVERY_SQL_ROOT = f"{RECOVERY_RESOURCE_ROOT}/db/recovery-control-migration/"
 RECOVERY_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/"
 RECOVERY_MIGRATION_ROOTS = (RECOVERY_SQL_ROOT, RECOVERY_JAVA_ROOT)
 RECOVERY_MIGRATION_ANCESTORS = {
@@ -35,6 +37,7 @@ RECOVERY_MIGRATION_ANCESTORS = {
     for path in (Path(root), *Path(root).parents)
     if path.parts
 }
+RECOVERY_HISTORY_VERSION_LIMIT = 50
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
@@ -130,8 +133,12 @@ def migration_path(path: str) -> re.Match[str] | None:
     return match
 
 
+def recovery_config_path(path: str) -> bool:
+    return path.startswith(RECOVERY_RESOURCE_ROOT + "/") and bool(PACKAGED_CONFIG_RE.search(path))
+
+
 def relevant_path(path: str) -> bool:
-    return path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
+    return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
              or PACKAGED_CONFIG_RE.search(path))
@@ -140,6 +147,10 @@ def relevant_path(path: str) -> bool:
 
 def current_snapshot(repo_root: Path) -> Snapshot:
     symlinks = current_recovery_migration_symlinks(repo_root)
+    config_directory = repo_root / RECOVERY_CONFIG_DIRECTORY
+    if (not RECOVERY_CONFIG_DIRECTORY.startswith(tuple(path + "/" for path in symlinks))
+            and config_directory.is_symlink()):
+        symlinks.add(RECOVERY_CONFIG_DIRECTORY)
     linked_prefixes = tuple(path + "/" for path in symlinks)
     paths = [*repo_root.glob("services/*/build.gradle.kts"),
              *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
@@ -157,7 +168,11 @@ def current_snapshot(repo_root: Path) -> Snapshot:
     snapshot = {}
     for path in paths:
         relative = path.relative_to(repo_root).as_posix()
-        if relative not in symlinks and not relative.startswith(linked_prefixes) and path.is_file():
+        if relative in symlinks or relative.startswith(linked_prefixes):
+            continue
+        if recovery_config_path(relative) and path.is_symlink():
+            snapshot[relative] = SYMLINK_SNAPSHOT
+        elif path.is_file():
             snapshot[relative] = path.read_bytes()
     snapshot.update({path: SYMLINK_SNAPSHOT for path in symlinks})
     return snapshot
@@ -180,6 +195,7 @@ def current_recovery_migration_symlinks(repo_root: Path) -> set[str]:
                         if path.is_symlink():
                             symlinks.add(path.relative_to(repo_root).as_posix())
     return symlinks
+
 
 def git(repo_root: Path, *args: str) -> bytes:
     result = subprocess.run(["git", "-C", str(repo_root), *args], capture_output=True, check=False)
@@ -208,7 +224,11 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
         metadata, raw_path = entry.split(b"\t", 1)
         mode = metadata.split(b" ", 1)[0]
         path = raw_path.decode("utf-8", errors="surrogateescape")
-        if relevant_path(path) and (path not in RECOVERY_MIGRATION_ANCESTORS or mode == b"120000"):
+        if relevant_path(path) and (
+            mode == b"120000" or (
+                path not in RECOVERY_MIGRATION_ANCESTORS and path != RECOVERY_CONFIG_DIRECTORY
+            )
+        ):
             snapshot[path] = SYMLINK_SNAPSHOT if mode == b"120000" else git(
                 repo_root, "show", f"{commit}:{path}"
             )
@@ -235,8 +255,13 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
                 issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
             if "/" in relative or "\\" in relative:
                 issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
-            elif not VERSION_RE.fullmatch(relative):
-                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+            else:
+                version = VERSION_RE.fullmatch(relative)
+                if version is None:
+                    issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+                elif len(version.group("version")) > RECOVERY_HISTORY_VERSION_LIMIT:
+                    issues.append(f"{path}: Recovery Flyway version must fit the "
+                                  f"{RECOVERY_HISTORY_VERSION_LIMIT}-character history column")
         else:
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
     return issues
@@ -249,14 +274,14 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
         version_match = VERSION_RE.match(Path(path).name)
         if project_match and version_match:
             text = version_match.group("version")
+            if path.startswith(RECOVERY_SQL_ROOT) and len(text) > RECOVERY_HISTORY_VERSION_LIMIT:
+                continue
             project, directory = project_match.groups()
             discovered.append(MigrationFile(path, project, text, normalize_version(text), f"classpath:db/{directory}"))
     return discovered
 
 
-def saga_adopters(
-    snapshot: Snapshot, *, require_placeholder_replacement_disabled: bool = True,
-) -> set[str]:
+def saga_runtime_projects(snapshot: Snapshot) -> set[str]:
     """Read existing runtime dependencies and composed convention plugins, not classifications.
 
     This follows the repository's literal Kotlin DSL wiring. Test dependencies are
@@ -291,8 +316,15 @@ def saga_adopters(
                 return True
         return False
 
+    return {project for project, source in module_sources.items()
+            if reaches_saga(source, {"module:" + project})}
+
+
+def saga_adopters(
+    snapshot: Snapshot, *, require_placeholder_replacement_disabled: bool = True,
+) -> set[str]:
     adopters = set()
-    for project, source in module_sources.items():
+    for project in saga_runtime_projects(snapshot):
         # Flyway scans nested packages below db/migration, so the parent location
         # exposes Saga resources too, even without a redundant explicit saga location.
         if project == RECOVERY_PROJECT:
@@ -317,7 +349,7 @@ def saga_adopters(
                 re.search(r"classpath:db/migration(?:/saga)?(?:[\s,\"']|$)", text)
                 for text in configured_files
             )
-        if loads_saga_location and reaches_saga(source, {"module:" + project}):
+        if loads_saga_location:
             adopters.add(project)
     return adopters
 
@@ -483,7 +515,7 @@ def recovery_flyway_locations(
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
-                                 "spring.flyway.skipdefaultresolvers",
+                                 "spring.flyway.skipdefaultresolvers", "spring.flyway.executeintransaction",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
                                  "spring.flyway.encoding", "spring.flyway.detectencoding",
@@ -548,7 +580,8 @@ def recovery_flyway_locations(
         return None
     if "callbacklocations" in flyway:
         return None
-    if any(value not in ([], "") for key, value in flyway.items() if key == "initsqls"):
+    # Spring Boot loads a YAML null and an empty YAML sequence as an empty scalar.
+    if flyway.get("initsqls") not in (None, [], ""):
         return None
     if require_placeholder_replacement_disabled:
         replacement = flyway.get("placeholderreplacement")
@@ -593,6 +626,11 @@ def recovery_flyway_locations(
     if skip_default_resolvers is not False and not (
             isinstance(skip_default_resolvers, str) and skip_default_resolvers.lower() == "false"):
         return None
+    execute_in_transaction = flyway.get("executeintransaction", True)
+    if execute_in_transaction is not True and not (
+            isinstance(execute_in_transaction, str)
+            and execute_in_transaction.strip().lower() in {"true", "on", "yes", "1"}):
+        return None
     skip_executing_migrations = flyway.get("skipexecutingmigrations", False)
     if skip_executing_migrations is not False and not (
             isinstance(skip_executing_migrations, str) and skip_executing_migrations.lower() == "false"):
@@ -605,6 +643,12 @@ def recovery_flyway_locations(
 
 
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
+    for label, snapshot in (("working tree", current), ("receiving parent", parent)):
+        for path, data in (snapshot or {}).items():
+            if data == SYMLINK_SNAPSHOT and (
+                path == RECOVERY_CONFIG_DIRECTORY or recovery_config_path(path)
+            ):
+                raise ValueError(f"{path}: Recovery configuration symlinks are unsupported in the {label}")
     migrations = discover_migration_files(current)
     recovery_locations = recovery_flyway_locations(current, RECOVERY_PROJECT)
     grouped = effective_sets(current, migrations, recovery_locations or set())
@@ -616,12 +660,16 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     if parent is not None:
         issues.extend(recovery_input_issues(parent))
         recovery_parent_migrations = [item for item in parent_migrations if item.project == RECOVERY_PROJECT]
+        has_inherited_saga = (
+            any(item.project == "common-saga" for item in parent_migrations)
+            and RECOVERY_PROJECT in saga_runtime_projects(parent)
+        )
         parent_locations = recovery_flyway_locations(
             parent, RECOVERY_PROJECT, require_placeholder_replacement_disabled=False,
-        ) if recovery_parent_migrations else None
-        if recovery_parent_migrations and (
+        ) if recovery_parent_migrations or has_inherited_saga else None
+        if (recovery_parent_migrations or has_inherited_saga) and (
             not parent_locations
-            or not parent_locations <= {RECOVERY_LOCATION, "classpath:db/migration"}
+            or not parent_locations <= {RECOVERY_LOCATION, "classpath:db/migration", "classpath:db/migration/saga"}
             or any(
                 item.location == RECOVERY_LOCATION
                 and (RECOVERY_LOCATION not in parent_locations or not is_recovery_sql_migration(item))
@@ -640,8 +688,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
                           f"in {RECOVERY_SCHEMA}, allow schema creation, share the journal datasource, "
-                          "disable placeholder replacement, apply UTF-8 migrations without non-empty connection "
-                          "init SQL or callback locations, automatic baselining, or dry-run output")
+                          "disable placeholder replacement, apply UTF-8 migrations in transactions without "
+                          "non-empty connection init SQL or callback locations, automatic baselining, or dry-run output")
         if not any(is_recovery_sql_migration(item) for item in migrations):
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     issues.extend(recovery_input_issues(current))
@@ -830,6 +878,29 @@ def run_self_test() -> None:
     )
     if [item.path for item in recovery_saga_sets[RECOVERY_PROJECT]] != [recovery + "V1__journal.sql"]:
         raise AssertionError("overridden Recovery locations must not add common Saga migrations")
+    inherited_recovery_parent = {
+        "services/recovery-controller-service/build.gradle.kts":
+            b'dependencies { implementation(project(":common-saga")) }',
+        recovery_config: b"spring.flyway.locations: classpath:db/migration/saga\n",
+        shared + "V1002__saga.sql": b"-- saga\n",
+    }
+    isolated_recovery_candidate = {**recovery_history,
+                                   shared + "V1002__saga.sql": b"-- saga\n"}
+    check("qualified Saga-only Recovery parent retains inherited versions",
+          isolated_recovery_candidate, inherited_recovery_parent,
+          "historical effective migration no longer applied")
+    check("unqualified Saga-only Recovery parent cannot lose inherited versions",
+          isolated_recovery_candidate, {
+              **inherited_recovery_parent,
+              recovery_config.removesuffix(".yml") + ".properties": b"server.port=9000\n",
+          }, "cannot qualify the receiving parent's packaged Flyway configuration")
+    check("first Recovery migrations may be introduced without parent history",
+          isolated_recovery_candidate, {
+              **inherited_recovery_parent,
+              "services/recovery-controller-service/build.gradle.kts":
+                  b'dependencies { testImplementation(project(":common-saga")) }',
+              recovery_config.removesuffix(".yml") + ".properties": b"server.port=9000\n",
+          }, None)
     check("explicitly empty Flyway connection init SQL qualifies recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: []\n",
@@ -846,6 +917,11 @@ def run_self_test() -> None:
             recovery_config: recovery_settings + f"    {setting}: []\n".encode(),
             recovery_config_override: f"spring.flyway.{setting}: [unsafe]\n".encode(),
         }, recovery_history, "non-empty connection init SQL" if setting == "init-sqls" else "callback locations")
+    check("higher-priority null Flyway init SQL clears a non-empty root list", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    init-sqls: [SET application_name = fixture]\n",
+        recovery_config_override: b"spring.flyway.init-sqls:\n",
+    }, recovery_history, None)
     check("explicitly empty Flyway callback list is unsupported", {
         **recovery_history,
         recovery_config: recovery_settings + b"    callback-locations: []\n",
@@ -1127,6 +1203,14 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"    skip-default-resolvers: false\n",
     }, recovery_history, None)
+    check("Flyway requires transactions for Recovery migrations", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    execute-in-transaction: false\n",
+    }, recovery_history, "apply UTF-8 migrations in transactions")
+    check("explicit Flyway transaction execution qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    execute-in-transaction: true\n",
+    }, recovery_history, None)
     check("skipping Flyway execution cannot qualify recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"    skip-executing-migrations: true\n",
@@ -1267,6 +1351,12 @@ def run_self_test() -> None:
     check("jOOQ-style backslash paths cannot hide flat Recovery migrations", {
         **complete_recovery_history, recovery + r"V3__generation\nested.sql": b"-- generation",
     }, complete_recovery_history, "recovery migration SQL must be flat")
+    for length in (RECOVERY_HISTORY_VERSION_LIMIT, RECOVERY_HISTORY_VERSION_LIMIT + 1):
+        version = "0" * (length - 3) + "3_1"
+        check(f"Recovery version display text has {length} characters", {
+            **complete_recovery_history, recovery + f"V{version}__width.sql": b"-- version width",
+        }, complete_recovery_history, None if length == RECOVERY_HISTORY_VERSION_LIMIT else
+            "Recovery Flyway version must fit the 50-character history column")
     check("ordinary flat underscore Recovery filenames remain supported", {
         **complete_recovery_history, recovery + "V3__generation_notes.sql": b"-- generation",
     }, complete_recovery_history, None)
@@ -1500,6 +1590,38 @@ def run_self_test() -> None:
                                for issue in recovery_input_issues(snapshot)):
                         raise AssertionError(f"Recovery migration link was not rejected: {linked_path}")
 
+        for config_link in (RECOVERY_CONFIG_DIRECTORY, recovery_config_override):
+            with tempfile.TemporaryDirectory() as linked_config_tmp:
+                linked_config_repo = Path(linked_config_tmp)
+                for path, data in recovery_history.items():
+                    fixture_path = linked_config_repo / path
+                    fixture_path.parent.mkdir(parents=True, exist_ok=True)
+                    fixture_path.write_bytes(data)
+                link = linked_config_repo / config_link
+                link.parent.mkdir(parents=True, exist_ok=True)
+                target = linked_config_repo / "override"
+                if config_link == RECOVERY_CONFIG_DIRECTORY:
+                    target.mkdir()
+                    (target / "application.yml").write_bytes(b"server.port: 9000\n")
+                else:
+                    target.write_bytes(b"server.port: 9000\n")
+                link.symlink_to(target, target_is_directory=target.is_dir())
+                git(linked_config_repo, "init", "-q")
+                git(linked_config_repo, "add", ".")
+                git(linked_config_repo, "-c", "user.name=Flyway fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "linked configuration")
+                link_commit = git(linked_config_repo, "rev-parse", "HEAD").decode().strip()
+                for label, candidate, baseline in (
+                    ("working tree", current_snapshot(linked_config_repo), recovery_history),
+                    ("receiving parent", recovery_history, parent_snapshot(linked_config_repo, link_commit)),
+                ):
+                    try:
+                        collect_issues(candidate, baseline)
+                    except ValueError as error:
+                        if str(error) != f"{config_link}: Recovery configuration symlinks are unsupported in the {label}":
+                            raise
+                    else:
+                        raise AssertionError(f"linked Recovery configuration was accepted in the {label}")
         make_fixture(root, [local + "V2__new.sql"])
         check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")
         try:

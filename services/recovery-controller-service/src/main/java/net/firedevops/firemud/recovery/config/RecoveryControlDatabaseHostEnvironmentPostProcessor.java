@@ -125,7 +125,33 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new SafeOverrideException(
           "spring.flyway.skip-executing-migrations must be disabled for the recovery migrations");
     }
+    if (Boolean.FALSE.equals(
+        binder.bind("spring.flyway.execute-in-transaction", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.execute-in-transaction must be enabled for the recovery migrations");
+    }
+    if (Boolean.TRUE.equals(
+        binder.bind("spring.flyway.skip-default-resolvers", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.skip-default-resolvers must be disabled for the recovery migrations");
+    }
+    requireMigrationNaming(binder, "spring.flyway.sql-migration-prefix", "V");
+    requireMigrationNaming(binder, "spring.flyway.sql-migration-separator", "__");
+    requireMigrationNaming(binder, "spring.flyway.repeatable-sql-migration-prefix", "R");
+    List<String> suffixes =
+        binder
+            .bind("spring.flyway.sql-migration-suffixes", Bindable.listOf(String.class))
+            .orElse(List.of(".sql"));
+    if (!List.of(".sql").equals(suffixes)) {
+      throw new SafeOverrideException(
+          "spring.flyway.sql-migration-suffixes must contain only .sql");
+    }
     requireAbsent(binder, "spring.flyway.dry-run-output");
+    var initSqls = binder.bind("spring.flyway.init-sqls", Bindable.listOf(String.class));
+    if (initSqls.isBound() && !initSqls.get().isEmpty()) {
+      throw new SafeOverrideException(
+          "spring.flyway.init-sqls must be empty for the recovery migrations");
+    }
     String encoding = binder.bind("spring.flyway.encoding", String.class).orElse(null);
     if (encoding != null && !"UTF-8".equalsIgnoreCase(encoding.trim())) {
       throw new SafeOverrideException(
@@ -154,6 +180,13 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     if (!List.of("classpath:db/recovery-control-migration").equals(locations)) {
       throw new SafeOverrideException(
           "spring.flyway.locations must contain only classpath:db/recovery-control-migration");
+    }
+  }
+
+  private static void requireMigrationNaming(Binder binder, String property, String expected) {
+    if (!expected.equals(binder.bind(property, String.class).orElse(expected))) {
+      throw new SafeOverrideException(
+          property + " must retain its default for the recovery migrations");
     }
   }
 

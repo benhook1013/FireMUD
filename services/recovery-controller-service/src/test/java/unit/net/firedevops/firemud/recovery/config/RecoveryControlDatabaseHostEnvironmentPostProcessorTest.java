@@ -521,6 +521,47 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .doesNotThrowAnyException();
   }
 
+  @ParameterizedTest
+  @CsvSource({
+    "spring.flyway.execute-in-transaction, false",
+    "spring.flyway.skip-default-resolvers, true",
+    "spring.flyway.sql-migration-prefix, fixture",
+    "spring.flyway.sql-migration-separator, fixture",
+    "spring.flyway.repeatable-sql-migration-prefix, fixture",
+    "spring.flyway.sql-migration-suffixes, .fixture",
+    "spring.flyway.sql-migration-suffixes[0], .fixture",
+    "spring.flyway.init-sqls, SET application_name = fixture",
+    "spring.flyway.init-sqls[0], SET application_name = fixture"
+  })
+  void rejectsMigrationDiscoveryAndConnectionInitOverrides(String property, String value) {
+    var environment = fixtureEnvironment().withProperty(property, value);
+
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith(property.replace("[0]", ""))
+        .hasNoCause();
+
+    environment.withProperty("spring.flyway.enabled", "false");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void acceptsExplicitMigrationDiscoveryDefaultsAndEmptyInitSql() {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.execute-in-transaction", "true")
+            .withProperty("spring.flyway.skip-default-resolvers", "false")
+            .withProperty("spring.flyway.sql-migration-prefix", "V")
+            .withProperty("spring.flyway.sql-migration-separator", "__")
+            .withProperty("spring.flyway.repeatable-sql-migration-prefix", "R")
+            .withProperty("spring.flyway.sql-migration-suffixes[0]", ".sql")
+            .withProperty("spring.flyway.init-sqls", "");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
   @Test
   void rejectsIncompatibleFlywayEncodingFromRelaxedEnvironmentOverride() {
     var environment = fixtureEnvironment().withProperty("spring.flyway.encoding", "UTF-8");

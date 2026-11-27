@@ -23,6 +23,8 @@ import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
@@ -42,6 +44,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   private static final String TRANSITION_TABLE =
       "recovery_control.initial_gameplay_release_transition";
   private static final String OUTBOX_TABLE = "recovery_control.initial_gameplay_release_outbox";
+  private static final Logger POSTGRES_PROTOCOL_LOG =
+      Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
 
   private final DSLContext dsl;
   private final InitialGameplayReleaseTupleCodec tupleCodec;
@@ -123,6 +127,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (settings == null || !Boolean.TRUE.equals(settings.get("redacted", Boolean.class))) {
       throw new IllegalStateException("Recovery journal requires redacted PostgreSQL logs");
     }
+    if (!driverLoggingIsRedacted()) {
+      throw new IllegalStateException("Recovery journal requires PostgreSQL driver tracing off");
+    }
+  }
+
+  /** The pinned JDBC protocol logger traces bound parameters at FINEST. */
+  public static boolean driverLoggingIsRedacted() {
+    return !POSTGRES_PROTOCOL_LOG.isLoggable(Level.FINEST);
   }
 
   @Override
