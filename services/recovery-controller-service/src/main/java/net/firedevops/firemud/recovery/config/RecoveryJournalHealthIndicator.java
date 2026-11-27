@@ -12,6 +12,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
       SELECT
         current_setting('transaction_read_only') = 'off'
+        AND current_setting('log_error_verbosity') = 'terse'
+        AND current_setting('log_parameter_max_length_on_error') = '0'
+        AND current_setting('log_parameter_max_length') = '0'
         AND (SELECT count(DISTINCT version) = 7
          FROM recovery_control.flyway_schema_history_recovery_control
          WHERE success AND (
@@ -95,6 +98,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND i.indisunique AND i.indisvalid AND i.indimmediate
             AND i.indpred IS NULL AND i.indnkeyatts = 1
             AND a.attname = 'maintenance_lock_identity')
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'payload_digest' AND NOT attisdropped AND attnotnull
+            AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass

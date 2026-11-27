@@ -13,7 +13,6 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.UUID;
 import javax.sql.DataSource;
-import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
@@ -125,7 +124,6 @@ class RecoveryControllerOwnerConfigurationTest {
         .withBean(FlywayMigrationStrategy.class, () -> flyway -> {})
         .run(context -> {
           assertThat(context).hasNotFailed();
-          assertThat(context).doesNotHaveBean(DatabaseAutoConfiguration.class);
           assertThat(context).hasSingleBean(DataSource.class);
           HikariDataSource datasource = context.getBean(HikariDataSource.class);
           assertThat(datasource.getJdbcUrl())

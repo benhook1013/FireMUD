@@ -102,7 +102,16 @@ public final class InitialGameplayReleaseTupleCodec {
   public record OperationProofTuple(
       Scope scope,
       java.util.UUID maintenanceLockIdentity,
-      InitialGameplayReleaseModel.InitialGameplayReleaseEvidence evidence) {}
+      InitialGameplayReleaseModel.InitialGameplayReleaseEvidence evidence) {
+    @Override
+    public String toString() {
+      return "OperationProofTuple[scope="
+          + scope
+          + ", maintenanceLockIdentity=<redacted>, evidence="
+          + evidence
+          + "]";
+    }
+  }
 
   public InitialGameplayReleaseModel.Scope readScope(String json) {
     try {

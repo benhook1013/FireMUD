@@ -22,6 +22,16 @@ class InitialGameplayReleaseTupleCodecTest {
       new InitialGameplayReleaseTupleCodec(JsonMapper.builder().build());
 
   @Test
+  void proofTupleRedactsTheLockOnlyInDiagnosticOutput() {
+    UUID lock = UUID.randomUUID();
+    var tuple = new InitialGameplayReleaseTupleCodec.OperationProofTuple(null, lock, null);
+    assertThat(tuple.toString())
+        .contains("maintenanceLockIdentity=<redacted>")
+        .doesNotContain(lock.toString());
+    assertThat(codec.toJson(tuple)).contains("\"maintenanceLockIdentity\":\"" + lock + "\"");
+  }
+
+  @Test
   void validScalarDigestsRetainTheExistingV2Bytes() {
     assertThat(codec.digest(Map.of("text", "ordinary")))
         .isEqualTo("69c0c5d37301a9ab22883df5654ab8d29cc4fb467f00756c685b025b8c47d3eb");
