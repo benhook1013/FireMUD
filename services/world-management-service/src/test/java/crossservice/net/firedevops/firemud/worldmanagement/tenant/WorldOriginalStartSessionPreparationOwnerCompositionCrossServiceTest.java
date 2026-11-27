@@ -52,6 +52,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -84,6 +85,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementService;
 import net.firedevops.firemud.common.account.AccountActorStagingEligibilityEvidence;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionClient;
@@ -146,6 +148,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
@@ -180,6 +183,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionIntentSna
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
@@ -289,7 +293,10 @@ import tools.jackson.databind.json.JsonMapper;
  * this does not establish genuine Human issuer/environment authority, production PKI, registered
  * endpoint activation, or runtime admission. The small test-only World socket invokes the typed
  * preparation owner directly, not assembly. The exact runtime installation artifact and held source
- * below are synthetic fixtures, not genuine external installation/custody evidence.
+ * below are synthetic fixtures, not genuine external installation/custody evidence. The dedicated
+ * serving-player hold case uses that guarded ACTIVE state with a synthetic player lease and
+ * controlled Account peer context; it qualifies neither hold-transport mTLS nor actual Account
+ * player-lease issuance, admission or release.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -444,6 +451,22 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void actualProtectedActiveWorldServingPlayerHoldReplaysAcrossOwnerReconstructionWithoutMutation()
+      throws Exception {
+    compose(
+        Refusal.NONE,
+        9_007_199_254_740_993L,
+        temporary,
+        ActivationFailure.NONE,
+        false,
+        false,
+        false,
+        false,
+        false,
+        ActiveWorldCheck.SERVING_PLAYER_HOLD);
+  }
+
+  @Test
   void actualStartingCanonicalAdmissionCompletesAndCommitsAcrossWorldGameSessionAndAccountOwners()
       throws Exception {
     compose(Refusal.NONE, 9_007_199_254_740_993L, temporary, ActivationFailure.NONE, false, true);
@@ -488,6 +511,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE,
     NONTRANSIENT_ROLLBACK_ONCE,
     NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE
+  }
+
+  private enum ActiveWorldCheck {
+    NONE,
+    SERVING_PLAYER_HOLD
   }
 
   private void compose(Refusal refusal) throws Exception {
@@ -582,6 +610,31 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       boolean abortCanonicalInitialAdmission,
       boolean playerCreatedPlacement,
       boolean advanceInstallationBeforeRetry)
+      throws Exception {
+    compose(
+        refusal,
+        reservationClaimFence,
+        proofDirectory,
+        activationFailure,
+        exerciseCanonicalInitialAdmissionHold,
+        exerciseCoupledCanonicalInitialAdmission,
+        abortCanonicalInitialAdmission,
+        playerCreatedPlacement,
+        advanceInstallationBeforeRetry,
+        ActiveWorldCheck.NONE);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure,
+      boolean exerciseCanonicalInitialAdmissionHold,
+      boolean exerciseCoupledCanonicalInitialAdmission,
+      boolean abortCanonicalInitialAdmission,
+      boolean playerCreatedPlacement,
+      boolean advanceInstallationBeforeRetry,
+      ActiveWorldCheck activeWorldCheck)
       throws Exception {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
@@ -1932,6 +1985,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(
                     finalAccountRows.get("account_start_session_activation_protection_settlements"))
                 .hasSize(1);
+            if (activeWorldCheck == ActiveWorldCheck.SERVING_PLAYER_HOLD) {
+              exerciseServingPlayerAdmissionHold(
+                  world, gs, association, lifecycleRepository, active);
+            }
             if (exerciseCanonicalInitialAdmissionHold) {
               exerciseCanonicalInitialAdmissionHold(
                   world, association, lifecycleRepository, activeReadRequest);
@@ -2012,6 +2069,267 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         identity.holdId(),
         identity.holdFence(),
         identity.holdBindingDigest());
+  }
+
+  private static void exerciseServingPlayerAdmissionHold(
+      Database world,
+      Database gs,
+      WorldCanonicalInstanceAssociationRepository associations,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycles,
+      WorldCanonicalInstanceLifecycleEvidence active)
+      throws Exception {
+    var association =
+        associations.readOwnerAssociation(active.request().canonicalGameInstanceId()).orElseThrow();
+    assertThat(association.isRunOwnedFixture()).isFalse();
+    assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(world.dsl().fetchCount(DSL.table("initial_admission_bind_hold"))).isZero();
+    assertThat(world.dsl().fetchCount(DSL.table("world_canonical_player_admission_hold"))).isZero();
+    var target = association.identity();
+    var catalog =
+        new GameSessionCanonicalRealmCatalogRepository(gs.dsl())
+            .readByRealm(
+                target.targetNamespace(), target.canonicalTenantId(), target.canonicalRealmId())
+            .orElseThrow();
+    assertThat(catalog.catalogRevision()).isEqualTo(target.catalogRevision());
+    assertThat(catalog.worldSlug()).isEqualTo(active.request().worldSlug());
+    assertThat(catalog.playableStateNamespaceId())
+        .isEqualTo(active.request().playableStateNamespaceId());
+    assertThat(catalog.stateScope()).isEqualTo(active.request().playableStateScope());
+    assertThat(catalog.publicProduction()).isTrue();
+    String lifecycleImage =
+        "SELECT to_jsonb(w)::text, w.xmin::text FROM world_instance w WHERE id=?";
+    var lifecycleBefore = world.dsl().fetchSingle(lifecycleImage, association.worldInstanceId());
+
+    // The original Account lease is synthetic, not Account issuance/currentness or a real player
+    // binding. Only its namespace/catalog/World target comes from the actual owners above.
+    var lease = syntheticServingPlayerLease(catalog, active);
+    long epoch = active.lifecycleEpoch();
+    long version = active.rowVersion();
+    var request = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, epoch, version);
+    // Explicitly controlled peer context, not mTLS proof for this hold service. The preceding
+    // protected ACTIVE and exact Account activation settlement use the existing real owner chain.
+    var accountContext =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                GrpcPeerIdentity.parseUri(
+                        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/account-service")
+                    .orElseThrow());
+    var service = servingPlayerHoldService(world);
+    assertThat(
+            accountContext.call(
+                () -> service.read(lease.canonicalJson(), lease.sha256(), epoch, version)))
+        .isEmpty();
+    var held =
+        accountContext.call(
+            () -> service.acquire(lease.canonicalJson(), lease.sha256(), epoch, version));
+    assertThat(held.request().sameBinding(request)).isTrue();
+    assertThat(held.worldEvidence().canonicalBytes())
+        .containsExactly(
+            lifecycles.read(held.worldEvidence().request()).orElseThrow().canonicalBytes());
+    var stored = world.dsl().fetchSingle("SELECT * FROM world_canonical_player_admission_hold");
+    assertThat(stored.get("hold_id", UUID.class)).isEqualTo(held.holdId());
+    assertThat(stored.get("hold_fence", UUID.class)).isEqualTo(held.holdFence());
+    assertThat(stored.get("hold_state", String.class)).isEqualTo("HELD");
+    assertThat(stored.get("lease_sha256", String.class)).isEqualTo(lease.sha256());
+    assertThat(stored.get("lease_bytes", byte[].class))
+        .containsExactly(lease.canonicalJson().getBytes(StandardCharsets.UTF_8));
+    assertThat(stored.get("world_evidence_bytes", byte[].class))
+        .containsExactly(held.worldEvidence().canonicalBytes());
+    // The new physical tuple excludes stale lifecycle writer snapshots.
+    var lifecycleAfter = world.dsl().fetchSingle(lifecycleImage, association.worldInstanceId());
+    assertThat(lifecycleAfter.get(0, String.class)).isEqualTo(lifecycleBefore.get(0, String.class));
+    assertThat(lifecycleAfter.get(1, String.class))
+        .isNotEqualTo(lifecycleBefore.get(1, String.class));
+    assertThatThrownBy(
+            () ->
+                world
+                    .dsl()
+                    .execute(
+                        "UPDATE world_instance SET row_version = row_version + 1 WHERE id = ?",
+                        association.worldInstanceId()))
+        .hasMessageContaining("World lifecycle is fenced by a retained player-admission hold");
+    var retainedRows =
+        rows(
+            world.dsl(),
+            "world_canonical_player_admission_hold",
+            "world_instance",
+            "world_canonical_instance_association",
+            "world_canonical_instance_preparation",
+            "world_canonical_instance_activation_fence",
+            "world_canonical_instance_activation_operation",
+            "initial_admission_bind_hold");
+    assertThat(
+            accountContext
+                .call(() -> service.acquire(lease.canonicalJson(), lease.sha256(), epoch, version))
+                .canonicalBytes())
+        .containsExactly(held.canonicalBytes());
+
+    // Reconstruct all local repositories and the service; no previous in-memory hold is supplied.
+    var reconstructed = servingPlayerHoldService(world);
+    var readback =
+        accountContext.call(
+            () ->
+                reconstructed
+                    .read(lease.canonicalJson(), lease.sha256(), epoch, version)
+                    .orElseThrow());
+    assertThat(readback.canonicalBytes()).containsExactly(held.canonicalBytes());
+    assertThat(readback.sha256()).isEqualTo(held.sha256());
+    assertThat(
+            accountContext
+                .call(
+                    () ->
+                        reconstructed.acquire(
+                            lease.canonicalJson(), lease.sha256(), epoch, version))
+                .canonicalBytes())
+        .containsExactly(held.canonicalBytes());
+
+    var changedCarrier = new LinkedHashMap<>(lease.carrier());
+    changedCarrier.put("leaseFence", "2");
+    var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
+    accountContext.run(
+        () -> {
+          assertThatThrownBy(
+                  () ->
+                      reconstructed.acquire(
+                          changedLease.canonicalJson(), changedLease.sha256(), epoch, version))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("Retained hold conflicts");
+          assertThatThrownBy(
+                  () ->
+                      reconstructed.read(
+                          changedLease.canonicalJson(), changedLease.sha256(), epoch, version))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("Retained hold conflicts");
+          assertThatThrownBy(
+                  () ->
+                      reconstructed.acquire(
+                          lease.canonicalJson(), lease.sha256(), epoch, version + 1))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("Retained hold conflicts");
+          assertThatThrownBy(
+                  () ->
+                      reconstructed.read(lease.canonicalJson(), lease.sha256(), epoch, version + 1))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("Retained hold conflicts");
+        });
+    assertThat(world.dsl().fetchCount(DSL.table("world_canonical_player_admission_hold")))
+        .isEqualTo(1);
+    assertThat(rows(world.dsl(), retainedRows.keySet().toArray(String[]::new)))
+        .isEqualTo(retainedRows);
+  }
+
+  private static WorldCanonicalPlayerAdmissionHoldService servingPlayerHoldService(Database world) {
+    var associations =
+        new WorldCanonicalInstanceAssociationRepository(
+            world.dsl(),
+            new WorldCompleteLaunchBindingRepository(world.dsl()),
+            new WorldAuthoredSourceIntakeRepository(world.dsl()),
+            new WorldAuthoredVersionIdentityRepository(world.dsl()));
+    return new WorldCanonicalPlayerAdmissionHoldService(
+        new WorldCanonicalPlayerAdmissionHoldRepository(
+            world.dsl(),
+            world.manager(),
+            NAMESPACE,
+            associations,
+            new WorldCanonicalInstanceLifecycleReadRepository(
+                world.dsl(), world.manager(), associations)),
+        NAMESPACE);
+  }
+
+  /**
+   * Donor #3084 carrier shape only; no current Account or player-admission authority is claimed.
+   */
+  private static AccountGameplayAdmissionLeaseEvidence syntheticServingPlayerLease(
+      CanonicalRealmCatalogSnapshot catalog, WorldCanonicalInstanceLifecycleEvidence active) {
+    var identity = active.request();
+    String account = UUID.randomUUID().toString();
+    String tenant = identity.canonicalTenantId().toString();
+    Map<String, Object> scope = new LinkedHashMap<>();
+    scope.put("accountId", account);
+    scope.put("tenantId", tenant);
+    scope.put("realmId", catalog.realmId().toString());
+    scope.put("worldSlug", identity.worldSlug());
+    scope.put("realmSlug", catalog.realmSlug());
+    scope.put("playableStateNamespaceId", identity.playableStateNamespaceId().toString());
+    scope.put("playableStateScope", identity.playableStateScope());
+    scope.put("gameInstanceId", identity.canonicalGameInstanceId().toString());
+    for (String key : List.of("characterId", "sessionId"))
+      scope.put(key, UUID.randomUUID().toString());
+    scope.put(
+        "regionId", active.operationalRegionAssignments().values().iterator().next().toString());
+    for (String key : List.of("bindingGeneration", "pointerVersion", "regionEpoch"))
+      scope.put(key, "9007199254740993");
+    scope.put("catalogRevision", Long.toString(catalog.catalogRevision()));
+    Map<String, Object> value = new LinkedHashMap<>();
+    value.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    value.put("schemaVersion", "1");
+    value.put("mode", "PUBLIC_PRODUCTION");
+    value.put("targetNamespace", identity.targetNamespace());
+    value.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + identity.targetNamespace() + "/sa/game-session-service");
+    value.put("requestId", UUID.randomUUID().toString());
+    value.put("leaseId", UUID.randomUUID().toString());
+    value.put("leaseFence", "1");
+    value.put("leaseKind", "NEW_BINDING");
+    value.put("bindingScope", scope);
+    value.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration",
+            "1",
+            "accountAuthorityGeneration",
+            "1",
+            "tenantAuthorityGeneration",
+            Map.of(tenant, "1"),
+            "membershipAuthorityGeneration",
+            Map.of(tenant, "1"),
+            "privateRealmGrantVersions",
+            List.of()));
+    value.put("issuanceFence", "1");
+    value.put(
+        "membershipBaseline",
+        Map.of(
+            "membershipLifecycleState",
+            "ACTIVE",
+            "membershipVersion",
+            Map.of(tenant, "1"),
+            "membershipAuthorityGeneration",
+            "1"));
+    value.put(
+        "outboxCheckpoints",
+        List.of(
+            servingPlayerCheckpoint("account/" + account, "0"),
+            servingPlayerCheckpoint("issuer/firemud-account-service", "0"),
+            servingPlayerCheckpoint("membership/" + account + "/" + tenant, "1"),
+            servingPlayerCheckpoint("tenant/" + tenant, "1")));
+    long now = System.currentTimeMillis();
+    value.put(
+        "tokenIdentityEvidence",
+        Map.ofEntries(
+            Map.entry("accountId", account),
+            Map.entry("operationId", UUID.randomUUID().toString()),
+            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
+            Map.entry("tokenJti", UUID.randomUUID().toString()),
+            Map.entry("tokenSHA256", "a".repeat(64)),
+            Map.entry("tokenGeneration", "1"),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("tokenIdentityFence", "1"),
+            Map.entry("tokenProfile", "game-session-account-delegation"),
+            Map.entry("issuedAt", Long.toString(now / 1000 - 2)),
+            Map.entry("notBefore", Long.toString(now / 1000 - 2)),
+            Map.entry("expiresAt", Long.toString(now / 1000 + 300))));
+    value.put("evaluatedAt", Long.toString(now));
+    value.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(value);
+  }
+
+  private static Map<String, Object> servingPlayerCheckpoint(String suffix, String sequence) {
+    return Map.of(
+        "outboxStreamKey", "account:auth-authority:v1:" + suffix, "outboxSequence", sequence);
   }
 
   private static void exerciseCanonicalInitialAdmissionHold(
