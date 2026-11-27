@@ -306,7 +306,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
             lifecycleRepository,
             observer,
             new AccountGameplayAdmissionPaidSource(
-                catalog, clock, limits, policy, observer, namespace, false),
+                catalog, clock, Duration.ofSeconds(1), limits, policy, observer, namespace, false),
             source);
     fixture.providerStatus("active");
     return fixture;

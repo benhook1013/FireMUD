@@ -231,8 +231,7 @@ public final class AccountGameplayAdmissionCurrentSources {
       }
       requireSupportedPublicTenantTuple(
           caller.snapshot(), targetTenantId, event, receipt.tenantBillingSequence());
-      observed.paidSource.requireReceiptStillCurrent(receipt);
-      sourceValidUntilMs = receipt.validUntil().toEpochMilli();
+      sourceValidUntilMs = observed.paidSource.requireReceiptStillCurrent(receipt).toEpochMilli();
     } else {
       if (paidReceipt != null) throw unavailable();
       requireCurrentDemo(caller.snapshot(), targetTenantId, selected.checkpoint());

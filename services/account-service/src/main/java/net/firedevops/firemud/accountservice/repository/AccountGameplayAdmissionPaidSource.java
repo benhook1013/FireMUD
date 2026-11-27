@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -25,6 +26,7 @@ import tools.jackson.databind.json.JsonMapper;
  * Provider observation runs only outside SQL. This component registers no route or provider write.
  */
 public final class AccountGameplayAdmissionPaidSource {
+  private static final Duration FRESHNESS_LIMIT = Duration.ofSeconds(15);
   private static final JsonMapper BILLING_HINT_JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -33,6 +35,7 @@ public final class AccountGameplayAdmissionPaidSource {
   private static final String BILLING_SCHEMA_VERSION = "account-hosting-subscription-event/v1";
   private final AccountHostingPlanCatalog plans;
   private final Clock clock;
+  private final Duration maxClockSkew;
   private final ReconciliationLimits limits;
   private final AccountHostingSubscriptionLifecyclePolicy policy;
   private final StripeHostingSubscriptionObserver observer;
@@ -42,6 +45,7 @@ public final class AccountGameplayAdmissionPaidSource {
   public AccountGameplayAdmissionPaidSource(
       AccountHostingPlanCatalog plans,
       Clock clock,
+      Duration maxClockSkew,
       ReconciliationLimits limits,
       AccountHostingSubscriptionLifecyclePolicy policy,
       StripeHostingSubscriptionObserver observer,
@@ -49,6 +53,12 @@ public final class AccountGameplayAdmissionPaidSource {
       boolean livemode) {
     this.plans = Objects.requireNonNull(plans);
     this.clock = Objects.requireNonNull(clock);
+    if (maxClockSkew == null
+        || maxClockSkew.isNegative()
+        || maxClockSkew.compareTo(FRESHNESS_LIMIT) >= 0) {
+      throw new IllegalArgumentException("Entitlement clock skew must be in [0, 15 seconds)");
+    }
+    this.maxClockSkew = maxClockSkew;
     this.limits = Objects.requireNonNull(limits);
     this.policy = Objects.requireNonNull(policy);
     this.observer = Objects.requireNonNull(observer);
@@ -116,14 +126,19 @@ public final class AccountGameplayAdmissionPaidSource {
     return receipt;
   }
 
-  void requireReceiptStillCurrent(AccountHostingSubscriptionCurrentReceipt receipt) {
+  Instant requireReceiptStillCurrent(AccountHostingSubscriptionCurrentReceipt receipt) {
     Instant now = clock.instant();
-    if (receipt.evaluatedAt() == null
-        || receipt.validUntil() == null
-        || now.isBefore(receipt.evaluatedAt())
-        || !now.isBefore(receipt.validUntil())) {
+    Instant evaluatedAt = receipt.evaluatedAt();
+    Instant validUntil = receipt.validUntil();
+    if (evaluatedAt == null || validUntil == null || evaluatedAt.isAfter(now.plus(maxClockSkew))) {
       throw new IllegalStateException("Current paid NEW source has expired");
     }
+    Instant freshUntil = evaluatedAt.plus(FRESHNESS_LIMIT.minus(maxClockSkew));
+    Instant deadline = freshUntil.isBefore(validUntil) ? freshUntil : validUntil;
+    if (!now.isBefore(deadline)) {
+      throw new IllegalStateException("Current paid NEW source has expired");
+    }
+    return deadline;
   }
 
   private AccountHostingSubscriptionLifecycleRepository reader(DSLContext exactDsl) {

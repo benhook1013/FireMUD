@@ -146,6 +146,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.ConnectionHolder;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -273,7 +275,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(paid.hosting().transport().reads()).isEqualTo(reads + 1);
     assertThat(current.snapshot().tenantId()).isEqualTo(paid.hosting().tenantId().toString());
     assertThat(current.sourceValidUntilMs())
-        .isEqualTo(paid.hosting().clock().instant().plusSeconds(15).toEpochMilli());
+        .isEqualTo(paid.hosting().clock().instant().plusSeconds(14).toEpochMilli());
     assertThat(caller.sourceAndIssuanceImage()).isEqualTo(before);
 
     var lease = caller.beginPendingAdmissionLease(current);
@@ -439,6 +441,42 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(paid.hosting().transport().reads()).isEqualTo(reads);
   }
 
+  @ParameterizedTest
+  @ValueSource(longs = {13_999, 14_000})
+  void paidReceiptExpiresAtEntitlementDeadlineBeforeLifecycleDeadline(long elapsedMillis)
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    var observed = paid.prepare().observeOutsideSql();
+    Instant evaluatedAt = paid.hosting().clock().instant();
+    Instant deadline = evaluatedAt.plusSeconds(14);
+    Instant readTime = evaluatedAt.plusMillis(elapsedMillis);
+    UUID originalJti = caller.committedCandidate.identity().tokenJti();
+    var reachedCallerRead = new AtomicBoolean();
+    var advanceClock =
+        advancePaidClockDuringCallerRead(paid, originalJti, readTime, reachedCallerRead);
+    java.util.function.Supplier<AccountGameplayAdmissionCurrentSources.Current> read =
+        () ->
+            caller.inCurrentSources(
+                sources ->
+                    sources.readCurrentPublicProductionNew(
+                        paid.hosting().tenantId(),
+                        originalJti,
+                        caller.committedCandidate,
+                        observed),
+                advanceClock);
+
+    if (readTime.isBefore(deadline)) {
+      assertThat(read.get().sourceValidUntilMs()).isEqualTo(deadline.toEpochMilli());
+    } else {
+      assertThatThrownBy(read::get)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Current paid NEW source has expired");
+    }
+    assertThat(reachedCallerRead).isTrue();
+    assertThat(paid.hosting().clock().instant()).isEqualTo(readTime);
+  }
+
   @Test
   void paidReceiptExpiringDuringFinalCallerSourceReadIsUnavailableWithoutWrites() throws Exception {
     PaidFixture paid = newPaidFixture(null);
@@ -450,22 +488,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     int providerReads = paid.hosting().transport().reads();
     var before = caller.sourceAndIssuanceImage();
     var reachedCallerRead = new AtomicBoolean();
-    // This exact issuance SELECT is downstream of the paid receipt read and early clock check.
     var expireDuringCallerRead =
-        ExecuteListener.onExecuteEnd(ctx -> {
-          String sql = ctx.sql();
-          var query = ctx.query();
-          if (sql != null
-              && sql.contains(
-                  "SELECT request_id FROM account_gameplay_delegation_issuance_operations")
-              && sql.contains("WHERE token_jti = ? AND status = 'COMMITTED'")
-              && query != null
-              && query.getBindValues().equals(List.of(originalJti))
-              && reachedCallerRead.compareAndSet(false, true)) {
-            assertThat(paid.hosting().clock().instant()).isBefore(Instant.ofEpochMilli(validUntil));
-            paid.hosting().clock().advanceToAtLeast(pastDeadline);
-          }
-        });
+        advancePaidClockDuringCallerRead(paid, originalJti, pastDeadline, reachedCallerRead);
 
     assertThatThrownBy(() ->
             caller.inCurrentSources(
@@ -483,6 +507,24 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(paid.hosting().transport().reads()).isEqualTo(providerReads);
     assertThat(caller.sourceAndIssuanceImage()).isEqualTo(before);
     assertThat(caller.leaseOperationCount()).isZero();
+  }
+
+  private static ExecuteListener advancePaidClockDuringCallerRead(
+      PaidFixture paid, UUID originalJti, Instant readTime, AtomicBoolean reachedCallerRead) {
+    // This exact issuance SELECT is downstream of the paid receipt read and early clock check.
+    return ExecuteListener.onExecuteEnd(ctx -> {
+      String sql = ctx.sql();
+      var query = ctx.query();
+      if (sql != null
+          && sql.contains("SELECT request_id FROM account_gameplay_delegation_issuance_operations")
+          && sql.contains("WHERE token_jti = ? AND status = 'COMMITTED'")
+          && query != null
+          && query.getBindValues().equals(List.of(originalJti))
+          && reachedCallerRead.compareAndSet(false, true)) {
+        assertThat(paid.hosting().clock().instant()).isBefore(readTime);
+        paid.hosting().clock().advanceToAtLeast(readTime);
+      }
+    });
   }
 
   @Test
@@ -599,7 +641,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           .isEqualTo(
               Math.min(
                   Math.min(evaluatedAt + 15_000L, identity.expiresAtEpochSecond() * 1000L),
-                  paid.hosting().clock().instant().plusSeconds(15).toEpochMilli()));
+                  paid.hosting().clock().instant().plusSeconds(14).toEpochMilli()));
       byte[] leaseBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
       paid.hosting().providerStatus("unsupported");
       var read = AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(jwt, leaseBytes);
