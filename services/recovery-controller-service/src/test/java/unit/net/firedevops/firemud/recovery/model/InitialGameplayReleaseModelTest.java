@@ -60,6 +60,32 @@ class InitialGameplayReleaseModelTest {
   }
 
   @Test
+  void journalBoundScopeAndOwnerProofRejectNoncharactersAtConstruction() {
+    Scope valid = scope(UUID.randomUUID());
+    String invalid = "owner-" + Character.toString(0xfdd0);
+    assertThatThrownBy(() ->
+            new Scope(
+                valid.operationId(),
+                valid.canonicalTenantId(),
+                valid.targetNamespace(),
+                valid.playableStateNamespaceId(),
+                valid.peerStorageBinding(),
+                invalid))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("evidenceRef must not contain Unicode noncharacters");
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                UUID.randomUUID(),
+                valid.playableStateNamespaceId(),
+                ProofDisposition.VERIFIED,
+                invalid,
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("sourceIdentity must not contain Unicode noncharacters");
+  }
+
+  @Test
   void pendingOutboxEntryCannotRetainPriorDispatchIdentityOrCount() {
     Scope scope = scope(UUID.randomUUID());
     var effect =
@@ -84,7 +110,7 @@ class InitialGameplayReleaseModelTest {
                 effect,
                 DIGEST,
                 InitialGameplayReleaseModel.EffectOutboxState.PENDING,
-                1,
+                0,
                 attemptId,
                 null,
                 null))
