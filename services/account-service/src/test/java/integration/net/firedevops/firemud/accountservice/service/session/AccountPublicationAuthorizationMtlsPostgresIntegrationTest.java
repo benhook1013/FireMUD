@@ -384,6 +384,15 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
                 order, descriptor.world());
         var terminal =
             AccountPublicationAuthorizationPostgresIntegrationTest.terminal(operation, outcome);
+        var foreignOrder =
+            new AccountPublicationAuthorizationBinding(
+                UUID.randomUUID(), UUID.randomUUID(), order.input(), order.sources());
+        var foreignOperation =
+            AccountPublicationAuthorizationPostgresIntegrationTest.operation(
+                foreignOrder, descriptor.world());
+        var foreignTerminal =
+            AccountPublicationAuthorizationPostgresIntegrationTest.terminal(
+                foreignOperation, outcome);
         var mode = new AtomicReference<>("exact");
         var gdReads = new java.util.concurrent.CopyOnWriteArrayList<String>();
         var worldReads = new java.util.concurrent.CopyOnWriteArrayList<String>();
@@ -496,6 +505,9 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
                     response.setOriginalOperation(com.google.protobuf.ByteString.EMPTY);
                   if (mode.get().equals("world-terminal"))
                     response.setWorldTerminalEvidence(com.google.protobuf.ByteString.EMPTY);
+                  if (mode.get().equals("world-foreign-terminal"))
+                    response.setWorldTerminalEvidence(
+                        com.google.protobuf.ByteString.copyFrom(foreignTerminal.canonicalBytes()));
                   if (mode.get().equals("world-unknown")) response.setWorldOutcomeValue(99);
                   if (mode.get().equals("world-phase"))
                     response.setWorldOutcomeValue(
@@ -535,6 +547,16 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
                 .isInstanceOf(RuntimeException.class);
             assertPending(sources, repository, order);
           }
+          mode.set("world-foreign-terminal");
+          int readsBeforeForeignTerminal = worldReads.size();
+          assertThatThrownBy(
+                  () -> asGameDesign(() -> composition.settle(operation.canonicalBytes())))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("World returned invalid publication terminal evidence")
+              .hasCauseInstanceOf(IllegalArgumentException.class);
+          assertThat(worldReads).hasSize(readsBeforeForeignTerminal + 1);
+          assertPending(sources, repository, order);
+
           mode.set("exact");
           try (var wrongGd = gameDesignClient(wrongServer.getPort(), pki.accountClient, pki.ca);
               var wrongWorld = worldClient(wrongServer.getPort(), pki.accountClient, pki.ca)) {
