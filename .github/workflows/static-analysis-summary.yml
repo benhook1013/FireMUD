@@ -176,10 +176,6 @@ jobs:
               return typeof ref === "string" && ref.trim() ? ref : null;
             };
 
-            // Metadata-only edits skip their gate under a non-required name; the
-            // earlier substantive run for the same title remains the result.
-            // GitHub leaves a skipped job's name expression unevaluated, so match
-            // the metadata label inside it.
             const workflowRunFor = async (workflowId, gateName) => {
               const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Gate";
               const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
@@ -232,29 +228,38 @@ jobs:
                   }
                   return { ...candidate, status: "unavailable", conclusion: null, jobs: [] };
                 }
+                // Use native job and step evidence to exclude metadata-only
+                // edits, including successful same-name preservation jobs.
                 const metadataName = `PR Metadata Edit (${gateName})`;
-                const metadata = data.jobs.some(job => job.status === "completed" &&
+                const historicalMetadata = data.jobs.some(job => job.status === "completed" &&
                   job.conclusion === "skipped" &&
                   (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
-                const substantive = data.jobs.some(job => job.name === gateName);
-                if (metadata && !substantive && candidate.conclusion === "skipped") continue;
-                // Older License metadata jobs shared the substantive name.
-                // Only exact, unambiguous step evidence can classify their result.
-                if (workflowId === "license-scan.yml" && candidate.status === "completed" &&
-                    candidate.conclusion === "success") {
-                  const namedSteps = (name) => data.jobs.filter(job => job.name === gateName)
-                    .flatMap(job => Array.isArray(job.steps) ? job.steps.filter(step => step?.name === name) : []);
-                  const enforcement = namedSteps("Verify ORT results");
-                  const legacyMetadata = namedSteps("Report dependency-deferred required gate");
-                  if (enforcement.length === 1 && enforcement[0].status === "completed" &&
-                      enforcement[0].conclusion === "skipped" && legacyMetadata.length === 1 &&
-                      legacyMetadata[0].status === "completed" && legacyMetadata[0].conclusion === "success") continue;
-                  if (enforcement.length !== 1 || enforcement[0].status !== "completed" ||
-                      enforcement[0].conclusion !== "success") {
-                    return { ...candidate, status: "unavailable", conclusion: null, jobs: [] };
-                  }
+                const gate = data.jobs.find(job => job.name === gateName);
+                if (historicalMetadata && !gate && candidate.conclusion === "skipped") continue;
+                const steps = Array.isArray(gate?.steps) ? gate.steps : [];
+                const enforcement = steps.filter(step => step?.name === (workflowId === "license-scan.yml"
+                  ? "Verify ORT results" : "Enforce successful CodeQL analysis"));
+                const preservation = steps.filter(step => step?.name ===
+                  "Preserve successful required gate on metadata-only edit");
+                const enforcementCompleted = enforcement.length === 1 && enforcement[0].status === "completed";
+                if (candidate.status === "completed" && gate?.status === "completed" &&
+                    enforcementCompleted && enforcement[0].conclusion === "skipped") {
+                  if (preservation.length === 1 && preservation[0].status === "completed" &&
+                      ["success", "failure"].includes(preservation[0].conclusion)) continue;
+                  // Older License metadata jobs may only expose the completed deferral guard.
+                  const deferral = steps.filter(step => step?.name === "Report dependency-deferred required gate");
+                  if (workflowId === "license-scan.yml" && candidate.conclusion === "success" &&
+                      preservation.length === 0 && deferral.length === 1 &&
+                      deferral[0].status === "completed" && deferral[0].conclusion === "success") continue;
                 }
-                if (!substantive) {
+                if (gate?.status === "completed" && gate.conclusion === "success" &&
+                    (!enforcementCompleted || enforcement[0].conclusion !== "success" ||
+                     (preservation.length > 0 && (preservation.length !== 1 ||
+                      preservation[0].status !== "completed" || preservation[0].conclusion !== "skipped")))) {
+                  return { ...candidate, jobs: data.jobs.map(job => job === gate
+                    ? { ...job, status: "unavailable", conclusion: null } : job) };
+                }
+                if (!gate) {
                   if (candidate.status === "completed" && terminalFailure.has(candidate.conclusion)) {
                     return { ...candidate, jobs: data.jobs };
                   }

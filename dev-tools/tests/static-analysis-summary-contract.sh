@@ -178,10 +178,18 @@ const github = {
     if (input.per_page !== 100) throw new Error("candidate must use bounded jobs");
     const fromAttempt = (row) => ({
       ...row, run_id: input.run_id, head_sha: currentHeadSha,
-      ...(row.name === "License Gate" ? {steps: [
-        {name: "Verify ORT results", status: "completed", conclusion: row.conclusion},
+      ...(["License Gate", "CodeQL Gate"].includes(row.name) ? {steps: row.steps ?? [
+        {name: row.name === "License Gate" ? "Verify ORT results" : "Enforce successful CodeQL analysis",
+          status: "completed", conclusion: row.conclusion},
       ]} : {}),
     });
+    if (input.run_id === 275) {
+      return {data: {total_count: 1, jobs: [fromAttempt({id: 2751,
+        name: "CodeQL Gate", status: "completed", conclusion: "success", steps: [
+          {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "success"},
+          {name: "Enforce successful CodeQL analysis", status: "completed", conclusion: "skipped"},
+        ]})]}};
+    }
     if (input.run_id === 270) {
       return {data: {total_count: 1, jobs: [fromAttempt({id: 2701,
         name: "github.event.action == 'edited' && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate'",
@@ -265,6 +273,17 @@ const github = {
             run_attempt: 1,
             status: "completed",
             conclusion: "skipped",
+          },
+          {
+            // The same-name preservation gate cannot mask the source failure.
+            id: 275,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+            created_at: "2026-09-20T15:00:00Z",
+            run_attempt: 1,
+            status: "completed",
+            conclusion: "success",
           },
           {
             id: 280,
@@ -655,7 +674,9 @@ async function assertExactBaseRef() {
     };
     github.request = async (route, input) => {
       const {data} = await originalRequest(route, input);
-      return {data: {...data, jobs: data.jobs.map(job => ({...job, conclusion: "success"}))}};
+      return {data: {...data, jobs: data.jobs.map(job => ({...job, conclusion: "success",
+        steps: job.steps?.map(step => ({...step, conclusion: "success"})),
+      }))}};
     };
     const passStart = calls.updated.length;
     await run(github, context, core);
@@ -719,9 +740,10 @@ async function assertSkippedRequiredGates() {
       github.request = async (route, input) => {
         const {data} = await originalRequest(route, input);
         if (![200, 300].includes(input.run_id)) return {data};
-        return {data: {...data, jobs: data.jobs.map(job => ({...job,
-          conclusion: [jobName, "CodeQL Analysis (java)"].includes(job.name) ? "skipped" : "success",
-        }))}};
+        return {data: {...data, jobs: data.jobs.map(job => {
+          const conclusion = [jobName, "CodeQL Analysis (java)"].includes(job.name) ? "skipped" : "success";
+          return {...job, conclusion, steps: job.steps?.map(step => ({...step, conclusion}))};
+        })}};
       };
       const start = calls.updated.length;
       await run(github, context, core);
@@ -950,7 +972,11 @@ run(github, context, core).then(async () => {
                 github.request = async (route, input) => {
                   if (input.run_id !== 200) return savedRequest(route, input);
                   const job = (id, name) => ({id, name, run_id: 200, run_attempt: 2, head_sha: currentHeadSha,
-                    status: "completed", conclusion: "success"});
+                    status: "completed", conclusion: "success",
+                    steps: name === "CodeQL Gate" ? [
+                      {name: "Enforce successful CodeQL analysis", status: "completed", conclusion: "success"},
+                    ] : [],
+                  });
                   return {data: {total_count: 2, jobs: [job(20021, "CodeQL Gate"), job(20022, "CodeQL Analysis (javascript-typescript)")]}};
                 };
                 github.paginate = async (method, input) => {

@@ -6,7 +6,6 @@ SUMMARY_PAYLOAD="$(python3 - "$ROOT_DIR" <<'PY'
 from pathlib import Path
 import base64
 import json
-import re
 import sys
 import yaml
 
@@ -55,28 +54,7 @@ split_markers = [step for step in ci['jobs']['validation-gate']['steps']
                  if step.get('name') == 'Declare dev tool contract split']
 if split_markers != [{'name': 'Declare dev tool contract split', 'run': ':'}]:
     raise SystemExit('Split contract inventory must retain its unconditional native source marker')
-def substantive_name(name):
-    # Metadata wrappers must normalize to an explicitly covered substantive name.
-    match = re.fullmatch(r"\$\{\{\s+.*\s+&&\s+'PR Metadata Edit \((.+)\)'\s+\|\|\s+'\1'\s+\}\}", name)
-    if match:
-        return match[1]
-    if "PR Metadata Edit" in name:
-        raise ValueError(f"Unrecognized metadata job wrapper: {name}")
-    return name
-
-assert substantive_name("${{ condition && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'   }}") == "Validation Gate"
-for malformed in [
-    "${{ condition && 'PR Metadata Edit (Validation Gate)' || 'Wrong Gate' }}",
-    "${{ condition && 'PR Metadata Edit (Validation Gate)' }}",
-]:
-    try:
-        substantive_name(malformed)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("Unrecognized metadata wrapper escaped normalization")
-
-names = [substantive_name(job['name']) for job in ci['jobs'].values()]
+names = [job['name'] for job in ci['jobs'].values()]
 for name in names:
     if '${{' not in name and json.dumps(name, ensure_ascii=False) not in script:
         raise SystemExit(f'Detached summary is missing the CI job name {name}')
@@ -216,8 +194,8 @@ async function noWrites(config, reject = false) {
     assert.doesNotMatch(moduleFailure.calls.creates[0].body, /All validation checks passed/);
   }
   const metadataSplit = clone(jobs);
-  metadataSplit.find(job => job.name === 'Validation Gate').name = 'PR Metadata Edit (Validation Gate)';
   for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }
+  metadataSplit.find(job => job.name === 'Validation Gate').conclusion = 'success';
   assert.equal((await noWrites({ jobs: metadataSplit })).comments.length, 0);
   // A later native run publishes first; a delayed older callback may neither rewrite it nor delete it as a duplicate.
   const newerSource = { ...clone(source), id: 71, run_number: 8 };

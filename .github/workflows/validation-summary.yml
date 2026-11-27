@@ -128,7 +128,7 @@ jobs:
             };
             const detector = one("Detect CI-Relevant Changes");
             if (detector === "skipped") {
-              core.info("Skipping metadata-only edit source");
+              core.info("Skipping metadata-only preservation source");
               return;
             }
             const fixedChecks = [

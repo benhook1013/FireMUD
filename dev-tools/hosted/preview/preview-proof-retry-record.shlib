@@ -41,6 +41,24 @@ preview_retry_holder_headroom() {
   ' <<<"$snapshot"
 }
 
+report_preview_retry_holder_headroom() {
+  local expected_uid="$1" snapshot headroom used hard_limit remaining
+  if ! snapshot="$(read_preview_retry_holder 2>/dev/null)" ||
+    ! jq -e --arg uid "$expected_uid" '.metadata.uid == $uid' <<<"$snapshot" >/dev/null ||
+    ! headroom="$(preview_retry_holder_headroom "$snapshot" 2>/dev/null)"; then
+    echo "Preview proof-retry holder headroom: unknown (fresh holder read or stored data validation failed)."
+    return 0
+  fi
+  used="$(jq -er '.usedBytes' <<<"$headroom")" || return 1
+  hard_limit="$(jq -er '.hardLimitBytes' <<<"$headroom")" || return 1
+  remaining="$(jq -er '.remainingBytes' <<<"$headroom")" || return 1
+  if (( used * 4 >= hard_limit * 3 )); then
+    echo "Warning: preview proof-retry holder uses ${used}/${hard_limit} stored-value bytes (${remaining} remaining; at least 75% used). Preserve reopenable rows; recover capacity through verified terminal retirement or planned storage expansion."
+  else
+    echo "Preview proof-retry holder uses ${used}/${hard_limit} stored-value bytes (${remaining} remaining)."
+  fi
+}
+
 read_preview_retry_holder() {
   local snapshot
   snapshot="$(kubectl -n "$preview_retry_holder_namespace" get configmap "$preview_retry_holder_name" \
@@ -252,4 +270,5 @@ retire_merged_preview_retry_entries() {
     holder="$(read_preview_retry_holder)" || return 1
     write_preview_retry_retirement_cursor "$holder" "$holder_uid" "$cursor" "$GITHUB_REPOSITORY:$last"
   fi
+  report_preview_retry_holder_headroom "$holder_uid"
 }

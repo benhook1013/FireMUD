@@ -1,0 +1,41 @@
+name: Publish Required Gate Status
+description: Publish an attributable supplementary metadata gate status after canonical assessment.
+inputs:
+  assessment:
+    description: Canonical preservation assessment.
+    required: true
+  gate-name:
+    description: Exact required gate context.
+    required: true
+  workflow-name:
+    description: Exact owning workflow name.
+    required: true
+  workflow-file:
+    description: Owning workflow filename.
+    required: true
+  workflow-path:
+    description: Exact owning workflow path.
+    required: true
+outputs:
+  publication:
+    description: pending-acknowledged, success-acknowledged, or unchanged.
+    value: ${{ steps.publish.outputs.publication }}
+runs:
+  using: composite
+  steps:
+    - name: Set up canonical GitHub CLI
+      uses: ./.github/actions/setup-gh
+    - name: Publish supplementary required gate status
+      id: publish
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ASSESSMENT: ${{ inputs.assessment }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REQUIRED_GATE_NAME: ${{ inputs.gate-name }}
+        EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}
+      run: bash "$GITHUB_ACTION_PATH/publish-required-gate-status.sh"
