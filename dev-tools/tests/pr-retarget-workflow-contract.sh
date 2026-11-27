@@ -2442,8 +2442,8 @@ require_contains "$image_wait_path" 'display_title = run.get("display_title", ""
 require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images trusted-branch ")'
 require_contains "$image_wait_path" 'and f"sha-{head_sha}" in tokens'
 require_contains "$image_wait_path" 'and "branch-develop" in tokens'
-require_contains "$image_wait_path" 'and f"base-{base_sha}" in tokens'
-require_contains "$image_wait_path" 'and f"merge-{merge_sha}" in tokens'
+require_contains "$image_wait_path" 'rf"Build Runtime Images secure-pr-artifact pr-[1-9][0-9]* base-{base_sha}"'
+require_contains "$image_wait_path" 'rf" head-{head_sha} merge-{merge_sha} mode-required", display_title'
 require_contains "$image_wait_path" 'run.get("event") == "workflow_run"'
 require_contains "$image_wait_path" 'gh api --paginate --slurp'
 require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying within the existing wait deadline.'
@@ -2983,7 +2983,7 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
 fi
 
 if [[ "$*" == *'/actions/runs/101' ]]; then
-  printf '{"id":101,"run_attempt":%s,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}"
+  printf '{"id":101,"workflow_id":501,"repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"run_attempt":%s,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}"
   exit 0
 fi
 if [[ "$*" == *'/attempts/1/jobs?per_page=100&page=1' ]]; then
@@ -2996,7 +2996,21 @@ if [[ "$*" == *'/attempts/1/jobs?per_page=100&page=1' ]]; then
     *'/actions/runs/202/'*) run=202 ;;
     *) exit 1 ;;
   esac
-  printf '{"total_count":1,"jobs":[{"id":1001,"run_id":%s,"run_attempt":1,"name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}\n' "$run"
+  printf '{"total_count":1,"jobs":[{"id":1001,"run_id":%s,"run_attempt":1,"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","number":5,"status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","number":6,"status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"success"},{"name":"PR runtime publication receipt v1 source-101-2 publisher-%s-1 artifact-9001 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","number":9,"status":"completed","conclusion":"success"}]}]}\n' "$run" "$run"
+  exit 0
+fi
+if [[ "$*" == *'/actions/runs/201/attempts/1' || "$*" == *'/actions/runs/202/attempts/1' ]]; then
+  if [[ "$*" == *'/actions/runs/201/attempts/1' ]]; then
+    run=201
+    event=workflow_run
+    title='Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2'
+  else
+    run=202
+    event=repository_dispatch
+    title='Publish PR Runtime Images source-run-101 attempt-2'
+  fi
+  printf '{"id":%s,"workflow_id":502,"path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","run_attempt":1,"name":"Publish PR Runtime Images","event":"%s","status":"completed","conclusion":"success","display_title":"%s","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}' \
+    "$run" "$event" "$title"
   exit 0
 fi
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
@@ -3024,7 +3038,7 @@ PY_PAGE
     exit 0
   fi
   cat <<'JSON'
-{"total_count":1,"workflow_runs":[{"id":201,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
+{"total_count":1,"workflow_runs":[{"id":201,"workflow_id":502,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
@@ -3032,7 +3046,7 @@ else
     exit 0
   fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"run_attempt":2,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"workflow_id":501,"run_attempt":2,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
 fi
 EOF
@@ -3073,11 +3087,11 @@ from pathlib import Path
 root = Path(sys.argv[1])
 waiter = Path(sys.argv[2]).read_text()
 source_parser = waiter.split("read_run_state() {\n  python3 -c '\n", 1)[1].split("\n' \"${wait_mode}\"", 1)[0]
-source = {"id": 101, "run_attempt": 2, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
+source = {"id": 101, "workflow_id": 501, "run_attempt": 2, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
 for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:01:00+00:00", "not-a-date", None]:
     result = subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [{**source, "created_at": created_at}]}), capture_output=True, text=True)
     if created_at == source["created_at"]:
-        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at + "\t2")
+        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at + "\t2\t501")
     else:
         assert result.returncode != 0, "source creation time must be a real UTC timestamp"
 def parse_source(run):
@@ -3092,10 +3106,10 @@ for name, run in {"missing-url": {key: value for key, value in source.items() if
 for conclusion in [None, ""]:
     result = parse_source({**source, "status": "in_progress", "conclusion": conclusion})
     assert result.returncode == 0
-    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created attempt; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\" \"$attempt\""], input=result.stdout, capture_output=True, text=True)
-    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"], "2"], "optional conclusion must preserve Bash field positions"
+    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created attempt workflow; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\" \"$attempt\" \"$workflow\""], input=result.stdout, capture_output=True, text=True)
+    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"], "2", "501"], "optional conclusion must preserve Bash field positions"
 
-base = {"id": 202, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
+base = {"id": 202, "workflow_id": 502, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
 fixtures = {
     "dispatch-success": base,
     "dispatch-earlier-attempt": {**base, "display_title": "Publish PR Runtime Images source-run-101 attempt-1"},
@@ -3191,7 +3205,7 @@ for job_proof in skipped missing-step wrong-attempt incomplete; do
     echo "Publisher job proof $job_proof unexpectedly admitted workflow success" >&2
     exit 1
   fi
-  require_contains "$contract_fixture_dir/$job_proof.error" 'Exact PR image publisher job and step success is unavailable'
+  require_contains "$contract_fixture_dir/$job_proof.error" 'Exact PR image publication and artifact proof is unavailable'
 done
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'

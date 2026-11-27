@@ -99,6 +99,8 @@ validation_path = Path(sys.argv[3])
 publisher_path = Path(sys.argv[4])
 runtime_path = Path(sys.argv[5])
 workflow = workflow_path.read_text(encoding="utf-8")
+publisher_definition = yaml.load(workflow, Loader=yaml.BaseLoader)
+publisher_steps = publisher_definition["jobs"]["publish"]["steps"]
 download = workflow.index("- name: Download successful PR image artifacts")
 validate = workflow.index("- name: Validate exact PR source and artifact before registry login")
 login = workflow.index("- name: Login to GHCR")
@@ -116,12 +118,8 @@ validation_path.write_text(
     "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines()) + "\n",
     encoding="utf-8",
 )
-publish_start = workflow.index("      - name: Publish fixed PR image tags")
-publish_run = workflow.index("        run: |\n", publish_start) + len("        run: |\n")
-publish_end = len(workflow)
-publish_script = workflow[publish_run:publish_end]
 publisher_path.write_text(
-    "\n".join(line[10:] if line.startswith("          ") else line for line in publish_script.splitlines()) + "\n",
+    next(step["run"] for step in publisher_steps if step.get("name") == "Publish fixed PR image tags"),
     encoding="utf-8",
 )
 def javascript_step(text, name):
@@ -151,7 +149,17 @@ Path(sys.argv[9]).write_text(
     refresh_script[deadline_start:deadline_end] + refresh_script[selector_start:selector_end],
     encoding="utf-8",
 )
-publisher_definition = yaml.load(workflow, Loader=yaml.BaseLoader)
+receipt = publisher_steps[-1]
+if receipt != {
+    "name": (
+        "PR runtime publication receipt v1 "
+        "source-${{ fromJSON(needs.source.outputs.source).id }}-${{ fromJSON(needs.source.outputs.source).run_attempt }} "
+        "publisher-${{ github.run_id }}-${{ github.run_attempt }} "
+        "artifact-${{ needs.source.outputs.artifact_id }} ${{ needs.source.outputs.artifact_digest }}"
+    ),
+    "run": ":",
+} or publisher_steps[-2].get("name") != "Publish fixed PR image tags":
+    raise SystemExit("native publication receipt must use the exact resolved artifact and attempts after successful publication")
 reconcile_job = publisher_definition["jobs"]["reconcile-failed-pr-runtime"]
 reconcile_step = next(step for step in reconcile_job["steps"] if step.get("name") == "Reconcile exact failed original runtime")
 Path(sys.argv[10]).write_text(reconcile_step["with"]["script"], encoding="utf-8")

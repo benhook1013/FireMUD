@@ -1483,3 +1483,8 @@ jobs:
             done
             available_services+=("$service")
           done
+
+      # Preserve the identity of the bytes just published in the native attempt
+      # jobs record, independently of the short-lived source artifact.
+      - name: PR runtime publication receipt v1 source-${{ fromJSON(needs.source.outputs.source).id }}-${{ fromJSON(needs.source.outputs.source).run_attempt }} publisher-${{ github.run_id }}-${{ github.run_attempt }} artifact-${{ needs.source.outputs.artifact_id }} ${{ needs.source.outputs.artifact_digest }}
+        run: ':'
