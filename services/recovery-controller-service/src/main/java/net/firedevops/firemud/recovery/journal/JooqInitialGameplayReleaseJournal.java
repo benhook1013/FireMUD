@@ -104,7 +104,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   @Override
   public Optional<Operation> find(UUID operationId) {
     Objects.requireNonNull(operationId, "operationId must not be null");
-    return Optional.ofNullable(selectOperationOrNull(dsl, operationId, false));
+    Operation operation = selectOperationOrNull(dsl, operationId, false);
+    if (operation != null && operation.phase() == Phase.FINALIZED) {
+      requireAcknowledgedEffect(
+          dsl,
+          operation,
+          EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF,
+          operation.finalizedAt(),
+          false);
+    }
+    return Optional.ofNullable(operation);
   }
 
   @Override
@@ -268,7 +277,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             LIMIT 1
             """,
             operationId);
-    return Optional.ofNullable(record).map(this::toOutboxEntry);
+    if (record == null) {
+      // A finalized operation must still have an exact, durable handoff receipt.
+      find(operationId);
+      return Optional.empty();
+    }
+    return Optional.of(toOutboxEntry(record));
   }
 
   @Override
@@ -303,7 +317,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       requirePhaseForEffect(operation.phase(), current.effect().kind());
       if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF) {
-        requireAcknowledgedPreparation(tx, operation, now);
+        requireAcknowledgedEffect(
+            tx, operation, EffectKind.PREPARE_PLAYABLE_STATE_FENCED, now, true);
       }
       int changed =
           tx.execute(
@@ -975,39 +990,45 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
   }
 
-  private void requireAcknowledgedPreparation(DSLContext tx, Operation operation, Instant now) {
+  private void requireAcknowledgedEffect(
+      DSLContext context,
+      Operation operation,
+      EffectKind kind,
+      Instant upperBound,
+      boolean forUpdate) {
     UUID operationId = operation.scope().operationId();
+    String label = kind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED ? "preparation" : "handoff";
     Record stored =
-        tx.fetchOne(
+        context.fetchOne(
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state, attempt_count, last_attempt_id, last_outcome_code,
                    acknowledged_at, last_dispatched_at, readback_identity, readback_payload, readback_digest
             FROM recovery_control.initial_gameplay_release_outbox
             WHERE operation_id = ? AND effect_kind = ?
-            FOR UPDATE
-            """,
+            """
+                + (forUpdate ? " FOR UPDATE" : ""),
             operationId,
-            EffectKind.PREPARE_PLAYABLE_STATE_FENCED.databaseValue());
-    if (stored == null) throw conflict("retained preparation is missing");
-    OutboxEntry preparation = toOutboxEntry(stored);
-    tupleCodec.requireEffectMatchesOperation(preparation.effect(), operation);
-    if (preparation.state() != EffectOutboxState.ACKNOWLEDGED
-        || preparation.acknowledgedAt().isAfter(now)) {
-      throw conflict("retained preparation acknowledgement is unavailable");
+            kind.databaseValue());
+    if (stored == null) throw conflict("retained " + label + " is missing");
+    OutboxEntry effect = toOutboxEntry(stored);
+    tupleCodec.requireEffectMatchesOperation(effect.effect(), operation);
+    if (effect.state() != EffectOutboxState.ACKNOWLEDGED
+        || effect.acknowledgedAt().isAfter(upperBound)) {
+      throw conflict("retained " + label + " acknowledgement is unavailable");
     }
     JSONB payload = stored.get("readback_payload", JSONB.class);
     String digest = stored.get("readback_digest", String.class);
     if (payload == null || digest == null) {
-      throw conflict("retained preparation readback is incomplete");
+      throw conflict("retained " + label + " readback is incomplete");
     }
     EffectReadback readback = tupleCodec.readEffectReadback(payload.data());
     if (!digest.equals(tupleCodec.digest(readback))) {
-      throw conflict("retained preparation readback digest does not match");
+      throw conflict("retained " + label + " readback digest does not match");
     }
     requireStoredReadbackIdentity(stored, readback);
-    requireReadbackMatches(readback, preparation, operationId, preparation.effect().effectId());
-    requireSuccessfulReadbackState(readback, preparation.effect().kind());
+    requireReadbackMatches(readback, effect, operationId, effect.effect().effectId());
+    requireSuccessfulReadbackState(readback, kind);
     requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
   }
 

@@ -2,6 +2,8 @@ package integration.net.firedevops.firemud.recovery;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -52,6 +54,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterF
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterInventory;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseController;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider;
 import net.firedevops.firemud.recovery.service.OwnerBoundaryUnavailableException;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -1982,6 +1985,44 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void finalizedOperationRequiresTheRetainedHandoffReceiptBeforeReturningNoWork() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry handoff = authorizedDispatch(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF, base);
+    UUID operationId = handoff.effect().operationId();
+    UUID effectId = handoff.effect().effectId();
+    var receipt =
+        readbackFor(
+            handoff,
+            handoff.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "terminal-handoff",
+            base.plusSeconds(7));
+    Operation finalized = journal.recordEffectReadback(handoff, receipt, base.plusSeconds(8));
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, tupleCodec, mock(InitialGameplayReleaseEvidenceProvider.class), port);
+
+    assertThat(journal.findNextEffect(operationId)).isEmpty();
+    assertThat(controller.reconcileNextEffect(operationId)).isEqualTo(finalized);
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET readback_identity = NULL, readback_payload = NULL, readback_digest = NULL"
+            + " WHERE outbox_id = ?",
+        handoff.outboxId());
+    String incomplete = storedOutbox(operationId, effectId);
+
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained handoff readback is incomplete");
+    assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained handoff readback is incomplete");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(incomplete);
+    verifyNoInteractions(port);
+  }
+
+  @Test
   void acknowledgedReadbackReplayRequiresTheEffectKindsSuccessfulStateInBothReplayBranches() {
     for (EffectKind effectKind : EffectKind.values()) {
       for (boolean exactReplay : List.of(true, false)) {
@@ -2042,7 +2083,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining("did not prove its exact durable outcome");
         assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupted);
-        assertThat(journal.find(operationId)).contains(acknowledged);
+        if (effectKind == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF) {
+          assertThatThrownBy(() -> journal.find(operationId))
+              .isInstanceOf(InitialGameplayReleaseConflictException.class)
+              .hasMessageContaining("did not prove its exact durable outcome");
+        } else {
+          assertThat(journal.find(operationId)).contains(acknowledged);
+        }
       }
     }
   }

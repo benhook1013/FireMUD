@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.AuditReason;
@@ -43,6 +44,7 @@ import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidencePro
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -235,6 +237,20 @@ class InitialGameplayReleaseControllerTest {
 
   private void assertPendingClaimHandling(
       boolean ownsClaim, EffectApplyResult applyResult, RetrySource expectedRetrySource) {
+    assertClaimHandling(EffectOutboxState.PENDING, ownsClaim, applyResult, expectedRetrySource);
+  }
+
+  @Test
+  void retryableEffectAppliesWithTheNewAttemptAndNextOrdinal() {
+    assertClaimHandling(
+        EffectOutboxState.RETRYABLE, true, EffectApplyResult.ambiguous("OWNER_PENDING"), null);
+  }
+
+  private void assertClaimHandling(
+      EffectOutboxState priorState,
+      boolean ownsClaim,
+      EffectApplyResult applyResult,
+      RetrySource expectedRetrySource) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var operation = mock(Operation.class);
@@ -246,17 +262,17 @@ class InitialGameplayReleaseControllerTest {
     when(scope.operationId()).thenReturn(operationId);
     when(operation.scope()).thenReturn(scope);
     when(effect.effectId()).thenReturn(effectId);
-    var pending =
-        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry.class);
-    when(pending.effect()).thenReturn(effect);
-    when(pending.state())
-        .thenReturn(
-            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
-                .PENDING);
+    var selected = mock(OutboxEntry.class);
+    when(selected.effect()).thenReturn(effect);
+    when(selected.state()).thenReturn(priorState);
+    int ordinal = priorState == EffectOutboxState.PENDING ? 1 : 2;
+    UUID previousAttempt = priorState == EffectOutboxState.PENDING ? null : UUID.randomUUID();
+    when(selected.attemptCount()).thenReturn(ordinal - 1);
+    when(selected.lastAttemptId()).thenReturn(previousAttempt);
     when(journal.find(operationId))
         .thenReturn(java.util.Optional.of(operation), java.util.Optional.of(after));
-    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(pending));
-    var claimedAttempt = new java.util.concurrent.atomic.AtomicReference<UUID>();
+    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(selected));
+    var claimedAttempt = new AtomicReference<UUID>();
     var claimed =
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry.class);
     when(journal.claimEffect(
@@ -280,7 +296,7 @@ class InitialGameplayReleaseControllerTest {
                           requested.getLeastSignificantBits()));
           if (ownsClaim) {
             when(claimed.effect()).thenReturn(effect);
-            when(claimed.attemptCount()).thenReturn(2);
+            when(claimed.attemptCount()).thenReturn(ordinal);
           }
           return claimed;
         });
@@ -299,6 +315,7 @@ class InitialGameplayReleaseControllerTest {
             port);
     assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
     assertThat(claimedAttempt.get()).isNotNull();
+    assertThat(claimedAttempt.get()).isNotEqualTo(previousAttempt);
     if (expectedRetrySource == null) {
       verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any(), any());
     } else {
@@ -313,7 +330,7 @@ class InitialGameplayReleaseControllerTest {
     if (!ownsClaim) {
       verifyNoInteractions(port);
     } else {
-      verify(port).apply(effect, claimedAttempt.get(), 2);
+      verify(port).apply(effect, claimedAttempt.get(), ordinal);
       verify(port, never()).readback(any(), any(), anyInt());
     }
     if (ownsClaim && expectedRetrySource == null) {
@@ -399,24 +416,26 @@ class InitialGameplayReleaseControllerTest {
             scope.evidenceRef(),
             "proof",
             DIGEST);
-    when(journal.findTransition(tuple))
-        .thenReturn(
-            java.util.Optional.empty(),
-            committed ? java.util.Optional.of(after) : java.util.Optional.empty());
+    var retainedTransition = new AtomicReference<>(java.util.Optional.<Operation>empty());
+    when(journal.findTransition(tuple)).thenAnswer(invocation -> retainedTransition.get());
     InitialGameplayReleaseEvidence changedEvidence = null;
     if (status == ResolutionStatus.AVAILABLE) {
       changedEvidence = mock(InitialGameplayReleaseEvidence.class);
       when(changedEvidence.evidenceIdentity()).thenReturn("proof");
       when(codec.digest(changedEvidence)).thenReturn("d".repeat(64));
     }
-    if (status == null) {
-      when(provider.read(scope))
-          .thenAnswer(invocation ->
-              new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.MigrationProof(
-                  UUID.randomUUID(), null, "storage", "revision", DIGEST));
-    } else {
-      when(provider.read(scope)).thenReturn(new EvidenceResolution(status, changedEvidence));
-    }
+    var resolution = status == null ? null : new EvidenceResolution(status, changedEvidence);
+    when(provider.read(scope))
+        .thenAnswer(invocation -> {
+          if (committed) {
+            retainedTransition.set(java.util.Optional.of(after));
+          }
+          if (status == null) {
+            new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.MigrationProof(
+                UUID.randomUUID(), null, "storage", "revision", DIGEST);
+          }
+          return resolution;
+        });
     var controller =
         new InitialGameplayReleaseController(
             journal, codec, provider, mock(InitialGameplayReleaseEffectPort.class));
@@ -445,9 +464,13 @@ class InitialGameplayReleaseControllerTest {
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
     var after =
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
-    when(journal.find(operationId))
-        .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
-    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.empty());
+    var snapshot = new AtomicReference<>(before);
+    when(journal.find(operationId)).thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
+    when(journal.findNextEffect(operationId))
+        .thenAnswer(invocation -> {
+          snapshot.set(after);
+          return java.util.Optional.empty();
+        });
     var controller =
         new InitialGameplayReleaseController(
             journal,
@@ -621,8 +644,9 @@ class InitialGameplayReleaseControllerTest {
         .hasMessageContaining("must match receipt");
   }
 
-  @Test
-  void futureDatedOwnerReadbackCannotAdvanceJournal() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void currentOperationSnapshotAcceptsExactOwnerReadbackOnlyWhenNotFutureDated(boolean future) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var effectPort = mock(InitialGameplayReleaseEffectPort.class);
     var scope =
@@ -650,7 +674,7 @@ class InitialGameplayReleaseControllerTest {
         new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
             UUID.randomUUID(),
             effect,
-            DIGEST,
+            codec.digest(effect),
             net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
                 .DISPATCHED,
             1,
@@ -665,16 +689,24 @@ class InitialGameplayReleaseControllerTest {
             attempt,
             outbox.attemptCount(),
             effect.kind(),
-            DIGEST,
-            DIGEST,
+            effect.operationTupleDigest(),
+            outbox.payloadDigest(),
             net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackState
                 .PREPARED_FENCED,
             net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
                 .EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
             "readback",
-            now.plusSeconds(1));
-    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(operation));
-    when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
+            future ? now.plusSeconds(1) : now);
+    var before = mock(Operation.class);
+    when(before.scope()).thenReturn(scope);
+    var snapshot = new AtomicReference<>(before);
+    when(journal.find(scope.operationId()))
+        .thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
+    when(journal.findNextEffect(scope.operationId()))
+        .thenAnswer(invocation -> {
+          snapshot.set(operation);
+          return java.util.Optional.of(outbox);
+        });
     when(effectPort.readback(effect, attempt, outbox.attemptCount()))
         .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback));
     var controller =
@@ -684,10 +716,15 @@ class InitialGameplayReleaseControllerTest {
             mock(InitialGameplayReleaseEvidenceProvider.class),
             effectPort,
             java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
-    assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
-        .isInstanceOf(
-            net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("observation time changed");
-    verify(journal, never()).recordEffectReadback(any(), any(), any());
+    if (future) {
+      assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("observation time changed");
+      verify(journal, never()).recordEffectReadback(any(), any(), any());
+    } else {
+      when(journal.recordEffectReadback(outbox, readback, now)).thenReturn(operation);
+      assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(operation);
+      verify(journal).recordEffectReadback(outbox, readback, now);
+    }
   }
 }

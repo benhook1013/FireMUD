@@ -170,6 +170,7 @@ class RecoveryControllerOwnerConfigurationTest {
           DSLContext dsl = context.getBean(DSLContext.class);
           assertThat(dsl.configuration().transactionProvider())
               .isInstanceOf(SpringTransactionProvider.class);
+          var rollback = new IllegalStateException("rollback caller-owned jOOQ transaction");
           assertThatThrownBy(() ->
                   dsl.transactionResult(configuration -> {
                     assertThat(TransactionSynchronizationManager.isActualTransactionActive())
@@ -177,9 +178,12 @@ class RecoveryControllerOwnerConfigurationTest {
                     assertThatThrownBy(() -> controller.reconcileNextEffect(UUID.randomUUID()))
                         .isInstanceOf(OwnerBoundaryUnavailableException.class)
                         .hasMessageContaining("RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
-                    throw new IllegalStateException("rollback caller-owned jOOQ transaction");
+                    throw rollback;
                   }))
-              .isInstanceOf(RuntimeException.class);
+              .satisfies(failure ->
+                  assertThat(failure == rollback || failure.getCause() == rollback)
+                      .as("the deliberate callback rollback exception is propagated")
+                      .isTrue());
           verify(connection).rollback();
           verifyNoInteractions(journal, effectPort);
         });

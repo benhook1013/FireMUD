@@ -26,6 +26,7 @@ VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
+RECOVERY_SCHEMA = "recovery_control"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
@@ -241,6 +242,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
     effective_settings = {}
     auto_configuration_switch = "spring.boot.enableautoconfiguration"
+    datasource_overrides = {"spring.flyway.url", "spring.flyway.user", "spring.flyway.password"}
     effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
         try:
@@ -256,6 +258,9 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
+            if any(path == override or path.startswith((override + ".", override + "["))
+                   for path in properties for override in datasource_overrides):
+                return None
             exclusion_property = "spring.autoconfigure.exclude"
             exclusion_paths = {
                 path for path in properties
@@ -303,7 +308,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                 return None
             exact_guard_paths = {auto_configuration_switch,
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
-                                 "spring.flyway.table",
+                                 "spring.flyway.table", "spring.flyway.schemas", "spring.flyway.defaultschema",
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
@@ -360,9 +365,15 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
         return None
     normalized_locations = {location.strip() for location in locations}
-    # Recovery readiness reads this exact table, which differs from Flyway's default.
-    if "classpath:db/recovery-control-migration" in normalized_locations and flyway.get("table") != RECOVERY_HISTORY_TABLE:
-        return None
+    if "classpath:db/recovery-control-migration" in normalized_locations:
+        schemas = flyway.get("schemas", [])
+        if isinstance(schemas, str):
+            schemas = [schema.strip() for schema in schemas.split(",")]
+        if schemas not in ([], [RECOVERY_SCHEMA]):
+            return None
+        history_schema = flyway.get("defaultschema", schemas[0] if schemas else None)
+        if history_schema != RECOVERY_SCHEMA or flyway.get("table") != RECOVERY_HISTORY_TABLE:
+            return None
     suffixes = flyway.get("sqlmigrationsuffixes", [".sql"])
     if isinstance(suffixes, str):
         suffixes = [suffixes]
@@ -392,10 +403,16 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     grouped, migrations = effective_sets(current)
     parent_grouped, parent_migrations = effective_sets(parent) if parent is not None else ({}, [])
     issues = []
-    for project in sorted({item.project for item in migrations if RECOVERY_MIGRATION_DIR in item.path}):
+    project = "recovery-controller-service"
+    project_root = f"services/{project}"
+    recovery_versioned = any(item.project == project and RECOVERY_MIGRATION_DIR in item.path for item in migrations)
+    if f"{project_root}/build.gradle.kts" in current or any(item.project == project for item in migrations):
         if not recovery_location_configured(current, project):
-            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway with target latest, "
-                          f"select the recovery-control location, and use history table {RECOVERY_HISTORY_TABLE}")
+            issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
+                          f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
+                          f"in {RECOVERY_SCHEMA}, and share the journal datasource")
+        if not recovery_versioned:
+            issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     recovery_sql_root = (
         "services/recovery-controller-service/src/main/resources" + RECOVERY_MIGRATION_DIR
     )
@@ -529,13 +546,41 @@ def run_self_test() -> None:
 
     recovery = "services/recovery-controller-service/src/main/resources/db/recovery-control-migration/"
     recovery_config = "services/recovery-controller-service/src/main/resources/application.yml"
-    recovery_table_setting = b"    table: flyway_schema_history_recovery_control\n"
+    recovery_table_setting = (
+        b"    schemas: recovery_control\n"
+        b"    default-schema: recovery_control\n"
+        b"    table: flyway_schema_history_recovery_control\n"
+    )
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
     check("absent history table falls back to a table Recovery readiness does not read", {
-        **recovery_history, recovery_config: recovery_settings.removesuffix(recovery_table_setting),
+        **recovery_history,
+        recovery_config: recovery_settings.removesuffix(b"    table: flyway_schema_history_recovery_control\n"),
     }, recovery_history, f"use history table {RECOVERY_HISTORY_TABLE}")
+    recovery_override_config = recovery_config.replace("/application.yml", "/config/application.yml")
+    for setting in ("default-schema", "schemas"):
+        check(f"higher-priority recovery history {setting} cannot point at public", {
+            **recovery_history,
+            recovery_override_config: f"spring.flyway.{setting}: public\n".encode(),
+        }, recovery_history, "historical effective migration no longer applied")
+    for setting in ("url", "user", "password"):
+        check(f"Flyway {setting} cannot separate Recovery migration from the journal datasource", {
+            **recovery_history,
+            recovery_override_config: f"spring.flyway.{setting}: unexpected\n".encode(),
+        }, recovery_history, "share the journal datasource")
+    recovery_build = "services/recovery-controller-service/build.gradle.kts"
+    first_recovery = {**recovery_history, recovery_build: b"plugins {}"}
+    check("first introduction with isolated Recovery migration", first_recovery, {}, None)
+    check("first introduction with only an ignored default-location migration", {
+        recovery_build: first_recovery[recovery_build],
+        recovery_config: recovery_settings,
+        recovery.replace("recovery-control-migration", "migration") + "V1__journal.sql": b"-- misplaced",
+    }, {}, "requires at least one versioned migration in the recovery-control location")
+    check("first introduction with no Recovery migration scripts", {
+        recovery_build: first_recovery[recovery_build],
+        recovery_config: recovery_settings,
+    }, {}, "requires at least one versioned migration in the recovery-control location")
     check("higher-priority history table override does not qualify recovery history", {
         **recovery_history,
         recovery_config.replace("/application.yml", "/config/application.yml"):
@@ -742,6 +787,7 @@ def run_self_test() -> None:
     dotted_recovery_settings = (
         b"spring.flyway.enabled: true\n"
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
+        b"spring.flyway.schemas: [recovery_control]\n"
         b"spring.flyway.table: flyway_schema_history_recovery_control\n"
     )
     check("dotted Spring Flyway recovery properties",
