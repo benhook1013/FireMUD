@@ -15,6 +15,7 @@ import ch.qos.logback.core.read.ListAppender;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -394,6 +395,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .execute(
               "ALTER TABLE recovery_control.initial_gameplay_release_operation"
                   + " ADD CONSTRAINT fixture_requires_bound_phase CHECK (phase <> 'collecting')");
+      int logStart = POSTGRES.getLogs().length();
       var injected = application.getBean(InitialGameplayReleaseJournal.class);
       Scope scope = scope();
       UUID lockIdentity = UUID.randomUUID();
@@ -403,7 +405,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasNoCause();
       assertThat(injected.find(scope.operationId())).isEmpty();
       assertThat(output.getAll()).doesNotContain(lockIdentity.toString());
-      String serverLog = POSTGRES.getLogs();
+      String serverLog =
+          awaitPostgresLogSince(
+              logStart,
+              "violates check constraint \"fixture_requires_bound_phase\"",
+              Duration.ofSeconds(5));
       assertThat(serverLog)
           .contains("violates check constraint \"fixture_requires_bound_phase\"")
           .doesNotContain(lockIdentity.toString());
@@ -1260,7 +1266,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       UUID lock = UUID.randomUUID();
       var preparedJournal = new JooqInitialGameplayReleaseJournal(logging, tupleCodec);
       assertThat(preparedJournal.create(scope(), lock).maintenanceLockIdentity()).isEqualTo(lock);
-      assertThat(POSTGRES.getLogs().substring(logStart))
+      assertThat(
+              awaitPostgresLogSince(
+                  logStart,
+                  "INSERT INTO recovery_control.initial_gameplay_release_operation",
+                  Duration.ofSeconds(5)))
           .contains("INSERT INTO recovery_control.initial_gameplay_release_operation")
           .doesNotContain(lock.toString());
     }
@@ -2833,7 +2843,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @Test
   void acknowledgedReadbackReplayRequiresTheEffectKindsSuccessfulStateInBothReplayBranches() {
-    for (EffectKind effectKind : EffectKind.values()) {
+    for (EffectKind effectKind : List.of(EffectKind.PREPARE_PLAYABLE_STATE_FENCED)) {
       for (boolean exactReplay : List.of(true, false)) {
         clearJournal();
         Instant base = Instant.parse("2026-09-01T00:00:00Z");
@@ -2892,14 +2902,89 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining("did not prove its exact durable outcome");
         assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupted);
-        if (effectKind == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF) {
-          assertThatThrownBy(() -> journal.find(operationId))
-              .isInstanceOf(InitialGameplayReleaseConflictException.class)
-              .hasMessageContaining("did not prove its exact durable outcome");
-        } else {
-          assertThat(journal.find(operationId)).contains(acknowledged);
-        }
+        assertThat(journal.find(operationId)).contains(acknowledged);
       }
+    }
+  }
+
+  @Test
+  void finalizedHandoffRejectsReplayWhenItsRetainedAcknowledgementIsCorrupted() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF, base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    Instant observedAt = base.plusSeconds(7);
+    EffectReadback successful =
+        readbackFor(
+            dispatched,
+            dispatched.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "successful-handoff-readback",
+            observedAt);
+    assertThat(journal.recordEffectReadback(dispatched, successful, observedAt).phase())
+        .isEqualTo(Phase.FINALIZED);
+    EffectReadback corruptedReceipt =
+        readbackFor(
+            dispatched,
+            dispatched.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "corrupted-handoff-readback",
+            observedAt);
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_outbox "
+                    + "SET readback_identity=?, readback_payload=CAST(? AS jsonb), "
+                    + "readback_digest=? WHERE operation_id=? AND effect_id=?",
+                corruptedReceipt.readbackIdentity(),
+                tupleCodec.toJson(corruptedReceipt),
+                tupleCodec.digest(corruptedReceipt),
+                operationId,
+                effectId))
+        .isEqualTo(1);
+    String corrupted = storedOutbox(operationId, effectId);
+
+    assertThatThrownBy(
+            () -> journal.recordEffectReadback(dispatched, successful, base.plusSeconds(9)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("did not prove its exact durable outcome");
+    assertThatThrownBy(() -> journal.find(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("did not prove its exact durable outcome");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupted);
+  }
+
+  @Test
+  void finalizedHandoffAcknowledgementSupportsExactAndLaterSameOutcomeReplay() {
+    for (boolean exactReplay : List.of(true, false)) {
+      clearJournal();
+      Instant base = Instant.parse("2026-09-01T00:00:00Z");
+      OutboxEntry dispatched = authorizedDispatch(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF, base);
+      Instant observedAt = base.plusSeconds(7);
+      EffectReadback acknowledged =
+          readbackFor(
+              dispatched,
+              dispatched.lastAttemptId(),
+              EffectReadbackState.OWNER_HANDOFF_APPLIED,
+              "successful-handoff-readback",
+              observedAt);
+      Operation finalized = journal.recordEffectReadback(dispatched, acknowledged, observedAt);
+      assertThat(finalized.phase()).isEqualTo(Phase.FINALIZED);
+      String retained =
+          storedOutbox(dispatched.effect().operationId(), dispatched.effect().effectId());
+      EffectReadback replay =
+          exactReplay
+              ? acknowledged
+              : readbackFor(
+                  dispatched,
+                  dispatched.lastAttemptId(),
+                  EffectReadbackState.OWNER_HANDOFF_APPLIED,
+                  "successful-handoff-readback",
+                  observedAt.plusSeconds(2));
+
+      assertThat(journal.recordEffectReadback(dispatched, replay, base.plusSeconds(10)))
+          .isEqualTo(finalized);
+      assertThat(storedOutbox(dispatched.effect().operationId(), dispatched.effect().effectId()))
+          .isEqualTo(retained);
     }
   }
 
@@ -4577,27 +4662,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 "v6-observation",
                 base.plusSeconds(2));
         assertThat(
-                legacyDsl.execute(
-                    """
-                    UPDATE recovery_control.initial_gameplay_release_outbox
-                    SET state = 'acknowledged', acknowledged_at = CAST(? AS timestamptz),
-                        updated_at = CAST(? AS timestamptz),
-                        readback_identity = ?, readback_payload = CAST(? AS jsonb),
-                        readback_digest = ?, preparation_observation_payload = CAST(? AS jsonb),
-                        preparation_observation_digest = ?
-                    WHERE outbox_id = ?
-                    """,
-                    acknowledgement.observedAt().atOffset(ZoneOffset.UTC),
-                    (retainObservation ? observation : acknowledgement)
-                        .observedAt()
-                        .atOffset(ZoneOffset.UTC),
-                    acknowledgement.readbackIdentity(),
-                    tupleCodec.toJson(acknowledgement),
-                    tupleCodec.digest(acknowledgement),
-                    retainObservation ? tupleCodec.toJson(observation) : null,
-                    retainObservation ? tupleCodec.digest(observation) : null,
-                    V1_OUTBOX_ID))
-            .isEqualTo(1);
+                legacyJournal
+                    .recordEffectReadback(dispatch, acknowledgement, acknowledgement.observedAt())
+                    .phase())
+            .isEqualTo(Phase.RELEASING);
+        if (retainObservation) {
+          legacyJournal.recordEffectReadback(dispatch, observation, base.plusSeconds(3));
+        }
         String retained = retainedOutboxRow(legacyDsl);
         Flyway upgrade = journalFlyway(legacyUrl, "7");
         if (retainObservation) {
@@ -4609,6 +4680,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           upgrade.migrate();
           upgrade.validate();
           assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("7");
+          OutboxEntry pendingHandoff = legacyJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
+          assertThat(pendingHandoff.effect().kind())
+              .isEqualTo(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
+          OutboxEntry claimedHandoff =
+              legacyJournal.claimEffect(
+                  V1_OPERATION_ID,
+                  pendingHandoff.effect().effectId(),
+                  UUID.randomUUID(),
+                  base.plusSeconds(4));
+          assertThat(claimedHandoff.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+          assertThat(claimedHandoff.lastAttemptId()).isNotNull();
         }
         assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
       }
@@ -5003,6 +5085,23 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 effectId),
             "expected persisted outbox row")
         .get("row_json", String.class);
+  }
+
+  private static String awaitPostgresLogSince(int startOffset, String expected, Duration timeout)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    String current = "";
+    while (System.nanoTime() < deadline) {
+      String logs = POSTGRES.getLogs();
+      if (logs.length() >= startOffset) {
+        current = logs.substring(startOffset);
+        if (current.contains(expected)) {
+          return current;
+        }
+      }
+      Thread.sleep(25);
+    }
+    throw new AssertionError("PostgreSQL log did not contain invocation diagnostic: " + expected);
   }
 
   private static EffectReadback readbackFor(

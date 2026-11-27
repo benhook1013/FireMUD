@@ -238,9 +238,7 @@ public final class InitialGameplayReleaseController {
     }
     try {
       verifyFreshEvidence(operation, evidenceProvider.read(operation.scope()));
-    } catch (OwnerBoundaryUnavailableException
-        | IllegalArgumentException
-        | InitialGameplayReleaseConflictException evidenceFailure) {
+    } catch (RuntimeException evidenceFailure) {
       return journal.findTransition(tuple).orElseThrow(() -> evidenceFailure);
     }
     return journal.transition(tuple, clock.instant());

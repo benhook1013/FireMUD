@@ -33,6 +33,8 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectO
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OwnerInitializationProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OwnerService;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
@@ -439,9 +441,10 @@ class InitialGameplayReleaseControllerTest {
     assertEvidenceFailureTransition(status, false);
   }
 
-  @Test
-  void missingMigrationDispositionStillReturnsTheConcurrentRetainedResult() {
-    assertEvidenceFailureTransition(null, true);
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void missingOwnerDispositionOnlyReplaysAnExactCommittedTransition(boolean committed) {
+    assertEvidenceFailureTransition(null, committed);
   }
 
   private void assertEvidenceFailureTransition(ResolutionStatus status, boolean committed) {
@@ -494,8 +497,13 @@ class InitialGameplayReleaseControllerTest {
             retainedTransition.set(java.util.Optional.of(after));
           }
           if (status == null) {
-            new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.MigrationProof(
-                UUID.randomUUID(), null, "storage", "revision", DIGEST);
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                UUID.randomUUID(),
+                scope.playableStateNamespaceId(),
+                null,
+                "owner",
+                DIGEST);
           }
           return resolution;
         });
@@ -506,6 +514,10 @@ class InitialGameplayReleaseControllerTest {
 
     if (committed) {
       assertThat(controller.resume(command)).isSameAs(after);
+    } else if (status == null) {
+      assertThatThrownBy(() -> controller.resume(command))
+          .isInstanceOf(NullPointerException.class)
+          .hasMessage("disposition must not be null");
     } else if (status == ResolutionStatus.AVAILABLE) {
       assertThatThrownBy(() -> controller.resume(command))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)

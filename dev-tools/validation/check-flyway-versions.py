@@ -27,6 +27,14 @@ MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/d
 RECOVERY_PROJECT = "recovery-controller-service"
 RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
 RECOVERY_SQL_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources/db/recovery-control-migration/"
+RECOVERY_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/"
+RECOVERY_MIGRATION_ROOTS = (RECOVERY_SQL_ROOT, RECOVERY_JAVA_ROOT)
+RECOVERY_MIGRATION_ANCESTORS = {
+    path.as_posix()
+    for root in RECOVERY_MIGRATION_ROOTS
+    for path in (Path(root), *Path(root).parents)
+    if path.parts
+}
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
@@ -73,7 +81,17 @@ class UniqueKeyLoader(yaml.SafeLoader):
 
 
 class RuntimeLiteralLoader(UniqueKeyLoader):
-    """Use Spring-style lowercase YAML boolean literals for runtime guard checks."""
+    """Use the supported subset of packaged Recovery YAML."""
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        for merge_key, sources in node.value:
+            if (merge_key.tag == "tag:yaml.org,2002:merge"
+                    and isinstance(sources, yaml.SequenceNode) and len(sources.value) > 1):
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a Recovery mapping", node.start_mark,
+                    "multi-source YAML merges are unsupported in packaged Recovery YAML", merge_key.start_mark,
+                )
+        super().flatten_mapping(node)
 
 
 RuntimeLiteralLoader.yaml_implicit_resolvers = {
@@ -113,11 +131,7 @@ def migration_path(path: str) -> re.Match[str] | None:
 
 
 def relevant_path(path: str) -> bool:
-    recovery_migration_roots = {
-        RECOVERY_SQL_ROOT.rstrip("/"),
-        f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration",
-    }
-    return path in recovery_migration_roots or bool(migration_path(path)) or (
+    return path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
              or PACKAGED_CONFIG_RE.search(path))
@@ -125,6 +139,8 @@ def relevant_path(path: str) -> bool:
 
 
 def current_snapshot(repo_root: Path) -> Snapshot:
+    symlinks = current_recovery_migration_symlinks(repo_root)
+    linked_prefixes = tuple(path + "/" for path in symlinks)
     paths = [*repo_root.glob("services/*/build.gradle.kts"),
              *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
              *repo_root.glob("services/*/src/main/resources/config/application*.y*ml"),
@@ -134,40 +150,36 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
-             *repo_root.glob(f"{RECOVERY_SQL_ROOT}**/*"),
-             *repo_root.glob(f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
-    symlinks = current_recovery_migration_symlinks(repo_root)
+    for root in RECOVERY_MIGRATION_ROOTS:
+        if not root.startswith(linked_prefixes):
+            paths.extend(repo_root.glob(f"{root}**/*"))
     snapshot = {}
     for path in paths:
         relative = path.relative_to(repo_root).as_posix()
-        if relative in symlinks:
-            snapshot[relative] = SYMLINK_SNAPSHOT
-        elif path.is_file():
+        if relative not in symlinks and not relative.startswith(linked_prefixes) and path.is_file():
             snapshot[relative] = path.read_bytes()
     snapshot.update({path: SYMLINK_SNAPSHOT for path in symlinks})
     return snapshot
 
 
 def current_recovery_migration_symlinks(repo_root: Path) -> set[str]:
-    roots = [
-        repo_root / RECOVERY_SQL_ROOT.rstrip("/"),
-        repo_root / f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration",
-    ]
     symlinks = set()
-    for root in roots:
-        if root.is_symlink():
-            symlinks.add(root.relative_to(repo_root).as_posix())
-            continue
-        if not root.is_dir():
-            continue
-        for directory, dirs, files in os.walk(root, followlinks=False):
-            for name in [*dirs, *files]:
-                path = Path(directory) / name
-                if path.is_symlink():
-                    symlinks.add(path.relative_to(repo_root).as_posix())
+    for root_path in RECOVERY_MIGRATION_ROOTS:
+        relative_root = Path(root_path)
+        root = repo_root / relative_root
+        for relative in (*reversed(relative_root.parents), relative_root):
+            if relative.parts and (repo_root / relative).is_symlink():
+                symlinks.add(relative.as_posix())
+                break
+        else:
+            if root.is_dir():
+                for directory, dirs, files in os.walk(root, followlinks=False):
+                    for name in [*dirs, *files]:
+                        path = Path(directory) / name
+                        if path.is_symlink():
+                            symlinks.add(path.relative_to(repo_root).as_posix())
     return symlinks
-
 
 def git(repo_root: Path, *args: str) -> bytes:
     result = subprocess.run(["git", "-C", str(repo_root), *args], capture_output=True, check=False)
@@ -196,7 +208,7 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
         metadata, raw_path = entry.split(b"\t", 1)
         mode = metadata.split(b" ", 1)[0]
         path = raw_path.decode("utf-8", errors="surrogateescape")
-        if relevant_path(path):
+        if relevant_path(path) and (path not in RECOVERY_MIGRATION_ANCESTORS or mode == b"120000"):
             snapshot[path] = SYMLINK_SNAPSHOT if mode == b"120000" else git(
                 repo_root, "show", f"{commit}:{path}"
             )
@@ -206,22 +218,12 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
 def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     """Apply the SQL-only Recovery input policy to either side of a comparison."""
     issues = []
-    recovery_java_root = (
-        "services/recovery-controller-service/src/main/java/db/recovery-control-migration/"
-    )
     for path in sorted(snapshot):
         if snapshot[path] == SYMLINK_SNAPSHOT and (
-            path.startswith((
-                RECOVERY_SQL_ROOT,
-                "services/recovery-controller-service/src/main/java/db/recovery-control-migration/",
-            ))
-            or path in {
-                RECOVERY_SQL_ROOT.rstrip("/"),
-                "services/recovery-controller-service/src/main/java/db/recovery-control-migration",
-            }
+            path in RECOVERY_MIGRATION_ANCESTORS or path.startswith(RECOVERY_MIGRATION_ROOTS)
         ):
             issues.append(f"{path}: Recovery migration symlinks are unsupported")
-        if path.startswith(recovery_java_root):
+        if path.startswith(RECOVERY_JAVA_ROOT):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
         if not path.startswith(RECOVERY_SQL_ROOT):
             continue
@@ -1282,6 +1284,25 @@ def run_self_test() -> None:
             b"    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
     }, complete_recovery_history, None)
+    check("a single-source merge sequence preserves explicit overrides", {
+        **complete_recovery_history, recovery_config: (
+            b"defaults: &fallback {enabled: false}\n" + recovery_settings
+            + b"    <<: [*fallback]\n    enabled: true\n"
+        ),
+    }, complete_recovery_history, None)
+    try:
+        collect_issues({
+            **complete_recovery_history, recovery_config: (
+                b"first: &first {enabled: true}\n"
+                b"second: &second {target: latest}\n" + recovery_settings
+                + b"    <<: [*first, *second]\n"
+            ),
+        }, complete_recovery_history)
+    except ValueError as error:
+        if "multi-source YAML merges are unsupported" not in str(error):
+            raise
+    else:
+        raise AssertionError("multi-source Recovery YAML merge was accepted")
     reused_alias = {
         **complete_recovery_history,
         recovery_config: (
@@ -1454,29 +1475,30 @@ def run_self_test() -> None:
         symlink_parent_issues, _, _ = collect_issues(combined_fixture, symlink_parent)
         if not any("Recovery migration symlinks are unsupported" in issue for issue in symlink_parent_issues):
             raise AssertionError("receiving-parent Recovery migration symlink was not rejected")
-        for migration_root in (
+        for linked_path in (
             RECOVERY_SQL_ROOT.rstrip("/"),
-            f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration",
+            RECOVERY_SQL_ROOT.rstrip("/").rsplit("/", 1)[0],
+            RECOVERY_JAVA_ROOT.rstrip("/"),
+            RECOVERY_JAVA_ROOT.rstrip("/").rsplit("/", 1)[0],
         ):
             with tempfile.TemporaryDirectory() as symlink_tmp:
                 symlink_repo = Path(symlink_tmp)
                 target = symlink_repo / "outside-root"
                 target.mkdir()
-                (target / "V1__journal.sql").write_text("-- target", encoding="utf-8")
-                root_link = symlink_repo / migration_root
+                root_link = symlink_repo / linked_path
                 root_link.parent.mkdir(parents=True, exist_ok=True)
                 root_link.symlink_to(target, target_is_directory=True)
                 git(symlink_repo, "init", "-q")
                 git(symlink_repo, "add", ".")
                 git(symlink_repo, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid",
-                    "commit", "-qm", "root symlink")
-                root_commit = git(symlink_repo, "rev-parse", "HEAD").decode().strip()
-                root_snapshot = parent_snapshot(symlink_repo, root_commit)
-                if root_snapshot.get(migration_root) != SYMLINK_SNAPSHOT:
-                    raise AssertionError(f"receiving-parent Recovery root symlink was omitted: {migration_root}")
-                if not any("Recovery migration symlinks are unsupported" in issue
-                           for issue in recovery_input_issues(root_snapshot)):
-                    raise AssertionError(f"receiving-parent Recovery root symlink was not rejected: {migration_root}")
+                    "commit", "-qm", "linked migration input")
+                link_commit = git(symlink_repo, "rev-parse", "HEAD").decode().strip()
+                for snapshot in (current_snapshot(symlink_repo), parent_snapshot(symlink_repo, link_commit)):
+                    if snapshot != {linked_path: SYMLINK_SNAPSHOT}:
+                        raise AssertionError(f"Recovery migration link was not captured: {linked_path}")
+                    if not any("Recovery migration symlinks are unsupported" in issue
+                               for issue in recovery_input_issues(snapshot)):
+                        raise AssertionError(f"Recovery migration link was not rejected: {linked_path}")
 
         make_fixture(root, [local + "V2__new.sql"])
         check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")

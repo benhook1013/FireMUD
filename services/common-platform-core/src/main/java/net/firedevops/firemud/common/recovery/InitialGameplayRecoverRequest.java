@@ -49,10 +49,7 @@ public record InitialGameplayRecoverRequest(
       Objects.requireNonNull(launchAssociation, "launchAssociation");
       Objects.requireNonNull(peerStorageBinding, "peerStorageBinding");
       evidenceRef = text(evidenceRef, 512);
-      if (evidenceRef
-          .codePoints()
-          .anyMatch(codePoint ->
-              (codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe)) {
+      if (evidenceRef.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
         throw new IllegalArgumentException(
             "Evidence reference must not contain Unicode noncharacters");
       }
@@ -92,14 +89,14 @@ public record InitialGameplayRecoverRequest(
       String bindingDigest) {
     public PeerStorageBinding {
       targetNamespace = namespace(targetNamespace);
-      clusterIdentity = text(clusterIdentity, 256);
+      clusterIdentity = journalSelector(clusterIdentity, 256);
       peerWorkloadIdentity = text(peerWorkloadIdentity, 256);
       if (!peerWorkloadIdentity.equals(
           "spiffe://firemud/ns/" + targetNamespace + "/sa/game-session-service")) {
         throw new IllegalArgumentException("Expected same-namespace Game Session peer selector");
       }
-      storageIdentity = text(storageIdentity, 256);
-      storageRevision = text(storageRevision, 128);
+      storageIdentity = journalSelector(storageIdentity, 256);
+      storageRevision = journalSelector(storageRevision, 128);
       bindingDigest = digest(bindingDigest);
     }
   }
@@ -161,6 +158,20 @@ public record InitialGameplayRecoverRequest(
       throw new IllegalArgumentException("Text must be bounded nonblank Unicode without controls");
     }
     return normalized;
+  }
+
+  private static String journalSelector(String value, int limit) {
+    String normalized = text(value, limit);
+    if (!normalized.equals(value)
+        || value.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
+      throw new IllegalArgumentException(
+          "Peer/storage selectors must be in NFC and contain no Unicode noncharacters");
+    }
+    return value;
+  }
+
+  private static boolean isNoncharacter(int codePoint) {
+    return (codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe;
   }
 
   private static boolean isUnicodeWhitespaceOnly(String value) {
