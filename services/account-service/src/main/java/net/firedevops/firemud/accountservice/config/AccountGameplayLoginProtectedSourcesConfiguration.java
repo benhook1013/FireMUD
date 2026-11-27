@@ -31,10 +31,17 @@ public class AccountGameplayLoginProtectedSourcesConfiguration {
   LettuceAccountCoordinationPinnedConnectionProvider accountGameplayLoginCoordinationConnections(
       @Value("${firemud.account.gameplay-login.coordination.uri:}") String configuredUri,
       @Value("${firemud.account.gameplay-login.coordination.command-timeout-millis:0}")
-          int commandTimeoutMillis) {
+          int commandTimeoutMillis,
+      org.springframework.beans.factory.ObjectProvider<
+              net.firedevops.firemud.common.prev1.PreV1GateWaivers>
+          waivers) {
+    boolean waived =
+        waivers
+            .getIfAvailable(net.firedevops.firemud.common.prev1.PreV1GateWaivers::disabled)
+            .enabled();
     try {
       return new LettuceAccountCoordinationPinnedConnectionProvider(
-          requiredCoordinationUri(configuredUri, commandTimeoutMillis));
+          requiredCoordinationUri(configuredUri, commandTimeoutMillis, waived));
     } catch (RuntimeException failure) {
       throw unavailable();
     }
@@ -52,6 +59,12 @@ public class AccountGameplayLoginProtectedSourcesConfiguration {
   }
 
   static RedisURI requiredCoordinationUri(String configuredUri, int timeoutMillis) {
+    return requiredCoordinationUri(configuredUri, timeoutMillis, false);
+  }
+
+  /** Requires TLS; Compose smoke may use plaintext only under the pre-v1 gate waiver. */
+  static RedisURI requiredCoordinationUri(
+      String configuredUri, int timeoutMillis, boolean preV1Plaintext) {
     char[] password = null;
     try {
       if (configuredUri == null
@@ -63,7 +76,8 @@ public class AccountGameplayLoginProtectedSourcesConfiguration {
       URI uri = URI.create(configuredUri);
       String userInfo = uri.getUserInfo();
       String principal = AccountGameplayDelegationRedisClient.REQUIRED_ACL_IDENTITY;
-      if (!"rediss".equals(uri.getScheme())
+      boolean tls = "rediss".equals(uri.getScheme());
+      if (!(tls || preV1Plaintext && "redis".equals(uri.getScheme()))
           || uri.getHost() == null
           || uri.getHost().isBlank()
           || uri.getPort() < 1
@@ -80,8 +94,8 @@ public class AccountGameplayLoginProtectedSourcesConfiguration {
       password = userInfo.substring(principal.length() + 1).toCharArray();
       var credentials = RedisCredentials.just(principal, password);
       return RedisURI.Builder.redis(uri.getHost(), uri.getPort())
-          .withSsl(true)
-          .withVerifyPeer(true)
+          .withSsl(tls)
+          .withVerifyPeer(tls)
           .withAuthentication(RedisCredentialsProvider.from(() -> credentials))
           .withDatabase(0)
           .withTimeout(Duration.ofMillis(timeoutMillis))

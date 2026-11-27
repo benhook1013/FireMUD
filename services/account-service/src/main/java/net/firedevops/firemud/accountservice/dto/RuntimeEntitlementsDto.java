@@ -1,7 +1,9 @@
 package net.firedevops.firemud.accountservice.dto;
 
+import java.util.UUID;
+
 public record RuntimeEntitlementsDto(
-    Long tenantId,
+    UUID tenantId,
     boolean gameplayAvailable,
     boolean allowPublicJoin,
     long entitlementVersion,

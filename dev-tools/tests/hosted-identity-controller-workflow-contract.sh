@@ -350,7 +350,7 @@ assert runtime_job["outputs"]["publishable"] == (
 )
 assert run_smoke_step["id"] == "runtime-smoke"
 assert run_smoke_step["continue-on-error"] is True
-assert run_smoke_step["env"]["FIREMUD_SMOKE_ADMISSION_QUALIFICATION"] == "held"
+assert run_smoke_step["env"]["FIREMUD_SMOKE_ADMISSION_QUALIFICATION"] == "baseline"
 smoke_gate = "${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
 assert setup_smoke_python_step["if"] == smoke_gate
 assert setup_smoke_python_step["uses"] == "./.github/actions/setup-python"

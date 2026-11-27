@@ -68,4 +68,32 @@ final class CanonicalGameplayRegionBindingBridgeOwnerFactory {
         entityReferenceClient,
         createdReferenceClient);
   }
+
+  /**
+   * Same composition over explicit placement and actor ports (pre-v1 run-owned fixture stand-ins).
+   */
+  static CanonicalGameplayRegionBindingBridgeOwner compose(
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      RedisURI coordinationUri,
+      RedisScriptCatalog scriptCatalog,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalGameplayRegionLeaseOwner.PlacementSource placementSource,
+      CanonicalGameplayRegionBindingBridgeOwner.ActorSource actorSource,
+      RuntimeIdentity runtimeIdentity,
+      Duration leaseTtl,
+      Clock clock) {
+    return new CanonicalGameplayRegionBindingBridgeOwner(
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            dsl,
+            coordinationRedis,
+            coordinationUri,
+            scriptCatalog,
+            incarnationSource,
+            placementSource,
+            runtimeIdentity,
+            leaseTtl,
+            clock),
+        Objects.requireNonNull(actorSource, "actorSource"));
+  }
 }

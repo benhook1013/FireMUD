@@ -128,6 +128,53 @@ class GameDesignGrpcServiceAuthTest {
   }
 
   @Test
+  void canonicalTenantReadServesOnlySameNamespaceGameSession() {
+    var tenant = java.util.UUID.fromString("5b8d4c0e-3a1f-4f6e-9b2d-7c1e0a9f3d21");
+    var games = Mockito.mock(net.firedevops.firemud.gamedesign.repository.GameRepository.class);
+    Mockito.when(games.findRuntimeTenantIdentityByTenantKey("1"))
+        .thenReturn(
+            Optional.of(
+                new net.firedevops.firemud.gamedesign.repository.GameTenantIdentity(
+                    tenant,
+                    net.firedevops.firemud.gamedesign.repository.GameTenantIdentity.ProvenanceKind
+                        .NEW_GAME_ROW,
+                    1L,
+                    null)));
+    GameDesignGrpcService service =
+        newService(
+            Mockito.mock(VersionService.class), Mockito.mock(VersionAssetArtifactService.class));
+    ReflectionTestUtils.setField(service, "workloadNamespace", WORKLOAD_NAMESPACE);
+    service.setGameRepository(games);
+    var request =
+        net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantRequest.newBuilder()
+            .setTenantId("1")
+            .build();
+
+    AtomicReference<net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse> served =
+        new AtomicReference<>();
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            GrpcPeerIdentity.parseUri(
+                    "spiffe://firemud/ns/" + WORKLOAD_NAMESPACE + "/sa/game-session-service")
+                .orElseThrow())
+        .run(() -> service.resolveCanonicalTenant(request, responseObserver(served)));
+    assertEquals(tenant.toString(), served.get().getCanonicalTenantId());
+
+    this.<net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse>assertDeniedMatrix(
+        observer -> service.resolveCanonicalTenant(request, observer),
+        response -> response.getError().getCode(),
+        "world-management-service",
+        "account-service");
+    this.<net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse>assertDenied(
+        observer -> service.resolveCanonicalTenant(request, observer),
+        response -> response.getError().getCode(),
+        "game-session-service",
+        "other-namespace",
+        Identity.PEER);
+  }
+
+  @Test
   void publishedReleaseBundleReadDeniesEveryIdentityBeforeOwnerServiceAccess() {
     VersionService versionService = Mockito.mock(VersionService.class);
     GameDesignGrpcService service =

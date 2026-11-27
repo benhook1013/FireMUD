@@ -308,6 +308,28 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void runOwnedFixtureTargetCapturesTheFixtureSourceShape() {
+    Fixture f = fixture(false);
+    controlledTarget(f.targets, true);
+    var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
+    assertThat(value.isRunOwnedFixtureSource()).isTrue();
+    assertThat(((Map<?, ?>) value.fields().get("target")).get("targetClass"))
+        .isEqualTo("PUBLIC_PRODUCTION");
+    var references = (Map<?, ?>) value.fields().get("sourceReferences");
+    assertThat(references.get("fixturePolicySealDigest")).isEqualTo("sha256:" + "d".repeat(64));
+    assertThat(references.get("fixtureLifecycleDigest"))
+        .isEqualTo(
+            RuntimePlayerAdmissionEntitlementEvidence.digestBytes(
+                "controlled-fixture-world-source".getBytes(StandardCharsets.UTF_8)));
+    assertThat(references.get("worldRowVersion")).isEqualTo("3");
+    assertThat(references.containsKey("worldCaptureId")).isFalse();
+    assertThat(references.containsKey("publishedPolicySetDigest")).isFalse();
+    assertThat(references.containsKey("worldLifecycleDigest")).isFalse();
+    assertThat(RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(value.canonicalBytes()))
+        .isEqualTo(value);
+  }
+
+  @Test
   void actualAbsenceBaselineReturnsNonadmittingPlayerEvidenceWithoutCreatingMembership() {
     Fixture f = fixture(false);
     long before = f.dsl.fetchCount(DSL.table("account_tenant_membership"));
@@ -586,8 +608,12 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
 
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
   private static void controlledTarget(CanonicalGameplayAdmissionDecisionReadClient targets) {
-    when(targets.resolvePublishedRealmAdmissionTarget(any()))
-        .thenAnswer(
+    controlledTarget(targets, false);
+  }
+
+  private static void controlledTarget(
+      CanonicalGameplayAdmissionDecisionReadClient targets, boolean runOwnedFixture) {
+    doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               var selector =
@@ -663,6 +689,30 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                   .thenReturn(UUID.fromString("44444444-4444-4444-8444-444444444444"));
               when(world.rowVersion()).thenReturn(2L);
               when(read.worldLifecycleEvidence()).thenReturn(world);
+              if (runOwnedFixture) {
+                when(read.isRunOwnedFixture()).thenReturn(true);
+                when(read.sourceEvidence()).thenThrow(new IllegalStateException("fixture"));
+                when(read.worldLifecycleEvidence()).thenThrow(new IllegalStateException("fixture"));
+                var fixture =
+                    mock(
+                        net.firedevops.firemud.common.world
+                            .CanonicalGameplayRunOwnedFixtureSourceEvidence.class);
+                when(fixture.admissionPointerSnapshotDigest()).thenReturn("a".repeat(64));
+                when(fixture.gameSessionOwnerProof()).thenReturn(ownerProof);
+                when(fixture.fixturePolicySealEvidenceDigest())
+                    .thenReturn("sha256:" + "d".repeat(64));
+                when(read.fixtureSource()).thenReturn(fixture);
+                var lifecycle =
+                    mock(
+                        net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence
+                            .class);
+                when(lifecycle.canonicalBytes())
+                    .thenReturn(
+                        "controlled-fixture-world-source"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                when(lifecycle.rowVersion()).thenReturn(3L);
+                when(read.fixtureLifecycleEvidence()).thenReturn(lifecycle);
+              }
               when(targets.readPublishedRealmAdmissionOwner(strict))
                   .thenAnswer(
                       readCall -> {
@@ -671,7 +721,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                         return read;
                       });
               return resolved;
-            });
+            })
+        .when(targets)
+        .resolvePublishedRealmAdmissionTarget(any());
   }
 
   private static final class Fixture {
@@ -686,6 +738,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private final UUID tenantId = UUID.randomUUID();
     private final CanonicalJoinScopeV2 scope;
     private final AccountPlayerAdmissionEntitlementOwner owner;
+    private final CanonicalGameplayAdmissionDecisionReadClient targets;
 
     private Fixture(
         DriverManagerDataSource dataSource,
@@ -881,7 +934,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                             .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
                 return Optional.of(candidate);
               });
-      var targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
+      targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
       controlledTarget(targets);
       owner =
           new AccountPlayerAdmissionEntitlementOwner(

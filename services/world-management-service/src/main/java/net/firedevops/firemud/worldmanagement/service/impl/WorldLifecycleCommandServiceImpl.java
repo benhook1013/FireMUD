@@ -58,6 +58,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssoc
 import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.jooq.DSLContext;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -108,6 +109,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   private final String workloadNamespace;
 
   private volatile RunOwnedWorldFixtureOwners runOwnedWorldFixtureOwners;
+  private volatile WorldRuntimeInstallationRegistry runtimeInstallationRegistry;
 
   private final TransactionOperations fixtureTransactionOperations;
   private final TransactionOperations prepareTransactionOperations;
@@ -480,6 +482,25 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     return transaction;
   }
 
+  /** Present only where a runtime installation source is configured (Compose pre-v1 waiver). */
+  @Autowired(required = false)
+  void setRuntimeInstallationRegistry(WorldRuntimeInstallationRegistry registry) {
+    this.runtimeInstallationRegistry = registry;
+  }
+
+  /**
+   * Freezes the current installation's required owners for the canonical fixture instance and holds
+   * the installation through the owner's synchronous commit.
+   */
+  private <T> T withFixtureLaunchOwners(
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence, Supplier<T> owner) {
+    WorldRuntimeInstallationRegistry registry = runtimeInstallationRegistry;
+    if (registry == null) throw fixtureEvidenceUnavailable();
+    registry.register();
+    return registry.withLaunchOwners(
+        fixtureEvidence.gameSessionAssociation().gameInstanceUuid(), owner);
+  }
+
   @PostConstruct
   void initMetrics() {
     prepareCounter = meterRegistry.counter("world_instance_prepare_total");
@@ -601,25 +622,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       throw fixtureEvidenceMismatch();
     }
     prepareCounter.increment();
-    WorldInstanceLifecycleSnapshotDto materializedSnapshot = snapshot(materialized);
-    return new WorldInstanceLifecycleSnapshotDto(
-        originalGameSessionRequest.tenantId(),
-        originalGameSessionRequest.gameInstanceId(),
-        materializedSnapshot.gameTemplateId(),
-        materializedSnapshot.controlPlaneRequestId(),
-        materializedSnapshot.launchDescriptorId(),
-        originalGameSessionRequest.versionId(),
-        materializedSnapshot.releaseBundleId(),
-        materializedSnapshot.generationConfigRevision(),
-        materializedSnapshot.publishedReleaseBundleRef(),
-        materializedSnapshot.versionStateEpoch(),
-        materializedSnapshot.lifecycleEpoch(),
-        materializedSnapshot.status(),
-        materializedSnapshot.remapSetId(),
-        materializedSnapshot.workflowId(),
-        materializedSnapshot.workflowFamily(),
-        materializedSnapshot.workflowRunId(),
-        materializedSnapshot.workflowStatus());
+    return gameSessionSnapshot(originalGameSessionRequest, snapshot(materialized));
   }
 
   private <T> T executeFixtureOwnerTransaction(Supplier<T> operation) {
@@ -633,6 +636,13 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   @Timed(value = "world.prepareInstance")
   public WorldInstanceLifecycleSnapshotDto prepareWorldInstance(
       PreparedWorldInstanceRequest request) {
+    if (canonicalFixtureModeEnabled()) {
+      validatePrepareRequest(request);
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence =
+          runOwnedCanonicalWorldLaunchEvidenceProvider.requireAuthenticatedEvidence();
+      return withFixtureLaunchOwners(
+          fixtureEvidence, () -> prepareRunOwnedFixture(request, fixtureEvidence));
+    }
     if (prepareTransactionOperations == null) return preparePublishedWorldInstance(request);
     return Objects.requireNonNull(
         prepareTransactionOperations.execute(status -> preparePublishedWorldInstance(request)),
@@ -730,9 +740,136 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   }
 
   @Override
-  @Transactional
   @Timed(value = "world.activateInstance")
   public WorldInstanceLifecycleSnapshotDto activatePreparedWorldInstance(
+      long tenantId, long gameInstanceId, long expectedLifecycleEpoch) {
+    if (canonicalFixtureModeEnabled()) {
+      return activateRunOwnedFixture(tenantId, gameInstanceId, expectedLifecycleEpoch);
+    }
+    if (prepareTransactionOperations == null) {
+      return activatePublishedWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch);
+    }
+    return Objects.requireNonNull(
+        prepareTransactionOperations.execute(
+            status ->
+                activatePublishedWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch)),
+        "Activation transaction returned no World snapshot");
+  }
+
+  /**
+   * Activates the canonical fixture World row addressed by the authenticated Game Session
+   * allocation. The Game Session keys only select the retained association; the World-private keys,
+   * original request and preparation binding come from the owner's committed evidence.
+   */
+  WorldInstanceLifecycleSnapshotDto activateRunOwnedFixture(
+      long tenantId, long gameInstanceId, long expectedLifecycleEpoch) {
+    requireNoAmbientFixtureReadTransaction();
+    return activateRunOwnedFixture(
+        tenantId,
+        gameInstanceId,
+        expectedLifecycleEpoch,
+        runOwnedCanonicalWorldLaunchEvidenceProvider.requireAuthenticatedEvidence());
+  }
+
+  WorldInstanceLifecycleSnapshotDto activateRunOwnedFixture(
+      long tenantId,
+      long gameInstanceId,
+      long expectedLifecycleEpoch,
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence) {
+    requireNoAmbientFixtureReadTransaction();
+    if (!canonicalFixtureModeEnabled()) throw fixtureWritesUnavailable();
+    fixtureEvidence.requireFixedGameSessionPeer();
+    fixtureEvidence.requireGameSessionAllocation(tenantId, gameInstanceId);
+    RunOwnedWorldFixtureOwners owners = requireRunOwnedWorldFixtureOwners();
+    WorldCanonicalInstanceAssociation retained =
+        owners
+            .associationRepository()
+            .readOwnerAssociation(fixtureEvidence.gameSessionAssociation().gameInstanceUuid())
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "WORLD_INSTANCE_NOT_FOUND: run-owned fixture World association is not prepared"));
+    WorldInstance prepared =
+        worldInstanceRepository
+            .findById(retained.worldInstanceId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "RUN_OWNED_WORLD_INSTANCE_MISSING: fixture World row is missing"));
+    PreparedWorldInstanceRequest originalGameSessionRequest =
+        new PreparedWorldInstanceRequest(
+            tenantId,
+            gameInstanceId,
+            prepared.getGameTemplateId(),
+            prepared.getControlPlaneRequestId(),
+            prepared.getLaunchDescriptorId(),
+            fixtureEvidence.launchDescriptor().versionId(),
+            prepared.getScriptPatchVersion(),
+            prepared.getRuntimeFlagsJson(),
+            prepared.getGenerationConfigRevision(),
+            prepared.getReleaseBundleId(),
+            prepared.getPublishedReleaseBundleRef(),
+            prepared.getVersionStateEpoch(),
+            prepared.getRemapSetId());
+    long expectedRowVersion = prepared.getRowVersion();
+    boolean transitioned =
+        withFixtureLaunchOwners(
+            fixtureEvidence,
+            () ->
+                executeFixtureOwnerTransaction(
+                    () -> {
+                      WorldCanonicalInstanceAssociation association =
+                          owners
+                              .associationRepository()
+                              .readRunOwnedFixtureAssociationInActivationTransaction(
+                                  fixtureEvidence, originalGameSessionRequest);
+                      return owners
+                          .associationRepository()
+                          .activateRunOwnedFixtureInOwnerTransaction(
+                              association, expectedLifecycleEpoch, expectedRowVersion);
+                    }));
+    WorldInstance activated =
+        worldInstanceRepository
+            .findById(retained.worldInstanceId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "RUN_OWNED_WORLD_INSTANCE_MISSING: fixture World row is missing"));
+    if (!STATUS_ACTIVE.equals(activated.getStatus())) throw lifecycleEpochMismatch();
+    if (transitioned) {
+      activateCounter.increment();
+      logger.info(
+          "Activated run-owned fixture world instance worldInstanceId={} lifecycleEpoch={}",
+          activated.getId(),
+          activated.getLifecycleEpoch());
+    }
+    return gameSessionSnapshot(originalGameSessionRequest, snapshot(activated));
+  }
+
+  private static WorldInstanceLifecycleSnapshotDto gameSessionSnapshot(
+      PreparedWorldInstanceRequest originalGameSessionRequest,
+      WorldInstanceLifecycleSnapshotDto worldSnapshot) {
+    return new WorldInstanceLifecycleSnapshotDto(
+        originalGameSessionRequest.tenantId(),
+        originalGameSessionRequest.gameInstanceId(),
+        worldSnapshot.gameTemplateId(),
+        worldSnapshot.controlPlaneRequestId(),
+        worldSnapshot.launchDescriptorId(),
+        originalGameSessionRequest.versionId(),
+        worldSnapshot.releaseBundleId(),
+        worldSnapshot.generationConfigRevision(),
+        worldSnapshot.publishedReleaseBundleRef(),
+        worldSnapshot.versionStateEpoch(),
+        worldSnapshot.lifecycleEpoch(),
+        worldSnapshot.status(),
+        worldSnapshot.remapSetId(),
+        worldSnapshot.workflowId(),
+        worldSnapshot.workflowFamily(),
+        worldSnapshot.workflowRunId(),
+        worldSnapshot.workflowStatus());
+  }
+
+  private WorldInstanceLifecycleSnapshotDto activatePublishedWorldInstance(
       long tenantId, long gameInstanceId, long expectedLifecycleEpoch) {
     WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
     if (worldInstance.getRunOwnedFixtureBindingSha256() != null) {

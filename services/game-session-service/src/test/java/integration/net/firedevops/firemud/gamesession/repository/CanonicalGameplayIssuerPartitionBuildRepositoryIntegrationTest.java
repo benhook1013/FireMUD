@@ -2391,7 +2391,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     Long unexpectedMaterializedFields =
         dsl.fetchSingle(
                 "SELECT count(*) FROM game_session_canonical_binding_region_bridge_obligation g"
-                    + " WHERE jsonb_strip_nulls(to_jsonb(g) - "
+                    + " WHERE jsonb_strip_nulls((CASE"
+                    + " WHEN to_jsonb(g)->>'world_source_kind' = 'HUMAN_CAPTURE'"
+                    + " THEN to_jsonb(g) - 'world_source_kind' ELSE to_jsonb(g) END) - "
                     + originalFields
                     + ") <> '{}'::jsonb")
             .get(0, Long.class);

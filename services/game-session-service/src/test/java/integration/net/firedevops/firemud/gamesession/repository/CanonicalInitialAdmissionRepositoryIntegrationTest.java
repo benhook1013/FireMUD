@@ -1489,7 +1489,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     return fixture
         .dsl
         .fetchSingle(
-            "SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(attempt)) "
+            "SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(attempt) - 'fixture_provenance_digest') "
                 + "ORDER BY initial_admission_request_id)::TEXT FROM game_session_canonical_initial_admission_attempt attempt")
         .get(0, String.class);
   }
@@ -2114,7 +2114,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             "SELECT jsonb_build_array(xmin::TEXT, to_jsonb(attempt) - ARRAY["
                 + "'account_protection_evidence_version', 'account_protection_id', "
                 + "'account_protection_fence', 'original_owner_attempt_id', 'original_owner_mutation_id', "
-                + "'original_owner_fence', 'account_protection_evidence_bytes'])::TEXT AS projection "
+                + "'original_owner_fence', 'account_protection_evidence_bytes', 'fixture_provenance_digest'])::TEXT AS projection "
                 + "FROM game_session_canonical_initial_admission_attempt attempt "
                 + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
             NAMESPACE,
@@ -2155,7 +2155,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     return fixture
         .dsl
         .fetchSingle(
-            "SELECT xmin::text || '/' || to_jsonb(attempt)::text AS projection "
+            "SELECT xmin::text || '/' || "
+                + "(to_jsonb(attempt) - 'fixture_provenance_digest')::text AS projection "
                 + "FROM game_session_canonical_initial_admission_attempt attempt WHERE target_namespace = ? "
                 + "AND initial_admission_request_id = ?",
             request.targetNamespace(),
@@ -2581,7 +2582,18 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "'fk_gs_canonical_human_runtime_completion_attempt', "
                 + "'fk_gs_canonical_human_runtime_completion_launch') "
                 + "AND completion_child.relname = 'game_session_canonical_human_runtime_completion' "
-                + "AND completion_namespace.nspname = current_schema())) guard")
+                + "AND completion_namespace.nspname = current_schema()) "
+                + "AND NOT EXISTS (SELECT 1 FROM pg_constraint fixture_fk "
+                + "JOIN pg_class fixture_child ON fixture_child.oid = fixture_fk.conrelid "
+                + "JOIN pg_namespace fixture_namespace "
+                + "ON fixture_namespace.oid = fixture_child.relnamespace "
+                + "WHERE fixture_fk.oid = trigger.tgconstraint "
+                + "AND fixture_fk.conname IN ("
+                + "'fk_gs_run_owned_fixture_runtime_completion_intent', "
+                + "'fk_gs_run_owned_fixture_runtime_completion_attempt', "
+                + "'fk_gs_run_owned_fixture_runtime_completion_launch') "
+                + "AND fixture_child.relname = 'game_session_run_owned_fixture_runtime_completion' "
+                + "AND fixture_namespace.nspname = current_schema())) guard")
         .get(0, String.class);
   }
 

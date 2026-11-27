@@ -42,6 +42,9 @@ PLAINTEXT_TELNET_HOST_ERROR = "tls_enabled=False requires a localhost-equivalent
 WORLD_DISCOVERY_ROW = re.compile(
     r"^\s*\S(?:.*?\S)?\s+\(([^()\r\n]+)\)\s*$"
 )
+CANONICAL_WORLD_DISCOVERY_ROW = re.compile(
+    r"^\s*([a-z0-9]+(?:-[a-z0-9]+)*)/([a-z0-9]+(?:-[a-z0-9]+)*)\s*$"
+)
 WORLD_DISCOVERY_POLL_INTERVAL_SECONDS = 0.5
 RETRYABLE_UPSTREAM_FAILURE_PREFIXES = ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
 DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES = (
@@ -220,17 +223,23 @@ def worlds_response_contains_selector(response, selector):
     if not isinstance(selector, str) or not selector.strip():
         raise ValueError("World discovery selector must be a non-empty string")
     normalized_selector = selector.strip().casefold()
-    slugs = []
+    matches = 0
     for line in response.splitlines():
         match = WORLD_DISCOVERY_ROW.fullmatch(line)
         if match is not None:
-            slugs.append(match.group(1).strip().casefold())
+            matches += match.group(1).strip().casefold() == normalized_selector
+            continue
+        canonical = CANONICAL_WORLD_DISCOVERY_ROW.fullmatch(line)
+        if canonical is not None:
+            tenant, world = canonical.groups()
+            # The canonical menu accepts the exact tenant/world or a unique tenant alias.
+            matches += normalized_selector == f"{tenant}/{world}" or (
+                not normalized_selector.isdecimal() and normalized_selector == tenant
+            )
 
-    matches = [slug for slug in slugs if slug == normalized_selector]
-
-    if len(matches) > 1:
+    if matches > 1:
         raise ProbeOperationalFailure(f"Configured smoke world selector {selector!r} appears ambiguously in WORLDS")
-    return len(matches) == 1
+    return matches == 1
 
 
 def wait_for_world_discovery(selector, expected_substrings, timeout_seconds, execute_worlds):
@@ -343,6 +352,19 @@ def run_transport_session(
             return result
 
 
+def websocket_fail_closed_play_steps(username, password, world, worlds_expect, login_expect):
+    """WebSocket steps until PLAY moves onto the canonical admission chain (#3481).
+
+    The run-owned fixture is canonical-only, so the retired numeric WebSocket PLAY must stay
+    fail-closed after a successful LOGIN; LOOK is proven once PLAY admits through the chain.
+    """
+    return [
+        ("WORLDS", [worlds_expect], "WORLDS"),
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        (f"PLAY {world}", ["ERROR ENTITLEMENT_UNAVAILABLE"], "PLAY"),
+    ]
+
+
 def login_play_look_steps(
     username,
     password,
@@ -371,6 +393,24 @@ def login_play_look_steps(
     return [
         (line, expected, label, look_timeout) if label == "LOOK" else (line, expected, label)
         for (line, expected, label) in steps
+    ]
+
+
+def canonical_fixture_play_steps(
+    username, password, world, worlds_expect, login_expect, play_expect, look_expect, *,
+    startup_discovery_timeout,
+):
+    """Run the canonical fixture lobby, PLAY, and LOOK on one live connection."""
+    discovery = ("WORLDS", [worlds_expect], "WORLDS")
+    # Check startup convergence before LOGIN, which starts new custody and clears that menu.
+    return [
+        (*discovery, startup_discovery_timeout),
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        discovery,
+        (f"REALMS {world}", ["OK REALMS"], "REALMS"),
+        (f"JOIN {world}", ["OK JOIN"], "JOIN"),
+        (f"PLAY {world}", [play_expect], "PLAY", 30),
+        ("LOOK", [look_expect, "Candle-lit Antechamber"], "LOOK", 30),
     ]
 
 
@@ -692,6 +732,7 @@ def run_telnet_command_plan(
     default_drain_timeout=0.25,
     step_results=None,
     discovery_selector=None,
+    retry_login_unavailable=False,
 ):
     responses = []
 
@@ -705,7 +746,9 @@ def run_telnet_command_plan(
             timeout_seconds if timeout is None else timeout,
             play_drain_timeout if label == "PLAY" else default_drain_timeout,
             step_results,
-            retry_upstream_failure=discovery_selector is None,
+            retry_upstream_failure=(
+                discovery_selector is None or (retry_login_unavailable and label == "LOGIN")
+            ),
         )
 
     def send_discovery_worlds(command, expected, label, remaining):
@@ -722,11 +765,11 @@ def run_telnet_command_plan(
             retryable_upstream_prefixes=DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES,
         )
 
-    def precondition(_line, expected_substrings, _label, _timeout):
+    def precondition(_line, expected_substrings, _label, timeout):
         return wait_for_world_discovery(
             discovery_selector,
             expected_substrings,
-            timeout_seconds,
+            timeout_seconds if timeout is None else timeout,
             send_discovery_worlds,
         )
 
@@ -793,6 +836,7 @@ def run_telnet_smoke_session(
     tls_server_hostname=None,
     tls_ca_file=None,
     discovery_selector=None,
+    retry_login_unavailable=False,
 ):
     return run_transport_session(
         open_session
@@ -814,6 +858,7 @@ def run_telnet_smoke_session(
             default_drain_timeout=default_drain_timeout,
             step_results=step_results,
             discovery_selector=discovery_selector,
+            retry_login_unavailable=retry_login_unavailable,
         ),
         f"Telnet session {host}:{port}",
         retry_window_seconds=retry_window_seconds,
@@ -948,11 +993,11 @@ def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None, di
             retryable_upstream_prefixes=DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES,
         )
 
-    def precondition(_line, expected_substrings, _label, _timeout):
+    def precondition(_line, expected_substrings, _label, timeout):
         return wait_for_world_discovery(
             discovery_selector,
             expected_substrings,
-            timeout_seconds,
+            timeout_seconds if timeout is None else timeout,
             send_discovery_worlds,
         )
 

@@ -30,7 +30,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** Same-namespace mTLS current-public-state read, with no bearer or readiness-plan dependency. */
 public final class AccountPublicJwksReadClient {
   private static final int ACCOUNT_PORT = 6565;
+  private static final org.slf4j.Logger LOG =
+      org.slf4j.LoggerFactory.getLogger(AccountPublicJwksReadClient.class);
   private static final long DEADLINE_SECONDS = 3L;
+  // Connection setup (DNS, TCP, mTLS handshake) in a cold JVM is bounded separately, so the RPC
+  // deadline measures only the read itself.
+  private static final long CONNECT_SECONDS = 15L;
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties tls;
   private final GrpcChannelFactory channels;
@@ -62,6 +67,7 @@ public final class AccountPublicJwksReadClient {
     ManagedChannel channel = null;
     try {
       channel = channels.buildChannel(endpoints.getAccountService(), ACCOUNT_PORT, tls, false);
+      awaitConnected(channel);
       var authenticated =
           ClientInterceptors.intercept(
               channel,
@@ -76,6 +82,7 @@ public final class AccountPublicJwksReadClient {
       return AccountPublicJwksReadCodec.result(response);
     } catch (StatusRuntimeException failure) {
       Status.Code code = failure.getStatus().getCode();
+      LOG.warn("Account public JWKS read failed with status {}", code);
       if (!hasTlsFailure(failure)
           && (code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED)) {
         throw new SourceUnavailableException();
@@ -92,6 +99,31 @@ public final class AccountPublicJwksReadClient {
       if (channel != null) {
         channel.shutdownNow();
       }
+    }
+  }
+
+  /**
+   * Waits while the channel is still connecting. A transient connection failure (including a TLS
+   * failure) proceeds to the RPC, so its status keeps the existing outage/invalid classification.
+   */
+  private static void awaitConnected(ManagedChannel channel) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CONNECT_SECONDS);
+    io.grpc.ConnectivityState state = channel.getState(true);
+    while (state == io.grpc.ConnectivityState.IDLE
+        || state == io.grpc.ConnectivityState.CONNECTING) {
+      long remaining = deadline - System.nanoTime();
+      if (remaining <= 0) {
+        throw new SourceUnavailableException();
+      }
+      var changed = new java.util.concurrent.CountDownLatch(1);
+      channel.notifyWhenStateChanged(state, changed::countDown);
+      try {
+        changed.await(remaining, TimeUnit.NANOSECONDS);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new SourceUnavailableException();
+      }
+      state = channel.getState(false);
     }
   }
 

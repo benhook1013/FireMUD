@@ -817,8 +817,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         || status.lifecycleRowVersion() != grant.source.lifecycleRowVersion()
         || !CanonicalGameplayRegionRuntimeStatusRepository.sameLifecycleRequestExceptReadRequestId(
             status.lifecycleRequest(), grant.source.lifecycleRequest())
-        || !status.captureId().equals(grant.source.captureId())
-        || !status.graphSha256().equals(grant.source.graphSha256())
+        || !Objects.equals(status.captureId(), grant.source.captureId())
+        || !Objects.equals(status.graphSha256(), grant.source.graphSha256())
         || !status.preparationInputDigest().equals(grant.source.preparationInputDigest())
         || !status
             .tenantRegionTag()

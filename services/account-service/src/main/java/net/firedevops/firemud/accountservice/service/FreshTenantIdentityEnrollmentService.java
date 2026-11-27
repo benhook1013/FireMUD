@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Consumer;
 import net.firedevops.firemud.accountservice.client.GameDesignFreshTenantIdentityClient;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
@@ -44,6 +45,18 @@ public final class FreshTenantIdentityEnrollmentService {
    * imports, reads back, and initializes the UUID tenant generation without resetting it.
    */
   public FreshTenantCreationEvidence enroll(UUID creationRequestId, String expectedDigest) {
+    return enrollAndInitialize(creationRequestId, expectedDigest, ignored -> {});
+  }
+
+  /**
+   * Runs Account-owned initialization in the same transaction as the authenticated identity import.
+   * The initializer must verify any additional source and handle exact replays.
+   */
+  public FreshTenantCreationEvidence enrollAndInitialize(
+      UUID creationRequestId,
+      String expectedDigest,
+      Consumer<FreshTenantCreationEvidence> initializeAccount) {
+    Objects.requireNonNull(initializeAccount, "Account owner initialization is required");
     if (creationRequestId == null
         || creationRequestId.equals(new UUID(0L, 0L))
         || !GameTenantCreationDigest.isDigest(expectedDigest)) {
@@ -81,6 +94,7 @@ public final class FreshTenantIdentityEnrollmentService {
                     "Fresh Account tenant association readback differs from owner evidence");
               }
               generationRepository.initializeTenantIfAbsent(readback.canonicalTenantId());
+              initializeAccount.accept(readback);
               return readback;
             });
     return Objects.requireNonNull(

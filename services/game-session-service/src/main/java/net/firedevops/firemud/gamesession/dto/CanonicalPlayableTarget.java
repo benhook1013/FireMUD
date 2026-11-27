@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
@@ -48,6 +49,44 @@ public record CanonicalPlayableTarget(
     Instant ownerProofTerminalAt,
     String characterCreationPolicy)
     implements Serializable {
+  public CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target admissionDecisionTarget() {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target(
+        targetNamespace(),
+        tenantSlug(),
+        canonicalTenantId(),
+        worldSlug(),
+        worldDisplayName(),
+        realmId(),
+        realmSlug(),
+        realmDisplayName(),
+        gameSessionTenantId(),
+        gameInstanceId(),
+        playableStateNamespaceId(),
+        playableStateScope(),
+        canonicalGameInstanceId(),
+        canonicalVersionId(),
+        runtimeVersionId(),
+        catalogRevision(),
+        pointerVersion(),
+        admissionPointerSnapshotDigest(),
+        activeWorldEpoch(),
+        initialAdmissionRequestId(),
+        initialAdmissionRequestDigest(),
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind.valueOf(
+            initialAdmissionOriginKind().name()),
+        expectedPriorPointerVersion(),
+        holdId(),
+        holdFence(),
+        holdBindingDigest(),
+        auditEventId(),
+        ownerProofDigest(),
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.valueOf(
+            ownerProofOutcome().name()),
+        positiveDurableAbort(),
+        ownerProofTerminalAt(),
+        characterCreationPolicy());
+  }
+
   private static final long serialVersionUID = 1L;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Pattern REQUEST_DIGEST = Pattern.compile("[0-9a-f]{64}");

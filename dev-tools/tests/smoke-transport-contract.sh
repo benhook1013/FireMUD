@@ -1211,6 +1211,21 @@ assert smoke_common.worlds_response_contains_selector(
 assert not smoke_common.worlds_response_contains_selector(
     "OK WORLDS\nWelcome to the demo world\n", "demo"
 )
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/demo\n", "demo"
+)
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/other-world\n", "DEMO/other-world"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\ndemo/other-world\n", "other-world"
+)
+try:
+    smoke_common.worlds_response_contains_selector("OK WORLDS\ndemo/world\ndemo/other\n", "demo")
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ambiguously" in str(exc)
+else:
+    raise AssertionError("A canonical tenant alias must match exactly one world")
 
 
 for transient_error in (
@@ -2016,6 +2031,22 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
+fixture_steps = smoke_common.canonical_fixture_play_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    startup_discovery_timeout=90,
+)
+assert [step[2] for step in fixture_steps] == ["WORLDS", "LOGIN", "WORLDS", "REALMS", "JOIN", "PLAY", "LOOK"]
+assert fixture_steps[0] == ("WORLDS", ["OK WORLDS"], "WORLDS", 90)
+assert fixture_steps[3][:2] == ("REALMS demo", ["OK REALMS"])
+assert fixture_steps[4][:2] == ("JOIN demo", ["OK JOIN"])
+assert fixture_steps[5][:2] == ("PLAY demo", ["OK PLAY"])
+assert fixture_steps[6][:2] == ("LOOK", ["OK LOOK", "Candle-lit Antechamber"])
+for run_plan in (smoke_common.run_telnet_command_plan, smoke_common.run_websocket_command_plan):
+    with patch("smoke_common.wait_for_world_discovery") as fixture_discovery:
+        run_plan(None, fixture_steps[:1], 10, discovery_selector="demo")
+    assert fixture_discovery.call_args.args[:3] == ("demo", ["OK WORLDS"], 90)
+
+
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
     "demo@example.com",
     "swordfish",
@@ -2067,8 +2098,15 @@ grep -Fq 'discovery_selector=world' \
 for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
-  grep -Fq 'discovery_selector=world' "$script" ||
-    { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
+  if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
+    grep -Fq 'discovery_selector = world' "$script" ||
+      { echo "$script must gate the mutation extension on the configured WORLDS selector" >&2; exit 1; }
+    grep -Fq 'steps = canonical_fixture_play_steps(' "$script" ||
+      { echo "$script baseline must use the authenticated Telnet PLAY and LOOK plan" >&2; exit 1; }
+  else
+    grep -Fq 'discovery_selector=world' "$script" ||
+      { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
+  fi
   assert_command_rejects \
     "SMOKE_MUTATION_EXTENSION must be boolean" \
     env SMOKE_MUTATION_EXTENSION=invalid bash "$script"
@@ -2099,7 +2137,7 @@ for script in \
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
   grep -q 'require_smoke_mutation_boundary' "$script"
   grep -q 'run-owned-compose' "$script"
-  grep -q 'login_play_look_steps' "$script"
+  [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]] || grep -Eq 'login_play_look_steps|websocket_fail_closed_play_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
   if [[ "$script" == *"game-session-service/websocket-login-look-smoke.sh" ]]; then
     grep -Fq -- 'venv_directory = repo_root / ".venv-smoke"' "$script" ||
@@ -2186,7 +2224,7 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
   grep -Fq 'bash "$WS_SMOKE_SCRIPT"' "$script"
   grep -Fq 'public successful admission remains unproved' "$script"
 done
-grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held' "$ROOT_DIR/.github/workflows/runtime-images.yml"
+grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: baseline' "$ROOT_DIR/.github/workflows/runtime-images.yml"
 grep -Fq 'does not prove host-published ingress' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'docker' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'Confirmed Telnet startup_unavailable denial and closed connection.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
@@ -2332,6 +2370,9 @@ case "$command_name" in
     exit 1
     ;;
   compose)
+    if [[ "${1:-}" == --project-name ]]; then
+      printf '%s\n' "$2" >"$state_dir/compose-down-project"
+    fi
     saw_down=false
     for argument in "$@"; do
       [[ "$argument" != down ]] || saw_down=true
@@ -2533,6 +2574,12 @@ assert_command_rejects \
   SMOKE_GAME_SESSION_WS_URL=ws://localhost:8085/ws \
   bash "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 assert_command_rejects \
+  "run-owned loopback listener" \
+  env FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true \
+  FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256=fixture-test \
+  SMOKE_GAME_SESSION_WS_URL=wss://example.test/ws/game/run-owned-fixture \
+  bash "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
+assert_command_rejects \
   "canonical Telnet endpoint" \
   env SMOKE_MUTATION_EXTENSION=true \
   SMOKE_MUTATION_BOUNDARY=run-owned-compose \
@@ -2592,6 +2639,29 @@ printf 'game-session|%s|game-session-service|exited|\n' "$COMPOSE_PROJECT_NAME" 
 run_owned_helper stop_run_owned_compose_project -f docker-compose.yml
 [[ ! -e "$marker_path" ]]
 [[ -e "$FAKE_DOCKER_STATE/compose-down" ]]
+[[ "$(cat "$FAKE_DOCKER_STATE/compose-down-project")" == "$COMPOSE_PROJECT_NAME" ]]
+
+# The transport reset retains the original claim and removes only its generated receipt.
+run_owned_helper claim_run_owned_compose_project
+printf 'game-session|%s|game-session-service|running|\n' "$COMPOSE_PROJECT_NAME" >"$FAKE_DOCKER_STATE/containers"
+receipt_dir="${marker_path%.marker}.authored-world-source"
+mkdir -m 777 "$receipt_dir"
+chmod 777 "$receipt_dir"
+printf 'generated\n' >"$receipt_dir/source-receipt.json"
+printf 'retained\n' >"$receipt_dir/other-file"
+reset_command=(
+  env FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=true
+  FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH="$receipt_dir"
+  bash -c "$RUN_OWNED_CHILD_BASH" _ "$RUN_OWNED_COMPOSE_HELPER"
+  reset_run_owned_fixture_for_next_transport -f docker-compose.yml
+)
+assert_command_rejects "authenticated project name" "${reset_command[@]}" --project-name=other
+[[ -e "$FAKE_DOCKER_STATE/containers" && -e "$receipt_dir/source-receipt.json" ]]
+"${reset_command[@]}"
+[[ -e "$marker_path" && ! -e "$receipt_dir/source-receipt.json" && -e "$receipt_dir/other-file" ]]
+[[ ! -e "$FAKE_DOCKER_STATE/containers" ]]
+[[ "$(cat "$FAKE_DOCKER_STATE/compose-down-project")" == "$COMPOSE_PROJECT_NAME" ]]
+run_owned_helper release_run_owned_compose_project
 
 echo "smoke script boundary contract checks passed"
 

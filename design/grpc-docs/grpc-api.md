@@ -661,6 +661,8 @@ for conventions on schema evolution and error handling. See each service's
     - [ReconnectionSettingsOverride](#gamedesign-v1-ReconnectionSettingsOverride)
     - [RepairPublishedVersionAssetsRequest](#gamedesign-v1-RepairPublishedVersionAssetsRequest)
     - [RepairPublishedVersionAssetsResponse](#gamedesign-v1-RepairPublishedVersionAssetsResponse)
+    - [ResolveCanonicalTenantRequest](#gamedesign-v1-ResolveCanonicalTenantRequest)
+    - [ResolveCanonicalTenantResponse](#gamedesign-v1-ResolveCanonicalTenantResponse)
     - [ResolveHelpTopicRequest](#gamedesign-v1-ResolveHelpTopicRequest)
     - [ResolveHelpTopicResponse](#gamedesign-v1-ResolveHelpTopicResponse)
     - [ResolveLaunchDescriptorRequest](#gamedesign-v1-ResolveLaunchDescriptorRequest)
@@ -1947,7 +1949,7 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  | Canonical tenant UUID. |
 | request_id | [string](#string) |  |  |
 
 
@@ -11224,6 +11226,37 @@ Complete immutable registration receipt, without another RPC&#39;s transient rea
 
 
 
+<a name="gamedesign-v1-ResolveCanonicalTenantRequest"></a>
+
+### ResolveCanonicalTenantRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveCanonicalTenantResponse"></a>
+
+### ResolveCanonicalTenantResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_tenant_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-ResolveHelpTopicRequest"></a>
 
 ### ResolveHelpTopicRequest
@@ -11805,6 +11838,7 @@ Standalone, unregistered exact version-state read for an already-intaken authore
 | GetDesignControlPlaneDigest | [GetDesignControlPlaneDigestRequest](#gamedesign-v1-GetDesignControlPlaneDigestRequest) | [GetDesignControlPlaneDigestResponse](#gamedesign-v1-GetDesignControlPlaneDigestResponse) |  |
 | GetPublishedReleaseBundle | [GetPublishedReleaseBundleRequest](#gamedesign-v1-GetPublishedReleaseBundleRequest) | [GetPublishedReleaseBundleResponse](#gamedesign-v1-GetPublishedReleaseBundleResponse) |  |
 | GetVersionState | [GetVersionStateRequest](#gamedesign-v1-GetVersionStateRequest) | [GetVersionStateResponse](#gamedesign-v1-GetVersionStateResponse) |  |
+| ResolveCanonicalTenant | [ResolveCanonicalTenantRequest](#gamedesign-v1-ResolveCanonicalTenantRequest) | [ResolveCanonicalTenantResponse](#gamedesign-v1-ResolveCanonicalTenantResponse) | Canonical tenant UUID for a Game Design tenant key; Game Design owns tenant identity. |
 | CompareAndSetVersionState | [CompareAndSetVersionStateRequest](#gamedesign-v1-CompareAndSetVersionStateRequest) | [CompareAndSetVersionStateResponse](#gamedesign-v1-CompareAndSetVersionStateResponse) |  |
 | ResolveLaunchDescriptor | [ResolveLaunchDescriptorRequest](#gamedesign-v1-ResolveLaunchDescriptorRequest) | [ResolveLaunchDescriptorResponse](#gamedesign-v1-ResolveLaunchDescriptorResponse) |  |
 | GetLaunchDescriptor | [GetLaunchDescriptorRequest](#gamedesign-v1-GetLaunchDescriptorRequest) | [GetLaunchDescriptorResponse](#gamedesign-v1-GetLaunchDescriptorResponse) |  |

@@ -19,8 +19,11 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
+import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureStartRoomRequest;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureStartRoomResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import org.junit.jupiter.api.Test;
@@ -34,14 +37,14 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
     var malformed = ReadWorldCanonicalInstanceLifecycleRequest.getDefaultInstance();
-    Collector actual;
+    Collector<ReadWorldCanonicalInstanceLifecycleResponse> actual;
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
       actual = call(service, malformed, peer("game-session-service", "test"));
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
-    Collector synchronization;
+    Collector<ReadWorldCanonicalInstanceLifecycleResponse> synchronization;
     TransactionSynchronizationManager.initSynchronization();
     try {
       synchronization = call(service, malformed, peer("game-session-service", "test"));
@@ -62,9 +65,9 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
             .setCanonicalRequestBytes(ByteString.copyFromUtf8("not-json"))
             .build();
 
-    Collector wrongService = call(service, malformed, peer("account-service", "test"));
-    Collector wrongNamespace = call(service, malformed, peer("game-session-service", "other"));
-    Collector wrongRequestNamespace =
+    var wrongService = call(service, malformed, peer("account-service", "test"));
+    var wrongNamespace = call(service, malformed, peer("game-session-service", "other"));
+    var wrongRequestNamespace =
         call(
             service,
             WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request("other")),
@@ -80,7 +83,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
 
-    Collector result =
+    var result =
         call(service, ReadWorldCanonicalInstanceLifecycleRequest.getDefaultInstance(), null);
 
     assertThat(result.error).isEqualTo(Status.Code.UNAUTHENTICATED);
@@ -92,7 +95,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
     SessionContext.setContext("11111111-1111-4111-8111-111111111111", List.of(), Map.of());
-    Collector result;
+    Collector<ReadWorldCanonicalInstanceLifecycleResponse> result;
     try {
       result =
           call(
@@ -113,7 +116,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     var read = request("test");
     when(repository.read(read)).thenReturn(Optional.empty());
 
-    Collector result =
+    var result =
         call(
             service,
             WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
@@ -131,7 +134,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     when(repository.read(read))
         .thenThrow(new DataAccessResourceFailureException("private storage detail"));
 
-    Collector result =
+    var result =
         call(
             service,
             WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
@@ -150,7 +153,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     when(repository.read(read))
         .thenThrow(new CannotCreateTransactionException("private transaction detail"));
 
-    Collector result =
+    var result =
         call(
             service,
             WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
@@ -178,7 +181,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
       var read = request("test");
       when(repository.read(read)).thenThrow(failure.failure);
 
-      Collector result =
+      var result =
           call(
               service,
               WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
@@ -198,7 +201,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     when(repository.read(read))
         .thenThrow(new org.jooq.exception.TooManyRowsException("private duplicate evidence"));
 
-    Collector result =
+    var result =
         call(
             service,
             WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
@@ -218,17 +221,62 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
             .setCanonicalRequestBytes(ByteString.copyFromUtf8("not-json"))
             .build();
 
-    Collector result = call(service, malformed, peer("game-session-service", "test"));
+    var result = call(service, malformed, peer("game-session-service", "test"));
 
     assertThat(result.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(repository);
   }
 
-  private static Collector call(
+  @Test
+  void fixtureStartRoomRequiresTheExactGameSessionPeerAndReturnsTheOwnerRoom() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+    var read = request("test");
+    var request =
+        ReadRunOwnedFixtureStartRoomRequest.newBuilder()
+            .setLifecycle(WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read))
+            .build();
+
+    var rejected = new Collector<ReadRunOwnedFixtureStartRoomResponse>();
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer("game-logic-service", "test"))
+        .run(() -> service.readRunOwnedFixtureStartRoom(request, rejected));
+    assertThat(rejected.error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(repository);
+
+    var evidence =
+        new WorldRunOwnedFixtureLifecycleEvidence(
+            read,
+            read.expectedReleaseAttestationDigest(),
+            "sha256:" + "e".repeat(64),
+            "ACTIVE",
+            3,
+            4);
+    when(repository.readRunOwnedFixtureStartRoom(read))
+        .thenReturn(
+            Optional.of(
+                new WorldCanonicalInstanceLifecycleReadRepository.FixtureStartRoom(
+                    evidence, "R-37")));
+    var admitted = new Collector<ReadRunOwnedFixtureStartRoomResponse>();
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer("game-session-service", "test"))
+        .run(() -> service.readRunOwnedFixtureStartRoom(request, admitted));
+
+    assertThat(admitted.error).isNull();
+    assertThat(admitted.completed).isTrue();
+    assertThat(admitted.value.getRoomInstanceKey()).isEqualTo("R-37");
+    assertThat(
+            WorldCanonicalInstanceLifecycleGrpcCodec.fromFixtureResponse(
+                read, admitted.value.getLifecycle()))
+        .isEqualTo(evidence);
+    verify(repository).readRunOwnedFixtureStartRoom(read);
+  }
+
+  private static Collector<ReadWorldCanonicalInstanceLifecycleResponse> call(
       WorldCanonicalInstanceLifecycleReadGrpcService service,
       ReadWorldCanonicalInstanceLifecycleRequest request,
       GrpcPeerIdentity peer) {
-    Collector response = new Collector();
+    var response = new Collector<ReadWorldCanonicalInstanceLifecycleResponse>();
     Context context =
         peer == null
             ? Context.ROOT
@@ -277,15 +325,14 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
 
   private record StorageFailureCase(Throwable failure, Status.Code expectedCode) {}
 
-  private static final class Collector
-      implements StreamObserver<ReadWorldCanonicalInstanceLifecycleResponse> {
-    private ReadWorldCanonicalInstanceLifecycleResponse value;
+  private static final class Collector<T> implements StreamObserver<T> {
+    private T value;
     private Status.Code error;
     private String description;
     private boolean completed;
 
     @Override
-    public void onNext(ReadWorldCanonicalInstanceLifecycleResponse response) {
+    public void onNext(T response) {
       value = response;
     }
 
