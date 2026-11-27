@@ -291,6 +291,7 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
   assert(proofRequests.slice(1).every(row => row.method === "listJobsForWorkflowRunAttempt"));
   assert.equal(new Set(requests.map(row => row.signal)).size, requests.length,
     "each direct lookup and proof request must receive a fresh timeout signal");
+  if (output.expired_artifact) return {reads, output, proofRequests, requests};
   if (expectException) {
     assert.deepEqual(output, {}, "exception attempts must expose no publication source");
     assert(!requests.some(row => row.method === "listWorkflowRunArtifacts"));
@@ -414,12 +415,11 @@ for (const publishable of ["false", "", undefined]) {
     {total_count: 2, artifacts: [artifact]},
     {total_count: 2, artifacts: [artifact, {...artifact, id: 9002}]},
   ]) {
-    await rejectsResolver(resolve({artifactInventory}), /complete exact-name source inventory/);
+    await rejectsResolver(resolve({artifactInventory}), /complete unique exact-name source inventory|exactly one artifact created within the selected upload step/);
   }
   for (const invalidArtifact of [
     {...artifact, id: 0},
     {...artifact, name: "different-artifact"},
-    {...artifact, expired: true},
     {...artifact, digest: undefined},
     {...artifact, digest: "sha256:bad"},
     {...artifact, workflow_run: {id: 123, head_sha: source.head_sha}},
@@ -428,6 +428,8 @@ for (const publishable of ["false", "", undefined]) {
     await rejectsResolver(resolve({artifactInventory: {total_count: 1, artifacts: [invalidArtifact]}}),
       /artifact identity, digest, or retention/);
   }
+  assert.deepEqual((await resolve({artifactInventory: {total_count: 1, artifacts: [{...artifact, expired: true}]}})).output,
+    {expired_artifact: `source-${source.id}-${source.run_attempt} artifact-${artifact.id} ${artifact.digest}`});
   await rejectsResolver(resolve({artifactError: true}), /native artifacts unavailable/);
   const exceptionJob = {...producerFor(source), steps: [{
     name: "Known canonical transition PLAY failure with successful authenticated cleanup",
@@ -473,8 +475,11 @@ for (const publishable of ["false", "", undefined]) {
   "a fresh rerun job cannot lend its window to a carried-forward upload step");
   await rejectsResolver(resolve({runs: [rerun], context: rerunContext, nativeAttempt: attempt2, jobs: [rerunProducer],
     artifactInventory: {total_count: 1, artifacts: [artifact]}}),
-  /artifact was not created within the selected upload step/,
+  /exactly one artifact created within the selected upload step/,
   "an attempt-1 artifact cannot qualify a fresh upload step on attempt 2");
+  assert.equal((await resolve({runs: [rerun], context: rerunContext, nativeAttempt: attempt2, jobs: [rerunProducer],
+    artifactInventory: {total_count: 2, artifacts: [{...artifact, id: 9002}, artifactFor(attempt2)]}})).output.artifact_id, "9001",
+    "a prior attempt's same-name artifact does not mask the selected upload");
   const rerunException = {...rerunProducer, steps: exceptionJob.steps};
   assert.deepEqual((await resolve({runs: [rerun], context: rerunContext, nativeAttempt: attempt2,
     jobs: [rerunException], expectException: true})).output, {},

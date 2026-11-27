@@ -52,6 +52,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class AccountTenantCapacityGrpcServiceTest {
   private enum RetainedEvidence {
     EXACT_QUOTA_DENIAL,
+    EXACT_EXPIRY_DENIAL,
     ABSENT,
     ACCEPTED,
     GENERIC_NO_ACCEPT,
@@ -209,9 +210,13 @@ class AccountTenantCapacityGrpcServiceTest {
 
   @ParameterizedTest
   @EnumSource(RetainedEvidence.class)
-  void quotaDenialReadUsesOnlyTheImmutableSelect(RetainedEvidence evidence) throws Exception {
+  void retainedDenialReadUsesOnlyTheImmutableSelect(RetainedEvidence evidence) throws Exception {
     var request = CapacityAdmissionTestFixture.playerRequest();
     var decisionId = UUID.randomUUID();
+    var expectedCode =
+        evidence == RetainedEvidence.EXACT_EXPIRY_DENIAL
+            ? Failure.CAPACITY_EVALUATION_EXPIRED
+            : Failure.CAPACITY_QUOTA_EXCEEDED;
     DSLContext dsl = mock();
     Connection connection = mock();
     when(connection.isReadOnly()).thenReturn(evidence != RetainedEvidence.WRITABLE_CONNECTION);
@@ -240,7 +245,7 @@ class AccountTenantCapacityGrpcServiceTest {
               evidence == RetainedEvidence.ACCEPTED
                       || evidence == RetainedEvidence.GENERIC_NO_ACCEPT
                   ? null
-                  : Failure.CAPACITY_QUOTA_EXCEEDED.name());
+                  : expectedCode.name());
     }
     String sql =
         "SELECT * FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND capacity_rearm_fence = ?";
@@ -285,12 +290,13 @@ class AccountTenantCapacityGrpcServiceTest {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
-    if (evidence == RetainedEvidence.EXACT_QUOTA_DENIAL) {
+    if (evidence == RetainedEvidence.EXACT_QUOTA_DENIAL
+        || evidence == RetainedEvidence.EXACT_EXPIRY_DENIAL) {
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
       var ordered = inOrder(observer);
       ordered.verify(observer).onNext(response.capture());
       assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
-          .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
+          .contains(new Refusal(expectedCode, decisionId));
       ordered.verify(observer).onCompleted();
     } else {
       assertFailure(observer, Failure.ENTITLEMENT_UNAVAILABLE);

@@ -1291,6 +1291,7 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Check Account V1040.4 probe access before writer quiescence": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Verify Account V1040.4 retained history before Helm": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
@@ -1347,6 +1348,19 @@ origin_probe_command = [
 ]
 if [line.strip() for line in origin_probe.get("run", "").splitlines()[-2:]] != origin_probe_command:
     raise SystemExit("the V1040.4 gate must call the probe with the exact ordered comparison")
+origin_access_name = "Check Account V1040.4 probe access before writer quiescence"
+origin_access = deploy_by_name[origin_access_name]
+if deploy_names.index(origin_access_name) >= deploy_names.index(quiesce["name"]):
+    raise SystemExit("the V1040.4 credential and admission check must precede quiescence")
+if origin_access.get("env") != origin_probe.get("env") or origin_access.get("continue-on-error"):
+    raise SystemExit("the credential check must use the exact probe context and fail closed")
+if [line.strip() for line in origin_access.get("run", "").splitlines()[-2:]] != [
+    origin_probe_command[0].replace(".sh ", ".sh --check-permissions "),
+    origin_probe_command[1],
+]:
+    raise SystemExit("the V1040.4 credential check must dry-run the exact probe manifest")
+if "steps.account-probe-access.outcome == 'success'" not in quiesce.get("if", ""):
+    raise SystemExit("the V1040.4 credential and admission check must gate quiescence")
 deploy_condition = deploy_by_name["Deploy dev-demo release"].get("if", "")
 expected_deploy_condition = (
     "${{ steps.cluster-access.outputs.available == 'true' && "
@@ -1592,6 +1606,7 @@ if failure_summary["env"] != {
     "DEPLOY_OUTCOME": "${{ steps." + deploy_by_name["Deploy dev-demo release"]["id"] + ".outcome }}",
     "RECORD_OUTCOME": "${{ steps." + deployed_head_step["id"] + ".outcome }}",
     "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
+    "BOOTSTRAP_RETENTION_OUTCOME": "${{ steps." + deploy_by_name["Retain successful dev-demo bootstrap result"]["id"] + ".outcome }}",
 }:
     raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
 failure_summary_run = failure_summary["run"]
@@ -1606,15 +1621,16 @@ for name, value in {
     )
 with tempfile.TemporaryDirectory() as directory:
     summary = Path(directory) / "summary.md"
-    for deployed, recorded, bootstrap, stage, expected in (
-        ("failure", "skipped", "skipped", "deploy", None),
-        ("skipped", "skipped", "skipped", "account-v1040-4-preflight", None),
-        ("success", "failure", "skipped", "deploy", None),
-        ("success", "skipped", "skipped", "deploy", None),
-        ("success", "success", "failure", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "cancelled", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "success", "smoke", "before repeating readiness or smoke"),
+    for deployed, recorded, bootstrap, retention, stage, expected in (
+        ("failure", "skipped", "skipped", "skipped", "deploy", None),
+        ("skipped", "skipped", "skipped", "skipped", "account-v1040-4-preflight", None),
+        ("success", "failure", "skipped", "skipped", "deploy", None),
+        ("success", "skipped", "skipped", "skipped", "deploy", None),
+        ("success", "success", "failure", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "skipped", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "cancelled", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "success", "failure", "bootstrap", "obtain owner readback of the original bootstrap"),
+        ("success", "success", "success", "success", "smoke", "before repeating readiness or smoke"),
     ):
         summary.write_text("", encoding="utf-8")
         subprocess.run(
@@ -1630,6 +1646,7 @@ with tempfile.TemporaryDirectory() as directory:
                 "DEPLOY_OUTCOME": deployed,
                 "RECORD_OUTCOME": recorded,
                 "BOOTSTRAP_OUTCOME": bootstrap,
+                "BOOTSTRAP_RETENTION_OUTCOME": retention,
             },
             check=True,
         )
@@ -1637,6 +1654,8 @@ with tempfile.TemporaryDirectory() as directory:
         guide = "/blob/" + "b" * 40 + "/design/architecture/"
         unconfirmed_recording = deployed == "success" and recorded != "success"
         expected_stage = "record-deployed-head" if unconfirmed_recording else stage
+        if bootstrap == "success" and retention != "success":
+            expected_stage = "retain-bootstrap-result"
         if f"Failed stage: `{expected_stage}`" not in evidence:
             raise SystemExit("dev-demo failure summary misidentified the failed stage")
         if unconfirmed_recording:
@@ -1657,7 +1676,7 @@ with tempfile.TemporaryDirectory() as directory:
         elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
             raise SystemExit("recorded target lacks the correct verification boundary")
         if deployed == "success" and recorded == "success":
-            if bootstrap != "success" and "before repeating readiness or smoke" in evidence:
+            if (bootstrap != "success" or retention != "success") and "before repeating readiness or smoke" in evidence:
                 raise SystemExit("incomplete original bootstrap must not receive smoke verification advice")
             if bootstrap == "success" and "refer bootstrap recovery to the affected owners" in evidence:
                 raise SystemExit("completed original bootstrap must not receive bootstrap replay advice")

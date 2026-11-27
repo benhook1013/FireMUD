@@ -163,6 +163,25 @@ assert_rejected push "$capacity_prefix_sha" "$capacity_origin_sha"
 namespace_for_head "$capacity_origin_sha"
 assert_rejected workflow_dispatch "" "$capacity_origin_sha"
 assert_rejected push "$account_v25_sha" "$capacity_origin_sha"
+printf '%s\n' '-- held exact expired-denial migration' >"$capacity_migration_dir/V1040.7__retain_expired_original_capacity_denials.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account expired-denial migration"
+capacity_expired_sha="$(git -C "$repo" rev-parse HEAD)"
+for deployed in "$capacity_origin_sha" "$capacity_prefix_sha"; do
+  namespace_for_head "$deployed"
+  if hold_output="$(cd "$repo" && bash "$detector" push "$deployed" "$capacity_expired_sha" dev 2>&1)"; then
+    echo "held Account V1040.7 range received an activation decision" >&2
+    exit 1
+  fi
+  if grep -q '^activation=' <<<"$hold_output"; then
+    echo "held Account V1040.7 range emitted an activation decision" >&2
+    exit 1
+  fi
+  grep -Fq 'Account V1040.7 retained activation is held pending an approved writer and consumer boundary' <<<"$hold_output"
+done
+
+git -C "$repo" switch -qc unsupported-capacity-origin "$capacity_origin_sha"
+namespace_for_head "$capacity_origin_sha"
 printf '%s\n' '-- unsupported later capacity migration' >"$capacity_migration_dir/V1040.7__unqualified.sql"
 git -C "$repo" add .
 git -C "$repo" commit -qm "Unsupported later capacity origin migration"

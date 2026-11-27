@@ -143,7 +143,16 @@ verify_writer_autoscaling_absent() {
   if ! hpa_json="$(kubectl --request-timeout=10s -n "$namespace" get hpa -o json)"; then
     fail "cannot inspect namespace HPAs"
   fi
-  if ! matching_hpas="$(jq -er '[.items[]? | select(.spec.scaleTargetRef.kind == "Deployment" and (.spec.scaleTargetRef.name == "account-service" or .spec.scaleTargetRef.name == "game-session-service" or .spec.scaleTargetRef.name == "automation-scripting-service"))] | length' <<<"$hpa_json")"; then
+  if ! matching_hpas="$(jq -er '
+    if (.items | type) != "array" then
+      error("invalid HPA inventory")
+    else
+      [.items[] | .spec.scaleTargetRef
+        | select(.kind == "Deployment" and
+          (.name == "account-service" or .name == "game-session-service" or .name == "automation-scripting-service"))]
+      | length
+    end
+  ' <<<"$hpa_json")"; then
     fail "cannot parse namespace HPAs"
   fi
   [[ "$matching_hpas" == 0 ]] ||

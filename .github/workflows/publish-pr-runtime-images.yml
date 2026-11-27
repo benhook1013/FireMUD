@@ -863,25 +863,33 @@ jobs:
                 const {data: inventory} = await github.rest.actions.listWorkflowRunArtifacts(proofOptions({
                   ...context.repo, run_id: sourceId, name: artifactName, per_page: 100, page: 1,
                 }));
-                if (inventory?.total_count !== 1 || !Array.isArray(inventory.artifacts) ||
-                    inventory.artifacts.length !== 1) {
-                  throw new Error("publication requires exactly one artifact in the complete exact-name source inventory");
+                if (!Array.isArray(inventory?.artifacts) || inventory.artifacts.length > 100 ||
+                    inventory.total_count !== inventory.artifacts.length ||
+                    new Set(inventory.artifacts.map(artifact => artifact?.id)).size !== inventory.artifacts.length) {
+                  throw new Error("publication requires a complete unique exact-name source inventory");
                 }
-                const artifact = inventory.artifacts[0];
+                // Run artifacts lack attempt IDs. A rerun may retain an older
+                // upload under the same name, outside this attempt's upload interval.
+                const currentArtifacts = inventory.artifacts.filter(artifact => {
+                  const created = timestamp(artifact?.created_at);
+                  return created >= Math.floor(uploadStart / 1000) * 1000 &&
+                    created <= Math.floor(uploadEnd / 1000) * 1000 + 999;
+                });
+                if (currentArtifacts.length !== 1) {
+                  throw new Error("publication requires exactly one artifact created within the selected upload step");
+                }
+                const artifact = currentArtifacts[0];
                 if (!Number.isSafeInteger(artifact?.id) || artifact.id <= 0 ||
-                    artifact.name !== artifactName || artifact.expired !== false ||
+                    artifact.name !== artifactName || typeof artifact.expired !== "boolean" ||
                     artifact.workflow_run?.id !== sourceId || artifact.workflow_run.head_sha !== run.head_sha ||
                     typeof artifact.digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(artifact.digest)) {
                   throw new Error("publication artifact identity, digest, or retention is not qualified");
                 }
-                // The run artifact API has no attempt number. Bind creation to
-                // the exact upload step, allowing for native timestamp precision.
-                const artifactCreated = timestamp(artifact.created_at);
-                if (artifactCreated < Math.floor(uploadStart / 1000) * 1000 ||
-                    artifactCreated > Math.floor(uploadEnd / 1000) * 1000 + 999) {
-                  throw new Error("publication artifact was not created within the selected upload step");
-                }
                 if (Date.now() >= deadline) throw new Error("publication producer proof exceeded its bounded deadline");
+                if (artifact.expired) {
+                  core.setOutput("expired_artifact", `source-${sourceId}-${run.run_attempt} artifact-${artifact.id} ${artifact.digest}`);
+                  return;
+                }
                 core.setOutput("source", JSON.stringify(run));
                 core.setOutput("title", run.display_title);
                 core.setOutput("artifact_name", artifactName);
@@ -895,6 +903,10 @@ jobs:
               }
               await new Promise(resolve => setTimeout(resolve, Math.min(2000, deadline - Date.now())));
             }
+
+      - name: Exact runtime artifact expired ${{ steps.resolve.outputs.expired_artifact }}
+        if: ${{ success() && steps.resolve.outputs.expired_artifact != '' }}
+        run: exit 1
 
   publish:
     name: Publish Fixed PR Merge Image Tags

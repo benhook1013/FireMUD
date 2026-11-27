@@ -126,13 +126,14 @@ module.exports = async function admitPrRuntimeRefresh({
     return true;
   };
 
-  const currentIdentity = async () => {
+  const currentIdentity = async ({requireConclusive = false} = {}) => {
     for (let observation = 0; observation < 6; observation++) {
       const result = await observeIdentity();
       if (typeof result === 'boolean') return result;
       if (result !== null && observation === 5) throw result.error;
       if (observation < 5) await sleep(2000);
     }
+    if (requireConclusive) fail('Runtime refresh tuple did not resolve before dispatch.');
     return false;
   };
 
@@ -291,6 +292,7 @@ module.exports = async function admitPrRuntimeRefresh({
     isPositiveInteger(Number(value)) && String(Number(value)) === value;
   const previewRefusal = {kind: 'unsent', description: 'Preview refusal'};
   const dispatchRejection = {kind: 'rejected', description: 'Dispatch rejection'};
+  const preSendUnavailable = {kind: 'pre-send-unavailable', description: 'Final identity read failure'};
   const ownerReceiptRefPrefix = (kind, tagSha) => `refs/tags/firemud-runtime-refresh-${kind}/v1/${tagSha}/`;
   const ownerReceiptIdentity = (claim, runId, attempt) =>
     `generation ${claim.generation} run ${runId} attempt ${attempt} tag ${claim.tag_sha}`;
@@ -366,7 +368,6 @@ module.exports = async function admitPrRuntimeRefresh({
       }));
       if (workflow?.path !== admissionPath || !isPositiveInteger(workflow.id)) return false;
 
-      const getRun = async () => dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: runId}));
       const isSuccessfulOwner = run => run?.id === runId && run.workflow_id === workflow.id &&
         run.run_attempt === attempt && run.event === 'repository_dispatch' &&
         run.repository?.full_name === fullName && run.head_repository?.full_name === fullName &&
@@ -374,7 +375,14 @@ module.exports = async function admitPrRuntimeRefresh({
         (claim.ownerRevision === undefined || run.head_sha === claim.ownerRevision) &&
         [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path) &&
         run.status === 'completed' && run.conclusion === 'success';
-      const run = await getRun();
+      // An exact successful attempt can permanently attest a definitive POST
+      // rejection even when the admission run starts a newer attempt.
+      const readReceiptRun = async () => kind === dispatchRejection.kind
+        ? dataOf(await github.rest.actions.getWorkflowRunAttempt({
+          ...contextRepo, run_id: runId, attempt_number: attempt,
+        }))
+        : dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: runId}));
+      const run = await readReceiptRun();
       if (!isSuccessfulOwner(run)) return false;
 
       const inventory = dataOf(await github.rest.actions.listJobsForWorkflowRunAttempt({
@@ -391,7 +399,7 @@ module.exports = async function admitPrRuntimeRefresh({
       if (markers.length !== 1 || markers[0].status !== 'completed' || markers[0].conclusion !== 'success' ||
           markers[0].name !== `${markerPrefix} ${ownerReceiptIdentity(claim, runId, attempt)}`) return false;
 
-      const latest = await getRun();
+      const latest = await readReceiptRun();
       return isSuccessfulOwner(latest) && latest.head_sha === run.head_sha;
     } catch {
       // An uncertain locator or marker cannot release a claim.
@@ -570,13 +578,14 @@ module.exports = async function admitPrRuntimeRefresh({
   try {
     const prior = await latestClaim();
     if (prior && !await ownerReceiptProven(prior, previewRefusal)) {
-      const rejected = await ownerReceiptProven(prior, dispatchRejection);
-      if (!rejected && !await terminalReceiverProven(prior)) {
-        core.info('Runtime refresh claim has no proven terminal receiver, preview refusal, or dispatch rejection; no dispatch.');
+      const provenPreSendOutcome = await ownerReceiptProven(prior, dispatchRejection) ||
+        await ownerReceiptProven(prior, preSendUnavailable);
+      if (!provenPreSendOutcome && !await terminalReceiverProven(prior)) {
+        core.info('Runtime refresh claim has no proven terminal receiver or trusted owner outcome; no dispatch.');
         return 'claim-held';
       }
-      if (rejected && !await currentIdentity()) {
-        core.info('Runtime refresh tuple changed during dispatch rejection verification; no dispatch.');
+      if (provenPreSendOutcome && !await currentIdentity()) {
+        core.info('Runtime refresh tuple changed during owner outcome verification; no dispatch.');
         return 'obsolete';
       }
     }
@@ -614,9 +623,12 @@ module.exports = async function admitPrRuntimeRefresh({
 
   let identityIsCurrent;
   try {
-    identityIsCurrent = await currentIdentity();
+    identityIsCurrent = await currentIdentity({requireConclusive: true});
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
+    if (isTrustedReceiptOwner() && await recordOwnerReceipt(claim, preSendUnavailable)) {
+      return 'pre-send-unavailable';
+    }
     return 'claim-held';
   }
 
