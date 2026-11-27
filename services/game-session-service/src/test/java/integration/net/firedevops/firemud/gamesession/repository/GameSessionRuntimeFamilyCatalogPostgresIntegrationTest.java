@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(20);
+      assertThat(catalog.catalogEpoch()).isEqualTo(21);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -202,6 +202,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.7",
               "catalog-installation:1065.0.8",
               "catalog-installation:1065.0.9",
+              "catalog-installation:1065.0.9.1",
               "catalog-installation:1065.0.10",
               "catalog-installation:1065.0.11")
           .noneMatch(identity ->
@@ -223,6 +224,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.7:")
                   || identity.contains(":1065.0.8:")
                   || identity.contains(":1065.0.9:")
+                  || identity.contains(":1065.0.9.1:")
                   || identity.contains(":1065.0.10:")
                   || identity.contains(":1065.0.11:"));
       assertThat(
@@ -761,7 +763,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(20);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(21);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -913,6 +915,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.7",
             "1065.0.8",
             "1065.0.9",
+            "1065.0.9.1",
             "1065.0.10",
             "1065.0.11")) {
       try (Fixture f = fixture(null)) {
@@ -973,6 +976,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.7",
             "1065.0.8",
             "1065.0.9",
+            "1065.0.9.1",
             "1065.0.10",
             "1065.0.11")) {
       try (Fixture f = fixture(null)) {
@@ -1888,12 +1892,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void capacityClosureReceiptLookupUpgradePreservesPopulatedCatalogAtEpochNineteen() {
-    try (Fixture f = fixture("1065.0.9")) {
+  void capacityClosureReceiptLookupUpgradePreservesPopulatedCatalogAtEpochTwenty() {
+    try (Fixture f = fixture("1065.0.9.1")) {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.10",
-          18,
+          19,
           "V1065.0.10__bound_capacity_closure_receipt_lookup.sql",
           "reject_gs_capacity_close_after_final_receipt()",
           null,
@@ -1906,12 +1910,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void fenceReceiptDispatchIncarnationUpgradePreservesPopulatedCatalogAtEpochTwenty() {
+  void fenceReceiptDispatchIncarnationUpgradePreservesPopulatedCatalogAtEpochTwentyOne() {
     try (Fixture f = fixture("1065.0.10")) {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.11",
-          19,
+          20,
           "V1065.0.11__bind_fence_receipt_dispatch_incarnation.sql",
           Map.of(),
           Map.of(),
