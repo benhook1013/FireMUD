@@ -80,8 +80,8 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * Physical socket proof for the source-qualified current version-state read boundary.
  *
- * <p>Received from donor PR #2964 (fce63ebd), adapted to the standalone version-state
- * service and current canonical Version identity. No production registration is added.
+ * <p>Received from donor PR #2964 (fce63ebd), adapted to the standalone version-state service and
+ * current canonical Version identity. No production registration is added.
  *
  * <p>The production peer extractor, standalone gRPC handler, and shared client run over ephemeral
  * mTLS sockets. The version-state producer is mocked and returns a complete digest-valid receipt;

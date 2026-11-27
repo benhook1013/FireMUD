@@ -81,7 +81,8 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
 
     // Compare every historical column, allowing only new schema columns to appear. Snapshotting
     // after migration would miss a migration that rewrote the retained tuple or its row version.
-    assertThat(releaseBundleTuple(fixture.dsl(), retainedBundleId)).containsAllEntriesOf(retainedBefore);
+    assertThat(releaseBundleTuple(fixture.dsl(), retainedBundleId))
+        .containsAllEntriesOf(retainedBefore);
     assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(xminBefore);
     PublishedReleaseBundle retained =
         fixture
