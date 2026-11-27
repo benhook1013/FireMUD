@@ -6787,7 +6787,28 @@ FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
   run_deploy_target_fixture native-distinct-merge-callback 1 'Unexpected source run head'
 test ! -s "$TEMP_DIR/deploy-target-native-distinct-merge-callback.output"
 
-# A PR source run must bind both its run head and uniquely selected PR association to the artifact head.
+# A merge-reported callback must agree with REST and the provider-confirmed
+# current merge parents. An empty association requires the exact native PR path.
+for source_binding in associated qualified-empty; do
+  bound_merge_run="$(jq -c --arg sha "$native_merge_sha" --arg binding "$source_binding" '
+    .head_sha = $sha | if $binding == "qualified-empty"
+      then .path += "@refs/pull/900/merge" | .pull_requests = [] else . end
+  ' <<<"$native_source_run_json")"
+  TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+  TEST_PR_MERGE_SHA="$native_merge_sha" \
+  FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$bound_merge_run" \
+  FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
+    run_deploy_target_fixture "native-merge-$source_binding" 0 'action=deploy'
+done
+bare_empty_merge_run="$(jq -c --arg sha "$native_merge_sha" '
+  .head_sha = $sha | .pull_requests = []
+' <<<"$native_source_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$bare_empty_merge_run" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
+  run_deploy_target_fixture native-merge-bare-empty 0 'Ignoring source run without a bound pull request association.'
+
+# A PR source run needs native identity in addition to the artifact head.
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
   run_deploy_target_fixture distinct-source-head 0 'Ignoring artifact not bound to the source run pull request and head.'
@@ -6797,10 +6818,10 @@ run_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.head_sha=$sha' <<
 association_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.pull_requests[0].head.sha=$sha' <<<"$valid_workflow_run_json")"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$run_head_only_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
-  run_deploy_target_fixture run-head-only 0 'Ignoring source run without a bound pull request association.'
+  run_deploy_target_fixture run-head-only 0 'Ignoring artifact not bound to the source run pull request and head.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-run-head-only.output"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$association_head_only_json" \
-  run_deploy_target_fixture association-head-only 0 'Ignoring source run without a bound pull request association.'
+  run_deploy_target_fixture association-head-only 0 'Ignoring artifact not bound to the source run pull request and head.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-association-head-only.output"
 
 # Reach the final artifact binding guard: PR 901/D satisfies the initial run

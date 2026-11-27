@@ -243,9 +243,17 @@ jobs:
             jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
               --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
               --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
-              '.sha == $sha and .tag == $claim and .object.type == "commit" and .object.sha == $merge and
-               ((.message | fromjson) ==
-                {pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,generation:$generation,witness_sha256:$witness_hash})' \
+              '{pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,
+                generation:$generation,witness_sha256:$witness_hash} as $tuple |
+               .sha == $sha and .tag == $claim and .object.type == "commit" and
+               ((.message | fromjson) as $annotation |
+                if $annotation | has("owner_revision") then
+                  $annotation.owner_revision as $owner |
+                  ($owner | type) == "string" and ($owner | test("^[0-9a-f]{40}\\z")) and .object.sha == $owner and
+                  .message == (($tuple + {owner_revision:$owner}) | tojson + "\n")
+                else
+                  .object.sha == $merge and .message == ($tuple | tojson + "\n")
+                end)' \
               <<<"$claim_tag" >/dev/null || {
                 echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
                 exit 1

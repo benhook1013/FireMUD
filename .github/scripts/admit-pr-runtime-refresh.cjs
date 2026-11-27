@@ -283,15 +283,16 @@ module.exports = async function admitPrRuntimeRefresh({
   const claimNamespace = `firemud-runtime-refresh-intent/v1/pr-${input.pr_number}/${input.merge_sha}/${baseRefHash}/`;
   const refPrefix = `refs/tags/${claimNamespace}`;
   const tagName = generation => `${claimNamespace}g${generation}`;
-  const claimMessage = (generation, witness_sha256) =>
-    `${JSON.stringify({...tuple, generation: String(generation), witness_sha256})}\n`;
+  const claimMessage = (generation, witness_sha256, owner_revision) =>
+    `${JSON.stringify({...tuple, generation: String(generation), witness_sha256, owner_revision})}\n`;
   const tagger = {name: 'FireMUD Runtime Refresh', email: 'runtime-refresh@firemud.dev'};
   const isSha = value => typeof value === 'string' && value.length === 40 && shaPattern.test(value);
   const isCanonicalId = value => typeof value === 'string' &&
     isPositiveInteger(Number(value)) && String(Number(value)) === value;
-  const unsentRefPrefix = tagSha => `refs/tags/firemud-runtime-refresh-unsent/v1/${tagSha}/`;
-  const unsentMarkerPrefix = 'Runtime refresh unsent claim';
-  const unsentMarkerIdentity = (claim, runId, attempt) =>
+  const previewRefusal = {kind: 'unsent', description: 'Preview refusal'};
+  const dispatchRejection = {kind: 'rejected', description: 'Dispatch rejection'};
+  const ownerReceiptRefPrefix = (kind, tagSha) => `refs/tags/firemud-runtime-refresh-${kind}/v1/${tagSha}/`;
+  const ownerReceiptIdentity = (claim, runId, attempt) =>
     `generation ${claim.generation} run ${runId} attempt ${attempt} tag ${claim.tag_sha}`;
   const isCanonicalDate = value => validChronology(value) && secondsUtc(Date.parse(value)) === value;
   const parseGeneration = value => {
@@ -299,16 +300,19 @@ module.exports = async function admitPrRuntimeRefresh({
     if (!isPositiveInteger(generation) || String(generation) !== value) fail('Invalid runtime claim generation.');
     return generation;
   };
-  const exactTag = (tag, generation, expectedWitnessDigest) => {
+  const parseClaimTag = (tag, generation) => {
     if (tag?.tag !== tagName(generation) || !isSha(tag.sha) || tag.object?.type !== 'commit' ||
-        tag.object.sha !== input.merge_sha || typeof tag.message !== 'string' ||
-        tag.tagger?.name !== tagger.name || tag.tagger.email !== tagger.email ||
-        !isCanonicalDate(tag.tagger.date)) return false;
+        typeof tag.message !== 'string' || tag.tagger?.name !== tagger.name || tag.tagger.email !== tagger.email ||
+        !isCanonicalDate(tag.tagger.date)) return null;
     const annotation = JSON.parse(tag.message);
-    const digest = annotation?.witness_sha256;
-    return typeof digest === 'string' && digest.length === 64 && /^[0-9a-f]{64}$/.test(digest) &&
-      (expectedWitnessDigest === undefined || digest === expectedWitnessDigest) &&
-      tag.message === claimMessage(generation, digest);
+    if (!isRecord(annotation)) return null;
+    const {witness_sha256: witnessDigest, owner_revision: ownerRevision} = annotation;
+    if (Object.hasOwn(annotation, 'owner_revision') && !isSha(ownerRevision)) return null;
+    // Older claims target the PR merge. Their canonical annotation has no owner revision.
+    if (tag.object.sha !== (ownerRevision ?? input.merge_sha) ||
+        typeof witnessDigest !== 'string' || witnessDigest.length !== 64 || !/^[0-9a-f]{64}$/.test(witnessDigest) ||
+        tag.message !== claimMessage(generation, witnessDigest, ownerRevision)) return null;
+    return {ownerRevision, witnessDigest};
   };
 
   const latestClaim = async () => {
@@ -338,14 +342,15 @@ module.exports = async function admitPrRuntimeRefresh({
     const generation = claims.size;
     const tag_sha = claims.get(generation);
     const tag = dataOf(await github.rest.git.getTag({...contextRepo, tag_sha}));
-    if (!exactTag(tag, generation) || tag.sha !== tag_sha) fail('Invalid runtime claim annotation.');
-    return {generation, date: tag.tagger.date, tag_sha};
+    const annotation = parseClaimTag(tag, generation);
+    if (!annotation || tag.sha !== tag_sha) fail('Invalid runtime claim annotation.');
+    return {generation, date: tag.tagger.date, tag_sha, ownerRevision: annotation.ownerRevision};
   };
 
-  const unsentPreviewProven = async claim => {
+  const ownerReceiptProven = async (claim, {kind}) => {
     try {
-      // The ref locates the attempt. Only its native completed step can prove no-send.
-      const prefix = unsentRefPrefix(claim.tag_sha);
+      // The ref only locates the attempt. The native step establishes the outcome.
+      const prefix = ownerReceiptRefPrefix(kind, claim.tag_sha);
       const refs = await github.rest.git.listMatchingRefs({...contextRepo, ref: prefix.slice(5)});
       if (refs?.status !== 200 || !isRecord(refs.headers) ||
           Object.keys(refs.headers).some(name => name.toLowerCase() === 'link') ||
@@ -366,6 +371,7 @@ module.exports = async function admitPrRuntimeRefresh({
         run.run_attempt === attempt && run.event === 'repository_dispatch' &&
         run.repository?.full_name === fullName && run.head_repository?.full_name === fullName &&
         run.head_branch === defaultBranch && isSha(run.head_sha) &&
+        (claim.ownerRevision === undefined || run.head_sha === claim.ownerRevision) &&
         [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path) &&
         run.status === 'completed' && run.conclusion === 'success';
       const run = await getRun();
@@ -380,9 +386,10 @@ module.exports = async function admitPrRuntimeRefresh({
           (Object.hasOwn(job, 'run_attempt') && job.run_attempt !== attempt) ||
           job.name !== 'Admit Exact Runtime Tuple' || job.status !== 'completed' || job.conclusion !== 'success' ||
           !Array.isArray(job.steps) || job.steps.some(step => typeof step?.name !== 'string')) return false;
-      const markers = job.steps.filter(step => step.name.startsWith(unsentMarkerPrefix));
+      const markerPrefix = `Runtime refresh ${kind} claim`;
+      const markers = job.steps.filter(step => step.name.startsWith(markerPrefix));
       if (markers.length !== 1 || markers[0].status !== 'completed' || markers[0].conclusion !== 'success' ||
-          markers[0].name !== `${unsentMarkerPrefix} ${unsentMarkerIdentity(claim, runId, attempt)}`) return false;
+          markers[0].name !== `${markerPrefix} ${ownerReceiptIdentity(claim, runId, attempt)}`) return false;
 
       const latest = await getRun();
       return isSuccessfulOwner(latest) && latest.head_sha === run.head_sha;
@@ -390,6 +397,69 @@ module.exports = async function admitPrRuntimeRefresh({
       // An uncertain locator or marker cannot release a claim.
       return false;
     }
+  };
+
+  const isTrustedAdmission = () => context.eventName === 'repository_dispatch' &&
+    context.payload.action === 'pr-runtime-base-refresh-request' &&
+    context.ref === `refs/heads/${defaultBranch}` && isSha(context.sha);
+  const isTrustedReceiptOwner = () => isTrustedAdmission() &&
+    isPositiveInteger(context.runId) && isCanonicalId(admissionAttempt);
+
+  const recordOwnerReceipt = async (claim, {kind, description}) => {
+    const ref = `${ownerReceiptRefPrefix(kind, claim.tag_sha)}${context.runId}/${admissionAttempt}`;
+    try {
+      const locator = await github.rest.git.createRef({...contextRepo, ref, sha: claim.tag_sha, request: {retries: 0}});
+      if (locator?.status !== 201 || locator.data?.ref !== ref ||
+          locator.data.object?.type !== 'tag' || locator.data.object.sha !== claim.tag_sha) {
+        fail(`${description} locator creation is unproven.`);
+      }
+    } catch {
+      core.warning(`${description} locator creation is unproven; keeping the claim held.`);
+      return false;
+    }
+    // A failed output write must fail the owning step and prevent its success marker.
+    core.setOutput(`${kind}_claim`, ownerReceiptIdentity(claim, context.runId, admissionAttempt));
+    return true;
+  };
+
+  const isDefinitiveDispatchRejection = error => {
+    // GitHub uses 422 for both validation failures and spam protection. Require
+    // the structured validation shape for this exact authenticated POST.
+    const response = error?.response;
+    const endpoint = `https://api.github.com/repos/${fullName}/dispatches`;
+    if (error?.status !== 422 || response?.status !== 422 ||
+        error.request?.method !== 'POST' || error.request.url !== endpoint || response.url !== endpoint ||
+        !isRecord(response.headers)) return false;
+
+    const headers = Object.entries(response.headers).map(([key, value]) => [key.toLowerCase(), value]);
+    const throttling = /abuse|spam|throttl|rate[\s_-]*limit|too[\s_-]+many[\s_-]+requests|retry[\s_-]*after/i;
+    const rateLimitMetadata = ['x-ratelimit-limit', 'x-ratelimit-reset', 'x-ratelimit-used', 'x-ratelimit-resource'];
+    const hasThrottlingHeader = headers.some(([key, value]) => key === 'x-ratelimit-remaining'
+      ? typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)
+      : !rateLimitMetadata.includes(key) && throttling.test(key));
+    if (!headers.some(([key, value]) => key === 'x-github-request-id' &&
+        typeof value === 'string' && /^[0-9a-f]+(?::[0-9a-f]+)+$/i.test(value)) ||
+        hasThrottlingHeader ||
+        (typeof error.message === 'string' && throttling.test(error.message))) return false;
+
+    const body = response.data;
+    if (!isRecord(body) || body.message !== 'Validation Failed' ||
+        typeof body.documentation_url !== 'string' ||
+        !/^https:\/\/docs\.github\.com\/(?:en\/)?rest\/repos\/repos#create-a-repository-dispatch-event$/.test(body.documentation_url) ||
+        Object.keys(body).some(key => !['message', 'documentation_url', 'errors', 'status'].includes(key)) ||
+        (Object.hasOwn(body, 'status') && body.status !== '422' && body.status !== 422) ||
+        !Array.isArray(body.errors) || body.errors.length === 0) return false;
+
+    return body.errors.every(detail => isRecord(detail) &&
+      ['invalid', 'missing_field', 'unprocessable'].includes(detail.code) &&
+      ['event_type', 'client_payload'].includes(detail.field) &&
+      Object.keys(detail).every(key => ['code', 'field', 'message', 'resource', 'index', 'value'].includes(key)) &&
+      ['message', 'resource'].every(key => !Object.hasOwn(detail, key) ||
+        (typeof detail[key] === 'string' && !throttling.test(detail[key]))) &&
+      (!Object.hasOwn(detail, 'index') || Number.isSafeInteger(detail.index)) &&
+      (!Object.hasOwn(detail, 'value') || detail.value === null || Number.isSafeInteger(detail.value) ||
+        (typeof detail.value === 'string' && !throttling.test(detail.value)) ||
+        (Array.isArray(detail.value) && detail.value.every(value => typeof value === 'string' && !throttling.test(value)))));
   };
 
   const receiverProvesClaim = async (run, claim) => {
@@ -499,20 +569,33 @@ module.exports = async function admitPrRuntimeRefresh({
   let witness;
   try {
     const prior = await latestClaim();
-    if (prior && !await unsentPreviewProven(prior) && !await terminalReceiverProven(prior)) {
-      core.info('Runtime refresh claim has no proven terminal receiver or preview refusal; no dispatch.');
-      return 'claim-held';
+    if (prior && !await ownerReceiptProven(prior, previewRefusal)) {
+      const rejected = await ownerReceiptProven(prior, dispatchRejection);
+      if (!rejected && !await terminalReceiverProven(prior)) {
+        core.info('Runtime refresh claim has no proven terminal receiver, preview refusal, or dispatch rejection; no dispatch.');
+        return 'claim-held';
+      }
+      if (rejected && !await currentIdentity()) {
+        core.info('Runtime refresh tuple changed during dispatch rejection verification; no dispatch.');
+        return 'obsolete';
+      }
     }
     const generation = (prior?.generation ?? 0) + 1;
     const date = secondsUtc(Date.now());
     if (!isPositiveInteger(generation) || (prior && date < prior.date)) fail('Invalid successor runtime claim.');
+    if (!isTrustedAdmission()) fail('Runtime claim owner revision is unproven.');
+    // GitHub binds the native repository_dispatch SHA to its default branch.
+    // The PR merge stays in the annotation and never becomes newly referenced.
+    const ownerRevision = context.sha;
     const candidateWitness = randomBytes(32).toString('hex');
     const witnessDigest = sha256(candidateWitness);
     const tag = await github.rest.git.createTag({
-      ...contextRepo, tag: tagName(generation), message: claimMessage(generation, witnessDigest),
-      object: input.merge_sha, type: 'commit', tagger: {...tagger, date}, request: {retries: 0},
+      ...contextRepo, tag: tagName(generation), message: claimMessage(generation, witnessDigest, ownerRevision),
+      object: ownerRevision, type: 'commit', tagger: {...tagger, date}, request: {retries: 0},
     });
-    if (tag?.status !== 201 || !exactTag(tag.data, generation, witnessDigest) || tag.data.tagger.date !== date) {
+    const annotation = parseClaimTag(tag?.data, generation);
+    if (tag?.status !== 201 || annotation?.ownerRevision !== ownerRevision ||
+        annotation.witnessDigest !== witnessDigest || tag.data.tagger.date !== date) {
       fail('Runtime claim tag creation is unproven.');
     }
     const ref = `refs/tags/${tagName(generation)}`;
@@ -539,26 +622,8 @@ module.exports = async function admitPrRuntimeRefresh({
 
   if (!identityIsCurrent) {
     core.info('Runtime refresh tuple changed after claiming; no dispatch.');
-    if (input.preview_only === true && context.eventName === 'repository_dispatch' &&
-        context.payload.action === 'pr-runtime-base-refresh-request' &&
-        context.ref === `refs/heads/${defaultBranch}` &&
-        isPositiveInteger(context.runId) && isCanonicalId(admissionAttempt)) {
-      const ref = `${unsentRefPrefix(claim.tag_sha)}${context.runId}/${admissionAttempt}`;
-      try {
-        const locator = await github.rest.git.createRef({
-          ...contextRepo, ref, sha: claim.tag_sha, request: {retries: 0},
-        });
-        if (locator?.status !== 201 || locator.data?.ref !== ref ||
-            locator.data.object?.type !== 'tag' || locator.data.object.sha !== claim.tag_sha) {
-          fail('Preview refusal locator creation is unproven.');
-        }
-      } catch {
-        core.warning('Preview refusal locator creation is unproven; keeping the claim held.');
-        return 'claim-held';
-      }
-      // A failed output write must fail this step and prevent the success marker.
-      core.setOutput('unsent_claim', unsentMarkerIdentity(claim, context.runId, admissionAttempt));
-    }
+    if (input.preview_only === true && isTrustedReceiptOwner() &&
+        !await recordOwnerReceipt(claim, previewRefusal)) return 'claim-held';
     return 'obsolete';
   }
 
@@ -574,10 +639,15 @@ module.exports = async function admitPrRuntimeRefresh({
         runtime_refresh_claim: String(claim.generation),
         runtime_refresh_claim_witness: witness,
       },
-      request: {retries: 0},
+      request: {retries: 0, redirect: 'error'},
     });
     if (dispatched?.status !== 204) fail('Unexpected runtime refresh dispatch status.');
-  } catch {
+  } catch (error) {
+    if (isTrustedReceiptOwner() && isDefinitiveDispatchRejection(error) &&
+        await recordOwnerReceipt(claim, dispatchRejection)) {
+      core.info('GitHub rejected the runtime refresh request at validation. Recorded the claim outcome.');
+      return 'dispatch-rejected';
+    }
     core.warning('Runtime refresh dispatch acceptance is unproven; leaving the claim held without retry.');
     return 'claim-held';
   } finally {

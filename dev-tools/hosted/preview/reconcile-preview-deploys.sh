@@ -1000,10 +1000,11 @@ evaluate_recent_source_handoff() {
       continue
     fi
 
+    # A workflow_run execution uses the default ref even when REST reports the source branch.
     consumer_created_after="$(date -u -d "@$((now_epoch - preview_handoff_window_seconds))" +%Y-%m-%dT%H:%M:%SZ)"
     if ! consumer_runs="$(gh api --method GET \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/${consumer_workflow_id}/runs" \
-      -f event=workflow_run -f per_page=100 -f "branch=${DEFAULT_BRANCH}" \
+      -f event=workflow_run -f per_page=100 \
       -f "created=>=${consumer_created_after}")"; then
       echo "Unable to recheck trusted consumers after recent source completion; retry budget unchanged." >&2
       return 2
@@ -1012,6 +1013,7 @@ evaluate_recent_source_handoff() {
       and (.total_count | type == "number" and . >= 0 and . == floor)
       and (.workflow_runs | type == "array" and length <= 100)
       and (.total_count == (.workflow_runs | length))
+      and (([.workflow_runs[].id] | unique | length) == .total_count)
       and all(.workflow_runs[]; type == "object" and (.id | type == "number" and . > 0 and . == floor)
         and .workflow_id == $workflow_id and (.run_attempt | type == "number" and . > 0 and . == floor)
         and (.event | type == "string") and (.status | type == "string")
@@ -1032,7 +1034,6 @@ evaluate_recent_source_handoff() {
           | select(type == "object" and (.id | positive_int) and (.run_attempt | positive_int)
             and .workflow_id == $workflow_id and .event == "workflow_run"
             and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
-            and .head_branch == $default_branch
             and .repository.full_name == $repository and .head_repository.full_name == $repository
             and (.path | IN(".github/workflows/hosted-identity-request.yml",
               ".github/workflows/hosted-identity-request.yml@" + $default_branch,
@@ -1079,7 +1080,8 @@ trusted_consumer_has_tuple() {
     .id == $id and .workflow_id == $workflow_id and .event == "workflow_run" and .head_sha == $head
     and (.run_attempt | type == "number" and . > 0 and . == floor)
     and .repository.full_name == $repository and .head_repository.full_name == $repository
-    and .head_branch == $default_branch
+    and (.head_branch | type == "string")
+    and ($expected_title == "" or .head_branch == $default_branch)
     and (.path | IN(".github/workflows/hosted-identity-request.yml",
       ".github/workflows/hosted-identity-request.yml@" + $default_branch,
       ".github/workflows/hosted-identity-request.yml@refs/heads/" + $default_branch))
@@ -1362,7 +1364,6 @@ dispatch_candidates() {
                 and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1;
               def trusted_consumer:
                 native_same_repo and .workflow_id == $consumer_workflow_id and .event == "workflow_run"
-                and .head_branch == $default_branch
                 and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
                 and (.path | IN(".github/workflows/hosted-identity-request.yml",
                   ".github/workflows/hosted-identity-request.yml@" + $default_branch,

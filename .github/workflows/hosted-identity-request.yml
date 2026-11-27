@@ -151,12 +151,6 @@ jobs:
             if [[ "$SOURCE_EVENT" == pull_request &&
                 "$source_path" =~ ^[.]github/workflows/preview[.]yml@refs/pull/([1-9][0-9]{0,50})/merge$ ]]; then
               source_path_pr="${BASH_REMATCH[1]}"
-              jq -e --arg pr "$source_path_pr" '
-                .head_sha as $head |
-                ([.pull_requests[]? | select((.number | tostring) == $pr)] |
-                  length == 1 and .[0].head.sha == $head)
-              ' <<<"$workflow_run_json" >/dev/null ||
-                emit_no_action "Ignoring qualified source path without a matching pull request and head."
             elif [[ "$SOURCE_EVENT" != repository_dispatch || -z "${DEFAULT_BRANCH:-}" ||
                 ( "$source_path" != ".github/workflows/preview.yml@$DEFAULT_BRANCH" &&
                   "$source_path" != ".github/workflows/preview.yml@refs/heads/$DEFAULT_BRANCH" ) ]]; then
@@ -170,8 +164,10 @@ jobs:
             [[ "$SOURCE_EVENT" == pull_request || "$SOURCE_EVENT" == repository_dispatch ]] ||
               emit_no_action "Ignoring source run with unsupported event ${SOURCE_EVENT}."
             if [[ "$SOURCE_EVENT" == pull_request ]]; then
-              jq -e '.head_sha as $head | (.pull_requests | type) == "array" and any(.pull_requests[]?; (.number | type) == "number" and .number > 0 and (.number | floor) == .number and .head.sha == $head)' \
-                <<<"$workflow_run_json" >/dev/null ||
+              jq -e --arg qualified "$source_path_pr" '
+                (.pull_requests | type) == "array" and
+                ((.pull_requests | length) > 0 or $qualified != "")
+              ' <<<"$workflow_run_json" >/dev/null ||
                 emit_no_action "Ignoring source run without a bound pull request association."
             fi
             if [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
@@ -211,16 +207,26 @@ jobs:
               fi
               PR_NUMBER="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               EXPECTED_HEAD_SHA="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              ARTIFACT_BASE_SHA="$(jq -er '.baseSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              ARTIFACT_MERGE_SHA="$(jq -er '.mergeSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               if [[ "$SOURCE_EVENT" == pull_request ]]; then
                 [[ -z "$source_path_pr" || "$source_path_pr" == "$PR_NUMBER" ]] ||
                   emit_no_action "Ignoring artifact not bound to the qualified source path pull request."
+                # The callback and REST agree on the native run SHA. A qualified
+                # refs/pull path with a merge SHA can bind an empty association,
+                # but only after the live exact merge and ordered parents below.
                 jq -e --argjson pr "$PR_NUMBER" --arg head "$EXPECTED_HEAD_SHA" \
-                  '.head_sha == $head and ([.pull_requests[] | select(.number == $pr)] | length) == 1 and ([.pull_requests[] | select(.number == $pr)][0].head.sha == $head)' \
-                  <<<"$workflow_run_json" >/dev/null ||
+                  --arg merge "$ARTIFACT_MERGE_SHA" --arg qualified "$source_path_pr" '
+                    [.pull_requests[] | select(.number == $pr)] as $selected |
+                    if (.pull_requests | length) == 0 then
+                      $qualified == ($pr | tostring) and .head_sha == $merge and $head != $merge
+                    else
+                      ($selected | length) == 1 and $selected[0].head.sha == $head
+                      and (.head_sha == $head or .head_sha == $merge)
+                    end
+                  ' <<<"$workflow_run_json" >/dev/null ||
                   emit_no_action "Ignoring artifact not bound to the source run pull request and head."
               fi
-              ARTIFACT_BASE_SHA="$(jq -er '.baseSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
-              ARTIFACT_MERGE_SHA="$(jq -er '.mergeSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               if [[ "$SOURCE_EVENT" == repository_dispatch && -n "$SOURCE_RETRY_NONCE" ]] || \
                 jq -e 'has("sourceRunAttempt")' "$ARTIFACT_DIRECTORY/preview-metadata.json" >/dev/null; then
                 metadata_source_attempt="$(jq -er '.sourceRunAttempt | select(type == "number" and . > 0 and . == floor)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"

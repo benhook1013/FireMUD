@@ -620,8 +620,9 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
 fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357129350/runs' ]]; then
   if [[ "$*" != *"--method GET"* || "$*" != *"event=workflow_run"* ||
-    "$*" != *"branch=develop"* || "$*" == *"head="* ]]; then
-    echo "fresh consumer inventory did not use bounded GET/branch query parameters: $*" >&2
+    "$*" != *"created=>="* || "$*" != *"per_page=100"* ||
+    "$*" == *"branch="* || "$*" == *"head="* ]]; then
+    echo "fresh consumer inventory did not use a bounded GET without a source-branch filter: $*" >&2
     exit 1
   fi
   printf '%s\n' "$*" >> "$FAKE_RECENT_HANDOFF_LOOKUP_LOG"
@@ -3735,8 +3736,8 @@ FAKE_TRUSTED_CONSUMER_JOBS_JSON="$(jq -cn --arg tuple "$recent_consumer_tuple" '
     head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",status:"completed",conclusion:"success",
     steps:[{name:$tuple,status:"completed",conclusion:"success"}]}]}')"
 export FAKE_TRUSTED_CONSUMER_JOBS_JSON
-export FAKE_TRUSTED_CONSUMER_LATEST_JSON='{"id":5256,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","name":"Trusted Hosted Identity Request","head_branch":"develop","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display_title":"PR preview 901","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}'
-export FAKE_RECENT_TRUSTED_CONSUMER_RUNS_JSON='{"total_count":1,"workflow_runs":[{"id":5256,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","name":"Trusted Hosted Identity Request","head_branch":"develop","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display_title":"PR preview 901","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}]}'
+export FAKE_TRUSTED_CONSUMER_LATEST_JSON='{"id":5256,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display_title":"PR preview 901","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}'
+export FAKE_RECENT_TRUSTED_CONSUMER_RUNS_JSON='{"total_count":1,"workflow_runs":[{"id":5256,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display_title":"PR preview 901","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}]}'
 reconciler_handoff_race_output="$TEMP_DIR/reconciler-handoff-race.out"
 (
   cd "$ROOT_DIR"
@@ -3782,12 +3783,20 @@ reconciler_expired_source_output="$TEMP_DIR/reconciler-expired-source.out"
 grep -Fq 'Dispatching preview render for PR #901' "$reconciler_expired_source_output"
 test -s "$FAKE_DISPATCH_LOG"
 
-for observation_case in duplicate-rows lookup-overflow workflow-run-only consumer-title-only consumer-stale-attempt consumer-finished consumer-finished-without-proof consumer-active-jobs-unavailable consumer-job-attempt-missing consumer-job-attempt-mismatch consumer-job-attempt-null consumer-steps-missing; do
+for observation_case in duplicate-rows lookup-overflow workflow-run-only consumer-source-branch consumer-default-path consumer-nondefault-path consumer-wrong-workflow-id consumer-wrong-tuple consumer-title-only consumer-stale-attempt consumer-finished consumer-finished-without-proof consumer-active-jobs-unavailable consumer-job-attempt-missing consumer-job-attempt-mismatch consumer-job-attempt-null consumer-steps-missing; do
 reset_case
 reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance-${observation_case}.out"
-consumer_run="$(jq -cn '{id:5256,run_attempt:1,event:"workflow_run",workflow_id:357129350,
-  path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",
-  head_branch:"develop",head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",display_title:"PR preview 901",
+consumer_run="$(jq -cn --arg observation "$observation_case" '
+  {id:5256,run_attempt:1,event:"workflow_run",
+  workflow_id:(if $observation == "consumer-wrong-workflow-id" then 1 else 357129350 end),
+  path:(".github/workflows/hosted-identity-request.yml"
+    + (if $observation == "consumer-default-path" then "@refs/heads/develop"
+       elif $observation == "consumer-nondefault-path" then "@refs/heads/feature-preview"
+       else "" end)),
+  name:"Trusted Hosted Identity Request",
+  head_branch:(if $observation | IN("consumer-source-branch", "consumer-default-path", "consumer-nondefault-path",
+    "consumer-wrong-workflow-id", "consumer-wrong-tuple") then "feature-preview" else "develop" end),
+  head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",display_title:"PR preview 901",
   repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},status:"in_progress"}')"
 namespace_absent_on_initial=false
 proof_complete=false
@@ -3813,7 +3822,8 @@ fi
       {total_count:1,jobs:[{name:"Validate Trusted Preview Target",run_id:5256,
         run_attempt:(if $observation == "consumer-job-attempt-mismatch" then 2 elif $observation == "consumer-job-attempt-null" then null else 1 end),
         head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",status:"completed",conclusion:"success",
-        steps:[{name:(if $observation == "consumer-title-only" then "Verify workflow source and immutable PR metadata" else $tuple end),
+        steps:[{name:(if $observation == "consumer-title-only" then "Verify workflow source and immutable PR metadata"
+          elif $observation == "consumer-wrong-tuple" then ($tuple | sub("pr-901"; "pr-902")) else $tuple end),
           status:"completed",conclusion:"success"}]}]}
         | if $observation == "consumer-job-attempt-missing" then .jobs[0] |= del(.run_attempt)
           elif $observation == "consumer-steps-missing" then .jobs[0] |= del(.steps)
@@ -3836,7 +3846,9 @@ fi
     PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_active_status_advance_output" 2>&1
-if [[ "$observation_case" == duplicate-rows || "$observation_case" == workflow-run-only || "$observation_case" == consumer-job-attempt-missing ]]; then
+if [[ "$observation_case" == duplicate-rows || "$observation_case" == workflow-run-only ||
+  "$observation_case" == consumer-source-branch || "$observation_case" == consumer-default-path ||
+  "$observation_case" == consumer-job-attempt-missing ]]; then
   grep -Fqx \
     "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
     "$reconciler_active_status_advance_output"

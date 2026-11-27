@@ -32,6 +32,7 @@ function admissionFixture() {
   });
   const sent = [];
   const warnings = [];
+  const messages = [];
   const outputs = new Map();
   const runs = [];
   const admissionRuns = new Map();
@@ -64,7 +65,7 @@ function admissionFixture() {
         if (claimRefs.has(ref)) throw Object.assign(new Error('ref already exists'), {status: 422});
         const record = {ref, object: {type: 'tag', sha}};
         claimRefs.set(ref, record);
-        if (ref.startsWith('refs/tags/firemud-runtime-refresh-unsent/')) {
+        if (/^refs\/tags\/firemud-runtime-refresh-(unsent|rejected)\//.test(ref)) {
           if (state.loseLocatorResponse) throw new Error('response lost after locator creation');
           return {status: 201, data: record};
         }
@@ -123,6 +124,7 @@ function admissionFixture() {
       },
       createDispatchEvent: async payload => {
         sent.push(payload);
+        if (state.dispatchError) throw state.dispatchError;
         // Registration becomes visible after the fixture's first two-second wait.
         state.newRun = makeRun({id: state.nextId++, created_at: state.dispatchCreatedAt ??
           new Date(Date.now() + 2000).toISOString()});
@@ -132,17 +134,18 @@ function admissionFixture() {
     },
   }};
   const admission = {github, input, admissionAttempt: '1',
-    context: {repo: {owner: 'example', repo: 'FireMUD'}, runId: 600, ref: 'refs/heads/develop',
+    context: {repo: {owner: 'example', repo: 'FireMUD'}, runId: 600, ref: 'refs/heads/develop', sha: D,
       eventName: 'repository_dispatch',
       payload: {action: 'pr-runtime-base-refresh-request', repository: {full_name: repository, default_branch: 'develop'}}},
-  core: {warning: value => warnings.push(value), info() {}, setOutput: (name, value) => outputs.set(name, value)},
+  core: {warning: value => warnings.push(value), info: value => messages.push(value),
+    setOutput: (name, value) => outputs.set(name, value)},
   sleep: async milliseconds => {
     state.waits.push(milliseconds);
     state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
   return {admission, makeRun, makePullRequestRun, runs, admissionRuns, sent, state,
-    warnings, outputs, claimRefs, claimTags, receiverJobs};
+    warnings, messages, outputs, claimRefs, claimTags, receiverJobs};
 }
 
 function preparePreviewRefusal(f) {
@@ -151,16 +154,28 @@ function preparePreviewRefusal(f) {
   f.state.afterClaim = () => { f.state.labels = []; };
 }
 
-function completePreviewRefusalAttempt(f) {
+function completeOwnerReceiptAttempt(f, kind = 'unsent') {
   const run = f.makeRun({id: 600, workflow_id: 43, path: '.github/workflows/admit-pr-runtime-refresh.yml',
     status: 'completed', conclusion: 'success'});
   const job = {id: 2, run_id: run.id, head_sha: run.head_sha, name: 'Admit Exact Runtime Tuple',
     status: 'completed', conclusion: 'success',
-    steps: [{name: `Runtime refresh unsent claim ${f.outputs.get('unsent_claim')}`,
+    steps: [{name: `Runtime refresh ${kind} claim ${f.outputs.get(`${kind}_claim`)}`,
       status: 'completed', conclusion: 'success'}]};
   f.admissionRuns.set(run.id, run);
   f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [job]);
   return {run, job};
+}
+
+function dispatchValidationError() {
+  const url = 'https://api.github.com/repos/example/FireMUD/dispatches';
+  return Object.assign(new Error('Validation Failed'), {
+    status: 422,
+    request: {method: 'POST', url},
+    response: {status: 422, url, headers: {'x-github-request-id': 'A1:B2:C3:D4', 'x-ratelimit-remaining': '42'},
+      data: {message: 'Validation Failed',
+        documentation_url: 'https://docs.github.com/rest/repos/repos#create-a-repository-dispatch-event',
+        errors: [{code: 'invalid', field: 'client_payload', message: 'provider response detail'}]}},
+  });
 }
 
 async function admitOrdinaryRefresh(f) {
@@ -204,11 +219,31 @@ test('serialized admission waits for the first exact receiver before releasing t
   const [tag] = f.claimTags.values();
   const {runtime_refresh_claim_witness: witness} = f.sent[0].client_payload;
   assert.match(witness, /^[0-9a-f]{64}$/);
-  assert.equal(JSON.parse(tag.message).witness_sha256, createHash('sha256').update(witness).digest('hex'));
+  assert.deepEqual(tag.object, {type: 'commit', sha: D});
+  assert.equal(tag.message, JSON.stringify({
+    ...f.admission.input,
+    generation: '1',
+    witness_sha256: createHash('sha256').update(witness).digest('hex'),
+    owner_revision: D,
+  }) + '\n');
   assert.deepEqual(f.sent, [{owner: 'example', repo: 'FireMUD', event_type: 'pr-runtime-base-refresh',
     client_payload: {...f.admission.input, image_tag: `pr-merge-${A}`, runtime_refresh_claim: '1',
       runtime_refresh_claim_witness: witness},
-    request: {retries: 0}}]);
+    request: {retries: 0, redirect: 'error'}}]);
+});
+
+test('a non-native admission context cannot create a tag or dispatch', async t => {
+  for (const overrides of [
+    {sha: undefined}, {sha: 'invalid'}, {ref: 'refs/heads/feature'}, {eventName: 'workflow_dispatch'},
+  ]) {
+    await t.test(JSON.stringify(overrides), async () => {
+      const f = admissionFixture();
+      Object.assign(f.admission.context, overrides);
+      assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+      assert.equal(f.claimTags.size, 0);
+      assert.equal(f.sent.length, 0);
+    });
+  }
 });
 
 test('read-only identity retries require a fresh exact tuple', async () => {
@@ -510,6 +545,100 @@ test('an unexpected dispatch response status cannot be described as accepted', a
   assert.equal(f.sent.length, 1);
 });
 
+test('an exact native provider rejection receipt allows one currently valid successor', async () => {
+  const f = admissionFixture();
+  f.state.dispatchError = dispatchValidationError();
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatch-rejected');
+  assert.equal(f.sent.length, 1);
+  assert.deepEqual(f.state.waits, []);
+  const [claim] = f.claimTags.values();
+  const ref = `refs/tags/firemud-runtime-refresh-rejected/v1/${claim.sha}/600/1`;
+  assert.deepEqual(f.claimRefs.get(ref), {ref, object: {type: 'tag', sha: claim.sha}});
+  assert.deepEqual([...f.outputs], [['rejected_claim', `generation 1 run 600 attempt 1 tag ${claim.sha}`]]);
+  const witness = f.sent[0].client_payload.runtime_refresh_claim_witness;
+  const outputText = [...f.warnings, ...f.messages, ...f.outputs.values()].join('\n');
+  assert.ok(!outputText.includes(witness));
+  assert.ok(!outputText.includes('provider response detail'));
+
+  delete f.state.dispatchError;
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  completeOwnerReceiptAttempt(f, 'rejected');
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
+});
+
+test('ambiguous dispatch responses never produce rejection or no-send receipts', async t => {
+  const variants = {
+    'bare 422': e => { delete e.response; },
+    'response status mismatch': e => { e.response.status = 429; },
+    'thrown status mismatch': e => { e.status = 503; },
+    'different response endpoint': e => { e.response.url += '/unexpected'; },
+    'different request method': e => { e.request.method = 'GET'; },
+    'missing provider request ID': e => { delete e.response.headers['x-github-request-id']; },
+    'retry-after header': e => { e.response.headers['Retry-After'] = '60'; },
+    'rate limit exhausted': e => { e.response.headers['x-ratelimit-remaining'] = '0'; },
+    'secondary throttle header': e => { e.response.headers['X-GitHub-Throttle'] = 'on'; },
+    'secondary limit message': e => { e.message = 'secondary rate limit'; },
+    'spam message': e => { e.response.data.message = 'The endpoint has been spammed'; },
+    'abuse detail': e => { e.response.data.errors[0].message = 'abuse prevention'; },
+    'wrong documentation link': e => { e.response.data.documentation_url = 'https://docs.github.com/rest'; },
+    'malformed body': e => { e.response.data = 'Validation Failed'; },
+    'no field errors': e => { e.response.data.errors = []; },
+    'unknown validation code': e => { e.response.data.errors[0].code = 'custom'; },
+    'unrelated validation field': e => { e.response.data.errors[0].field = 'other'; },
+  };
+  for (const [name, change] of Object.entries(variants)) {
+    await t.test(name, async () => {
+      const f = admissionFixture();
+      f.state.dispatchError = dispatchValidationError();
+      change(f.state.dispatchError);
+      assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+      assert.equal(f.outputs.size, 0);
+      assert.equal(f.claimRefs.size, 1);
+      delete f.state.dispatchError;
+      assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+      assert.equal(f.sent.length, 1);
+    });
+  }
+});
+
+test('a rejected claim stays held if the locator acknowledgment or the marker write fails', async t => {
+  await t.test('locator response lost', async () => {
+    const f = admissionFixture();
+    f.state.dispatchError = dispatchValidationError();
+    f.state.loseLocatorResponse = true;
+    assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+    assert.equal(f.claimRefs.size, 2);
+    assert.equal(f.outputs.size, 0);
+    completeOwnerReceiptAttempt(f, 'rejected');
+    assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+    assert.equal(f.sent.length, 1);
+  });
+  await t.test('marker output write failed', async () => {
+    const f = admissionFixture();
+    f.state.dispatchError = dispatchValidationError();
+    f.admission.core.setOutput = () => { throw new Error('output unavailable'); };
+    await assert.rejects(admitRuntimeRefresh(f.admission), /output unavailable/);
+    assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+    assert.equal(f.sent.length, 1);
+  });
+});
+
+test('a comparison that moves during rejection receipt lookup cannot reserve a successor generation', async () => {
+  const f = admissionFixture();
+  f.state.dispatchError = dispatchValidationError();
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatch-rejected');
+  completeOwnerReceiptAttempt(f, 'rejected');
+  const readJobs = f.admission.github.rest.actions.listJobsForWorkflowRunAttempt;
+  f.admission.github.rest.actions.listJobsForWorkflowRunAttempt = async request => {
+    f.state.base = D;
+    return readJobs(request);
+  };
+  assert.equal(await admitOrdinaryRefresh(f), 'obsolete');
+  assert.equal(f.claimTags.size, 1);
+  assert.equal(f.sent.length, 1);
+});
+
 test('admission retries a transient identity read after acknowledging the claim', async () => {
   const f = admissionFixture();
   const exactPull = f.admission.github.rest.pulls.get;
@@ -550,16 +679,16 @@ test('an exact successful native preview refusal allows ordinary CI to claim the
   const locatorRef = `refs/tags/firemud-runtime-refresh-unsent/v1/${claim.sha}/600/1`;
   assert.deepEqual(f.claimRefs.get(locatorRef), {ref: locatorRef, object: {type: 'tag', sha: claim.sha}});
   assert.equal(f.outputs.get('unsent_claim'), `generation 1 run 600 attempt 1 tag ${claim.sha}`);
-  completePreviewRefusalAttempt(f);
+  completeOwnerReceiptAttempt(f);
 
   assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
 });
 
-test('only the successful current admission attempt can prove a claim was unsent', async t => {
+test('only the successful current admission attempt can prove an unsent or rejected claim', async t => {
   const mismatches = {
-    'duplicate locator': f => {
-      const locator = [...f.claimRefs.values()].find(ref => ref.ref.includes('/firemud-runtime-refresh-unsent/'));
+    'duplicate locator': (f, {kind}) => {
+      const locator = [...f.claimRefs.values()].find(ref => ref.ref.includes(`/firemud-runtime-refresh-${kind}/`));
       const ref = locator.ref.replace('/600/1', '/600/2');
       f.claimRefs.set(ref, {...locator, ref});
     },
@@ -569,12 +698,16 @@ test('only the successful current admission attempt can prove a claim was unsent
     'wrong branch': (f, {run}) => { run.head_branch = 'stacked'; },
     'wrong qualified path': (f, {run}) => { run.path += '@refs/heads/stacked'; },
     'wrong repository': (f, {run}) => { run.head_repository.full_name = 'fork/FireMUD'; },
+    'wrong owner revision': (f, {run, job}) => { run.head_sha = E; job.head_sha = E; },
     'superseded attempt': (f, {run}) => { run.run_attempt++; },
     'failed run': (f, {run}) => { run.conclusion = 'failure'; },
     'wrong job head': (f, {job}) => { job.head_sha = E; },
     'skipped marker': (f, {job}) => { job.steps[0].conclusion = 'skipped'; },
     'duplicate marker': (f, {job}) => { job.steps.push(job.steps[0]); },
     'wrong tag': (f, {job}) => { job.steps[0].name = job.steps[0].name.replace(/[0-9a-f]{40}$/, E); },
+    'wrong marker kind': (f, {job, kind}) => {
+      job.steps[0].name = job.steps[0].name.replace(kind, kind === 'unsent' ? 'rejected' : 'unsent');
+    },
     'attempt moves during marker read': (f, {run}) => {
       const read = f.admission.github.rest.actions.listJobsForWorkflowRunAttempt;
       f.admission.github.rest.actions.listJobsForWorkflowRunAttempt = async request => {
@@ -583,15 +716,19 @@ test('only the successful current admission attempt can prove a claim was unsent
       };
     },
   };
-  for (const [name, change] of Object.entries(mismatches)) {
-    await t.test(name, async () => {
-      const f = admissionFixture();
-      preparePreviewRefusal(f);
-      assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
-      change(f, completePreviewRefusalAttempt(f));
-      assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
-      assert.deepEqual(f.sent, []);
-    });
+  for (const kind of ['unsent', 'rejected']) {
+    for (const [name, change] of Object.entries(mismatches)) {
+      await t.test(`${kind}: ${name}`, async () => {
+        const f = admissionFixture();
+        if (kind === 'unsent') preparePreviewRefusal(f);
+        else f.state.dispatchError = dispatchValidationError();
+        assert.equal(await admitRuntimeRefresh(f.admission), kind === 'unsent' ? 'obsolete' : 'dispatch-rejected');
+        change(f, {...completeOwnerReceiptAttempt(f, kind), kind});
+        delete f.state.dispatchError;
+        assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+        assert.equal(f.sent.length, kind === 'unsent' ? 0 : 1);
+      });
+    }
   }
 });
 
@@ -602,7 +739,7 @@ test('a lost locator acknowledgement does not produce a preview refusal marker',
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
   assert.equal(f.claimRefs.size, 2);
   assert.equal(f.outputs.size, 0);
-  completePreviewRefusalAttempt(f);
+  completeOwnerReceiptAttempt(f);
   assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
   assert.deepEqual(f.sent, []);
 });
@@ -711,14 +848,46 @@ test('an equal commit on a different base ref gets an independent exact claim', 
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '1']);
 });
 
-test('an annotated claim which points at a different merge can never authorize dispatch', async () => {
+test('a claim with inconsistent annotation or tag target stays held despite a native terminal receiver', async t => {
+  const variants = {
+    'different target': record => { record.object.sha = A; },
+    'malformed owner revision': record => {
+      record.message = JSON.stringify({...JSON.parse(record.message), owner_revision: null}) + '\n';
+      record.object.sha = A;
+    },
+    'noncanonical annotation bytes': record => { record.message += '\n'; },
+  };
+  for (const [name, change] of Object.entries(variants)) {
+    await t.test(name, async () => {
+      const f = admissionFixture();
+      assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+      const [run] = f.runs;
+      run.status = 'completed';
+      run.conclusion = 'success';
+      proveFixtureDispatchBase(f, run);
+      const [record] = f.claimTags.values();
+      change(record);
+      assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+      assert.equal(f.sent.length, 1);
+    });
+  }
+});
+
+test('an ambiguous legacy merge-target claim retains its generation until a terminal receiver proves it', async () => {
   const f = admissionFixture();
-  f.state.keepHidden = true;
-  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
-  const [record] = f.claimTags.values();
-  record.object.sha = D;
+  const legacyRun = f.makeRun({status: 'completed', conclusion: 'success'});
+  proveFixtureDispatchBase(f, legacyRun);
+  const prior = structuredClone(f.claimTags.get(E));
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
-  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent.length, 0);
+
+  f.runs.push(legacyRun);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent[0].client_payload.runtime_refresh_claim, '2');
+  assert.deepEqual(f.claimTags.get(E), prior);
+  const successor = [...f.claimTags.values()].find(tag => tag.tag.endsWith('/g2'));
+  assert.deepEqual(successor.object, {type: 'commit', sha: D});
+  assert.equal(JSON.parse(successor.message).owner_revision, D);
 });
 
 test('unseen same-second activity is ambiguous dispatch attribution and never triggers a retry', async t => {
@@ -792,10 +961,11 @@ test('both wake inputs retain intent in one non-replacing exact tuple queue on t
   assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
     {ref: '${{ github.workflow_sha }}', 'persist-credentials': 'false'});
   assert.match(job.steps.find(step => step.id === 'admit').with.script, /input: context.payload.client_payload/);
-  const marker = job.steps.at(-1);
-  assert.equal(marker.name, 'Runtime refresh unsent claim ${{ steps.admit.outputs.unsent_claim }}');
-  assert.equal(marker.if, "${{ success() && steps.admit.outputs.unsent_claim != '' }}");
-  assert.equal(marker['continue-on-error'], undefined);
+  for (const [marker, kind] of [[job.steps.at(-2), 'unsent'], [job.steps.at(-1), 'rejected']]) {
+    assert.equal(marker.name, `Runtime refresh ${kind} claim \${{ steps.admit.outputs.${kind}_claim }}`);
+    assert.equal(marker.if, `\${{ success() && steps.admit.outputs.${kind}_claim != '' }}`);
+    assert.equal(marker['continue-on-error'], undefined);
+  }
 });
 
 const tupleStep = (kind, base, merge) => ({

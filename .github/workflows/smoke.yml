@@ -581,7 +581,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "ad7ae1a525621952060f824752e96491c3d5b5973b29bcac7ad83c45f03ec45a";
+            const canonicalRuntimeWorkflowSha256 = "cb3117e121f317cadf31968ef3a41bb32368deddc4c584cc72ef982095133e2e";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -707,7 +707,10 @@ jobs:
             }
 
             function isSuccessfulRuntimeWorkflowDefinition(definitionHash, sourceEvent) {
+              // The earlier claim target does not invalidate already established smoke proof.
+              const canonicalMergeTargetRuntimeWorkflowSha256 = "ad7ae1a525621952060f824752e96491c3d5b5973b29bcac7ad83c45f03ec45a";
               return definitionHash === canonicalRuntimeWorkflowSha256 ||
+                definitionHash === canonicalMergeTargetRuntimeWorkflowSha256 ||
                 definitionHash === canonicalMergeOnlyArtifactRuntimeWorkflowSha256 ||
                 (sourceEvent === "repository_dispatch" &&
                   (definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 ||

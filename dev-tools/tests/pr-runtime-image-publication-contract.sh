@@ -747,17 +747,22 @@ def admit(current_request, current_merge, current_branch, overrides=None, event_
 
 claim_sha = "d" * 40
 claim_witness = "f" * 64
+admission_revision = "9" * 40
 claim_tag_file = fixture / "runtime-claim-tag.json"
 
-def install_claim(request, merge, branch):
+def install_claim(request, merge, branch, owner_revision=admission_revision):
     base_ref_hash = hashlib.sha256(request["base"]["ref"].encode()).hexdigest()
     claim = f"firemud-runtime-refresh-intent/v1/pr-{request['number']}/{merge['sha']}/{base_ref_hash}/g1"
     claim_ref = {"ref": f"refs/tags/{claim}", "object": {"type": "tag", "sha": claim_sha}}
-    claim_tag = {"sha": claim_sha, "tag": claim, "object": {"type": "commit", "sha": merge["sha"]},
-                 "message": json.dumps({"pr_number": str(request["number"]), "base_ref": request["base"]["ref"],
-                                        "base_sha": branch["object"]["sha"], "head_sha": request["head"]["sha"],
-                                        "merge_sha": merge["sha"], "generation": "1",
-                                        "witness_sha256": hashlib.sha256(claim_witness.encode()).hexdigest()}) + "\n"}
+    annotation = {"pr_number": str(request["number"]), "base_ref": request["base"]["ref"],
+                  "base_sha": branch["object"]["sha"], "head_sha": request["head"]["sha"],
+                  "merge_sha": merge["sha"], "generation": "1",
+                  "witness_sha256": hashlib.sha256(claim_witness.encode()).hexdigest()}
+    if owner_revision is not None:
+        annotation["owner_revision"] = owner_revision
+    claim_tag = {"sha": claim_sha, "tag": claim,
+                 "object": {"type": "commit", "sha": owner_revision if owner_revision is not None else merge["sha"]},
+                 "message": json.dumps(annotation, ensure_ascii=False, separators=(",", ":")) + "\n"}
     claim_tag_file = fixture / "runtime-claim-tag.json"
     (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
     claim_tag_file.write_text(json.dumps(claim_tag))
@@ -772,6 +777,10 @@ try:
     missing_claim = admit(request, merge, branch)
     assert missing_claim.returncode != 0
     assert not Path(env["GITHUB_OUTPUT"]).read_text()
+    legacy_request = install_claim(request, merge, branch, owner_revision=None)
+    legacy_result = admit(request, merge, branch, legacy_request)
+    assert legacy_result.returncode == 0, legacy_result.stderr
+    assert f"runtime_refresh_claim_tag={claim_sha}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     claim_request = install_claim(request, merge, branch)
     claim_ref = json.loads((fixture / "runtime-claim-ref.json").read_text())
     claim_tag = json.loads(claim_tag_file.read_text())
@@ -791,9 +800,17 @@ try:
     assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": "b" * 64}).returncode != 0
     assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": ""}).returncode != 0
     assert admit(request, merge, branch, {**claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": ""}).returncode != 0
-    claim_tag_file.write_text(json.dumps({**claim_tag, "object": {"type": "commit", "sha": "e" * 40}}))
-    assert admit(request, merge, branch, claim_request).returncode != 0
-    assert "runtime_refresh_claim=1\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
+    malformed_owner = admission_revision + "\n"
+    malformed_annotation = {**json.loads(claim_tag["message"]), "owner_revision": malformed_owner}
+    for invalid_tag in [
+        {**claim_tag, "object": {"type": "commit", "sha": merge["sha"]}},
+        {**claim_tag, "message": claim_tag["message"] + "\n"},
+        {**claim_tag, "object": {"type": "commit", "sha": malformed_owner},
+         "message": json.dumps(malformed_annotation, separators=(",", ":")) + "\n"},
+    ]:
+        claim_tag_file.write_text(json.dumps(invalid_tag))
+        assert admit(request, merge, branch, claim_request).returncode != 0
+        assert "runtime_refresh_claim=1\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
     oversized_generation = "9007199254740992"
     oversized_claim = claim.removesuffix("/g1") + f"/g{oversized_generation}"
     oversized_lookup = fixture / "oversized-claim-lookup"
