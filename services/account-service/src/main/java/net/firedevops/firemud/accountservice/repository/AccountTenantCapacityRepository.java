@@ -1,7 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -39,17 +38,17 @@ public final class AccountTenantCapacityRepository {
   }
 
   /** Called by the actual Account player evaluator before its final source transaction commits. */
-  public void retainPlayerEvaluation(RuntimePlayerAdmissionEntitlementEvidence source) {
-    retain(Evidence.player(source));
-  }
-
-  private void retain(Evidence evidence) {
+  public void retainPlayerEvaluation(
+      RuntimePlayerAdmissionEntitlementEvidence source, Instant originalPaidCutoff) {
     transaction();
+    Evidence evidence = Evidence.player(source);
+    OffsetDateTime cutoff = originalPaidCutoff == null ? null : at(originalPaidCutoff);
+    requirePaidCutoff(evidence, cutoff);
     int inserted =
         dsl.execute(
             "INSERT INTO account_tenant_capacity_evaluations "
-                + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz) ON CONFLICT (evaluation_identity) DO NOTHING",
+                + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at, original_paid_cutoff) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, ?::timestamptz) ON CONFLICT (evaluation_identity) DO NOTHING",
             evidence.evaluationIdentity(),
             evidence.snapshotIdentity(),
             evidence.tenantId(),
@@ -57,12 +56,36 @@ public final class AccountTenantCapacityRepository {
             evidence.owner().service(),
             evidence.canonicalBytes(),
             at(evidence.evaluatedAt()),
-            at(evidence.expiresAt()));
+            at(evidence.expiresAt()),
+            cutoff);
     if (inserted != 0 && inserted != 1) throw unavailable();
-    requireRetained(evidence);
+    OffsetDateTime retained =
+        retainedEvaluation(evidence).get("original_paid_cutoff", OffsetDateTime.class);
+    if (!Objects.equals(toInstant(cutoff), toInstant(retained))) throw unavailable();
   }
 
   public Instant requireRetained(Evidence evidence) {
+    return time(retainedEvaluation(evidence), "expires_at");
+  }
+
+  /** Returns the original application-clock cutoff for an exact fresh paid evaluation. */
+  public Instant requireRetainedOriginalPaidCutoff(Evidence evidence) {
+    OffsetDateTime cutoff =
+        retainedEvaluation(evidence).get("original_paid_cutoff", OffsetDateTime.class);
+    requirePaidCutoff(evidence, cutoff);
+    return toInstant(cutoff);
+  }
+
+  private static void requirePaidCutoff(Evidence evidence, OffsetDateTime cutoff) {
+    if ("PAID_HOSTING".equals(evidence.fields().get("sourceKind")) != (cutoff != null)
+        || (cutoff != null && cutoff.isBefore(at(evidence.expiresAt())))) throw unavailable();
+  }
+
+  private static Instant toInstant(OffsetDateTime value) {
+    return value == null ? null : value.toInstant();
+  }
+
+  private Record retainedEvaluation(Evidence evidence) {
     transaction();
     Record row =
         dsl.fetchOne(
@@ -82,7 +105,7 @@ public final class AccountTenantCapacityRepository {
             .expiresAt()
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
             .equals(time(row, "expires_at"))) throw unavailable();
-    return time(row, "expires_at");
+    return row;
   }
 
   /** Compare the exact retained deadline to the database clock after locking its evaluation. */
@@ -176,15 +199,29 @@ public final class AccountTenantCapacityRepository {
         || history.get("owner_readback", byte[].class) == null) throw conflict();
   }
 
+  /** Fresh database time, not the transaction-start timestamp or an injected application clock. */
+  public void requireFresh(Evidence evidence) {
+    transaction();
+    requireCurrentLifetime(evidence, databaseNow(dsl));
+  }
+
+  /**
+   * Reads PostgreSQL wall time for evidence creation/freshness checks across application clocks.
+   */
+  public static Instant databaseNow(DSLContext exactDsl) {
+    return time(
+        Objects.requireNonNull(exactDsl).fetchSingle("SELECT clock_timestamp() AS observed_at"),
+        "observed_at");
+  }
+
   /** Retains acceptance only after the locked quota check, in the same reservation transaction. */
-  public Optional<Result> createIfQuotaAvailable(Request request, Instant expiresAt, Clock clock) {
-    Record usage = usage(request);
-    requireCurrentLifetime(request.evidence(), clock.instant());
+  public Optional<Result> createIfQuotaAvailable(Request request, Record usage, Instant expiresAt) {
+    requireFresh(request.evidence());
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied) return Optional.empty();
     new AccountCapacityOriginDecisionRepository(dsl).accept(request);
-    requireCurrentLifetime(request.evidence(), clock.instant());
+    requireFresh(request.evidence());
     long held = Math.addExact(number(usage, "held_units"), delta);
     updateUsage(request, usage, held, number(usage, "used_units"));
     int created =

@@ -639,8 +639,15 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   @Test
-  void firstRecoveryAfterDeadlineFinalizesAnExactPositiveOnce() {
-    var f = capacityPersistenceFixture(true);
+  void firstRecoveryAfterDeadlineFinalizesPositiveAndQuarantinesOtherOutcomes()
+      throws InterruptedException {
+    var outcomes = List.of("negative", "indeterminate", "malformed", "unavailable", "late");
+    var fixtures = capacityPersistenceFixturesPastRecoveryDeadline(1 + outcomes.size());
+    assertExactPositiveAfterDeadline(fixtures.getFirst());
+    assertOtherOutcomesAfterDeadline(outcomes, fixtures.subList(1, fixtures.size()));
+  }
+
+  private static void assertExactPositiveAfterDeadline(CapacityPersistenceFixture f) {
     assertThat(Instant.now()).isAfter(f.initial.expiresAt().plusSeconds(60));
     var calls = new java.util.concurrent.atomic.AtomicInteger();
     var recovery =
@@ -685,11 +692,11 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .isEqualTo(1);
   }
 
-  @Test
-  void firstLateNegativeMalformedUnavailableAndOverBudgetReadsQuarantineWithoutReleasing() {
-    for (String outcome :
-        List.of("negative", "indeterminate", "malformed", "unavailable", "late")) {
-      var f = capacityPersistenceFixture(true);
+  private static void assertOtherOutcomesAfterDeadline(
+      List<String> outcomes, List<CapacityPersistenceFixture> fixtures) {
+    for (int index = 0; index < outcomes.size(); index++) {
+      String outcome = outcomes.get(index);
+      var f = fixtures.get(index);
       assertThat(Instant.now()).isAfter(f.initial.expiresAt().plusSeconds(60));
       var now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
       var recoveryClock =
@@ -778,12 +785,55 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     }
   }
 
-  /** Genuine same-transaction fresh creation; controlled entitlement and owner execution source. */
-  private static CapacityPersistenceFixture capacityPersistenceFixture() {
-    return capacityPersistenceFixture(false);
+  /** Age committed fresh attempts without changing evidence, immutable rows or database time. */
+  private static List<CapacityPersistenceFixture> capacityPersistenceFixturesPastRecoveryDeadline(
+      int count) throws InterruptedException {
+    var fixtures = new ArrayList<CapacityPersistenceFixture>();
+    var retained = new ArrayList<String>();
+    // Create all cases before waiting, so all six cases share one real aging window.
+    for (int index = 0; index < count; index++) {
+      var fixture = capacityPersistenceFixture();
+      fixtures.add(fixture);
+      retained.add(capacityReservationImage(fixture));
+    }
+    long started = System.nanoTime();
+    for (int index = 0; index < fixtures.size(); index++) {
+      var fixture = fixtures.get(index);
+      var poll =
+          fixture.context.deadlinePoll.resultQuery(
+              "SELECT clock_timestamp() > reconcile_deadline AS expired"
+                  + " FROM account_tenant_capacity_reservations WHERE reservation_id = ?",
+              fixture.initial.reservationId());
+      poll.queryTimeout(3);
+      while (!Boolean.TRUE.equals(poll.fetchSingle().get("expired", Boolean.class))
+          || !Instant.now().isAfter(fixture.initial.expiresAt().plusSeconds(60))) {
+        assertThat(System.nanoTime() - started)
+            .as(
+                "Fresh reservation must age past its persisted recovery deadline within two minutes")
+            .isLessThan(TimeUnit.MINUTES.toNanos(2));
+        Thread.sleep(250);
+      }
+      assertThat(capacityReservationImage(fixture)).isEqualTo(retained.get(index));
+      assertThat(
+              fixture.context.dsl.fetchCount(
+                  DSL.table("account_tenant_capacity_recovery_evidence")))
+          .isZero();
+    }
+    return fixtures;
   }
 
-  private static CapacityPersistenceFixture capacityPersistenceFixture(boolean expired) {
+  private static String capacityReservationImage(CapacityPersistenceFixture fixture) {
+    return fixture
+        .context
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_build_object('row', to_jsonb(reservation), 'xmin', reservation.xmin::text)::text AS image FROM account_tenant_capacity_reservations reservation WHERE reservation_id = ?",
+            fixture.initial.reservationId())
+        .get("image", String.class);
+  }
+
+  /** Genuine same-transaction fresh creation; controlled entitlement and owner execution source. */
+  private static CapacityPersistenceFixture capacityPersistenceFixture() {
     StorageContext c = storageContext();
     var fixture = storageFixture(c);
     var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
@@ -796,53 +846,52 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var base =
         net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.worldRequest(
             17L);
-    // A retained historical reservation is inserted through the same controlled source fixture.
-    // No live producer accepts stale evidence, and no immutable row or database clock is changed.
-    var now =
-        java.time.Instant.now()
-            .minusSeconds(expired ? 120 : 0)
-            .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-    String json =
-        new String(base.evidence().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
-            .replace(base.identity().tenantId().toString(), tenant.toString())
-            .replace(
-                net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.NOW
-                    .toString(),
-                now.toString());
-    var evidence =
-        net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence.parse(
-            json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Owner
-                .WORLD_MANAGEMENT);
-    var context =
-        (net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.WorldContext)
-            base.context();
-    var request =
-        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
-                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity(
-                    tenant, base.identity().requestId(), base.identity().admissionId()),
-                base.admissionAttemptId(),
-                base.capacityRearmFence(),
-                base.targetNamespace(),
-                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
-                    .WorldContext(
-                    tenant,
-                    context.operationId(),
-                    context.lifecycleId(),
-                    context.gameInstanceId(),
-                    context.ownerId(),
-                    context.ownerFence()),
-                base.operation(),
-                base.priorShape(),
-                base.requestedShape(),
-                evidence,
-                base.capacityDelta(),
-                null)
-            .withDigest();
     var repository =
         new net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository(c.dsl);
     var initial =
         c.transaction.execute(status -> {
+          var now =
+              net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
+                  .databaseNow(c.dsl);
+          String json =
+              new String(base.evidence().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                  .replace(base.identity().tenantId().toString(), tenant.toString())
+                  .replace(
+                      net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture
+                          .NOW
+                          .toString(),
+                      now.toString());
+          var evidence =
+              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence.parse(
+                  json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                  net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Owner
+                      .WORLD_MANAGEMENT);
+          var context =
+              (net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.WorldContext)
+                  base.context();
+          var request =
+              new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                      new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                          .Identity(
+                          tenant, base.identity().requestId(), base.identity().admissionId()),
+                      base.admissionAttemptId(),
+                      base.capacityRearmFence(),
+                      base.targetNamespace(),
+                      new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                          .WorldContext(
+                          tenant,
+                          context.operationId(),
+                          context.lifecycleId(),
+                          context.gameInstanceId(),
+                          context.ownerId(),
+                          context.ownerFence()),
+                      base.operation(),
+                      base.priorShape(),
+                      base.requestedShape(),
+                      evidence,
+                      base.capacityDelta(),
+                      null)
+                  .withDigest();
           // Controlled fixture evidence deliberately bypasses the absent World producer.
           // Production
           // has no route to perform this insertion and World admission remains unavailable.
@@ -858,12 +907,11 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                   evidence.evaluatedAt()),
               net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at(
                   evidence.expiresAt()));
-          return repository
-              .createIfQuotaAvailable(
-                  request,
-                  evidence.expiresAt(),
-                  Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC))
-              .orElseThrow(() -> new AssertionError("Controlled fixture must have capacity"));
+          var reservation =
+              repository
+                  .createIfQuotaAvailable(request, repository.usage(request), evidence.expiresAt())
+                  .orElseThrow();
+          return Map.entry(request, reservation);
         });
     var owner =
         new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
@@ -881,7 +929,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             c.manager,
             java.time.Clock.systemUTC(),
             "prod");
-    return new CapacityPersistenceFixture(c, request, repository, owner, initial);
+    return new CapacityPersistenceFixture(
+        c, initial.getKey(), repository, owner, initial.getValue());
   }
 
   private static net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
@@ -1764,6 +1813,15 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .load()
         .migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var pollSource =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    pollSource.setSchema(schema);
+    var pollProperties = new java.util.Properties();
+    pollProperties.setProperty("connectTimeout", "5");
+    pollProperties.setProperty("socketTimeout", "5");
+    pollSource.setConnectionProperties(pollProperties);
+    DSLContext deadlinePoll = DSL.using(pollSource, SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -1828,7 +1886,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             manager,
             Clock.systemUTC(),
             reauthenticationCryptography(Clock.systemUTC()));
-    return new StorageContext(dsl, accounts, evidence, service, transaction, manager);
+    return new StorageContext(dsl, deadlinePoll, accounts, evidence, service, transaction, manager);
   }
 
   private static AccountControlUiResponseCryptography reauthenticationCryptography(Clock clock) {
@@ -1867,6 +1925,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
 
   private record StorageContext(
       DSLContext dsl,
+      DSLContext deadlinePoll,
       AccountRepository accounts,
       AccountRecentReauthenticationRepository evidenceRepository,
       AccountRecentReauthenticationService service,

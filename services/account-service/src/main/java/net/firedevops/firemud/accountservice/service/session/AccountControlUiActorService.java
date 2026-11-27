@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -97,9 +98,7 @@ public final class AccountControlUiActorService {
         AccountControlUiAuthority.ScopeKind.ACCOUNT,
         null,
         null,
-        current ->
-            new AccountAuthenticatedActor(
-                current.stored.accountId, current.stored.operationId, current.stored.tokenHash));
+        current -> new AccountAuthenticatedActor(current.stored));
   }
 
   /** Consumes current Account evidence and producer fences in the mutation's owner transaction. */
@@ -107,13 +106,7 @@ public final class AccountControlUiActorService {
       String compactJwt, Function<AccountAuthenticatedActor, T> action) {
     Objects.requireNonNull(action, "current Account action is required");
     return withCurrentAccountSources(
-        compactJwt,
-        current ->
-            action.apply(
-                new AccountAuthenticatedActor(
-                    current.stored.accountId,
-                    current.stored.operationId,
-                    current.stored.tokenHash)));
+        compactJwt, current -> action.apply(new AccountAuthenticatedActor(current.stored)));
   }
 
   /**
@@ -417,11 +410,20 @@ public final class AccountControlUiActorService {
   record AcceptedSignerKey(String keyId, String fingerprint) {}
 
   private void requireCurrentOriginalToken(AccountControlUiIssuanceRepository.Stored original) {
+    requireCurrentOriginalToken(original.issuedAt, original.expiresAt);
+  }
+
+  /** Checks the original bearer after billing evidence has been bound under Account SQL locks. */
+  void requireCurrentOriginalToken(AccountAuthenticatedActor original) {
+    requireCurrentOriginalToken(original.issuedAt, original.expiresAt);
+  }
+
+  private void requireCurrentOriginalToken(Instant issuedAt, Instant expiresAt) {
     var now = clock.instant();
-    if (original.issuedAt == null
-        || original.expiresAt == null
-        || now.isBefore(original.issuedAt)
-        || !now.isBefore(original.expiresAt)) {
+    if (issuedAt == null
+        || expiresAt == null
+        || now.isBefore(issuedAt)
+        || !now.isBefore(expiresAt)) {
       throw denied();
     }
   }
@@ -577,11 +579,15 @@ public final class AccountControlUiActorService {
     private final UUID accountId;
     private final UUID issuanceOperationId;
     private final String tokenHash;
+    private final Instant issuedAt;
+    private final Instant expiresAt;
 
-    private AccountAuthenticatedActor(UUID accountId, UUID issuanceOperationId, String tokenHash) {
-      this.accountId = accountId;
-      this.issuanceOperationId = issuanceOperationId;
-      this.tokenHash = tokenHash;
+    private AccountAuthenticatedActor(AccountControlUiIssuanceRepository.Stored original) {
+      this.accountId = original.accountId;
+      this.issuanceOperationId = original.operationId;
+      this.tokenHash = original.tokenHash;
+      this.issuedAt = original.issuedAt;
+      this.expiresAt = original.expiresAt;
     }
 
     public UUID accountId() {

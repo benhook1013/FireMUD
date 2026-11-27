@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -553,6 +555,97 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
         .findByAccountUuid(org.mockito.ArgumentMatchers.any());
     verifyNoInteractions(sessionService);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"password, true", "123456, false", "wrong, false"})
+  void billingVerificationKeepsOnlyAcceptedPasswordWhenChallengeIsReplaced(
+      String credential, boolean passwordAccepted) {
+    Account account = ordinaryIssuanceAccount();
+    ordinaryIssuanceChallenge(account);
+    var verification =
+        service.preverifyBillingPrimaryCredential(
+            account.getAccountUuid(), account.getEmail(), credential);
+
+    var replacement = ordinaryIssuanceChallenge(account);
+    replacement.setId(4L);
+    when(accountEmailLoginChallengeRepository.tryLockAccountChallenge(account.getId()))
+        .thenReturn(true);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      if (passwordAccepted) {
+        assertEquals(
+            account.getAccountUuid(),
+            service.applyBillingPrimaryVerification(account, verification).accountId());
+      } else {
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.applyBillingPrimaryVerification(account, verification));
+      }
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+
+    assertEquals(0, replacement.getInvalidAttemptCount());
+    verify(accountEmailLoginChallengeRepository, never())
+        .delete(org.mockito.ArgumentMatchers.any());
+    verify(accountEmailLoginChallengeRepository, never()).save(org.mockito.ArgumentMatchers.any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void billingVerificationStillRequiresCurrentPasswordHashAndMode(boolean changedPassword) {
+    Account account = ordinaryIssuanceAccount();
+    ordinaryIssuanceChallenge(account);
+    var verification =
+        service.preverifyBillingPrimaryCredential(
+            account.getAccountUuid(), account.getEmail(), "password");
+    Account locked = new Account();
+    locked.setId(account.getId());
+    locked.setAccountUuid(account.getAccountUuid());
+    locked.setAccountUuidSourceNumericId(account.getAccountUuidSourceNumericId());
+    locked.setAccountUuidProvenance(account.getAccountUuidProvenance());
+    locked.setEmail(account.getEmail());
+    locked.setLoginAuthModes(changedPassword ? account.getLoginAuthModes() : "EMAIL_OTP");
+    locked.setPasswordHash(changedPassword ? hash("replacement") : account.getPasswordHash());
+    ordinaryIssuanceChallenge(account).setId(4L);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThrows(
+          IllegalStateException.class,
+          () -> service.applyBillingPrimaryVerification(locked, verification));
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+
+    verify(accountEmailLoginChallengeRepository, never()).tryLockAccountChallenge(account.getId());
+  }
+
+  @Test
+  void billingVerificationCountsFailedCredentialAgainstUnchangedChallenge() {
+    Account account = ordinaryIssuanceAccount();
+    var challenge = ordinaryIssuanceChallenge(account);
+    var verification =
+        service.preverifyBillingPrimaryCredential(
+            account.getAccountUuid(), account.getEmail(), "wrong");
+    when(accountEmailLoginChallengeRepository.tryLockAccountChallenge(account.getId()))
+        .thenReturn(true);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      var denied =
+          assertThrows(
+              AuthenticationException.class,
+              () -> service.applyBillingPrimaryVerification(account, verification));
+      assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, denied.getCode());
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+
+    assertEquals(1, challenge.getInvalidAttemptCount());
+    verify(accountEmailLoginChallengeRepository).save(challenge);
   }
 
   private Account ordinaryIssuanceAccount() {

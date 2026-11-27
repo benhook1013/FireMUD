@@ -17,6 +17,7 @@ import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
@@ -56,6 +58,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
@@ -72,6 +75,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmi
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
@@ -124,7 +128,6 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final String ISSUER = "firemud-account-service";
   private static final String PEER =
       "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
-  private static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture();
   @TempDir Path certificateDirectory;
@@ -191,7 +194,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       when(target.ownerProofDigest())
           .thenReturn((String) sources.get("gameSessionOwnerProofDigest"));
       var claims = mock(ContextClaims.class);
-      when(claims.expiresAtMillis()).thenReturn(NOW.plusSeconds(120).toEpochMilli());
+      when(claims.expiresAtMillis()).thenReturn(f.baseTime.plusSeconds(120).toEpochMilli());
       var context = mock(FirstPartyConnectContext.class);
       when(context.hasCompleteRoutingScope()).thenReturn(true);
       when(context.claims()).thenReturn(claims);
@@ -210,9 +213,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                   UUID.fromString((String) sources.get("callerTokenJti")),
                   controlledTokenDigest(),
                   GameSessionAccountDelegationProfile.PROFILE,
-                  NOW.minusSeconds(10).getEpochSecond(),
-                  NOW.minusSeconds(10).getEpochSecond(),
-                  NOW.plusSeconds(120).getEpochSecond(),
+                  f.baseTime.minusSeconds(10).getEpochSecond(),
+                  f.baseTime.minusSeconds(10).getEpochSecond(),
+                  f.baseTime.plusSeconds(120).getEpochSecond(),
                   "1",
                   "1",
                   ByteString.EMPTY,
@@ -234,10 +237,18 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               pki.clientProperties(certificateDirectory, pki.identity("client")),
               new GrpcChannelFactory(),
               NAMESPACE,
-              Clock.fixed(NOW, ZoneOffset.UTC))) {
+              Clock.fixed(expected.evaluatedAt(), ZoneOffset.UTC))) {
         client.init();
         var received = client.read(context, request.requestId(), login, () -> true);
-        assertThat(received.canonicalBytes()).isEqualTo(expected.canonicalBytes());
+        assertThat(received.fields().get("snapshotIdentity"))
+            .isEqualTo(expected.fields().get("snapshotIdentity"));
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT canonical_evidence FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+                        received.fields().get("evaluationIdentity"))
+                    .get(0, byte[].class))
+            .containsExactly(received.canonicalBytes());
         assertThat(received.membershipSource().membershipExists()).isEqualTo(joined);
         assertThat(received.membershipSource().gameplayAdmissionAllowed()).isEqualTo(joined);
         assertThat(new String(received.canonicalBytes(), StandardCharsets.UTF_8))
@@ -289,7 +300,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             mock(AccountHostingSubscriptionLifecycleService.class),
             f.demos,
             new DataSourceTransactionManager(f.dataSource),
-            Clock.fixed(NOW, ZoneOffset.UTC),
+            Clock.fixed(f.baseTime, ZoneOffset.UTC),
             NAMESPACE);
     var request =
         new AccountTenantOperationEntitlementOwner.Request(
@@ -330,6 +341,136 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
           assertThat(checkpoint.outboxSequence()).isEqualTo("0");
         });
     assertThat(value.membershipSource().sourceEvidence()).isNotEmpty();
+  }
+
+  @Test
+  void postCommitClockQueryIsCancelledAndReleasesItsConnection() {
+    var clockReads = new AtomicInteger();
+    var blockedBackend = new AtomicInteger();
+    Fixture f =
+        fixture(
+            false,
+            Clock.systemUTC(),
+            new org.jooq.impl.DefaultExecuteListener() {
+              @Override
+              public void renderEnd(org.jooq.ExecuteContext context) {
+                if (!"SELECT clock_timestamp() AS observed_at".equals(context.sql())
+                    || clockReads.incrementAndGet() != 2) return;
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                try (var statement = context.connection().createStatement();
+                    var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+                  assertThat(result.next()).isTrue();
+                  blockedBackend.set(result.getInt(1));
+                } catch (SQLException failure) {
+                  throw new IllegalStateException(failure);
+                }
+                context.sql("SELECT clock_timestamp() AS observed_at FROM pg_sleep(15)");
+              }
+            });
+    long started = System.nanoTime();
+    assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            SQLException.class, failure -> assertThat(failure.getSQLState()).isEqualTo("57014"));
+    assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
+    assertThat(blockedBackend.get()).isPositive();
+    org.awaitility.Awaitility.await("PostgreSQL backend released")
+        .atMost(Duration.ofSeconds(3))
+        .until(() ->
+            !f.dsl.fetchExists(
+                DSL.selectOne().from("pg_stat_activity").where("pid = ?", blockedBackend.get())));
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_evaluations"))).isOne();
+  }
+
+  @Test
+  void paidDeadlinePreservesOnlyTheEarlierBoundAgainstActualPostgresTime() {
+    Fixture f = fixture(false);
+    f.transaction.executeWithoutResult(status -> {
+      Instant stamp = databaseNow(f.dsl);
+      Instant cutoff = stamp.plusSeconds(20);
+      assertThat(
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  cutoff, stamp, stamp.plusSeconds(5)))
+          .isEqualTo(stamp.plusSeconds(15));
+      assertThat(
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  cutoff, stamp, stamp.minusSeconds(5)))
+          .isEqualTo(cutoff);
+      assertThatThrownBy(() ->
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  cutoff, stamp, cutoff))
+          .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+      assertThatThrownBy(() ->
+              AccountPlayerAdmissionEntitlementOwner.conservativePaidReceiptDeadline(
+                  stamp, stamp, stamp.minusSeconds(5)))
+          .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+    });
+  }
+
+  @Test
+  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockLeadsDatabaseTime() {
+    MutableClock aheadOfDatabase = new MutableClock(Instant.EPOCH, ZoneOffset.UTC);
+    Fixture f = fixture(false, aheadOfDatabase);
+    Instant databaseBeforeEvaluation = databaseNow(f.dsl);
+    aheadOfDatabase.setInstant(databaseBeforeEvaluation.plusSeconds(5));
+    var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
+    Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(aheadOfDatabase.instant()).isAfter(databaseAfterEvaluation);
+    assertThat(value.evaluatedAt()).isAfterOrEqualTo(databaseBeforeEvaluation);
+    assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
+
+    var target = (Map<?, ?>) value.fields().get("target");
+    var sourceReferences = (Map<?, ?>) value.fields().get("sourceReferences");
+    assertThat(target.get("evaluatedAt")).isEqualTo(f.scope.evaluatedAt());
+    assertThat(target.get("connectScopeExpiresAt")).isEqualTo(f.scope.connectScopeExpiresAt());
+    assertThat(sourceReferences.get("scopeDigest")).isEqualTo(AccountJoinDigest.scopeV2(f.scope));
+
+    var retained =
+        f.dsl.fetchOne(
+            "SELECT canonical_evidence, evaluated_at, expires_at "
+                + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            value.fields().get("evaluationIdentity"));
+    assertThat(retained).isNotNull();
+    assertThat(retained.get("canonical_evidence", byte[].class))
+        .containsExactly(value.canonicalBytes());
+    assertThat(AccountTenantCapacityRepository.time(retained, "evaluated_at"))
+        .isEqualTo(value.evaluatedAt());
+    assertThat(AccountTenantCapacityRepository.time(retained, "expires_at"))
+        .isEqualTo(
+            value.validUntil().isBefore(value.evaluatedAt().plusSeconds(15))
+                ? value.validUntil()
+                : value.evaluatedAt().plusSeconds(15));
+
+    var capacity = new AccountTenantCapacityRepository(f.dsl);
+    f.transaction.executeWithoutResult(status -> capacity.requireFresh(Evidence.player(value)));
+  }
+
+  @Test
+  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockTrailsDatabaseTime() {
+    MutableClock behindDatabase = new MutableClock(Instant.EPOCH, ZoneOffset.UTC);
+    Fixture f = fixture(false, behindDatabase);
+    Instant databaseBeforeEvaluation = databaseNow(f.dsl);
+    behindDatabase.setInstant(databaseBeforeEvaluation.plusSeconds(-5));
+    var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
+    Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(behindDatabase.instant()).isBefore(databaseBeforeEvaluation);
+    assertThat(value.evaluatedAt()).isAfterOrEqualTo(databaseBeforeEvaluation);
+    assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
+
+    var retained =
+        f.dsl.fetchOne(
+            "SELECT canonical_evidence, evaluated_at, expires_at "
+                + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            value.fields().get("evaluationIdentity"));
+    assertThat(retained).isNotNull();
+    assertThat(retained.get("canonical_evidence", byte[].class))
+        .containsExactly(value.canonicalBytes());
+    assertThat(AccountTenantCapacityRepository.time(retained, "evaluated_at"))
+        .isEqualTo(value.evaluatedAt());
+
+    var capacity = new AccountTenantCapacityRepository(f.dsl);
+    f.transaction.executeWithoutResult(status -> capacity.requireFresh(Evidence.player(value)));
   }
 
   @Test
@@ -713,6 +854,22 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   private Fixture fixture(boolean join, boolean initializeCapacity) {
+    return fixture(join, null, new org.jooq.impl.DefaultExecuteListener(), initializeCapacity);
+  }
+
+  private Fixture fixture(boolean join, Clock applicationClock) {
+    return fixture(join, applicationClock, new org.jooq.impl.DefaultExecuteListener(), false);
+  }
+
+  private Fixture fixture(boolean join, Clock applicationClock, org.jooq.ExecuteListener listener) {
+    return fixture(join, applicationClock, listener, false);
+  }
+
+  private Fixture fixture(
+      boolean join,
+      Clock applicationClock,
+      org.jooq.ExecuteListener listener,
+      boolean initializeCapacity) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
@@ -724,7 +881,14 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
-    return new Fixture(dataSource, join, initializeCapacity);
+    DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    Instant baseTime = databaseNow(setupDsl).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+    return new Fixture(dataSource, join, baseTime, applicationClock, listener, initializeCapacity);
+  }
+
+  private static Instant databaseNow(DSLContext dsl) {
+    return AccountTenantCapacityRepository.time(
+        dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"), "observed_at");
   }
 
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
@@ -812,23 +976,30 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final class Fixture {
     private final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
-    private final Instant now;
     private final MutableClock clock;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
     private final AccountTenantMembershipRepository memberships;
     private final AccountDemoTenantEntitlementRepository demos;
     private final Account account;
+    private final Instant baseTime;
     private final UUID tenantId = UUID.randomUUID();
     private final CanonicalJoinScopeV2 scope;
     private final AccountPlayerAdmissionEntitlementOwner owner;
     private final AccountTenantCapacityOwner capacityOwner;
 
-    private Fixture(DriverManagerDataSource dataSource, boolean join, boolean initializeCapacity) {
+    private Fixture(
+        DriverManagerDataSource dataSource,
+        boolean join,
+        Instant baseTime,
+        Clock applicationClock,
+        org.jooq.ExecuteListener listener,
+        boolean initializeCapacity) {
       this.dataSource = dataSource;
-      now = initializeCapacity ? Instant.now().truncatedTo(ChronoUnit.MICROS) : NOW;
-      clock = new MutableClock(now, ZoneOffset.UTC);
+      this.baseTime = baseTime;
+      clock = new MutableClock(baseTime, ZoneOffset.UTC);
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+      dsl.configuration().set(new org.jooq.impl.DefaultExecuteListenerProvider(listener));
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
       accounts = new AccountRepository(dsl);
@@ -915,8 +1086,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               UUID.randomUUID(),
               7,
               3,
-              now.minusSeconds(20).toString(),
-              now.plusSeconds(120).toString());
+              baseTime.minusSeconds(20).toString(),
+              baseTime.plusSeconds(120).toString());
       String joinRequestId = UUID.randomUUID().toString();
       String callerBinding = "controlled-join-caller";
       transaction.execute(status -> {
@@ -984,9 +1155,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               mock(AccountGameplayCredentialRequestBinding.class),
               "a".repeat(64),
               UUID.randomUUID(),
-              now.minusSeconds(10).getEpochSecond(),
-              now.minusSeconds(10).getEpochSecond(),
-              now.plusSeconds(120).getEpochSecond());
+              baseTime.minusSeconds(10).getEpochSecond(),
+              baseTime.minusSeconds(10).getEpochSecond(),
+              baseTime.plusSeconds(120).getEpochSecond());
       var candidate = mock(CommittedCandidateVerificationData.class);
       when(candidate.identity()).thenReturn(identity);
       when(candidate.authoritySnapshot())
@@ -1035,7 +1206,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               tenantEvents,
               targets,
               transactions,
-              clock,
+              applicationClock == null ? clock : applicationClock,
               NAMESPACE);
     }
 

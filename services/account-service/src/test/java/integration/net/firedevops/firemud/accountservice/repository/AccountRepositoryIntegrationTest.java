@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
@@ -46,6 +47,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
@@ -59,6 +61,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_METHOD)
 class AccountRepositoryIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String MIGRATION_LOCATION = "classpath:db/migration";
   private static final String MIGRATION_PROOF_ONLY_TAG = "migration-proof-only";
@@ -515,20 +519,10 @@ class AccountRepositoryIntegrationTest {
   @Test
   void canonicalSubscriptionOriginalBindingLocksRequiredOwnerChainThroughCommit() throws Exception {
     var fixture = CanonicalHostingSubscriptionTestFixture.create(dataSource);
-    var claim =
-        fixture
-            .service()
-            .claimProvisioning(fixture.creation().requestId(), 1, UUID.randomUUID())
-            .claim();
     assertThat(
             fixture
-                .service()
-                .reconcile(
-                    UUID.randomUUID(),
-                    fixture.creation().requestId(),
-                    claim.subscriptionRowVersion(),
-                    fixture.providerId(),
-                    claim.attemptId())
+                .withCheckoutDirectory(invoiceCheckoutDirectory)
+                .completeFirstInvoice()
                 .outcome())
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
     var receipt = fixture.service().readCurrent(fixture.tenantId());

@@ -95,10 +95,12 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             context
                 .dsl()
                 .resultQuery(
-                    "SELECT count(*) FROM flyway_schema_history "
-                        + "WHERE version::numeric BETWEEN 74 AND 98 AND success")
-                .fetchOne(0, Long.class))
-        .isEqualTo(25L);
+                    "SELECT version FROM flyway_schema_history WHERE success "
+                        + "AND version ~ '^(7[4-9]|8[0-9]|9[0-8])$' ORDER BY installed_rank")
+                .fetch()
+                .getValues(0, String.class))
+        .containsExactlyElementsOf(
+            java.util.stream.IntStream.rangeClosed(74, 98).mapToObj(String::valueOf).toList());
 
     for (String relation :
         new String[] {

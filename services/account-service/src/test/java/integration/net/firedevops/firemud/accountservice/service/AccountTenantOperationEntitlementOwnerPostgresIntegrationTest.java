@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,6 +24,7 @@ import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Cod
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -37,6 +39,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
+  @TempDir Path invoiceCheckoutDirectory;
+
   private static final String WORLD = "spiffe://firemud/ns/prod/sa/world-management-service";
 
   @Container
@@ -94,16 +98,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
   void paidUsesActualReceiptSdkAndAuthorityCheckpointWithFreshEvaluationOfSameSnapshot() {
     Context c = context();
     var f = c.fixture();
-    var claim =
-        f.service().claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
-    var committed =
-        f.service()
-            .reconcile(
-                UUID.randomUUID(),
-                f.creation().requestId(),
-                claim.subscriptionRowVersion(),
-                f.providerId(),
-                claim.attemptId());
+    var committed = f.withCheckoutDirectory(invoiceCheckoutDirectory).completeFirstInvoice();
     assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     int beforeReads = f.transport().reads();
     UUID requestId = UUID.randomUUID();
@@ -154,16 +149,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
   void captureRunsInsideFinalWritableTransactionAndFailureRollsBackCapturedSql() {
     Context c = context();
     var f = c.fixture();
-    var claim =
-        f.service().claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
-    var committed =
-        f.service()
-            .reconcile(
-                UUID.randomUUID(),
-                f.creation().requestId(),
-                claim.subscriptionRowVersion(),
-                f.providerId(),
-                claim.attemptId());
+    var committed = f.withCheckoutDirectory(invoiceCheckoutDirectory).completeFirstInvoice();
     assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     String marker = "capture_marker_" + UUID.randomUUID().toString().replace("-", "");
     AtomicInteger captures = new AtomicInteger();

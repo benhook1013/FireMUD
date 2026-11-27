@@ -67,6 +67,40 @@ public final class AccountRecentReauthenticationPolicyRepository {
     }
   }
 
+  /**
+   * Billing has distinct retained policy rows; game-creation evidence cannot authorize a charge.
+   */
+  public AccountRecentReauthenticationPolicy.Effective resolveCurrentForPurpose(String purpose) {
+    if (AccountRecentReauthenticationPolicy.PURPOSE.equals(purpose)) {
+      return resolveCurrentForGameCreation();
+    }
+    if (!AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(purpose)) {
+      throw unavailable();
+    }
+    requireTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT p.policy_version AS platform_version, p.recent_age_seconds AS platform_age, "
+                + "p.max_clock_skew_seconds AS platform_skew, d.policy_version AS deployment_version, "
+                + "d.recent_age_seconds AS deployment_age, d.max_clock_skew_seconds AS deployment_skew "
+                + "FROM account_billing_reauthentication_policy_current pc "
+                + "JOIN account_billing_reauthentication_policy_values p USING (policy_scope, policy_version) "
+                + "CROSS JOIN account_billing_reauthentication_policy_current dc "
+                + "JOIN account_billing_reauthentication_policy_values d ON d.policy_scope = dc.policy_scope AND d.policy_version = dc.policy_version "
+                + "WHERE pc.policy_scope = 'PLATFORM' AND dc.policy_scope = 'DEPLOYMENT' FOR SHARE OF pc, dc");
+    if (row == null) throw unavailable();
+    return AccountRecentReauthenticationPolicy.resolve(
+        purpose,
+        new AccountRecentReauthenticationPolicy.PlatformValue(
+            requiredPositive(row, "platform_version"),
+            requiredPositive(row, "platform_age"),
+            requiredNonnegative(row, "platform_skew")),
+        new AccountRecentReauthenticationPolicy.DeploymentValue(
+            requiredPositive(row, "deployment_version"),
+            requiredPositive(row, "deployment_age"),
+            requiredNonnegative(row, "deployment_skew")));
+  }
+
   public record CurrentSourcesForGameCreation(
       AccountRecentReauthenticationPolicy.Effective effectivePolicy, List<SourceEvidence> sources) {
     public CurrentSourcesForGameCreation {

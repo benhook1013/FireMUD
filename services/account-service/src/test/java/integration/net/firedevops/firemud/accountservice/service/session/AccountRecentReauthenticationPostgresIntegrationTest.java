@@ -2,7 +2,10 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2Factory;
 import java.io.IOException;
@@ -134,6 +137,61 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .isEqualTo(persistedInstant);
     assertThat(replay.evidenceId()).isEqualTo(original.evidenceId());
     assertThat(replay.issuedAt()).isEqualTo(persistedInstant);
+  }
+
+  @Test
+  void typedBillingBindingRoundTripsJavaFractionGroupsThroughPostgres() {
+    Context c = context();
+    installBillingPolicy(c);
+    Account account = c.account("PASSWORD");
+    var actors = controlledBillingActors(c, account);
+    for (Instant expiry :
+        List.of(
+            Instant.parse("2026-11-01T01:02:03.123400Z"),
+            Instant.parse("2026-11-01T01:02:03.100000Z"))) {
+      UUID requestId = UUID.randomUUID();
+      UUID authorizationId = UUID.randomUUID();
+      var binding =
+          new AccountRecentReauthenticationEvidence.BillingContext(
+              account.getAccountUuid(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              "sha256:" + "d".repeat(64),
+              3L,
+              expiry,
+              authorizationId,
+              0L,
+              AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose.PRE_ROW_RENEWAL);
+      var request =
+          new AccountRecentReauthenticationService.Request(
+              requestId,
+              account.getAccountUuid(),
+              AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+              authorizationId,
+              binding,
+              account.getEmail(),
+              PASSWORD);
+
+      var fenceCallbacks = new ArrayList<UUID>();
+      var original =
+          c.service.reauthenticateAndBindBilling(
+              request, actors, "controlled-bearer", e -> fenceCallbacks.add(e.evidenceId()));
+      Record row = c.evidenceRow(original.evidenceId());
+      var replay =
+          c.service.reauthenticateAndBindBilling(
+              request, actors, "controlled-bearer", e -> fenceCallbacks.add(e.evidenceId()));
+      assertThat(fenceCallbacks).containsExactly(original.evidenceId(), original.evidenceId());
+
+      assertThat(original.billingContext()).isEqualTo(binding);
+      assertThat(
+              row.get("billing_context_invoice_expires_at", java.time.OffsetDateTime.class)
+                  .toInstant())
+          .isEqualTo(expiry);
+      assertThat(row.get("billing_context_digest", String.class)).isEqualTo(binding.digest());
+      assertThat(row.get("request_digest", String.class)).isEqualTo(original.requestDigest());
+      assertThat(replay.evidenceId()).isEqualTo(original.evidenceId());
+      assertThat(replay.billingContext()).isEqualTo(binding);
+    }
   }
 
   @Test
@@ -809,8 +867,10 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     Account account = c.account("PASSWORD");
     UUID evidenceId = insertEvidenceWithoutMac(c, account, UUID.randomUUID(), UUID.randomUUID());
     var evidence = readHistoricalEvidence(c, evidenceId);
-    c.consume(
-        evidence, account.getAccountUuid(), evidence.purpose(), evidence.creationOperationId());
+    // This predecessor schema has the original consumption contract, without billing columns.
+    c.tx(() ->
+        new AccountRecentReauthenticationRepository(c.dsl)
+            .insertConsumption(evidence, c.clock.instant()));
     Record originalEvidence = c.evidenceRow(evidence.evidenceId());
     Record originalConsumption =
         Objects.requireNonNull(
@@ -840,7 +900,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
 
     c.migrateToLatest();
 
-    assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(originalEvidence);
+    assertHistoricalEvidence(c, evidence.evidenceId(), originalEvidence);
     assertThat(
             Objects.requireNonNull(
                 c.dsl.fetchOne(
@@ -1156,7 +1216,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .migrate();
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
         .isZero();
-    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertHistoricalEvidence(c, evidenceId, original);
     assertThatThrownBy(
             () -> c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD)))
         .isInstanceOf(IllegalStateException.class);
@@ -1172,10 +1232,90 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
                     operationId,
                     "a".repeat(64))))
         .isInstanceOf(DataAccessException.class);
-    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertHistoricalEvidence(c, evidenceId, original);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence"))
         .isEqualTo(1);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isZero();
+  }
+
+  @Test
+  void firstInvoiceFenceMigrationPreservesUnboundBillingEvidenceWithoutAuthorizingIt() {
+    Context c = contextAtVersion(true, MigrationVersion.fromVersion("1042"));
+    installBillingPolicy(c);
+    Account account = c.account("PASSWORD");
+    UUID requestId = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    String purpose = AccountRecentReauthenticationPolicy.BILLING_PURPOSE;
+    UUID evidenceId =
+        c.tx(() -> {
+          UUID id = insertEvidenceWithoutMac(c, account, requestId, operationId, purpose);
+          c.dsl.execute(
+              "INSERT INTO account_recent_reauthentication_replay_credentials"
+                  + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                  + " VALUES (?, ?, ?, ?, ?, 'mac1', ?)",
+              id,
+              requestId,
+              account.getAccountUuid(),
+              purpose,
+              operationId,
+              "a".repeat(64));
+          return id;
+        });
+    Record original = c.evidenceRow(evidenceId);
+    String xmin = c.evidenceXmin(evidenceId);
+    String credentialRead =
+        "SELECT to_jsonb(credential)::text AS image"
+            + " FROM account_recent_reauthentication_replay_credentials credential"
+            + " WHERE evidence_id = ?";
+    String replayCredential =
+        c.dsl.fetchSingle(credentialRead, evidenceId).get("image", String.class);
+    assertThat(replayCredential).isNotNull();
+    c.migrateToLatest();
+    assertThat(c.dsl.fetchSingle(credentialRead, evidenceId).get("image", String.class))
+        .isEqualTo(replayCredential);
+    assertHistoricalEvidence(c, evidenceId, original);
+    var repository = new AccountRecentReauthenticationRepository(c.dsl);
+    var retained = c.tx(() -> repository.findByRequest(requestId).orElseThrow());
+    assertThat(retained.evidenceId()).isEqualTo(evidenceId);
+    assertThat(retained.billingContext()).isNull();
+
+    var binding =
+        new AccountRecentReauthenticationEvidence.BillingContext(
+            account.getAccountUuid(),
+            UUID.randomUUID(),
+            operationId,
+            "sha256:" + "d".repeat(64),
+            1L,
+            BASE.plusSeconds(60),
+            operationId,
+            0L,
+            AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose.INITIAL_CONFIRMATION);
+    var changed =
+        new AccountRecentReauthenticationService.Request(
+            requestId,
+            account.getAccountUuid(),
+            purpose,
+            operationId,
+            binding,
+            account.getEmail(),
+            PASSWORD);
+    var actors = controlledBillingActors(c, account);
+    assertThatThrownBy(() ->
+            c.service.reauthenticateAndBindBilling(
+                changed,
+                actors,
+                "controlled-bearer",
+                ignored -> {
+                  throw new AssertionError("Changed legacy binding must not reach invoice fence");
+                }))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    assertHistoricalEvidence(c, evidenceId, original);
+    assertThat(c.evidenceXmin(evidenceId)).isEqualTo(xmin);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence")).isOne();
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+    assertThat(c.count("SELECT count(*) FROM subscription_first_invoice_operation_fences"))
         .isZero();
   }
 
@@ -1209,7 +1349,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
-    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertHistoricalEvidence(c, evidenceId, original);
     assertThat(c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials"))
         .isEqualTo(proof);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
@@ -1219,7 +1359,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .isInstanceOf(AuthenticationException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
         .isEqualTo(1L);
-    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertHistoricalEvidence(c, evidenceId, original);
     assertThat(c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials"))
         .isEqualTo(proof);
   }
@@ -1898,16 +2038,60 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         row.get("issued_at", java.time.OffsetDateTime.class).toInstant());
   }
 
+  private static AccountControlUiActorService controlledBillingActors(Context c, Account account) {
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(account.getAccountUuid());
+    var actors = mock(AccountControlUiActorService.class);
+    when(actors.withCurrentAccount(eq("controlled-bearer"), any()))
+        .thenAnswer(call -> {
+          java.util.function.Function<AccountControlUiActorService.AccountAuthenticatedActor, ?>
+              action = call.getArgument(1);
+          return c.tx(() -> action.apply(actor));
+        });
+    return actors;
+  }
+
+  private static void installBillingPolicy(Context c) {
+    c.tx(() -> {
+      c.dsl.execute(
+          "INSERT INTO account_billing_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
+      return c.dsl.execute(
+          "INSERT INTO account_billing_reauthentication_policy_current "
+              + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
+    });
+  }
+
+  private static void assertHistoricalEvidence(Context c, UUID id, Record original) {
+    Record retained = c.evidenceRow(id);
+    assertThat(retained.into(original.fields())).isEqualTo(original);
+    assertThat(
+            Arrays.stream(retained.fields())
+                .map(field -> field.getName())
+                .filter(name -> name.startsWith("billing_context_"))
+                .toList())
+        .hasSize(9)
+        .allMatch(name -> retained.get(name) == null);
+  }
+
   /** Controlled pre-migration evidence fixture using actual Account and policy source guards. */
   private static UUID insertEvidenceWithoutMac(
       Context c, Account account, UUID requestId, UUID operationId) {
+    return insertEvidenceWithoutMac(
+        c, account, requestId, operationId, AccountRecentReauthenticationPolicy.PURPOSE);
+  }
+
+  private static UUID insertEvidenceWithoutMac(
+      Context c, Account account, UUID requestId, UUID operationId, String purpose) {
     UUID evidenceId = UUID.randomUUID();
     String payload =
         "account-recent-reauthentication-request/v1\nrequestId="
             + requestId
             + "\naccountId="
             + account.getAccountUuid()
-            + "\npurpose=SELF_SERVICE_GAME_CREATION"
+            + "\npurpose="
+            + purpose
             + "\ncreationOperationId="
             + operationId
             + "\n";
@@ -1923,6 +2107,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     }
     var policy =
         AccountRecentReauthenticationPolicy.resolve(
+            purpose,
             new AccountRecentReauthenticationPolicy.PlatformValue(1, 300, 30),
             new AccountRecentReauthenticationPolicy.DeploymentValue(1, 300, 30));
     c.tx(() -> {
@@ -1934,10 +2119,11 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
               + " identity_provenance, account_uuid_source_numeric_id, account_lifecycle_state, account_authority_generation,"
               + " account_authority_source_version, issuance_fence, issuance_fence_source_version, platform_policy_version,"
               + " deployment_policy_version, effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at)"
-              + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
+              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
           evidenceId,
           requestId,
           account.getAccountUuid(),
+          purpose,
           operationId,
           bytes,
           digest,
@@ -2048,6 +2234,14 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
           dsl.fetchOne(
               "SELECT * FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
               evidenceId));
+    }
+
+    String evidenceXmin(UUID evidenceId) {
+      return Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT xmin::text FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                  evidenceId))
+          .get(0, String.class);
     }
 
     long count(String query, Object... parameters) {

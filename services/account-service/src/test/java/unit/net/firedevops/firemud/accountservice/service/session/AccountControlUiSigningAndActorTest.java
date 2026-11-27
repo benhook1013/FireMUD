@@ -484,6 +484,30 @@ class AccountControlUiSigningAndActorTest {
   }
 
   @Test
+  void billingBearerExpiryAfterBindingRollsBackOwnerTransaction() throws Exception {
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(NOW);
+    var f = new Fixture(true, clock);
+    String compact = f.sign(f.claims);
+    f.owner(compact);
+
+    assertThatThrownBy(() ->
+            f.actors.withCurrentAccount(
+                compact,
+                actor -> {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  when(clock.instant()).thenReturn(NOW.plusSeconds(300));
+                  f.actors.requireCurrentOriginalToken(actor);
+                  return null;
+                }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Exact current authenticated initial creator required");
+    verify(f.transactions).rollback(any());
+    verify(f.transactions, never()).commit(any());
+  }
+
+  @Test
   void accountOriginalRecoveryRejectsTenantChangedAccountAndExpiredOriginal() throws Exception {
     Fixture tenant = new Fixture();
     tenant.owner(tenant.sign(tenant.claims));
@@ -624,6 +648,10 @@ class AccountControlUiSigningAndActorTest {
     }
 
     Fixture(boolean accountOnly, Instant clockNow) {
+      this(accountOnly, Clock.fixed(clockNow, ZoneOffset.UTC));
+    }
+
+    Fixture(boolean accountOnly, Clock clock) {
       when(snapshot.scopeKind())
           .thenReturn(
               accountOnly
@@ -730,14 +758,7 @@ class AccountControlUiSigningAndActorTest {
           .rollback(any());
       actors =
           new AccountControlUiActorService(
-              operations,
-              authority,
-              signers,
-              registry,
-              source,
-              fences,
-              transactions,
-              Clock.fixed(clockNow, ZoneOffset.UTC));
+              operations, authority, signers, registry, source, fences, transactions, clock);
     }
 
     void owner(String compact) {

@@ -2174,6 +2174,15 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               AccountGameplayTokenIdentityFenceRepository.revocationDigest(identity, requestId)));
     }
 
+    Instant retainedCanonicalConnectScopeCutoff(String scopeTokenHash) {
+      return Objects.requireNonNull(
+          serializable.execute(status ->
+              connectScopes
+                  .findCanonicalEvidenceByTokenHash(scopeTokenHash)
+                  .map(evidence -> Instant.parse(evidence.connectScopeExpiresAt()))
+                  .orElseThrow()));
+    }
+
     net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner
         playerEntitlementOwner(CanonicalGameplayAdmissionDecisionReadClient protectedTargets) {
       var scopes =

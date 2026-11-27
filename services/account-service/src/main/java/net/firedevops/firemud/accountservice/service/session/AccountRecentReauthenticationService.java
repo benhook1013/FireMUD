@@ -13,6 +13,9 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
@@ -23,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl.BillingPrimaryVerification;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl.ControlUiPrimaryIdentity;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -35,7 +39,6 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Account's existing real primary-authentication producer and creates no token, route or session.
  */
 public final class AccountRecentReauthenticationService {
-  private static final String PURPOSE = AccountRecentReauthenticationPolicy.PURPOSE;
   private final AccountServiceImpl primaryAuthentication;
   private final AccountRepository accounts;
   private final AccountAuthorityGenerationRepository generations;
@@ -75,6 +78,58 @@ public final class AccountRecentReauthenticationService {
    * exact Account/action/creation-operation evidence in the same writable owner transaction.
    */
   public AccountRecentReauthenticationEvidence reauthenticate(Request request) {
+    requireRequest(request);
+    if (!AccountRecentReauthenticationPolicy.PURPOSE.equals(request.purpose)) throw conflict();
+    return reauthenticate(
+        request,
+        action -> transaction.execute(ignored -> action.get()),
+        account ->
+            primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                EmailCanonicalization.normalize(request.email), request.secret));
+  }
+
+  AccountRecentReauthenticationEvidence reauthenticateAndBindBilling(
+      Request request,
+      AccountControlUiActorService actors,
+      String bearer,
+      Consumer<AccountRecentReauthenticationEvidence> bind) {
+    requireRequest(request);
+    if (!AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(request.purpose)
+        || request.billingContext == null) throw conflict();
+    // Exact retained retries authenticate against the existing request MAC. Fresh requests
+    // perform the expensive verifier before taking the shared producer locks.
+    boolean retained =
+        Boolean.TRUE.equals(
+            transaction.execute(
+                ignored -> evidenceRepository.findByRequest(request.requestId).isPresent()));
+    BillingPrimaryVerification verification =
+        retained
+            ? null
+            : primaryAuthentication.preverifyBillingPrimaryCredential(
+                request.accountId, EmailCanonicalization.normalize(request.email), request.secret);
+    return reauthenticate(
+        request,
+        action ->
+            actors.withCurrentAccount(
+                bearer,
+                actor -> {
+                  if (!request.accountId.equals(actor.accountId())) throw conflict();
+                  Attempt attempt = action.get();
+                  if (attempt.denial == null) {
+                    var evidence =
+                        requireCurrentBillingEvidenceLocked(
+                            attempt.evidence.evidenceId(),
+                            actor.accountId(),
+                            request.creationOperationId);
+                    bind.accept(evidence);
+                    actors.requireCurrentOriginalToken(actor);
+                  }
+                  return attempt;
+                }),
+        account -> primaryAuthentication.applyBillingPrimaryVerification(account, verification));
+  }
+
+  private static void requireRequest(Request request) {
     Objects.requireNonNull(request, "Account reauthentication request is required");
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("Recent reauthentication must own its Account transaction");
@@ -94,12 +149,21 @@ public final class AccountRecentReauthenticationService {
         || request.secret.length() > 1024) {
       throw new IllegalArgumentException("Bounded Account reauthentication request is required");
     }
+  }
 
+  private AccountRecentReauthenticationEvidence reauthenticate(
+      Request request,
+      Function<Supplier<Attempt>, Attempt> retainInOwnerTransaction,
+      Function<Account, ControlUiPrimaryIdentity> authenticate) {
     byte[] credentialRequest = credentialRequest(request);
     Attempt attempt;
     try {
       attempt =
-          transaction.execute(ignored -> {
+          retainInOwnerTransaction.apply(() -> {
+            // Match billing's Account-before-request lock order. Validate the locked row only
+            // for new evidence so exact historical game-creation replay keeps its semantics.
+            Optional<Account> lockedAccount =
+                accounts.findByAccountUuidForUpdate(request.accountId);
             evidenceRepository.lockRequest(request.requestId);
             Optional<AccountRecentReauthenticationEvidence> existingRequest =
                 evidenceRepository.findByRequest(request.requestId);
@@ -108,7 +172,11 @@ public final class AccountRecentReauthenticationService {
               requireExactRequest(existing, request);
               return replayAttempt(existing, credentialRequest);
             }
-            if (!PURPOSE.equals(request.purpose)) {
+            if (!AccountRecentReauthenticationPolicy.supportedPurpose(request.purpose)) {
+              throw conflict();
+            }
+            if (AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(request.purpose)
+                && request.billingContext == null) {
               throw conflict();
             }
 
@@ -122,8 +190,10 @@ public final class AccountRecentReauthenticationService {
             // Resolve and lock the current policy before primary authentication. Missing policy
             // therefore cannot consume an OTP or commit a new authentication grant.
             AccountRecentReauthenticationPolicy.Effective policy =
-                policyRepository.resolveCurrentForGameCreation();
-            Account account = requireCurrentAccount(request.accountId);
+                AccountRecentReauthenticationPolicy.PURPOSE.equals(request.purpose)
+                    ? policyRepository.resolveCurrentForGameCreation()
+                    : policyRepository.resolveCurrentForPurpose(request.purpose);
+            Account account = requireCurrentAccount(request.accountId, lockedAccount);
             String email = EmailCanonicalization.normalize(request.email);
             if (!email.equals(EmailCanonicalization.normalize(account.getEmail()))) {
               throw conflict();
@@ -131,8 +201,7 @@ public final class AccountRecentReauthenticationService {
 
             ControlUiPrimaryIdentity authenticated;
             try {
-              authenticated =
-                  primaryAuthentication.authenticateControlUiPrimaryIdentity(email, request.secret);
+              authenticated = authenticate.apply(account);
             } catch (AuthenticationException denied) {
               // Return the denial from the transaction callback so normal failed-attempt
               // accounting commits. A successful OTP remains rollback-capable with retention.
@@ -152,7 +221,8 @@ public final class AccountRecentReauthenticationService {
                     request.requestId,
                     request.accountId,
                     request.purpose,
-                    request.creationOperationId);
+                    request.creationOperationId,
+                    request.billingContext);
             var evidence =
                 new AccountRecentReauthenticationEvidence(
                     UUID.randomUUID(),
@@ -173,7 +243,8 @@ public final class AccountRecentReauthenticationService {
                     policy.effectivePolicyVersion(),
                     policy.recentAgeSeconds(),
                     policy.maxClockSkewSeconds(),
-                    issuedAt);
+                    issuedAt,
+                    request.billingContext);
             String keyId = cryptography.currentKeyId();
             var replayProof =
                 new AccountRecentReauthenticationRepository.ReplayProof(
@@ -189,24 +260,24 @@ public final class AccountRecentReauthenticationService {
         throw new AuthenticationException(attempt.denial.code, attempt.denial.message);
       }
       var expected = Objects.requireNonNull(attempt.evidence);
-      Attempt readback =
+      var readback =
           transaction.execute(ignored -> {
             evidenceRepository.lockRequest(expected.requestId());
             var retained = evidenceRepository.readExactOriginal(expected);
-            return replayAttempt(retained, credentialRequest);
+            if (!replayCredentialsMatch(retained, credentialRequest)) {
+              throw unavailable();
+            }
+            return retained;
           });
       if (readback == null) throw unavailable();
-      if (readback.denial != null) {
-        throw new AuthenticationException(readback.denial.code, readback.denial.message);
-      }
-      return Objects.requireNonNull(readback.evidence);
+      return readback;
     } finally {
       Arrays.fill(credentialRequest, (byte) 0);
     }
   }
 
-  // Both callers hold the original request lock. Denials leave the callback as values so the
-  // independent failure history commits before any exception reaches the caller.
+  // Public replay holds the original request lock. Credential denials leave the callback as
+  // values so the failed-attempt history commits before any exception reaches the caller.
   private Attempt replayAttempt(AccountRecentReauthenticationEvidence evidence, byte[] request) {
     if (evidenceRepository.countReplayFailures(evidence) >= 5) {
       return Attempt.denied("INVALID_CREDENTIALS", "Invalid credentials");
@@ -240,7 +311,11 @@ public final class AccountRecentReauthenticationService {
   private static byte[] credentialRequest(Request request) {
     byte[] identity =
         AccountRecentReauthenticationRepository.requestPayload(
-            request.requestId, request.accountId, request.purpose, request.creationOperationId);
+            request.requestId,
+            request.accountId,
+            request.purpose,
+            request.creationOperationId,
+            request.billingContext);
     byte[] email = new byte[0];
     byte[] secret = new byte[0];
     try {
@@ -332,7 +407,7 @@ public final class AccountRecentReauthenticationService {
     Objects.requireNonNull(presented, "Typed Account reauthentication evidence is required");
     requireNonNilUuid(expectedAccountId, "expected Account identity");
     requireNonNilUuid(expectedCreationOperationId, "expected creation operation ID");
-    if (!PURPOSE.equals(expectedPurpose)) {
+    if (!AccountRecentReauthenticationPolicy.supportedPurpose(expectedPurpose)) {
       throw conflict();
     }
 
@@ -343,6 +418,22 @@ public final class AccountRecentReauthenticationService {
       throw conflict();
     }
     return evidence;
+  }
+
+  /**
+   * Current billing proof, including a previous exact one-time consumption, never game creation.
+   */
+  public AccountRecentReauthenticationEvidence requireCurrentBillingEvidenceLocked(
+      UUID evidenceId, UUID accountId, UUID operationId) {
+    var retained =
+        evidenceRepository
+            .findByEvidenceId(evidenceId)
+            .orElseThrow(AccountRecentReauthenticationService::unavailable);
+    var exact =
+        lockExactBinding(
+            retained, accountId, AccountRecentReauthenticationPolicy.BILLING_PURPOSE, operationId);
+    requireCurrentEvidence(exact);
+    return exact;
   }
 
   private void requireCurrentEvidence(AccountRecentReauthenticationEvidence evidence) {
@@ -365,7 +456,9 @@ public final class AccountRecentReauthenticationService {
     }
 
     AccountRecentReauthenticationPolicy.Effective policy =
-        policyRepository.resolveCurrentForGameCreation();
+        AccountRecentReauthenticationPolicy.PURPOSE.equals(evidence.purpose())
+            ? policyRepository.resolveCurrentForGameCreation()
+            : policyRepository.resolveCurrentForPurpose(evidence.purpose());
     if (policy.platformVersion() != evidence.platformPolicyVersion()
         || policy.deploymentVersion() != evidence.deploymentPolicyVersion()
         || !policy.effectivePolicyVersion().equals(evidence.effectivePolicyVersion())
@@ -377,10 +470,11 @@ public final class AccountRecentReauthenticationService {
   }
 
   private Account requireCurrentAccount(UUID accountId) {
-    Account account =
-        accounts
-            .findByAccountUuidForUpdate(accountId)
-            .orElseThrow(AccountRecentReauthenticationService::unavailable);
+    return requireCurrentAccount(accountId, accounts.findByAccountUuidForUpdate(accountId));
+  }
+
+  private static Account requireCurrentAccount(UUID accountId, Optional<Account> lockedAccount) {
+    Account account = lockedAccount.orElseThrow(AccountRecentReauthenticationService::unavailable);
     if (account.getId() == null
         || account.getId() <= 0L
         || !accountId.equals(account.getAccountUuid())
@@ -410,7 +504,11 @@ public final class AccountRecentReauthenticationService {
       AccountRecentReauthenticationEvidence evidence, Request request) {
     byte[] payload =
         AccountRecentReauthenticationRepository.requestPayload(
-            request.requestId, request.accountId, request.purpose, request.creationOperationId);
+            request.requestId,
+            request.accountId,
+            request.purpose,
+            request.creationOperationId,
+            request.billingContext);
     if (!evidence.requestId().equals(request.requestId)
         || !evidence.accountId().equals(request.accountId)
         || !evidence.purpose().equals(request.purpose)
@@ -420,6 +518,7 @@ public final class AccountRecentReauthenticationService {
             .equals(AccountRecentReauthenticationRepository.digest(payload))) {
       throw conflict();
     }
+    if (!Objects.equals(evidence.billingContext(), request.billingContext)) throw conflict();
   }
 
   private static void requireNonNilUuid(UUID value, String field) {
@@ -450,6 +549,7 @@ public final class AccountRecentReauthenticationService {
     private final UUID accountId;
     private final String purpose;
     private final UUID creationOperationId;
+    private final AccountRecentReauthenticationEvidence.BillingContext billingContext;
     private final String email;
     private final String secret;
 
@@ -460,12 +560,30 @@ public final class AccountRecentReauthenticationService {
         UUID creationOperationId,
         String email,
         String secret) {
+      this(requestId, accountId, purpose, creationOperationId, null, email, secret);
+    }
+
+    public Request(
+        UUID requestId,
+        UUID accountId,
+        String purpose,
+        UUID creationOperationId,
+        AccountRecentReauthenticationEvidence.BillingContext billingContext,
+        String email,
+        String secret) {
       this.requestId = requestId;
       this.accountId = accountId;
       this.purpose = purpose;
       this.creationOperationId = creationOperationId;
+      this.billingContext = billingContext;
       this.email = email;
       this.secret = secret;
+      if (billingContext != null
+          && (!AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(purpose)
+              || !Objects.equals(accountId, billingContext.accountId())
+              || !Objects.equals(creationOperationId, billingContext.authorizationRequestId()))) {
+        throw new IllegalArgumentException("Typed billing context differs from Account request");
+      }
     }
 
     @Override

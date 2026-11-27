@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +47,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * tenant authority remains readable by the generic membership source, but this DEMO-shaped lease
  * projection refuses paid hosting rather than decoding it as DEMO or consulting a provider in SQL.
  */
-final class AccountGameplayAdmissionCurrentSources {
+public final class AccountGameplayAdmissionCurrentSources {
   private static final String ACCOUNT_ISSUER = GameSessionAccountDelegationProfile.ISSUER;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Set<String> LEASE_SOURCE_FIELDS =
@@ -181,6 +182,40 @@ final class AccountGameplayAdmissionCurrentSources {
     requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
 
     return new Current(snapshot, typedTenantEvent, currentCommittedCandidate);
+  }
+
+  /**
+   * Locks the exact caller and current tenant billing-owner Account rows in deterministic order.
+   *
+   * <p>Call inside the caller's writable SERIALIZABLE transaction, before hosting-wallet or tenant
+   * source locks. This shared lock step keeps paid admission readers on the same Account-first
+   * order even when the caller is not the billing owner.
+   */
+  public static void lockRequiredAccountsBeforeTenantSources(
+      DSLContext exactDsl, UUID tenantId, UUID callerAccountId) {
+    Objects.requireNonNull(exactDsl, "The caller-enlisted DSLContext is required");
+    requireNonNilUuid(tenantId, "Canonical tenant UUID");
+    requireNonNilUuid(callerAccountId, "Verified caller Account UUID");
+    requireWritableSerializableAccountTransaction(exactDsl);
+
+    Record owner =
+        exactDsl.fetchOne(
+            "SELECT owner_account_uuid FROM account_tenant_billing_owners WHERE tenant_uuid = ?",
+            tenantId);
+    UUID billingOwnerAccountId = owner == null ? null : owner.get("owner_account_uuid", UUID.class);
+    if (billingOwnerAccountId != null) {
+      requireNonNilUuid(billingOwnerAccountId, "Tenant billing-owner Account UUID");
+    }
+
+    List<UUID> requiredAccounts = new ArrayList<>(2);
+    requiredAccounts.add(callerAccountId);
+    if (billingOwnerAccountId != null && !billingOwnerAccountId.equals(callerAccountId)) {
+      requiredAccounts.add(billingOwnerAccountId);
+    }
+    requiredAccounts.sort(UUID::compareTo);
+    for (UUID accountId : requiredAccounts) {
+      lockExactAccountFirst(exactDsl, accountId);
+    }
   }
 
   /**
@@ -417,6 +452,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void requireWritableSerializableAccountTransaction() {
+    requireWritableSerializableAccountTransaction(dsl);
+  }
+
+  private static void requireWritableSerializableAccountTransaction(DSLContext dsl) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw unavailable();
@@ -436,6 +475,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void lockExactAccountFirst(UUID accountId) {
+    lockExactAccountFirst(dsl, accountId);
+  }
+
+  private static void lockExactAccountFirst(DSLContext dsl, UUID accountId) {
     Record locked =
         dsl.fetchOne(
             "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", accountId);

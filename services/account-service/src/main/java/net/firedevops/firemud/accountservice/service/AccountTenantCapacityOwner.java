@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.service;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.conflict;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.number;
-import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.requireCurrentLifetime;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -38,9 +37,11 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.postgresql.util.PSQLException;
 import org.springframework.dao.CannotSerializeTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -56,6 +57,8 @@ import org.springframework.transaction.support.TransactionTemplate;
     justification = "Private Account owner collaborators.")
 public final class AccountTenantCapacityOwner {
   private static final int TRANSACTION_TIMEOUT_SECONDS = 5;
+  private static final String CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT =
+      "account_tenant_capacity_attempt_freshness";
   private static final int MAX_SERIALIZATION_ATTEMPTS = 4;
   private static final long INITIAL_RETRY_DELAY_MILLIS = 5;
 
@@ -192,45 +195,54 @@ public final class AccountTenantCapacityOwner {
           lockPlayerAccount(request);
           var evidence = request.evidence();
           Instant retainedExpiry = capacity.requireRetained(evidence);
-          Instant now = clock.instant();
-          if (now.isBefore(evidence.evaluatedAt()))
+          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          if (expired && !evidence.permitsCreation()) {
             throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
-          if (!evidence.permitsCreation()) requireCurrentLifetime(evidence, now);
+          }
           var parsed = currentMembership(request);
           requireSupportedShape(request);
-          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
-          if (!expired && now.isBefore(retainedExpiry)) {
-            currentDelegationAndScope(request, parsed, now);
-            now = clock.instant();
-            expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          if (expired) {
+            return expiredOriginal(request, retainedExpiry);
           }
-          if (expired && !now.isBefore(retainedExpiry) && evidence.permitsCreation()) {
-            return new CommitDecision(
-                null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
+
+          capacity.requireFresh(evidence);
+          var authority = currentDelegationAndScope(request, parsed);
+          if (capacity.retainedEvaluationExpired(retainedExpiry)) {
+            return expiredOriginal(request, retainedExpiry);
           }
-          requireCurrentLifetime(evidence, now);
-          if (expired) throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
-          if (!evidence.permitsCreation())
+          if (!evidence.permitsCreation()) {
+            authority.requireCurrent(clock.instant());
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-          var reservation =
-              capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
-          // The quota lock and write path can outlive the last qualification read. A late
-          // database observation rolls back any provisional acceptance, reservation and usage.
-          if (capacity.retainedEvaluationExpired(retainedExpiry))
-            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          }
+
+          // A wait on usage can consume the remaining lifetime. Recheck under the lock.
+          Record usage = capacity.usage(request);
+          authority.requireCurrent(clock.instant());
+          var reservation = capacity.createIfQuotaAvailable(request, usage, evidence.expiresAt());
           if (reservation.isPresent()) {
+            authority.requireCurrent(clock.instant());
+            requireFreshAtCommit(request, authority);
             return new CommitDecision(reservation.orElseThrow(), null);
           }
+          authority.requireCurrent(clock.instant());
           Refusal denial = originDecisions.refuse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
-          requireCurrentLifetime(evidence, clock.instant());
-          if (capacity.retainedEvaluationExpired(retainedExpiry))
-            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          capacity.requireFresh(evidence);
+          authority.requireCurrent(clock.instant());
+          requireFreshAtCommit(request, authority);
           return new CommitDecision(null, denial);
         });
     // Throw only after the transaction has committed the exact denial.
     if (decision.denial() != null)
       throw new CapacityException(decision.denial().code(), decision.denial().durableDenialId());
     return decision.reservation();
+  }
+
+  private CommitDecision expiredOriginal(Request request, Instant retainedExpiry) {
+    if (!request.evidence().permitsCreation() || clock.instant().isBefore(retainedExpiry)) {
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    }
+    return new CommitDecision(
+        null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
   }
 
   private record CommitDecision(Result reservation, Refusal denial) {}
@@ -263,14 +275,16 @@ public final class AccountTenantCapacityOwner {
       if (!"RESERVED".equals(row.get("state", String.class))
           || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
           || row.get("owner_readback", byte[].class) == null) throw conflict();
-      capacity.requireRetained(next.evidence());
-      current(next, clock.instant());
       requireSupportedShape(next);
       // Match the fresh reservation/refusal path before arbitrating the attempt UUID.
       capacity.usage(next);
+      var authority = current(next);
+      capacity.requireFresh(next.evidence());
+      authority.requireCurrent(clock.instant());
       originDecisions.accept(next);
       requireClaim(row, recoveryOwner, claimFence, clock.instant());
-      requireCurrentLifetime(next.evidence(), clock.instant());
+      capacity.requireFresh(next.evidence());
+      authority.requireCurrent(clock.instant());
       int history =
           dsl.execute(
               "INSERT INTO account_tenant_capacity_attempt_history "
@@ -306,16 +320,31 @@ public final class AccountTenantCapacityOwner {
               claimFence);
       if (changed != 1) throw conflict();
       // Reservation identity and both usage columns are deliberately untouched.
-      return capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
+      var result = capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
+      authority.requireCurrent(clock.instant());
+      requireFreshAtCommit(next, authority);
+      return result;
     });
   }
 
-  private void current(Request request, Instant now) {
-    var evidence = request.evidence();
-    requireCurrentLifetime(evidence, now);
-    var parsed = currentMembership(request);
-    currentDelegationAndScope(request, parsed, now);
-    requireCurrentLifetime(evidence, clock.instant());
+  private void requireFreshAtCommit(Request request, AppAuthorityWindow authority) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void beforeCommit(boolean readOnly) {
+            capacity.requireFresh(request.evidence());
+            authority.requireCurrent(clock.instant());
+          }
+        });
+  }
+
+  private AppAuthorityWindow current(Request request) {
+    capacity.requireFresh(request.evidence());
+    var authority = currentDelegationAndScope(request, currentMembership(request));
+    capacity.requireFresh(request.evidence());
+    authority.requireCurrent(clock.instant());
+    return authority;
   }
 
   private RuntimePlayerAdmissionEntitlementEvidence currentMembership(Request request) {
@@ -345,8 +374,10 @@ public final class AccountTenantCapacityOwner {
     return parsed;
   }
 
-  private void currentDelegationAndScope(
-      Request request, RuntimePlayerAdmissionEntitlementEvidence parsed, Instant now) {
+  private AppAuthorityWindow currentDelegationAndScope(
+      Request request, RuntimePlayerAdmissionEntitlementEvidence parsed) {
+    Instant paidCutoff = capacity.requireRetainedOriginalPaidCutoff(request.evidence());
+    Instant now = clock.instant();
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var fields = request.evidence().fields();
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
@@ -378,6 +409,23 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
+    // PostgreSQL owns evaluation freshness. The caller, scope and paid receipt
+    // retain their independent application-clock cutoffs.
+    return new AppAuthorityWindow(
+        issuance.identity().notBeforeEpochSecond(),
+        issuance.identity().expiresAtEpochSecond(),
+        Instant.parse(scope.connectScopeExpiresAt()),
+        paidCutoff);
+  }
+
+  private record AppAuthorityWindow(
+      long notBeforeEpochSecond, long expiresEpochSecond, Instant scopeExpiry, Instant paidCutoff) {
+    private void requireCurrent(Instant now) {
+      if (now.getEpochSecond() < notBeforeEpochSecond
+          || now.getEpochSecond() >= expiresEpochSecond
+          || !now.isBefore(scopeExpiry)
+          || (paidCutoff != null && !now.isBefore(paidCutoff))) throw unavailable();
+    }
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {
@@ -457,6 +505,20 @@ public final class AccountTenantCapacityOwner {
     return !caller.isCancelled() && !deadline.isExpired();
   }
 
+  private static boolean capacityAttemptFreshnessFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof PSQLException postgresFailure
+          && "23514".equals(postgresFailure.getSQLState())) {
+        var serverError = postgresFailure.getServerErrorMessage();
+        if (serverError != null
+            && CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT.equals(serverError.getConstraint())) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private static boolean serializationFailure(RuntimeException failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof CannotSerializeTransactionException
@@ -470,16 +532,22 @@ public final class AccountTenantCapacityOwner {
   <T> T inTransaction(Supplier<T> action) {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
-    return Objects.requireNonNull(
-        transaction.execute(status -> {
-          AccountTenantCapacityRepository.transaction();
-          dsl.connection(connection -> {
-            if (connection.getAutoCommit()
-                || connection.isReadOnly()
-                || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE)
-              throw unavailable();
-          });
-          return action.get();
-        }));
+    try {
+      return Objects.requireNonNull(
+          transaction.execute(status -> {
+            AccountTenantCapacityRepository.transaction();
+            dsl.connection(connection -> {
+              if (connection.getAutoCommit()
+                  || connection.isReadOnly()
+                  || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE)
+                throw unavailable();
+            });
+            return action.get();
+          }));
+    } catch (RuntimeException failure) {
+      if (capacityAttemptFreshnessFailure(failure))
+        throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+      throw failure;
+    }
   }
 }
