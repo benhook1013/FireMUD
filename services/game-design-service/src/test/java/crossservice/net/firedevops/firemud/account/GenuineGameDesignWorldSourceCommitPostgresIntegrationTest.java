@@ -29,6 +29,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
@@ -92,6 +93,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphAppl
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplyGrpcService;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
@@ -112,6 +114,8 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionSystemException;
+import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -274,6 +278,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
       var intakes = new WorldAuthoredSourceIntakeRepository(world.dsl());
       assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId())).isEmpty();
       assertThat(claim.acknowledgedReceipt()).isEmpty();
+      var intakeCalls = new AtomicInteger();
 
       try (var sourceClient =
               new AuthoredWorldSourceClient(
@@ -282,12 +287,14 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
               new WorldAuthoredSourceIntakeClient(
                   endpoints, pki.client("game-design-service"), factory, NAMESPACE)) {
         sourceClient.init();
-        register(
-            worldHandlers,
-            new WorldAuthoredSourceIntakeGrpcService(
-                new WorldAuthoredSourceIntakeService(
-                    sourceClient, intakes, world.transactions(), NAMESPACE),
-                NAMESPACE));
+        worldHandlers.addService(
+            ServerInterceptors.intercept(
+                new WorldAuthoredSourceIntakeGrpcService(
+                    new WorldAuthoredSourceIntakeService(
+                        sourceClient, intakes, world.transactions(), NAMESPACE),
+                    NAMESPACE),
+                new GrpcPeerIdentityInterceptor(),
+                countDeliveryIntakes(intakeCalls)));
         intakeClient.init();
         var delivery =
             new GameAuthoredWorldSourceDeliveryService(
@@ -304,6 +311,28 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(deliveries.readPending(NAMESPACE, null, 2))
             .singleElement()
             .satisfies(remaining -> assertThat(remaining.source()).isEqualTo(secondSource));
+        assertThat(intakeCalls).hasValue(1);
+
+        var lostAcknowledgement = new AtomicBoolean();
+        var recoveryDelivery =
+            new GameAuthoredWorldSourceDeliveryService(
+                deliveries,
+                intakeClient,
+                loseDeliveryCommitAcknowledgement(gd.store(), lostAcknowledgement),
+                NAMESPACE);
+        var recovered = recoveryDelivery.deliver(secondSource.operationId());
+        var recoveredReceipt = recovered.acknowledgedReceipt().orElseThrow();
+        var recoveredWorld =
+            intakes.read(NAMESPACE, recovered.request().intakeRequestId()).orElseThrow();
+
+        assertThat(lostAcknowledgement).isTrue();
+        assertThat(recovered.source()).isEqualTo(secondSource);
+        assertThat(recoveredWorld.source()).isEqualTo(secondSource);
+        assertThat(recoveredReceipt.receiptDigest()).isEqualTo(recoveredWorld.receiptDigest());
+        assertThat(deliveries.read(secondSource.operationId())).contains(recovered);
+        assertThat(recoveryDelivery.deliver(secondSource.operationId())).isEqualTo(recovered);
+        assertThat(intakeCalls).hasValue(2);
+        assertThat(deliveries.readPending(NAMESPACE, null, 2)).isEmpty();
       }
     } finally {
       gdServer.shutdownNow();
@@ -705,6 +734,22 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     }
   }
 
+  private static ServerInterceptor countDeliveryIntakes(AtomicInteger calls) {
+    String method =
+        WorldAuthoredSourceIntakeServiceGrpc.getIntakeAuthoredWorldSourceMethod()
+            .getFullMethodName();
+    return new ServerInterceptor() {
+      @Override
+      public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+          ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+        if (method.equals(call.getMethodDescriptor().getFullMethodName())) {
+          calls.incrementAndGet();
+        }
+        return next.startCall(call, headers);
+      }
+    };
+  }
+
   private static ServerInterceptor failureInterceptor(Failure failure, AtomicBoolean pending) {
     return new ServerInterceptor() {
       @Override
@@ -834,6 +879,19 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     var result = new TransactionTemplate(store.transactions());
     result.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     return result;
+  }
+
+  private static DataSourceTransactionManager loseDeliveryCommitAcknowledgement(
+      Store store, AtomicBoolean lostAcknowledgement) {
+    return new DataSourceTransactionManager(
+        Objects.requireNonNull(store.transactions().getDataSource())) {
+      @Override
+      protected void doCommit(DefaultTransactionStatus status) {
+        super.doCommit(status);
+        lostAcknowledgement.set(true);
+        throw new TransactionSystemException("Test-only lost Game Design commit acknowledgement");
+      }
+    };
   }
 
   private static Server server(
