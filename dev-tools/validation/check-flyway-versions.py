@@ -314,6 +314,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                                  "spring.flyway.repeatablesqlmigrationprefix",
                                  "spring.flyway.skipdefaultresolvers",
                                  "spring.flyway.skipexecutingmigrations",
+                                 "spring.flyway.dryrunoutput",
+                                 "spring.flyway.createschemas",
                                  "spring.flyway.baselineonmigrate"}
             guard_paths = {
                 path for path in properties
@@ -348,7 +350,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             and auto_configuration_enabled.strip().lower() in {"true", "on", "yes", "1"}):
         return None
     if effective_exclusions is not None and any(
-        name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
+        name.strip().rsplit(".", 1)[-1] in {"FlywayAutoConfiguration", "DataSourceAutoConfiguration"}
         for name in effective_exclusions
     ):
         return None
@@ -360,6 +362,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if flyway.get("target", "latest") != "latest":
         # Qualify the complete packaged history, not a pinned migration prefix.
         return None
+    if "dryrunoutput" in flyway:
+        return None
     locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
         locations = locations.split(",")
@@ -367,6 +371,10 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
         return None
     normalized_locations = {location.strip() for location in locations}
     if "classpath:db/recovery-control-migration" in normalized_locations:
+        create_schemas = flyway.get("createschemas", True)
+        if create_schemas is not True and not (
+                isinstance(create_schemas, str) and create_schemas.strip().lower() in {"true", "on", "yes", "1"}):
+            return None
         schemas = flyway.get("schemas", [])
         if isinstance(schemas, str):
             schemas = [schema.strip() for schema in schemas.split(",")]
@@ -415,7 +423,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
         if not recovery_location_configured(current, project):
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
-                          f"in {RECOVERY_SCHEMA}, share the journal datasource, and disable automatic baselining")
+                          f"in {RECOVERY_SCHEMA}, allow schema creation, share the journal datasource, "
+                          "and apply migrations without automatic baselining or dry-run output")
         if not recovery_versioned:
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     recovery_sql_root = (
@@ -437,6 +446,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                 issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
         if path.startswith(recovery_sql_root) and path.lower().endswith(".java"):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
+        if path.startswith(recovery_sql_root) and path.lower().endswith(".sql.conf"):
+            issues.append(f"{path}: Recovery migration sidecars are unsupported because jOOQ reads only the SQL")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -736,6 +747,16 @@ def run_self_test() -> None:
         check(f"unresolved auto-configuration exclusion {exclusion!r} fails closed", {
             **recovery_history, recovery_config: recovery_settings + exclusion,
         }, recovery_history, "historical effective migration no longer applied")
+    for exclusion in (
+        b"spring.autoconfigure.exclude: ",
+        b"spring.autoconfigure.exclude[0]: ",
+        b"spring.autoconfigure.exclude:\n  - ",
+    ):
+        check(f"datasource autoconfiguration exclusion via {exclusion!r} fails closed", {
+            **recovery_history,
+            recovery_config: recovery_settings + exclusion
+                + b"org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration\n",
+        }, recovery_history, "historical effective migration no longer applied")
     disabled_auto_configuration = b"spring.boot.enableautoconfiguration: false\n"
     check("global Spring Boot auto-configuration disable cannot qualify recovery history", {
         **recovery_history, recovery_config: recovery_settings + disabled_auto_configuration,
@@ -770,6 +791,24 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"    skip-executing-migrations: false\n",
     }, recovery_history, None)
+    check("Flyway dry-run output cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    dry-run-output: recovery-dry-run.sql\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("higher-priority Flyway dry-run output cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.flyway.dryRunOutput: recovery-dry-run.sql\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("disabling Flyway schema creation cannot bootstrap the recovery journal", {
+        **recovery_history, recovery_config: recovery_settings + b"    create-schemas: false\n",
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
+    check("higher-priority Flyway schema creation enable qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    create-schemas: false\n",
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.flyway.create-schemas: 'true'\n",
+    }, recovery_history, None)
     check("unrecognized recovery SQL filename is rejected", {
         **recovery_history, recovery + "journal_extension.sql": b"-- extension",
     }, recovery_history, "recovery SQL must use Flyway's canonical versioned V* migration filename")
@@ -784,6 +823,10 @@ def run_self_test() -> None:
         **recovery_history,
         recovery + "V2__journal.java": b"// java migration",
     }, recovery_history, "Recovery migration sources must be SQL-only")
+    check("Flyway migration sidecars cannot change only the packaged SQL execution", {
+        **recovery_history,
+        recovery + "V1__journal.sql.conf": b"shouldExecute=false",
+    }, recovery_history, "Recovery migration sidecars are unsupported")
     ordinary_without_locations = {
         **recovery_history,
         recovery_config: b"spring:\n  flyway:\n    enabled: true\n",
