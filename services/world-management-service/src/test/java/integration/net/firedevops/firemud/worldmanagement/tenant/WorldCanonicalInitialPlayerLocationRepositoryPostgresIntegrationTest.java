@@ -12,6 +12,7 @@ import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -30,6 +31,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingR
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -191,12 +193,76 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
           .isInstanceOf(
               WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationEvidenceException
                   .class);
+      assertInitialLocationOriginGuard(dsl, request, lifecycle);
       assertThat(repository.read(request)).isEmpty();
       assertThat(rowCount(dsl, "world_canonical_initial_player_location_operation"))
           .isEqualTo(operationsBefore);
       assertThat(rowCount(dsl, "character_location")).isEqualTo(locationsBefore);
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    }
+  }
+
+  private static void assertInitialLocationOriginGuard(
+      DSLContext dsl,
+      WorldCanonicalInitialPlayerLocationRepository.Request request,
+      WorldCanonicalInstanceLifecycleEvidence lifecycle)
+      throws Exception {
+    for (String origin : new String[] {"NO_PRIOR_POINTER", "EXPECT_CLOSED", null, "UNKNOWN"}) {
+      var requestJson =
+          (tools.jackson.databind.node.ObjectNode) JSON.readTree(request.requestBytes());
+      requestJson.put("initialAdmissionOrigin", origin);
+      byte[] requestBytes =
+          Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(requestJson));
+      String requestDigest = prefixedDigest(requestBytes);
+
+      var result = JSON.createObjectNode();
+      result.put("schema", "world-canonical-initial-player-location-result/v1");
+      result.put("operationId", request.operationId().toString());
+      result.put("outcome", "CONFLICT");
+      result.put("conflictCode", "FIXTURE_CONFLICT");
+      result.put("requestBytesBase64", Base64.getEncoder().encodeToString(requestBytes));
+      result.put("requestDigest", requestDigest);
+      result.putNull("runtimeRoomInstanceId");
+      result.putNull("startLocation");
+      byte[] resultBytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(result));
+      String resultDigest = prefixedDigest(resultBytes);
+
+      // Known origins reach the association check, where this unregistered World must still fail.
+      String expected =
+          switch (origin) {
+            case null -> "Initial-location request requires exactly one closed actor origin";
+            case "NO_PRIOR_POINTER", "EXPECT_CLOSED" ->
+                "World initial-location operation differs from its canonical association";
+            default -> "World initial-location operation differs from its canonical request/result";
+          };
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "INSERT INTO world_canonical_initial_player_location_operation "
+                          + "(canonical_tenant_id, playable_state_namespace_id, "
+                          + "canonical_game_instance_id, operation_id, world_instance_id, "
+                          + "request_digest, request_bytes, original_lifecycle_evidence_bytes, "
+                          + "outcome, conflict_code, result_bytes, result_digest) "
+                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFLICT', ?, ?, ?)",
+                      lifecycle.request().canonicalTenantId(),
+                      lifecycle.request().playableStateNamespaceId(),
+                      lifecycle.request().canonicalGameInstanceId(),
+                      request.operationId(),
+                      1L,
+                      requestDigest,
+                      requestBytes,
+                      request.originalLifecycleEvidenceBytes(),
+                      "FIXTURE_CONFLICT",
+                      resultBytes,
+                      resultDigest))
+          .as("initial-admission origin %s", origin)
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure).hasMessageContaining(expected);
+              });
     }
   }
 
