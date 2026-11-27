@@ -692,27 +692,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               incarnation,
               redisOwner.requireTimelineAbsent(source, incarnation),
               NOW);
-      var activeClock = new AtomicReference<Clock>(Clock.systemUTC());
-      Clock clock =
-          new Clock() {
-            @Override
-            public java.time.ZoneId getZone() {
-              return ZoneOffset.UTC;
-            }
-
-            @Override
-            public Clock withZone(java.time.ZoneId zone) {
-              return activeClock.get().withZone(zone);
-            }
-
-            @Override
-            public Instant instant() {
-              return activeClock.get().instant();
-            }
-          };
+      var deadlineObservation = new PreparedTimelineDeadlineObservation(redis.ownerClient(), true);
       var controlledRepository = org.mockito.Mockito.spy(statusRepository);
       var scopedRepositoryCalls = new java.util.concurrent.atomic.AtomicInteger();
-      var installRedisCutoff = new java.util.concurrent.atomic.AtomicLong();
       org.mockito.Mockito.doAnswer(
               invocation -> {
                 int call = scopedRepositoryCalls.incrementAndGet();
@@ -721,33 +703,14 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 if (refuseFirstCleanup && call == 2) {
                   throw new IllegalStateException("controlled first cleanup refusal");
                 }
-                var budget =
-                    invocation.<CanonicalGameplayOriginalNewCapacityExecutionBudget>getArgument(0);
-                if (call == 1) installRedisCutoff.set(budget.absoluteDeadlineMillis());
-                return statusRepository.forBudget(budget);
+                return statusRepository.forBudget(invocation.getArgument(0));
               })
           .when(controlledRepository)
           .forBudget(org.mockito.ArgumentMatchers.any());
       world.resetReads();
       // The second source read occurs after Redis preflight, before the irreversible SQL claim.
       world.setAfterRead(
-          2,
-          () -> {
-            try {
-              long redisCutoff = installRedisCutoff.get();
-              assertThat(redisCutoff).as("actual install budget cutoff").isPositive();
-              long stopWaiting = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-              long observed = redisTimeMillis(redis.admin());
-              while (observed < redisCutoff && System.nanoTime() < stopWaiting) {
-                Thread.sleep(10);
-                observed = redisTimeMillis(redis.admin());
-              }
-              assertThat(observed).isGreaterThanOrEqualTo(redisCutoff);
-            } catch (InterruptedException interrupted) {
-              Thread.currentThread().interrupt();
-              throw new IllegalStateException(interrupted);
-            }
-          });
+          2, () -> awaitRedisTimelineCutoff(redis.admin(), deadlineObservation.probeCutoff()));
       var owner =
           new CanonicalGameplayRegionLeaseOwner(
               inventory,
@@ -764,7 +727,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                   "controlled-sha",
                   "controlled-image"),
               Duration.ofSeconds(30),
-              clock,
+              deadlineObservation.clock(Clock.systemUTC()),
               true);
       // A separate autocommit data source read at actual command dispatch proves the SQL
       // claim was visible outside its transaction. The earlier Redis PROBE sees PREPARED.
@@ -797,21 +760,15 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             }
           };
       redis.ownerClient().addListener(observedOwnerCommand);
-      try {
-        // Anchor only after all mocks/listeners are ready. Keep half of the bounded monotonic
-        // window on each side of the physical Redis cutoff, independent of host clock skew.
-        long operationMillis =
-            CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
-        activeClock.set(
-            Clock.fixed(
-                Instant.ofEpochMilli(redisTimeMillis(redis.admin()) - operationMillis / 2),
-                ZoneOffset.UTC));
+      try (deadlineObservation) {
         var failedInstall =
             catchThrowable(() -> owner.installForTransition(TRANSITION_ID, world.request()));
         assertThat(failedInstall).isInstanceOf(IllegalStateException.class);
         assertThat(initialize.get())
             .as("INITIALIZE after the committed SQL claim; install refusal: %s", failedInstall)
             .isNotNull();
+        assertThat(timelineCommandCutoff(initialize.get()))
+            .isEqualTo(deadlineObservation.probeCutoff());
         assertThat(completed.get(2, TimeUnit.SECONDS))
             .as("physical Redis deadline refusal after dispatch, not local pre-dispatch expiry")
             .isEqualTo(-3L);
@@ -830,7 +787,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         preparation.operationId())
                     .get(0, String.class))
             .isEqualTo("INITIALIZING");
-        activeClock.set(Clock.systemUTC());
         // The real callback retained the proof, which the same owner must discover by transition.
         assertThat(owner.installForTransition(TRANSITION_ID, world.request())).isNotNull();
       } else {
@@ -848,6 +804,79 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       }
     } finally {
       dropSchema(testSchema.schema());
+    }
+  }
+
+  private static long timelineCommandCutoff(RedisCommand<?, ?, ?> command) {
+    String arguments = command.getArgs().toCommandString();
+    String lastArgument = arguments.substring(arguments.lastIndexOf(' ') + 1);
+    assertThat(lastArgument).matches("value<[0-9]+>");
+    return Long.parseLong(lastArgument.substring("value<".length(), lastArgument.length() - 1));
+  }
+
+  private static final class PreparedTimelineDeadlineObservation
+      implements CommandListener, AutoCloseable {
+    private final RedisClient client;
+    private final boolean shortenRedisBudget;
+    private final ThreadLocal<Boolean> timeSubmitted = new ThreadLocal<>();
+    private final AtomicReference<Instant> localBudgetStart = new AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicLong probeCutoff =
+        new java.util.concurrent.atomic.AtomicLong();
+
+    private PreparedTimelineDeadlineObservation(RedisClient client, boolean shortenRedisBudget) {
+      this.client = client;
+      this.shortenRedisBudget = shortenRedisBudget;
+      client.addListener(this);
+    }
+
+    @Override
+    public void commandStarted(CommandStartedEvent event) {
+      var command = event.getCommand();
+      if (shortenRedisBudget && command.getType() == CommandType.TIME && probeCutoff() == 0) {
+        timeSubmitted.set(true);
+      } else if (command.getType() == CommandType.EVALSHA
+          && command.getArgs().toCommandString().contains("value<PROBE>")) {
+        timeSubmitted.remove();
+        probeCutoff.compareAndSet(0, timelineCommandCutoff(command));
+      }
+    }
+
+    long probeCutoff() {
+      return probeCutoff.get();
+    }
+
+    Clock clock(Clock delegate) {
+      return new Clock() {
+        @Override
+        public java.time.ZoneId getZone() {
+          return delegate.getZone();
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+          return PreparedTimelineDeadlineObservation.this.clock(delegate.withZone(zone));
+        }
+
+        @Override
+        public Instant instant() {
+          Instant now = delegate.instant();
+          localBudgetStart.compareAndSet(null, now);
+          // During conversion only, model a tighter local wall-clock budget. The unchanged
+          // monotonic deadline leaves time to claim, wait for Redis, and observe a real -3.
+          if (Boolean.TRUE.equals(timeSubmitted.get())) {
+            long elapsed =
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS - 1_500L;
+            Instant later = localBudgetStart.get().plusMillis(elapsed);
+            if (later.isAfter(now)) return later;
+          }
+          return now;
+        }
+      };
+    }
+
+    @Override
+    public void close() {
+      client.removeListener(this);
     }
   }
 
@@ -925,16 +954,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .admin()
           .hset(metaKey, ascii("first_timeline_source_digest"), ascii(preparation.sourceDigest()));
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
-      var initializationNow = Instant.now();
+      long redisBefore = redisTimeMillis(redis.admin());
+      // Use a Game Session clock ahead of Redis. The lease must still end within its local budget.
+      var initializationNow = Instant.ofEpochMilli(redisBefore).plusSeconds(60);
       var initializationClock = Clock.fixed(initializationNow, ZoneOffset.UTC);
       var deadline = initializationNow.toEpochMilli() + 10_000L;
-      var redisCutoff = initializationNow.toEpochMilli() + 5_000L;
-      initializeTimelineWithoutCreationPermission(
-          redisOwner.forHandoffDeadline(initializationClock, deadline),
-          preparation,
-          "exact-renewal");
-      assertThat(redis.admin().type(leaseKey)).isEqualTo("string");
-      assertThat(redis.admin().pexpiretime(leaseKey)).isEqualTo(redisCutoff);
+      try (var deadlineObservation =
+          new PreparedTimelineDeadlineObservation(redis.ownerClient(), false)) {
+        initializeTimelineWithoutCreationPermission(
+            redisOwner.forHandoffDeadline(initializationClock, deadline),
+            preparation,
+            "exact-renewal");
+        assertThat(redis.admin().type(leaseKey)).isEqualTo("string");
+        assertThat(redis.admin().pexpiretime(leaseKey))
+            .isEqualTo(deadlineObservation.probeCutoff());
+        assertThat(deadlineObservation.probeCutoff())
+            .isBetween(
+                redisBefore,
+                redisTimeMillis(redis.admin())
+                    + CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS);
+      }
       assertThat(redis.admin().hlen(metaKey)).isEqualTo(5L);
       assertThat(redis.admin().hget(metaKey, ascii("first_timeline_operation_id")))
           .containsExactly(ascii(preparation.operationId().toString()));
@@ -994,8 +1033,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         "controlled-sha",
                         "controlled-image")))
             .isInstanceOf(IllegalStateException.class)
-            .hasStackTraceContaining("ACL failure in script")
-            .hasStackTraceContaining("the 'time' command");
+            .hasStackTraceContaining("NOPERM")
+            .hasStackTraceContaining("time");
         assertPreparedTimelineUnchanged(
             testSchema.dsl(), statusRepository, redis, source, preparation);
       } finally {
@@ -1431,14 +1470,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               "controlled-test",
               "controlled-sha",
               "controlled-image");
-      // Freeze the server cutoff from Redis TIME; leave the real local five-second budget in
-      // place so a definitive Redis refusal can be observed after an acknowledged claim.
-      long redisCutoff = redisTimeMillis(redis.admin()) + 3_000L;
       long localBudgetMillis =
           CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
-      Clock laggingClock =
-          Clock.fixed(Instant.ofEpochMilli(redisCutoff - localBudgetMillis), ZoneOffset.UTC);
-      var bounded = redisOwner.forHandoffDeadline(laggingClock, redisCutoff);
+      var deadlineObservation =
+          new PreparedTimelineDeadlineObservation(redis.ownerClient(), mode != 1);
       var proof =
           new AtomicReference<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>();
       var recoveryRepository = org.mockito.Mockito.spy(repository);
@@ -1498,7 +1533,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             @Override
             public void commandStarted(CommandStartedEvent event) {
               if (observeInitialization.get()
-                  && event.getCommand().getType() == CommandType.EVALSHA) {
+                  && event.getCommand().getType() == CommandType.EVALSHA
+                  && event.getCommand().getArgs().toCommandString().contains("value<INITIALIZE>")) {
                 evaluations.incrementAndGet();
                 initializationCommand.compareAndSet(null, event.getCommand());
               }
@@ -1507,21 +1543,23 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             @Override
             public void commandSucceeded(CommandSucceededEvent event) {
               if (event.getCommand() == initializationCommand.get()) {
+                observeInitialization.set(false);
                 completed.complete(event.getCommand().getOutput().get());
               }
             }
           };
       // Lettuce installs and snapshots command listeners as it opens the connection.
       // Attach before the real PROBE, but arm only after the committed SQL claim.
-      if (mode == 0 || mode == 1) redis.ownerClient().addListener(observed);
-      AutoCloseable removeObserver =
-          () -> {
-            if (mode == 0 || mode == 1) redis.ownerClient().removeListener(observed);
-          };
-      try (removeObserver;
+      redis.ownerClient().addListener(observed);
+      AutoCloseable removeObserver = () -> redis.ownerClient().removeListener(observed);
+      try (deadlineObservation;
+          removeObserver;
           var session =
-              bounded.prepareTimelineInitialization(
-                  preparation, Duration.ofSeconds(30), identity)) {
+              redisOwner
+                  .forHandoffDeadline(
+                      deadlineObservation.clock(Clock.systemUTC()),
+                      System.currentTimeMillis() + 10_000L)
+                  .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
         // Real PROBE completed on the pinned connection before the durable SQL claim.
         permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
         assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
@@ -1534,7 +1572,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             // This control intentionally exhausts the local monotonic deadline before dispatch.
             Thread.sleep(localBudgetMillis + 500L);
           } else {
-            awaitRedisTimelineCutoff(redis.admin(), redisCutoff);
+            awaitRedisTimelineCutoff(redis.admin(), deadlineObservation.probeCutoff());
           }
           assertThatThrownBy(() ->
                   session.initialize(
@@ -1690,10 +1728,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         }
                       }))
               .isInstanceOf(IllegalStateException.class);
-          if (mode == 0) {
+          if (mode != 1) {
             assertThat(evaluations).hasValue(1);
+            assertThat(timelineCommandCutoff(initializationCommand.get()))
+                .isEqualTo(deadlineObservation.probeCutoff());
             assertThat(completed.get(2, TimeUnit.SECONDS)).isEqualTo(-3L);
-          } else if (mode == 1) {
+          } else {
             assertThat(evaluations).as("no INITIALIZE after local expiration").hasValue(0);
           }
         } finally {

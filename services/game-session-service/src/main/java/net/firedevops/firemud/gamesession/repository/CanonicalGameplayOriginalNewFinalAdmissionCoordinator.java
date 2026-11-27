@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
@@ -120,7 +121,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           && source.transitionStatus()
               == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
           && capacityRequest.evidence().permitsCreation()) {
-        throw reconcileQuotaDenial(
+        throw reconcileAdmissionDenial(
             source,
             privateRegionInstallation,
             capacityRequest,
@@ -188,7 +189,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                 capacityExecution.precharge(
                     source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
             if (retainedDenial != null)
-              throw CapacityRefusedException.retainedQuotaDenial(retainedDenial);
+              throw CapacityRefusedException.retainedAdmissionDenial(retainedDenial);
           }
           final TenantCapacityAdmission.Result reservation;
           try {
@@ -197,19 +198,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                     ? capacityClient.commit(capacityRequest, absoluteDeadlineMillis)
                     : recoveredConfirmation.committedCapacityResult();
           } catch (CapacityRefusedException refusal) {
-            if (precharge && refusal.durableDenialId() != null) {
+            if (precharge
+                && refusal.code().supportsDurableDenial()
+                && refusal.durableDenialId() != null) {
               try {
                 capacityExecution.settleDeniedCharge(
                     source,
                     capacityRequest,
                     selectedOwner,
-                    refusal.durableDenialId(),
+                    new Refusal(refusal.code(), refusal.durableDenialId()),
                     absoluteDeadlineMillis);
               } catch (RuntimeException settlementFailure) {
                 // This remains local and indeterminate; the authenticated Account denial has
                 // already completed, and settlement failure must not rewrite that outcome.
                 LOG.warn(
-                    "Original NEW quota denial received; local evidence settlement unconfirmed");
+                    "Original NEW Account denial received; local evidence settlement unconfirmed");
               }
             }
             throw refusal;
@@ -323,7 +326,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private CapacityRefusedException reconcileQuotaDenial(
+  private CapacityRefusedException reconcileAdmissionDenial(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       CanonicalGameplayRegionLeaseOwner.Installation installation,
       TenantCapacityAdmission.Request request,
@@ -337,12 +340,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       throw unavailable();
     }
     var charge = capacityExecution.requireExistingCharge(source, request, selectedOwner, deadline);
-    var denialId = charge.accountDenialId();
-    if (denialId == null) {
-      denialId = capacityClient.readRetainedQuotaDenial(request, deadline);
-      capacityExecution.settleDeniedCharge(source, request, selectedOwner, denialId, deadline);
+    var denial = charge.accountDenial();
+    if (denial == null) {
+      denial = capacityClient.readRetainedAdmissionDenial(request, deadline);
+      capacityExecution.settleDeniedCharge(source, request, selectedOwner, denial, deadline);
     }
-    return CapacityRefusedException.retainedQuotaDenial(denialId);
+    return CapacityRefusedException.retainedAdmissionDenial(denial);
   }
 
   private CanonicalGameplayAccountInitialOpenProof.CurrentOpen readAccountOpen(

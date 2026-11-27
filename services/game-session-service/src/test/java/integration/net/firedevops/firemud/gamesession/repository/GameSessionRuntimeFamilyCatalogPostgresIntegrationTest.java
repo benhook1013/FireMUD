@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(22);
+      assertThat(catalog.catalogEpoch()).isEqualTo(23);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -205,7 +205,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.9.1",
               "catalog-installation:1065.0.9.2",
               "catalog-installation:1065.0.10",
-              "catalog-installation:1065.0.11")
+              "catalog-installation:1065.0.11",
+              "catalog-installation:1065.0.11.1")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -228,7 +229,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.9.1:")
                   || identity.contains(":1065.0.9.2:")
                   || identity.contains(":1065.0.10:")
-                  || identity.contains(":1065.0.11:"));
+                  || identity.contains(":1065.0.11:")
+                  || identity.contains(":1065.0.11.1:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -765,7 +767,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(22);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(23);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -920,7 +922,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.9.1",
             "1065.0.9.2",
             "1065.0.10",
-            "1065.0.11")) {
+            "1065.0.11",
+            "1065.0.11.1")) {
       try (Fixture f = fixture(null)) {
         var original =
             f.dsl.fetchSingle(
@@ -982,7 +985,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.9.1",
             "1065.0.9.2",
             "1065.0.10",
-            "1065.0.11")) {
+            "1065.0.11",
+            "1065.0.11.1")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -1945,6 +1949,28 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               List.of(
                   "CHECK(fence_dispatch_id IS NULL OR fence_readback IS NULL"
                       + " OR incarnation_digest = fence_dispatch_incarnation):true")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void typedCapacityDenialUpgradePreservesPopulatedCatalogAtEpochTwentyThree() {
+    try (Fixture f = fixture("1065.0.11")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.11.1",
+          22,
+          "V1065.0.11.1__retain_typed_capacity_evidence_denial.sql",
+          Map.of(
+              "settle_gs_capacity_evidence_charge()",
+              List.of(
+                  "NEW.account_denial_kind IS NULL",
+                  "OLD.account_denial_id IS NOT NULL",
+                  "Execution custody prevents capacity evidence settlement")),
+          Map.of(),
+          Map.of(
+              "game_session_capacity_evidence_charge.gs_capacity_evidence_charge_account_denial_kind",
+              List.of("account_denial_kind IS NULL")),
           Map.of());
     }
   }

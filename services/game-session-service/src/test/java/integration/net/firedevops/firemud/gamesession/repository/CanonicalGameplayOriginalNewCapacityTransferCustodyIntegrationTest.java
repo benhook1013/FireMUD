@@ -15,6 +15,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.ExecuteListener;
@@ -179,7 +181,7 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
       var selected =
           new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
               original.selectedOwnerId(), original.selectedOwnerFence());
-      UUID denial = UUID.randomUUID();
+      var denial = new Refusal(Failure.CAPACITY_EVALUATION_EXPIRED, UUID.randomUUID());
       Runnable settle =
           () ->
               proof
@@ -196,6 +198,19 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
       } else {
         settle.run();
         settle.run();
+        var restarted = proof.capacity(proof.sql);
+        assertThat(
+                restarted
+                    .requireExistingCharge(
+                        proof.admission, original.request(), selected, transferDeadline())
+                    .accountDenial())
+            .isEqualTo(denial);
+        var wrongKind = new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, denial.durableDenialId());
+        assertThatThrownBy(() ->
+                restarted.settleDeniedCharge(
+                    proof.admission, original.request(), selected, wrongKind, transferDeadline()))
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity evidence budget is unavailable");
       }
       assertThat(
               proof
@@ -205,7 +220,7 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
                           + " WHERE admission_attempt_id=?",
                       original.request().admissionAttemptId())
                   .get(0, UUID.class))
-          .isEqualTo(ownerReplaced ? null : denial);
+          .isEqualTo(ownerReplaced ? null : denial.durableDenialId());
     }
   }
 
@@ -220,7 +235,7 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
       var selected =
           new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
               original.selectedOwnerId(), original.selectedOwnerFence());
-      java.util.function.Function<OriginalNewCapacityExecution, UUID> precharge =
+      java.util.function.Function<OriginalNewCapacityExecution, Refusal> precharge =
           execution ->
               proof.sql.transactionResult(configuration ->
                   CanonicalGameplayCapacityEvidenceBudget.precharge(
@@ -239,7 +254,8 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
                   "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
                   fresh.request().admissionAttemptId()))
           .isNull();
-      assertThat(precharge.apply(original)).isEqualTo(denial);
+      assertThat(precharge.apply(original))
+          .isEqualTo(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, denial));
     }
   }
 

@@ -870,6 +870,22 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return administration.sync().get(ascii(candidateInstallation.sessionKey()));
   }
 
+  /** Establishes a real held charge before controlled delay of the original Account request. */
+  public void prechargeCapacityForControlledRecovery(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      Clock prechargeClock) {
+    var source =
+        new CanonicalGameplayBindingInventoryRepository(binding.dsl())
+            .readOriginalNewFinalAdmissionSource(decision);
+    var owner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            binding.dsl(), coordination, scripts, prechargeClock, tags);
+    long deadline = prechargeClock.millis() + 5_000L;
+    var selectedOwner = owner.requireRequestBinding(source, request, deadline);
+    if (owner.precharge(source, request, selectedOwner, deadline) != null)
+      throw new IllegalStateException("Expected a held charge without a retained denial");
+  }
+
   /** Actual Account commit followed by a controlled selected-owner movement before GS binding. */
   public OwnerMovementFault commitThenMoveSelectedOwnerForFault(
       net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient client,

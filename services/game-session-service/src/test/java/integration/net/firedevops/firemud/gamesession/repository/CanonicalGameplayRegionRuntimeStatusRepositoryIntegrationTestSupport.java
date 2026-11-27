@@ -25,6 +25,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -465,7 +467,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
               new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
                   original.selectedOwnerId(), original.selectedOwnerFence()),
               assignment.tenantGameplayTag(),
-              denial));
+              new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, denial)));
     }
 
     void precharge(OriginalNewCapacityExecution original) {

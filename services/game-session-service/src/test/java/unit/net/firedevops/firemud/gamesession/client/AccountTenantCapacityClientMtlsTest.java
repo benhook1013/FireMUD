@@ -372,8 +372,9 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void localDenialReplayRequiresADurableDecisionId() {
     var denialId = UUID.randomUUID();
-    var replay = AccountTenantCapacityClient.CapacityRefusedException.retainedAdmissionDenial(
-        new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, denialId));
+    var replay =
+        AccountTenantCapacityClient.CapacityRefusedException.retainedAdmissionDenial(
+            new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, denialId));
     assertThat(replay.code())
         .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
     assertThat(replay.durableDenialId()).isEqualTo(denialId);
