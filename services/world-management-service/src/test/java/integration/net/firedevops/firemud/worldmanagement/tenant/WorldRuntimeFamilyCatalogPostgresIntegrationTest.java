@@ -75,7 +75,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var evidence = f.owner().read(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(11);
+      assertThat(catalog.catalogEpoch()).isEqualTo(12);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -207,7 +207,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetch(
-                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' AND version IS DISTINCT FROM '1048' AND version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1070' AND version IS DISTINCT FROM '1071' AND version IS DISTINCT FROM '1072' AND version IS DISTINCT FROM '1073' AND version IS DISTINCT FROM '1074' AND version IS DISTINCT FROM '1075' ORDER BY installed_rank")
+                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' AND version IS DISTINCT FROM '1048' AND version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1070' AND version IS DISTINCT FROM '1071' AND version IS DISTINCT FROM '1072' AND version IS DISTINCT FROM '1073' AND version IS DISTINCT FROM '1074' AND version IS DISTINCT FROM '1075' AND version IS DISTINCT FROM '1076' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .isEqualTo(historyBefore);
       f.owner().read(request());
@@ -316,7 +316,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
         migration(f.source, f.schema, null).migrate();
         Request read = request();
         var original = f.owner().read(read);
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(11);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(12);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -368,7 +368,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(11);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(12);
     }
   }
 
@@ -399,7 +399,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       for (String version :
           List.of(
               "1046", "1047", "1048", "1049", "1050", "1070", "1071", "1072", "1073", "1074",
-              "1075")) {
+              "1075", "1076")) {
         for (String column : List.of("success", "script")) {
           Request read = request();
           var evidence = new Evidence(read, UUID.randomUUID(), catalog);

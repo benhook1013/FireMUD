@@ -842,21 +842,27 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var request = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
 
     var preparedRows = allRows(dsl).get("world_instance");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    """
-                    INSERT INTO world_run_owned_fixture_activation (
-                        world_instance_id, canonical_game_instance_id, fixture_binding_sha256,
-                        expected_lifecycle_epoch, expected_row_version, result_lifecycle_epoch,
-                        result_row_version)
-                    SELECT id, canonical_game_instance_id, run_owned_fixture_binding_sha256,
-                        lifecycle_epoch, row_version, lifecycle_epoch + 1, row_version + 1
-                    FROM world_instance WHERE id = ?
-                    """,
-                    id))
+    assertThatThrownBy(() -> insertFixtureActivationReceipt(id))
         .hasStackTraceContaining(
             "Run-owned fixture activation receipt did not commit its exact ACTIVE CAS");
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          insertFixtureActivationReceipt(id);
+                          assertThat(
+                                  dsl.execute(
+                                      "DELETE FROM world_run_owned_fixture_activation_manifest "
+                                          + "WHERE transaction_id = txid_current() AND world_instance_id = ?",
+                                      id))
+                              .isEqualTo(1);
+                          dsl.execute(
+                              "UPDATE world_instance SET status='ACTIVE', lifecycle_epoch=2, row_version=1 "
+                                  + "WHERE id = ?",
+                              id);
+                        }))
+        .hasStackTraceContaining("Run-owned fixture World row mutations are disabled");
     assertThat(allRows(dsl).get("world_instance")).isEqualTo(preparedRows);
     assertThat(
             scalarLong(
@@ -885,6 +891,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             service, evidence, controlledInstallation, 1L);
     assertThat(replay).isEqualTo(activated);
     assertThat(allRows(dsl).get("world_run_owned_fixture_activation")).isEqualTo(committedReceipt);
+    assertThat(scalarLong("SELECT count(*) FROM world_run_owned_fixture_activation_manifest"))
+        .isZero();
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
     assertThatThrownBy(
             () ->
@@ -920,6 +928,19 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             dsl.execute(
                 "DELETE FROM world_run_owned_fixture_activation WHERE world_instance_id = ?", id),
         "23514");
+  }
+
+  private void insertFixtureActivationReceipt(long worldInstanceId) {
+    dsl.execute(
+        """
+        INSERT INTO world_run_owned_fixture_activation (
+            world_instance_id, canonical_game_instance_id, fixture_binding_sha256,
+            expected_lifecycle_epoch, expected_row_version, result_lifecycle_epoch, result_row_version)
+        SELECT id, canonical_game_instance_id, run_owned_fixture_binding_sha256,
+            lifecycle_epoch, row_version, lifecycle_epoch + 1, row_version + 1
+        FROM world_instance WHERE id = ?
+        """,
+        worldInstanceId);
   }
 
   @Test
@@ -1802,8 +1823,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 through V1075 install eleven catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L);
+          .as("V1046 through V1050 and V1070 through V1076 install twelve catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -1834,6 +1855,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
               retainedRowsAtDefaultFrontierOriginalColumns.remove(
                   "world_run_owned_fixture_activation"))
           .as("new additive V1070 fixture activation table is installed and empty")
+          .isNotNull()
+          .isEmpty();
+      assertThat(
+              retainedRowsAtDefaultFrontierOriginalColumns.remove(
+                  "world_run_owned_fixture_activation_manifest"))
           .isNotNull()
           .isEmpty();
       for (String extendedTable :
@@ -3597,6 +3623,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1073");
     versions.add("1074");
     versions.add("1075");
+    versions.add("1076");
     return List.copyOf(versions);
   }
 
