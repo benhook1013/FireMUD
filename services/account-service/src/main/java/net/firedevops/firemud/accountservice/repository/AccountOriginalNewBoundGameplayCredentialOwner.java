@@ -502,7 +502,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
 
-    if (committedCapacityRequest != null) {
+    if (committedCapacityRequest != null || beforeRead.paidHosting()) {
       AccountGameplayAdmissionCurrentSources.Observed beforeActivationObservation =
           prepareCurrentOriginalSource(beforeActivationCaller, requestedLease);
       inWritableSerializableTransaction(dsl -> {
@@ -510,7 +510,8 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
             readCurrentOriginalSource(
                 dsl, beforeActivationCaller, requestedLease, beforeActivationObservation);
         requireSameOriginalOperation(beforeRead.operation(), current.operation());
-        return readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest);
+        readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest);
+        return current;
       });
       if (Context.current().isCancelled()) throw unavailable();
     }
@@ -927,7 +928,10 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         new AccountGameplayAdmissionLeaseRepository(dsl)
             .readExact(lease)
             .orElseThrow(AccountOriginalNewBoundGameplayCredentialOwner::unavailable);
-    return new SourceRead(operation, current.currentCommittedCandidate().authoritySnapshot());
+    return new SourceRead(
+        operation,
+        current.currentCommittedCandidate().authoritySnapshot(),
+        current.sourceValidUntilMs() != null);
   }
 
   private Binding responseBinding(
@@ -1269,7 +1273,9 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
   }
 
   private record SourceRead(
-      AccountGameplayAdmissionLeaseOperation operation, AccountAuthoritySnapshot accountAuthority) {
+      AccountGameplayAdmissionLeaseOperation operation,
+      AccountAuthoritySnapshot accountAuthority,
+      boolean paidHosting) {
     SourceRead {
       Objects.requireNonNull(operation);
       Objects.requireNonNull(accountAuthority);

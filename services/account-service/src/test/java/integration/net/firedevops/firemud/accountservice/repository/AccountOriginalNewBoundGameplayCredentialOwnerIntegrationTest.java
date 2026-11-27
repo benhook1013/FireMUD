@@ -143,7 +143,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
   }
 
   @Test
-  void paidConfirmationWithElapsedContinuityDoesNotWriteReadback() throws Exception {
+  void paidConfirmationWithElapsedContinuityLeavesRegistryPending() throws Exception {
     paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
     sourceFixture = paidFixture.caller();
     exerciseFinalConfirmation(false, false, true);
@@ -494,6 +494,14 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
         assertThat(finalReadCalls.get()).isOne();
         assertThat(continuityAdvances.get()).isOne();
         assertUnconfirmed(dsl, serializable, originalLease);
+        byte[] expectedPending = committed.pendingRegistryRecordBytes();
+        try {
+          redisFixture
+              .client()
+              .requirePendingRecord(committed.tokenHash(), expectedPending, exactRedisExpiryMillis);
+        } finally {
+          Arrays.fill(expectedPending, (byte) 0);
+        }
         assertThat(issuancePhysicalImage(dsl)).isEqualTo(before);
         assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
         return;
@@ -629,8 +637,8 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       finalReadMode.set(FinalReadMode.EXACT);
       int paidReadsBeforeExactFinal = paidObservationReads();
       var confirmed = confirm(owner, peer, loginJwt, originalLease);
-      // Early source, genesis, a single frozen-credential open, and final confirmation.
-      assertPaidObservationReadsSince(paidReadsBeforeExactFinal, 4);
+      // Early source, genesis, frozen-credential open, preactivation, and final confirmation.
+      assertPaidObservationReadsSince(paidReadsBeforeExactFinal, 5);
       assertThat(confirmed.lineageId()).isEqualTo(first.lineageId());
       assertThat(confirmed.originalLeaseId())
           .isEqualTo(UUID.fromString((String) originalLease.carrier().get("leaseId")));
