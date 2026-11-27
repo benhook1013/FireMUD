@@ -1547,6 +1547,46 @@ with tempfile.TemporaryDirectory() as directory:
         raise SystemExit("dev-demo result lost exact IDs or copied unapproved response material")
     if subprocess.run(command, capture_output=True).returncode == 0:
         raise SystemExit("dev-demo result was allowed to overwrite its immutable receipt")
+    verify_intent = {
+        "schema": "dev-demo-bootstrap-intent/v1",
+        "runId": "123", "attempt": "2", "headSha": "a" * 40,
+        "namespace": "dev", "namespaceUid": "namespace-uid",
+        "release": "dev", "helmRevision": "7",
+        "controlPlaneRequestId": "dev-demo-smoke-bootstrap-123-2",
+        "tenantId": 1, "gameTemplateId": 1,
+    }
+    verify_result = {
+        "schema": "dev-demo-bootstrap-result/v1", "intent": verify_intent,
+        "accountUuid": account_uuid, "gameSession": session,
+    }
+    intent_path = evidence / "downloaded-intent.json"
+    result_path = evidence / "downloaded-result.json"
+    intent_path.write_text(json.dumps(verify_intent), encoding="utf-8")
+    result_path.write_text(json.dumps(verify_result), encoding="utf-8")
+    verify_command = [
+        "python3", str(repository_root / "dev-tools/hosted/dev-demo/write-bootstrap-result.py"),
+        "verify", str(intent_path), str(result_path),
+        "--run-id", "123", "--attempt", "2", "--target-sha", "a" * 40,
+        "--namespace-uid", "namespace-uid", "--helm-revision", "7",
+        "--account-uuid", account_uuid, "--game-session-id", str(session["id"]),
+    ]
+    verified = subprocess.run(verify_command, capture_output=True, text=True)
+    if verified.returncode != 0 or verified.stdout != "bootstrap receipt verified\n":
+        raise SystemExit("dev-demo offline receipt verification must accept the exact synthetic receipt")
+    for option, mismatch in (("--run-id", "124"), ("--attempt", "3"),
+                             ("--target-sha", "b" * 40), ("--namespace-uid", "other-uid"),
+                             ("--helm-revision", "8"), ("--account-uuid", "12345678-1234-1234-1234-123456789abd"),
+                             ("--game-session-id", str(session["id"] + 1))):
+        mismatch_command = verify_command.copy()
+        index = mismatch_command.index(option)
+        mismatch_command[index + 1] = mismatch
+        refused = subprocess.run(mismatch_command, capture_output=True, text=True)
+        if refused.returncode == 0 or refused.stdout != "bootstrap receipt refused\n":
+            raise SystemExit("dev-demo offline receipt verification must refuse mismatched identities")
+    result_path.unlink()
+    missing = subprocess.run(verify_command, capture_output=True, text=True)
+    if missing.returncode == 0 or missing.stdout != "bootstrap receipt refused\n":
+        raise SystemExit("dev-demo offline receipt verification must refuse an absent result")
 failure_summary = deploy_by_name["Summarize dev-demo failure"]
 if failure_summary["env"] != {
     "DEPLOY_OUTCOME": "${{ steps." + deploy_by_name["Deploy dev-demo release"]["id"] + ".outcome }}",
