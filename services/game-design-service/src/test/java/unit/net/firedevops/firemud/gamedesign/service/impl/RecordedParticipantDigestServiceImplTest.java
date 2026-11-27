@@ -70,6 +70,47 @@ class RecordedParticipantDigestServiceImplTest {
   }
 
   @Test
+  void retainedEntityV1BaselineIsNotReinterpretedAsV2EvenWithEqualDigest() {
+    RecordedParticipantDigest recorded = new RecordedParticipantDigest();
+    recorded.setTenantId("tenant-1");
+    recorded.setPublishType(PublishType.FULL_VERSION);
+    recorded.setParticipantKey(PublishParticipantKey.ENTITY_MANAGEMENT);
+    recorded.setScopeValue("7");
+    recorded.setAppliedCommitId("version:7");
+    recorded.setContentDigest("same-content");
+    recorded.setDigestSchemaVersion(1);
+    when(repository.findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.FULL_VERSION,
+            PublishParticipantKey.ENTITY_MANAGEMENT,
+            null,
+            "7",
+            "version:7"))
+        .thenReturn(Optional.of(recorded));
+
+    var rejected =
+        assertThrows(
+            PublishGateFailureException.class,
+            () ->
+                service.assertMatchesRecordedDigests(
+                    "tenant-1",
+                    PublishType.FULL_VERSION,
+                    List.of(
+                        new PublishParticipantDigestDto(
+                            "ENTITY_MANAGEMENT",
+                            "7",
+                            "version:7",
+                            "same-content",
+                            2,
+                            null,
+                            null))));
+    assertEquals(PublishGateFailureCode.RECORDED_DIGEST_SCHEMA_MISMATCH, rejected.failureCode());
+    assertEquals(1, recorded.getDigestSchemaVersion());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .save(any(RecordedParticipantDigest.class));
+  }
+
+  @Test
   void recordVerifiedDigestsStoresBaselineAndVerificationWorkflow() {
     when(repository.findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
             "tenant-1",
