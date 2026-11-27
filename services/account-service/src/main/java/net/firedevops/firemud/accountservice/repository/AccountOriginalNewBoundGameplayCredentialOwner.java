@@ -287,6 +287,9 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
               new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
           Genesis stored = issuance.readByLease(leaseId(requestedLease));
           requireSameGenesisIdentity(exactGenesisForCommit, stored);
+          if (clock.instant().getEpochSecond() >= caller.identity().expiresAtEpochSecond()) {
+            throw unavailable();
+          }
           Genesis committedResult = issuance.commit(stored, receiptDigest);
           var fenceRepository = new AccountGameplayTokenIdentityFenceRepository(dsl);
           var tokenIdentity =

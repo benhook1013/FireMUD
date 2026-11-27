@@ -435,6 +435,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                   paid.caller().committedCandidate.identity().tokenJti(),
                   paid.caller().committedCandidate,
                   paid.hosting().admissionPaidSource());
+          assertThat(prepared).isNotNull();
           assertThatThrownBy(prepared::observeOutsideSql).isInstanceOf(IllegalStateException.class);
           return null;
         });
