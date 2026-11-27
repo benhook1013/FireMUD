@@ -3,6 +3,13 @@ package integration.net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.ServerInterceptors;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.net.InetSocketAddress;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -12,7 +19,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
@@ -20,7 +31,10 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateService;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
@@ -29,6 +43,7 @@ import org.jooq.impl.DefaultConfiguration;
 import org.jooq.impl.DefaultExecuteListener;
 import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -141,6 +156,79 @@ class AuthoredWorldVersionStateIntegrationTest {
     assertThat(afterStateChange).containsEntry("source", before.get("source"));
     assertThat(afterStateChange.get("version")).isNotEqualTo(before.get("version"));
     assertThat(rowVersions(fixture)).isEqualTo(afterStateChange);
+  }
+
+  @Test
+  void sameReadIdentityObservesCommittedLifecycleOverMutualTls(@TempDir Path directory)
+      throws Exception {
+    var fixture = fixture("repeated-socket-read");
+    var request = request(fixture, UUID.randomUUID());
+    var before = rowVersions(fixture);
+    String namespaceUri = "spiffe://firemud/ns/" + NAMESPACE + "/sa/";
+    var pki =
+        LoopbackMtlsTestPki.create(
+            directory,
+            "Authored Version State Integration Test CA",
+            new IdentitySpec("game-design", namespaceUri + "game-design-service", true),
+            new IdentitySpec("world", namespaceUri + "world-management-service", false));
+    var gameDesign = pki.identity("game-design");
+    var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
+    var server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            gameDesign.privateKey(), gameDesign.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setGameDesignService("127.0.0.1:" + server.getPort());
+      try (var client =
+          new AuthoredWorldVersionStateClient(
+              endpoints,
+              pki.clientProperties(directory, pki.identity("world")),
+              new GrpcChannelFactory(),
+              NAMESPACE)) {
+        client.init();
+        var draft = client.read(request);
+        assertThat(draft.request()).isEqualTo(request);
+        assertThat(draft.sourceEvidence()).isEqualTo(fixture.source());
+        assertThat(draft.versionState())
+            .isEqualTo(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_DRAFT);
+        assertThat(draft.versionStateEpoch()).isEqualTo(1L);
+        assertThat(rowVersions(fixture)).isEqualTo(before);
+
+        updateVersionInRequiresNew(fixture, "RETIRED", 2L);
+        var after = rowVersions(fixture);
+        assertThat(after).containsEntry("game", before.get("game"));
+        assertThat(after).containsEntry("source", before.get("source"));
+        assertThat(after).containsEntry("binding", before.get("binding"));
+        assertThat(after.get("version")).isNotEqualTo(before.get("version"));
+
+        var retired = client.read(request);
+        assertThat(retired.request()).isEqualTo(request);
+        assertThat(retired.sourceEvidence()).isEqualTo(draft.sourceEvidence());
+        assertThat(retired.canonicalVersionId()).isEqualTo(draft.canonicalVersionId());
+        assertThat(retired.versionState())
+            .isEqualTo(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_RETIRED);
+        assertThat(retired.versionStateEpoch()).isEqualTo(2L);
+        assertThat(retired.evidenceDigest()).isNotEqualTo(draft.evidenceDigest());
+        assertThat(rowVersions(fixture)).isEqualTo(after);
+      }
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(3, TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   @Test
