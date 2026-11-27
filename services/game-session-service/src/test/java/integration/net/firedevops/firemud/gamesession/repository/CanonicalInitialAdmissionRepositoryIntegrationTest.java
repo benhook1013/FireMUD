@@ -53,6 +53,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.CanonicalClosedPointerConflictException;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.InvalidCanonicalClosedPointerEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.PreparedInitialClosed;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
@@ -282,6 +283,53 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     assertThat(locked.receiptDigest()).isEqualTo(before.receiptDigest());
     assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()))
         .contains(before);
+  }
+
+  @Test
+  void expectedClosedRejectsInconsistentAuditAndMissingOutcomeInIsolatedCopies() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(47), "origin actor", "original reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var original =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    var prepared =
+        fixture.pointerRepository.prepareExpectedClosed(NAMESPACE, request.requestId(), 1L, 1L);
+
+    // Transaction-local shadow tables expose inconsistent evidence to the real reader while
+    // keeping the canonical tables and their triggers intact.
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          fixture.dsl.execute(
+              """
+              CREATE TEMP TABLE gameplay_admission_pointer_event ON COMMIT DROP AS
+              SELECT * FROM gameplay_admission_pointer_event WHERE id = ?
+              """,
+              original.auditEventId());
+          assertThat(
+                  fixture.dsl.execute(
+                      "UPDATE pg_temp.gameplay_admission_pointer_event SET reason = ? WHERE id = ?",
+                      "conflicting audit reason",
+                      original.auditEventId()))
+              .isEqualTo(1);
+          assertThatThrownBy(() -> fixture.pointerRepository.lockExpectedClosed(prepared))
+              .isInstanceOf(InvalidCanonicalClosedPointerEvidenceException.class)
+              .hasMessageContaining("audit event conflicts");
+        });
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          fixture.dsl.execute(
+              """
+              CREATE TEMP TABLE game_session_canonical_closed_admission_pointer_request
+              ON COMMIT DROP AS
+              SELECT * FROM game_session_canonical_closed_admission_pointer_request WHERE false
+              """);
+          assertThatThrownBy(() -> fixture.pointerRepository.lockExpectedClosed(prepared))
+              .isInstanceOf(InvalidCanonicalClosedPointerEvidenceException.class)
+              .hasMessageContaining("request outcome is missing");
+        });
+
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()))
+        .contains(original);
   }
 
   @Test
