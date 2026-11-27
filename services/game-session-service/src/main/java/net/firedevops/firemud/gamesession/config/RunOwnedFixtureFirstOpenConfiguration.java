@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.RunOwnedFixtureRuntimeCompletionRepository;
 import net.firedevops.firemud.gamesession.service.impl.AuthenticatedCanonicalInitialAdmissionWorldVerifier;
+import net.firedevops.firemud.gamesession.service.impl.RunOwnedFixtureInitialAdmissionOwnerReadGrpcService;
 import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -64,6 +65,13 @@ public class RunOwnedFixtureFirstOpenConfiguration {
             endpoints, tlsProperties, channelFactory, workloadNamespace);
     client.init();
     return client;
+  }
+
+  @Bean
+  RunOwnedFixtureInitialAdmissionOwnerReadGrpcService runOwnedFixtureInitialAdmissionOwnerRead(
+      RunOwnedCanonicalLaunchPreparationOwner launchOwner,
+      CanonicalInitialAdmissionRepository admissions) {
+    return new RunOwnedFixtureInitialAdmissionOwnerReadGrpcService(launchOwner, admissions);
   }
 
   @Bean

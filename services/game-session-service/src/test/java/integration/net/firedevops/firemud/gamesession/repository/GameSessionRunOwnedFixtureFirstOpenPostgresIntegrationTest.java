@@ -2,17 +2,24 @@ package integration.net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamesession.CanonicalInitialAdmissionOwnerGrpcCodec;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidenceTestFixture;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
@@ -35,6 +42,9 @@ import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRep
 import net.firedevops.firemud.gamesession.repository.RunOwnedFixtureRuntimeCompletionRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.impl.RunOwnedFixtureInitialAdmissionOwnerReadGrpcService;
+import net.firedevops.firemud.gamesession.v1.ReadRunOwnedFixtureInitialAdmissionOwnerRequest;
+import net.firedevops.firemud.gamesession.v1.ReadRunOwnedFixtureInitialAdmissionOwnerResponse;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
@@ -43,6 +53,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -184,6 +195,13 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
     CanonicalInitialAdmissionWorldProof worldProof = worldProof(request);
     assertThat(flag(f, () -> f.admissions.reserveFixtureStarting(request))).isTrue();
     assertThat(flag(f, () -> f.admissions.reserveFixtureStarting(request))).isFalse();
+    assertThat(f.admissions.readRunOwnedFixture(NAMESPACE, requestId, provenance))
+        .hasValueSatisfying(
+            pending ->
+                assertThat(pending.outcome())
+                    .isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING));
+    assertThat(f.admissions.readRunOwnedFixture(NAMESPACE, requestId, "sha256:" + "0".repeat(64)))
+        .isEmpty();
     assertThat(
             f.dsl
                 .fetchSingle(
@@ -248,6 +266,8 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
     CanonicalInitialAdmissionOwnerProof proof =
         f.admissions.read(NAMESPACE, requestId).orElseThrow();
     assertThat(proof.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+    assertThat(f.admissions.readRunOwnedFixture(NAMESPACE, requestId, provenance)).contains(proof);
+    assertFixtureOwnerRead(f, evidence, hold, proof);
     Record attempt =
         f.dsl.fetchSingle(
             "SELECT * FROM game_session_canonical_initial_admission_attempt "
@@ -341,6 +361,53 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
    * Calls the installed predicate with a complete owner-derived target, without inserting a
    * binding.
    */
+  @SuppressWarnings("unchecked")
+  private static void assertFixtureOwnerRead(
+      Fixture fixture,
+      RunOwnedInitialAdmissionLaunchEvidence evidence,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity hold,
+      CanonicalInitialAdmissionOwnerProof retained) {
+    var launchOwner = mock(RunOwnedCanonicalLaunchPreparationOwner.class);
+    when(launchOwner.loadFixedVerifiedEvidenceForWorldPeer()).thenReturn(evidence);
+    when(launchOwner.readFixedFixtureLaunch(evidence))
+        .thenReturn(fixture.instanceLaunches.readVerifiedFixtureLaunch(evidence));
+    var service =
+        new RunOwnedFixtureInitialAdmissionOwnerReadGrpcService(launchOwner, fixture.admissions);
+    var request =
+        ReadRunOwnedFixtureInitialAdmissionOwnerRequest.newBuilder()
+            .setReadRequestId(uuid(1303).toString())
+            .setAuthorityKind("RUN_OWNED_FIXTURE")
+            .setFixturePolicySealEvidenceDigest(evidence.fixturePolicySeal().evidenceDigest())
+            .setHold(CanonicalInitialAdmissionOwnerGrpcCodec.toRequest(hold))
+            .build();
+    StreamObserver<ReadRunOwnedFixtureInitialAdmissionOwnerResponse> observer =
+        mock(StreamObserver.class);
+    service.readRunOwnedFixtureInitialAdmissionOwner(request, observer);
+    var received = ArgumentCaptor.forClass(ReadRunOwnedFixtureInitialAdmissionOwnerResponse.class);
+    verify(observer).onNext(received.capture());
+    verify(observer).onCompleted();
+    assertThat(received.getValue().getReadRequestId()).isEqualTo(request.getReadRequestId());
+    assertThat(received.getValue().getAuthorityKind()).isEqualTo(request.getAuthorityKind());
+    assertThat(received.getValue().getFixturePolicySealEvidenceDigest())
+        .isEqualTo(request.getFixturePolicySealEvidenceDigest());
+    var proof =
+        CanonicalInitialAdmissionOwnerGrpcCodec.requireResponse(
+            hold, received.getValue().getProof());
+    assertThat(proof.committedPointerVersion()).isEqualTo(retained.committedPointerVersion());
+    assertThat(proof.auditEventId()).isEqualTo(retained.auditEventId());
+    assertThat(proof.proofDigest()).isEqualTo(retained.proofDigest());
+
+    StreamObserver<ReadRunOwnedFixtureInitialAdmissionOwnerResponse> rejected =
+        mock(StreamObserver.class);
+    service.readRunOwnedFixtureInitialAdmissionOwner(
+        request.toBuilder().setFixturePolicySealEvidenceDigest("sha256:" + "0".repeat(64)).build(),
+        rejected);
+    var error = ArgumentCaptor.forClass(Throwable.class);
+    verify(rejected).onError(error.capture());
+    assertThat(Status.fromThrowable(error.getValue()).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+  }
+
   private static boolean hasFixtureBindingSource(
       Fixture f,
       String requestId,
