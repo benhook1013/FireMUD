@@ -3572,6 +3572,25 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                           .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED);
               var placementRetry = initialLocationClient.placeInitialPlayer(placementRequest);
               assertThat(placementRetry.toByteArray()).containsExactly(placed.toByteArray());
+              UUID placementId = UUID.fromString(placementRequest.getPlacementOperationUuid());
+              var retainedPlacement = placementSnapshot(world.dsl(), placementId);
+              for (var changed :
+                  List.of(
+                      placementRequest.toBuilder()
+                          .setCharacterUuid(UUID.randomUUID().toString())
+                          .build(),
+                      placementRequest.toBuilder()
+                          .setAssignmentUuid(UUID.randomUUID().toString())
+                          .setAssignmentIntentDigest("c".repeat(64))
+                          .build())) {
+                assertThatThrownBy(() -> initialLocationClient.placeInitialPlayer(changed))
+                    .isInstanceOfSatisfying(
+                        StatusRuntimeException.class,
+                        failure ->
+                            assertThat(failure.getStatus().getCode())
+                                .isEqualTo(Status.Code.FAILED_PRECONDITION));
+              }
+              assertThat(placementSnapshot(world.dsl(), placementId)).isEqualTo(retainedPlacement);
 
               var regionResolver =
                   new CanonicalInitialPlayerLocationRegionResolver(
@@ -3942,7 +3961,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .isEqualTo(retained.runtimeRoomInstanceId());
             assertThat(location.get("initial_runtime_room_instance_id", Long.class))
                 .isEqualTo(retained.runtimeRoomInstanceId());
-            var beforeRetry = createdPlacementSnapshot(world.dsl(), placementId);
+            var beforeRetry = placementSnapshot(world.dsl(), placementId);
             assertThat(client.placeInitialPlayer(request).toByteArray())
                 .containsExactly(placed.toByteArray());
             assertThat(client.readInitialPlayerLocation(request).toByteArray())
@@ -3951,7 +3970,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             var region = client.readInitialPlayerLocationRegion(request);
             assertThat(region.getPlacementResult().toByteArray())
                 .containsExactly(placed.toByteArray());
-            assertThat(createdPlacementSnapshot(world.dsl(), placementId)).isEqualTo(beforeRetry);
+            assertThat(placementSnapshot(world.dsl(), placementId)).isEqualTo(beforeRetry);
             assertThat(reads.get()).isEqualTo(4);
           }
         } finally {
@@ -3963,7 +3982,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     }
   }
 
-  private static List<String> createdPlacementSnapshot(DSLContext dsl, UUID placementId) {
+  private static List<String> placementSnapshot(DSLContext dsl, UUID placementId) {
     // Include all retained bytes, room columns and physical row versions, not just row counts.
     return dsl.fetch(
             "SELECT to_jsonb(o)::text || ':' || o.xmin::text AS snapshot "

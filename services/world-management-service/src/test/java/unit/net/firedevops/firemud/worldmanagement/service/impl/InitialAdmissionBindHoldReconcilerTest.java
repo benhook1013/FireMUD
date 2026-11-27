@@ -55,7 +55,7 @@ class InitialAdmissionBindHoldReconcilerTest {
         Mockito.mock(InitialAdmissionBindHoldRepository.class);
     InitialAdmissionBindHoldService service = Mockito.mock(InitialAdmissionBindHoldService.class);
     ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider = mockProvider();
-    when(repository.findNonterminal(32)).thenReturn(List.of(first, second));
+    when(repository.findNonterminalLegacy(32)).thenReturn(List.of(first, second));
     when(proofClientProvider.getIfAvailable()).thenReturn(null);
     doThrow(new IllegalStateException("stale reconciliation CAS"))
         .when(service)
@@ -167,7 +167,7 @@ class InitialAdmissionBindHoldReconcilerTest {
   private static InitialAdmissionBindHoldRepository repositoryWith(InitialAdmissionBindHold hold) {
     InitialAdmissionBindHoldRepository repository =
         Mockito.mock(InitialAdmissionBindHoldRepository.class);
-    when(repository.findNonterminal(32)).thenReturn(List.of(hold));
+    when(repository.findNonterminalLegacy(32)).thenReturn(List.of(hold));
     return repository;
   }
 

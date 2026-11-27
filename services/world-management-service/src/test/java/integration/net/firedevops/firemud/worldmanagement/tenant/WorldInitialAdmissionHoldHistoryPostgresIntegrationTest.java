@@ -109,7 +109,7 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
           assertThat(repository.hasNonterminalForRealm(retained.tenantId(), retained.realmUuid()))
               .isEqualTo(List.of("PENDING", "RECONCILIATION_REQUIRED").contains(retained.status()));
         });
-    assertThat(repository.findNonterminal(256)).hasSize(2);
+    assertThat(repository.findNonterminalLegacy(256)).hasSize(2);
     assertPromotionDenied(sql, beforeHold.keySet().iterator().next());
     assertRetained(sql, after1020World, after1020Hold);
     assertUnmapped(sql, true);

@@ -55,7 +55,7 @@ public class InitialAdmissionBindHoldReconciler {
   @Scheduled(fixedDelayString = "${world.initial-admission-bind.reconcile-delay-ms:5000}")
   public void reconcilePendingHolds() {
     List<net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold> holds =
-        holdRepository.findNonterminal(32);
+        holdRepository.findNonterminalLegacy(32);
     if (holds.isEmpty()) {
       return;
     }

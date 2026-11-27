@@ -58,12 +58,13 @@ public class InitialAdmissionBindHoldRepository {
         UUID.fromString(holdId));
   }
 
-  public List<InitialAdmissionBindHold> findNonterminal(int limit) {
+  public List<InitialAdmissionBindHold> findNonterminalLegacy(int limit) {
     Result<Record> rows =
         dsl.fetch(
             "SELECT "
                 + SELECT_COLUMNS
-                + " FROM initial_admission_bind_hold WHERE status IN "
+                + " FROM initial_admission_bind_hold WHERE canonical_request_bytes IS NULL "
+                + "AND status IN "
                 + "('PENDING', 'RECONCILIATION_REQUIRED') ORDER BY updated_at, hold_id LIMIT ?",
             Math.max(1, Math.min(limit, 256)));
     return rows.map(this::toEntity);

@@ -38,6 +38,8 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayer
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class CanonicalInitialPlayerLocationServiceTest {
   private static final String NAMESPACE = "firemud";
@@ -527,8 +529,12 @@ class CanonicalInitialPlayerLocationServiceTest {
     verify(location, never()).store(any());
   }
 
-  @Test
-  void nonCommittedGameSessionTerminalStopsBeforePlacementWrite() {
+  @ParameterizedTest
+  @CsvSource({"PENDING,false,false", "COMMITTED,true,false", "COMMITTED,false,true"})
+  void inexactGameSessionTerminalStopsBeforePlacementWrite(
+      GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome,
+      boolean changedDigest,
+      boolean changedAuditEvent) {
     var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
     var location = emptyLocation(selection);
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
@@ -558,8 +564,12 @@ class CanonicalInitialPlayerLocationServiceTest {
             });
     var terminal = mock(GameSessionCanonicalInitialAdmissionOwnerProof.class);
     when(terminal.holdIdentity()).thenAnswer(invocation -> readIdentity.get());
-    when(terminal.outcome())
-        .thenReturn(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    when(terminal.outcome()).thenReturn(outcome);
+    when(terminal.committedPointerVersion()).thenReturn(selection.committedPointerVersion());
+    when(terminal.auditEventId())
+        .thenReturn(changedAuditEvent ? selection.auditEventId() + 1 : selection.auditEventId());
+    when(terminal.proofDigest())
+        .thenReturn(changedDigest ? "sha256:" + "0".repeat(64) : selection.terminalProofDigest());
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     when(gameSession.read(any())).thenReturn(terminal);
 
