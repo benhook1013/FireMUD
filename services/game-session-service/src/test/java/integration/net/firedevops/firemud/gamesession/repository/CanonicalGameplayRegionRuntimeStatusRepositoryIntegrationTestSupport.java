@@ -303,15 +303,26 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     final CanonicalGameplayRegionRuntimeStatus prior;
     final OriginalNewCapacityExecution execution;
     final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding region;
+    final net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision
+        otherDecision;
+    final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding otherRegion;
+    final CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+        otherAdmission;
     CanonicalGameplayRegionOwnerTransferRepository transfers;
     CanonicalGameplayProtectedIncarnationReceiver receiver;
     CanonicalGameplayRegionOwnerTransferCoordinator coordinator;
 
     TransferSqlProof() throws Exception {
+      this(false);
+    }
+
+    TransferSqlProof(boolean withOtherCandidate) throws Exception {
       this(
           new DefaultExecuteListener(),
           TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+          withOtherCandidate);
     }
 
     TransferSqlProof(int maximumRecords, long maximumBindingBytes) throws Exception {
@@ -345,7 +356,24 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         long maximumBindingBytes,
         int maximumRetainedRecords)
         throws Exception {
-      this(listener, maximumRecords, maximumBindingBytes, maximumRetainedRecords, 256, 1024);
+      this(listener, maximumRecords, maximumBindingBytes, maximumRetainedRecords, false);
+    }
+
+    TransferSqlProof(
+        DefaultExecuteListener listener,
+        int maximumRecords,
+        long maximumBindingBytes,
+        int maximumRetainedRecords,
+        boolean withOtherCandidate)
+        throws Exception {
+      this(
+          listener,
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords,
+          256,
+          1024,
+          withOtherCandidate);
     }
 
     TransferSqlProof(
@@ -355,6 +383,25 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         int maximumRetainedRecords,
         int maximumTransfers,
         int maximumItems)
+        throws Exception {
+      this(
+          listener,
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords,
+          maximumTransfers,
+          maximumItems,
+          false);
+    }
+
+    TransferSqlProof(
+        DefaultExecuteListener listener,
+        int maximumRecords,
+        long maximumBindingBytes,
+        int maximumRetainedRecords,
+        int maximumTransfers,
+        int maximumItems,
+        boolean withOtherCandidate)
         throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
@@ -460,17 +507,34 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                   new net.firedevops.firemud.gamesession.service
                       .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                   new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
-      upstream =
-          new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
-              sql, fixture.originalPreparedDecisionWithControlledAccountLease(), directory);
-      var decision = fixture.originalPreparedDecisionWithControlledAccountLease();
+                      .CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
+      var decision = fixture.originalPreparedDecisionWithControlledAccountLease(withOtherCandidate);
       var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
       CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(redis, scripts, inventory, tags)
           .installOnce(decision);
       fixture.acknowledgeOriginalIssuer();
       new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
           .repair(fixture.transitionId());
+
+      String otherSeed = "two-origin-transfer";
+      if (withOtherCandidate) {
+        fixture.prepareOtherControllerNew(otherSeed);
+        otherDecision = fixture.otherControllerDecision(otherSeed, true);
+      } else {
+        otherDecision = null;
+      }
+      upstream =
+          withOtherCandidate
+              ? new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
+                  sql, decision, otherDecision, directory)
+              : new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
+                  sql, decision, directory);
       region =
           CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
               sql,
@@ -480,6 +544,24 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
               upstream.request,
               upstream.resolver,
               upstream.entity);
+      if (withOtherCandidate) {
+        fixture.projectOtherControllerNew(otherSeed);
+        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
+                redis, scripts, inventory, tags)
+            .installOnce(otherDecision);
+        fixture.acknowledgeOtherControllerNew(otherSeed);
+        new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
+            .repair(otherDecision.bindingDecisionId());
+        otherRegion =
+            CanonicalGameplayRegionOwnerCompositionFixture.installAdditionalOriginalCandidate(
+                region,
+                otherDecision.bindingDecisionId(),
+                upstream.request(otherDecision.bindingDecisionId()));
+        otherAdmission = inventory.readOriginalNewFinalAdmissionSource(otherDecision);
+      } else {
+        otherRegion = null;
+        otherAdmission = null;
+      }
       admission = inventory.readOriginalNewFinalAdmissionSource(decision);
       scope = region.installation().source;
       prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
@@ -507,6 +589,37 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     void replayBridge() {
       var replayed = region.owner().bridge(region.installation());
       assertThat(replayed.obligation()).isEqualTo(region.acknowledgement().obligation());
+    }
+
+    void freezeWithCommittedOriginExecution(CanonicalGameplayCapacityOrigin origin)
+        throws Exception {
+      try (var credential =
+              new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                  admission.candidate(), clock);
+          var raw = credential.template();
+          var template = raw.bindCapacityExecution(execution)) {
+        var account = controlledAccountOpen();
+        var issuer = issuerOpen();
+        capacity(sql)
+            .authorizeWithOrigin(
+                admission, template, account, issuer, execution, transferDeadline(), origin);
+        var custody = new CanonicalGameplayCapacityOriginRepository(sql).read(origin);
+        var finalOwner =
+            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(redis, scripts, clock, tags)
+                .forOrigin(origin, custody);
+        try (var finalReadback =
+            finalOwner.finalizeOriginalNewOnce(
+                admission, template, account, issuer, execution, transferDeadline())) {
+          UUID id = begin();
+          var captured = transfers.within(transferDeadline(), ignored -> transfers.capture(id));
+          assertThat(captured)
+              .extracting(item -> item.execution().digest())
+              .containsExactly(execution.digest());
+          new CanonicalGameplayBindingInventoryRepository(sql)
+              .commitOriginalNewFinalAdmission(finalReadback);
+        }
+        assertThat(executionState(execution)).isEqualTo("COMMITTED");
+      }
     }
 
     OriginalNewCapacityExecution newControlledExecution() {
@@ -740,6 +853,21 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           transferDeadline());
     }
 
+    CanonicalGameplayRegionRuntimeStatus installCalibrationTransfer(
+        CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+        UUID transferId,
+        CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
+        long deadline) {
+      return transfer.install(
+          transferId,
+          scope,
+          prior,
+          grant.tokenCorrelation(),
+          grant.ownerService(),
+          grant.ownerInstanceId(),
+          deadline);
+    }
+
     CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
       var repository =
           new CanonicalGameplayIssuerAdmissionBarrierRepository(
@@ -825,32 +953,35 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
 
     boolean physicalExecutionExists(OriginalNewCapacityExecution original, String tag) {
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        return connection
-                .sync()
-                .exists(
-                    ascii(
-                        "session:game:capacity-execution:{"
-                            + tag
-                            + "}:"
-                            + original.request().admissionAttemptId()))
-            != 0;
+        return connection.sync().exists(physicalExecutionKey(original, tag)) != 0;
+      }
+    }
+
+    String physicalExecutionState(OriginalNewCapacityExecution original) {
+      try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
+        return new String(
+            connection.sync().hget(physicalExecutionKey(original), ascii("state")),
+            StandardCharsets.US_ASCII);
       }
     }
 
     void losePhysicalExecution(OriginalNewCapacityExecution original) {
-      String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        assertThat(
-                connection
-                    .sync()
-                    .del(
-                        ascii(
-                            "session:game:capacity-execution:{"
-                                + tag
-                                + "}:"
-                                + original.request().admissionAttemptId())))
-            .isEqualTo(1L);
+        assertThat(connection.sync().del(physicalExecutionKey(original))).isEqualTo(1L);
       }
+    }
+
+    byte[] physicalExecutionKey(OriginalNewCapacityExecution original) {
+      String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
+      return physicalExecutionKey(original, tag);
+    }
+
+    byte[] physicalExecutionKey(OriginalNewCapacityExecution original, String tag) {
+      return ascii(
+          "session:game:capacity-execution:{"
+              + tag
+              + "}:"
+              + original.request().admissionAttemptId());
     }
 
     void rawReplaceOwner(String owner, String correlation) {

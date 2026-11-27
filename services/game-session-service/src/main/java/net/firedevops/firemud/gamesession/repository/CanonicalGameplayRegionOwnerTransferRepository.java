@@ -6,9 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
@@ -1029,6 +1027,17 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         .readAssignmentForRetainedCapacityExecution(transitionId);
   }
 
+  @Override
+  public CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+      Context context, CanonicalGameplayTenantGameplayTagRepository sourceTags, long deadline) {
+    if (admitted.get() == null)
+      return within(deadline, ignored -> readAssignment(context, sourceTags, deadline));
+    if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
+    return readItem(
+            context.transferId(), context.targetOrdinal(), context.executionDigest(), sourceTags)
+        .assignment();
+  }
+
   static Record observationCurrent(DSLContext tx, UUID id) {
     Record row =
         tx.fetchOne(
@@ -1063,19 +1072,42 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   }
 
   private Item readItem(UUID transferId, long ordinal, String executionDigest) {
+    return readItem(transferId, ordinal, executionDigest, tags);
+  }
+
+  private Item readItem(
+      UUID transferId,
+      long ordinal,
+      String executionDigest,
+      CanonicalGameplayTenantGameplayTagRepository sourceTags) {
     return sql()
         .transactionResult(
             configuration -> {
               DSLContext transaction = DSL.using(configuration);
               transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              return loadItem(transaction, transferId, ordinal, executionDigest);
+              return loadItem(transaction, transferId, ordinal, executionDigest, sourceTags);
             });
   }
 
   private Item loadItem(DSLContext tx, UUID transferId, long ordinal, String executionDigest) {
+    return loadItem(tx, transferId, ordinal, executionDigest, tags);
+  }
+
+  private Item loadItem(
+      DSLContext tx,
+      UUID transferId,
+      long ordinal,
+      String executionDigest,
+      CanonicalGameplayTenantGameplayTagRepository sourceTags) {
     Record row =
         tx.fetchOne(
-            "SELECT e.*,t.original_new_candidate_bytes FROM game_session_original_new_capacity_execution e JOIN game_session_canonical_binding_transition t ON t.transition_id=e.transition_id WHERE e.execution_digest=?",
+            "SELECT e.*, t.status AS transition_status, t.original_new_candidate_bytes,"
+                + " t.original_new_capacity_execution_digest, t.original_new_final_session_sha256,"
+                + " t.original_new_admission_at_ms, t.original_new_continuity_expires_at_ms,"
+                + " t.original_new_session_duration_ms"
+                + " FROM game_session_original_new_capacity_execution e"
+                + " JOIN game_session_canonical_binding_transition t ON t.transition_id=e.transition_id"
+                + " WHERE e.execution_digest=?",
             executionDigest);
     if (row == null) throw unavailable();
     var candidate =
@@ -1092,7 +1124,15 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             .request()
             .admissionAttemptId()
             .equals(row.get("admission_attempt_id", UUID.class))) throw unavailable();
-    var assignment = tags.readAssignmentForRetainedCapacityExecution(tx, execution.transitionId());
+    boolean committed = "COMMITTED".equals(row.get("status", String.class));
+    if (committed) {
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.requireRetainedCommittedEvidence(
+          execution, row, row, row.get("transition_status", String.class));
+    }
+    var assignment =
+        committed
+            ? sourceTags.readAssignmentForCommittedTransferItem(tx, execution.transitionId())
+            : sourceTags.readAssignmentForRetainedCapacityExecution(tx, execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
     var binding = candidate.bindingIdentity();
@@ -1267,10 +1307,13 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         throw unavailable();
       JsonNode node = JSON.readTree(canonical);
       byte[] payload = Base64.getDecoder().decode(node.get("canonicalAttemptPayload").textValue());
-      var request = decodeRequest(payload, node.get("mutationDigest").textValue());
+      var request =
+          CapacityAdmissionDigest.decodeCommittable(
+              payload, node.get("mutationDigest").textValue());
+      var identity = request.identity();
       var reservation =
           new TenantCapacityAdmission.Result(
-              request.identity(),
+              identity,
               request.admissionAttemptId(),
               request.capacityRearmFence(),
               request.mutationDigest(),
@@ -1295,83 +1338,6 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     }
   }
 
-  /** Strict canonical request decoder shared by execution envelopes and positive origins. */
-  static TenantCapacityAdmission.Request decodeRequest(byte[] payload, String mutationDigest) {
-    try {
-      if (payload == null
-          || payload.length == 0
-          || payload.length > CapacityAdmissionDigest.MAX_PREIMAGE_BYTES) throw unavailable();
-      var parser = new Frame(payload);
-      if (!"mutationDigest/v1".equals(parser.segment())) throw unavailable();
-      Map<String, Object> fields = parser.fields(7, 0);
-      var scope = object(fields, "scope");
-      var target = object(fields, "target");
-      var player = object(target, "ownerContext");
-      var expected = object(fields, "expectedVersion");
-      var mutation = object(fields, "mutation");
-      var identity =
-          new TenantCapacityAdmission.Identity(
-              uuid(scope, "tenantId"), uuid(scope, "requestId"), uuid(scope, "admissionId"));
-      var request =
-          new TenantCapacityAdmission.Request(
-              identity,
-              uuid(expected, "admissionAttemptId"),
-              number(expected, "capacityRearmFence"),
-              text(target, "targetNamespace"),
-              new TenantCapacityAdmission.PlayerContext(
-                  uuid(player, "accountId"),
-                  uuid(player, "tenantId"),
-                  uuid(player, "playableStateNamespaceId"),
-                  uuid(player, "gameInstanceId"),
-                  uuid(player, "characterId"),
-                  uuid(player, "sessionId"),
-                  uuid(player, "realmId"),
-                  uuid(player, "requestId"),
-                  text(player, "playableStateScope")),
-              TenantCapacityAdmission.Operation.valueOf(text(mutation, "operation")),
-              shape(object(mutation, "priorShape")),
-              shape(object(mutation, "requestedShape")),
-              TenantCapacityAdmission.Evidence.parse(
-                  Base64.getDecoder().decode(text(mutation, "accountEvidence")),
-                  TenantCapacityAdmission.Owner.GAME_SESSION),
-              number(mutation, "capacityDelta"),
-              mutationDigest);
-      if (!parser.done() || !Arrays.equals(payload, CapacityAdmissionDigest.preimage(request)))
-        throw unavailable();
-      request.requireCommittable();
-      return request;
-    } catch (RuntimeException invalid) {
-      throw unavailable();
-    }
-  }
-
-  private static TenantCapacityAdmission.Shape shape(Map<String, Object> value) {
-    return new TenantCapacityAdmission.Shape(
-        number(value, "activeSessions"),
-        number(value, "concurrentGameInstances"),
-        number(value, "storageBytes"));
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Map<String, Object> object(Map<String, Object> value, String key) {
-    if (!(value.get(key) instanceof Map<?, ?>)) throw unavailable();
-    return (Map<String, Object>) value.get(key);
-  }
-
-  private static String text(Map<String, Object> value, String key) {
-    if (!(value.get(key) instanceof String text)) throw unavailable();
-    return text;
-  }
-
-  private static long number(Map<String, Object> value, String key) {
-    if (!(value.get(key) instanceof Long number)) throw unavailable();
-    return number;
-  }
-
-  private static UUID uuid(Map<String, Object> value, String key) {
-    return UUID.fromString(text(value, key));
-  }
-
   private static byte[] bytes(String text) {
     return text.getBytes(StandardCharsets.UTF_8);
   }
@@ -1392,56 +1358,6 @@ final class CanonicalGameplayRegionOwnerTransferRepository
 
   private static IllegalStateException unavailable() {
     return new IllegalStateException("Normal region owner transfer is held");
-  }
-
-  private static final class Frame {
-    private final byte[] data;
-    private int offset;
-
-    private Frame(byte[] data) {
-      if (data.length > CapacityAdmissionDigest.MAX_PREIMAGE_BYTES) throw unavailable();
-      this.data = data;
-    }
-
-    private String segment() {
-      int start = offset;
-      while (offset < data.length && data[offset] >= '0' && data[offset] <= '9') offset++;
-      if (offset == start || offset >= data.length || data[offset++] != ':' || offset - start > 8)
-        throw unavailable();
-      int size =
-          Integer.parseInt(new String(data, start, offset - start - 1, StandardCharsets.US_ASCII));
-      if (size < 0
-          || size > CapacityAdmissionDigest.MAX_SEGMENT_BYTES
-          || size > data.length - offset) throw unavailable();
-      String result = new String(data, offset, size, StandardCharsets.UTF_8);
-      offset += size;
-      return result;
-    }
-
-    private Map<String, Object> fields(int count, int depth) {
-      if (count < 0 || count > 16 || depth > 8) throw unavailable();
-      Map<String, Object> result = new LinkedHashMap<>();
-      for (int index = 0; index < count; index++) {
-        String name = segment(), type = segment();
-        if (offset >= data.length || data[offset++] != '1') throw unavailable();
-        String payload = segment();
-        Object value;
-        if (type.equals("object")) {
-          Frame nested = new Frame(bytes(payload));
-          value = nested.fields(Integer.parseInt(nested.segment()), depth + 1);
-          if (!nested.done()) throw unavailable();
-        } else if (type.equals("string")) value = payload;
-        else if (type.equals("number") && payload.matches("0|[1-9][0-9]{0,18}"))
-          value = Long.parseLong(payload);
-        else throw unavailable();
-        if (result.put(name, value) != null) throw unavailable();
-      }
-      return result;
-    }
-
-    private boolean done() {
-      return offset == data.length;
-    }
   }
 
   record FrozenOriginal(

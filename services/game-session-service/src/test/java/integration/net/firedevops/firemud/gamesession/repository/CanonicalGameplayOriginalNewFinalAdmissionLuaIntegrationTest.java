@@ -57,6 +57,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   private static final String GENERATION = "1";
   private static final String TRANSITION = "99999999-9999-4999-8999-999999999999";
   private static final String ATTEMPT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  private static final String LOGOUT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   private static final long DURATION_MILLIS = 120_000L;
   private static final byte[] ISSUER_PAYLOAD = new byte[] {0, 1, 2, 0, (byte) 0xff, 13, 10};
   private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -154,6 +155,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
             .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
             .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
             .addCommand(CommandType.EVALSHA)
+            .addCommand(CommandType.EVALSHA_RO)
             .addCommand(CommandType.TYPE)
             .addCommand(CommandType.PTTL)
             .addCommand(CommandType.GET)
@@ -647,6 +649,151 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         "binding", original.arguments()[16],
         "digest", original.arguments()[18],
         "state", ascii(state));
+  }
+
+  @Test
+  void admittedLogoutRetainsTheOriginalFinalAndReplaysWithoutChangingANewerController()
+      throws Exception {
+    ScriptCase original = seed();
+    assertThat(eval(original)).isEqualTo(1);
+    var admittedImage = physicalImage(original);
+    String logoutScript = loadLogoutScript();
+    var logout = logoutCase(original, LOGOUT, System.currentTimeMillis() + 15_000);
+    admin.aclSetuser(
+        PRINCIPAL, new AclSetuserArgs().addCommand(CommandType.DEL).addCommand(CommandType.SREM));
+
+    assertThat(eval(logoutScript, logout)).isEqualTo(1);
+    byte[] sessionKey = ascii(original.keys()[0]);
+    byte[] characterKey = ascii(original.keys()[1]);
+    assertThat(admin.pttl(sessionKey)).isEqualTo(-1);
+    assertThat(admin.get(sessionKey))
+        .isEqualTo(
+            ascii(
+                "{\"purpose\":\"original-new-admitted-logout/v1\",\"bindingGeneration\":\""
+                    + GENERATION
+                    + "\",\"capacityExecutionDigest\":\""
+                    + new String(original.arguments()[18], StandardCharsets.US_ASCII)
+                    + "\",\"logoutId\":\""
+                    + LOGOUT
+                    + "\",\"originalSessionSha1\":\""
+                    + new String(logout.arguments()[12], StandardCharsets.US_ASCII)
+                    + "\"}"));
+    assertThat(admin.get(characterKey)).isNull();
+    assertThat(admin.sismember(ascii(original.keys()[2]), ascii(SESSION))).isFalse();
+    assertThat(admin.sismember(ascii(original.keys()[3]), ascii(SESSION))).isFalse();
+    var closedImage = physicalImage(original);
+    for (int index = 4; index < original.keys().length; index++) {
+      String key = original.keys()[index];
+      assertThat(closedImage.get(key)).containsExactly(admittedImage.get(key));
+    }
+    assertThat(eval(original)).isEqualTo(-1);
+
+    String successor = "77777777-7777-4777-8777-777777777777";
+    admin.set(
+        characterKey,
+        ascii(
+            "{\"sessionId\":\""
+                + successor
+                + "\",\"gameInstanceId\":\""
+                + INSTANCE
+                + "\",\"bindingGeneration\":\"2\"}"));
+    admin.sadd(ascii(original.keys()[2]), ascii(successor));
+    admin.sadd(ascii(original.keys()[3]), ascii(successor));
+    var successorImage = physicalImage(original);
+    assertThat(eval(logoutScript, logoutCase(original, LOGOUT, 1))).isEqualTo(2);
+    assertThat(eval(logoutScript, logoutCase(original, TRANSITION, 1))).isEqualTo(-1);
+    assertPhysicalImage(original, successorImage, 7);
+  }
+
+  @Test
+  void admittedLogoutRefusesStaleGenerationExpiryMissingOriginalAndDeniedMutationWithoutWrites()
+      throws Exception {
+    ScriptCase original = seed();
+    assertThat(eval(original)).isEqualTo(1);
+    String logoutScript = loadLogoutScript();
+    var logout = logoutCase(original, LOGOUT, System.currentTimeMillis() + 15_000);
+    var before = physicalImage(original);
+    assertThat(eval(logoutScript, logout)).isEqualTo(-1);
+    assertPhysicalImage(original, before, 7);
+    admin.aclSetuser(
+        PRINCIPAL, new AclSetuserArgs().addCommand(CommandType.DEL).addCommand(CommandType.SREM));
+    assertThat(eval(logoutScript, logoutCase(original, LOGOUT, 1))).isEqualTo(-1);
+    byte[][] staleArguments = logout.arguments().clone();
+    staleArguments[6] = ascii("2");
+    assertThat(eval(logoutScript, new ScriptCase(logout.keys(), staleArguments))).isEqualTo(-1);
+    assertPhysicalImage(original, before, 7);
+
+    admin.del(ascii(original.keys()[6]));
+    var missing = physicalImage(original);
+    assertThat(eval(logoutScript, logout)).isEqualTo(-1);
+    assertPhysicalImage(original, missing, 7);
+  }
+
+  @Test
+  void admittedLogoutReadbackNeverDispatchesAndRequiresAnExactPersistentFence() throws Exception {
+    ScriptCase original = seed();
+    assertThat(eval(original)).isEqualTo(1);
+    String logoutScript = loadLogoutScript();
+    var dispatch = logoutCase(original, LOGOUT, System.currentTimeMillis() + 15_000);
+    var observed = logoutCase(original, LOGOUT, 1);
+    observed.arguments()[13] = ascii("OBSERVE");
+    byte[][] keys =
+        java.util.Arrays.stream(observed.keys()).map(key -> ascii(key)).toArray(byte[][]::new);
+    var liveImage = physicalImage(original);
+    assertThat(observeLogout(logoutScript, keys, observed)).isEqualTo(-1);
+    assertPhysicalImage(original, liveImage, 7);
+
+    admin.aclSetuser(
+        PRINCIPAL, new AclSetuserArgs().addCommand(CommandType.DEL).addCommand(CommandType.SREM));
+    assertThat(eval(logoutScript, dispatch)).isEqualTo(1);
+    admin.aclSetuser(
+        PRINCIPAL,
+        new AclSetuserArgs()
+            .removeCommand(CommandType.SET)
+            .removeCommand(CommandType.DEL)
+            .removeCommand(CommandType.SREM));
+    var fencedImage = physicalImage(original);
+    assertThat(observeLogout(logoutScript, keys, observed)).isEqualTo(2);
+    assertPhysicalImage(original, fencedImage, 7);
+
+    admin.set(ascii(original.keys()[1]), ascii("{}"));
+    var malformedImage = physicalImage(original);
+    assertThat(observeLogout(logoutScript, keys, observed)).isEqualTo(-1);
+    assertPhysicalImage(original, malformedImage, 7);
+
+    admin.del(ascii(original.keys()[1]), ascii(original.keys()[0]));
+    var missingImage = physicalImage(original);
+    assertThat(observeLogout(logoutScript, keys, observed)).isEqualTo(-1);
+    assertPhysicalImage(original, missingImage, 7);
+  }
+
+  private long observeLogout(String sha, byte[][] keys, ScriptCase testCase) {
+    return owner.evalshaReadOnly(sha, ScriptOutputType.INTEGER, keys, testCase.arguments());
+  }
+
+  private String loadLogoutScript() throws Exception {
+    try (InputStream input =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream("redis/lua/game-session-original-new-admitted-logout.lua")) {
+      if (input == null) {
+        throw new IllegalStateException("Admitted logout script resource is absent");
+      }
+      return owner.scriptLoad(input.readAllBytes());
+    }
+  }
+
+  private ScriptCase logoutCase(ScriptCase original, String logoutId, long deadline) {
+    String[] keys = java.util.Arrays.copyOf(original.keys(), 5);
+    keys[4] = original.keys()[6];
+    byte[][] arguments = java.util.Arrays.copyOf(original.arguments(), 14);
+    arguments[8] = original.arguments()[18];
+    arguments[9] = ascii(logoutId);
+    arguments[10] = ascii(Long.toString(deadline));
+    arguments[11] = original.arguments()[16];
+    arguments[12] = admin.hget(ascii(keys[4]), ascii("sessionSha1"));
+    arguments[13] = ascii("DISPATCH");
+    return new ScriptCase(keys, arguments);
   }
 
   private static ScriptCase expired(ScriptCase original) {

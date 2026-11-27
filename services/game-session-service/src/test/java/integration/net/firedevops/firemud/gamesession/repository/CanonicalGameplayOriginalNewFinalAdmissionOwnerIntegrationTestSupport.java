@@ -82,6 +82,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
             .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
             .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
             .addCommand(CommandType.EVALSHA)
+            .addCommand(CommandType.EVALSHA_RO)
             .addCommand(CommandType.TYPE)
             .addCommand(CommandType.PTTL)
             .addCommand(CommandType.GET)
@@ -117,6 +118,8 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution(),
                 new CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewAdmittedLogoutRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service

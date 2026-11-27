@@ -28,7 +28,8 @@ public final class AccountOriginalNewCapacityExecutionReadClient
     extends AbstractReloadingBlockingGrpcClient<
         OriginalNewCapacityExecutionReadServiceGrpc
             .OriginalNewCapacityExecutionReadServiceBlockingStub>
-    implements AccountTenantCapacityRecoveryWorker.ExecutionReadClient {
+    implements AccountTenantCapacityRecoveryWorker.ExecutionReadClient,
+        AccountTenantCapacityRecoveryWorker.HistoricalFinalReadClient {
   private static final long MAX_READ_MILLIS = 5000;
   private final String namespace;
   private final String peer;
@@ -64,17 +65,7 @@ public final class AccountOriginalNewCapacityExecutionReadClient
       TenantCapacityAdmission.Request request,
       TenantCapacityAdmission.Result reservation,
       Instant deadline) {
-    Deadline maximum = Deadline.after(MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
-    requireNoAmbientSql("Capacity execution read requires no Account transaction");
-    if (!namespace.equals(request.targetNamespace())
-        || request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
-        || SessionContext.hasAuthenticatedCallerContext()
-        || SessionContext.isInternalService()
-        || SessionContext.getServiceName() != null
-        || SessionContext.getServiceInstanceId() != null) throw unavailable();
-    long millis = Math.min(MAX_READ_MILLIS, Duration.between(clock.instant(), deadline).toMillis());
-    if (millis <= 0) throw unavailable();
-    Deadline rpcDeadline = maximum.offset(millis - MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
+    Deadline rpcDeadline = authorizedDeadline(request, deadline);
     var selector = new OriginalNewCapacityExecutionReadGrpcCodec.Selector(request, reservation);
     var wire = OriginalNewCapacityExecutionReadGrpcCodec.toRequest(selector);
     var response =
@@ -116,6 +107,46 @@ public final class AccountOriginalNewCapacityExecutionReadClient
             canonical);
     if (rpcDeadline.isExpired() || !clock.instant().isBefore(deadline)) throw unavailable();
     return observation;
+  }
+
+  @Override
+  public AccountTenantCapacityRecoveryWorker.HistoricalObservation readHistoricalFinal(
+      TenantCapacityAdmission.Request request,
+      TenantCapacityAdmission.Result reservation,
+      Instant deadline) {
+    Deadline rpcDeadline = authorizedDeadline(request, deadline);
+    var selector = new OriginalNewCapacityExecutionReadGrpcCodec.Selector(request, reservation);
+    var wire = OriginalNewCapacityExecutionReadGrpcCodec.toRequest(selector);
+    var response =
+        withPublishedInitializedStub(
+            "Historical FINAL read unavailable",
+            stub -> {
+              if (rpcDeadline.isExpired()) throw unavailable();
+              return stub.withDeadline(rpcDeadline)
+                  .withMaxOutboundMessageSize(
+                      OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES)
+                  .withMaxInboundMessageSize(
+                      OriginalNewCapacityExecutionReadGrpcCodec.MAX_RESPONSE_BYTES)
+                  .readHistoricalOriginalNewCapacityFinal(wire);
+            });
+    var receipt =
+        OriginalNewCapacityExecutionReadGrpcCodec.fromHistoricalResponse(selector, response);
+    if (rpcDeadline.isExpired() || !clock.instant().isBefore(deadline)) throw unavailable();
+    return new AccountTenantCapacityRecoveryWorker.HistoricalObservation(peer, receipt);
+  }
+
+  private Deadline authorizedDeadline(TenantCapacityAdmission.Request request, Instant deadline) {
+    Deadline maximum = Deadline.after(MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
+    requireNoAmbientSql("Capacity execution read requires no Account transaction");
+    if (!namespace.equals(request.targetNamespace())
+        || request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
+        || SessionContext.hasAuthenticatedCallerContext()
+        || SessionContext.isInternalService()
+        || SessionContext.getServiceName() != null
+        || SessionContext.getServiceInstanceId() != null) throw unavailable();
+    long millis = Math.min(MAX_READ_MILLIS, Duration.between(clock.instant(), deadline).toMillis());
+    if (millis <= 0) throw unavailable();
+    return maximum.offset(millis - MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
   }
 
   @Override

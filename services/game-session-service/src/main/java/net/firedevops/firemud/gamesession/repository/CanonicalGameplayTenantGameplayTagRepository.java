@@ -71,7 +71,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BindingTarget source = retainedCapacityTarget(transaction, transitionId, true);
+          BindingTarget source = retainedCapacityTarget(transaction, transitionId, true, false);
           requireTenantClaim(transaction, source.tenantId());
           // A retained execution cannot allocate replacement topology after loss of its mapping.
           if (transaction.fetchOne(
@@ -94,8 +94,18 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
   }
 
   Assignment readAssignmentForRetainedCapacityExecution(DSLContext transaction, UUID transitionId) {
+    return readRetainedAssignment(transaction, transitionId, false);
+  }
+
+  /** Transfer item topology after the caller proves exact retained COMMITTED evidence. */
+  Assignment readAssignmentForCommittedTransferItem(DSLContext transaction, UUID transitionId) {
+    return readRetainedAssignment(transaction, transitionId, true);
+  }
+
+  private Assignment readRetainedAssignment(
+      DSLContext transaction, UUID transitionId, boolean retainedCommit) {
     requireNonNil(transitionId, "transitionId");
-    BindingTarget source = retainedCapacityTarget(transaction, transitionId, false);
+    BindingTarget source = retainedCapacityTarget(transaction, transitionId, false, retainedCommit);
     requireTenantClaim(transaction, source.tenantId());
     Record mapping =
         transaction.fetchOne(
@@ -106,7 +116,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
   }
 
   private BindingTarget retainedCapacityTarget(
-      DSLContext transaction, UUID transitionId, boolean lock) {
+      DSLContext transaction, UUID transitionId, boolean lock, boolean retainedCommit) {
     Record transition =
         transaction.fetchOne(
             "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
@@ -120,7 +130,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
                   transaction, transitionId, false);
       if (!retained.isAccountAborted()) throw conflict("Exact retained Account abort required");
     }
-    return loadBindingTarget(transaction, transitionId, null, aborted, lock);
+    return loadBindingTarget(transaction, transitionId, null, aborted, lock, retainedCommit);
   }
 
   /** Reads the immutable allocation without changing the transfer's region-lock order. */
@@ -350,7 +360,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
   private BindingTarget loadBindingTarget(
       DSLContext transaction, UUID transitionId, UUID abandonmentId, boolean retainedAbort) {
-    return loadBindingTarget(transaction, transitionId, abandonmentId, retainedAbort, true);
+    return loadBindingTarget(transaction, transitionId, abandonmentId, retainedAbort, true, false);
   }
 
   private BindingTarget loadBindingTarget(
@@ -358,7 +368,8 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
       UUID transitionId,
       UUID abandonmentId,
       boolean retainedAbort,
-      boolean lock) {
+      boolean lock,
+      boolean retainedCommit) {
     boolean negative = abandonmentId != null;
     String negativeSelector =
         negative
@@ -411,6 +422,10 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     byte[] inventoryRefBytes = requiredBytes(row, "binding_ref");
     String transitionState = requiredString(row, "status");
     String inventoryState = requiredString(row, "lifecycle");
+    boolean retiredCommit =
+        retainedCommit
+            && "COMMITTED".equals(transitionState)
+            && Set.of("TERMINAL_UNRESOLVED", "TERMINAL").contains(inventoryState);
     if (!tenantId.equals(inventoryTenantId)
         || !namespaceId.equals(inventoryNamespaceId)
         || !characterId.equals(inventoryCharacterId)
@@ -422,12 +437,13 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
                 ? Set.of("ABORTED")
                 : negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES)
             .contains(transitionState)
-        || !(retainedAbort
-                ? Set.of("TERMINAL_UNRESOLVED", "TERMINAL")
-                : negative
-                    ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
-                    : INVENTORY_STATES)
-            .contains(inventoryState)
+        || (!retiredCommit
+            && !(retainedAbort
+                    ? Set.of("TERMINAL_UNRESOLVED", "TERMINAL")
+                    : negative
+                        ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
+                        : INVENTORY_STATES)
+                .contains(inventoryState))
         || !transitionRefMatches(
             transitionRefBytes, inventoryRefBytes, tenantId, gameInstanceId, sessionId)
         || !requiredBigInteger(row, "candidate_binding_generation")
@@ -440,7 +456,9 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
     if (("PREPARED".equals(transitionState) && !"CANDIDATE_PREPARED".equals(inventoryState))
         || ("PROVISIONAL".equals(transitionState) && !"PROVISIONAL".equals(inventoryState))
-        || ("COMMITTED".equals(transitionState) && !"ACTIVE".equals(inventoryState))
+        || ("COMMITTED".equals(transitionState)
+            && !"ACTIVE".equals(inventoryState)
+            && !retiredCommit)
         || ("ABORTED".equals(transitionState)
             && !Set.of("TERMINAL_UNRESOLVED", "TERMINAL").contains(inventoryState))) {
       throw conflict("The durable transition and candidate inventory lifecycle disagree");

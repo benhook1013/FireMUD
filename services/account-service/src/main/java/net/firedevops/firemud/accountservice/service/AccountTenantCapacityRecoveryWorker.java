@@ -6,6 +6,7 @@ import static net.firedevops.firemud.accountservice.repository.AccountTenantCapa
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
@@ -20,6 +21,7 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecutionReadGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -56,6 +58,16 @@ public final class AccountTenantCapacityRecoveryWorker {
   public interface ExecutionReadClient {
     Observation readExact(Request request, Result reservation, Instant deadline);
   }
+
+  /** Exact authenticated historical read, separate from the current execution source. */
+  public interface HistoricalFinalReadClient {
+    HistoricalObservation readHistoricalFinal(
+        Request request, Result reservation, Instant deadline);
+  }
+
+  public record HistoricalObservation(
+      String authenticatedOwnerWorkload,
+      OriginalNewCapacityExecutionReadGrpcCodec.HistoricalFinalReadback receipt) {}
 
   public record Observation(
       String authenticatedOwnerWorkload,
@@ -105,16 +117,27 @@ public final class AccountTenantCapacityRecoveryWorker {
   private final DSLContext dsl;
   private final AccountTenantCapacityRepository capacity;
   private final ExecutionReadClient source;
+  private final HistoricalFinalReadClient historicalSource;
   private final Clock clock;
   private final UUID workerId = UUID.randomUUID();
   private final Set<Identity> inFlight = ConcurrentHashMap.newKeySet();
 
   public AccountTenantCapacityRecoveryWorker(
       AccountTenantCapacityOwner owner, DSLContext dsl, ExecutionReadClient source, Clock clock) {
+    this(owner, dsl, source, null, clock);
+  }
+
+  public AccountTenantCapacityRecoveryWorker(
+      AccountTenantCapacityOwner owner,
+      DSLContext dsl,
+      ExecutionReadClient source,
+      HistoricalFinalReadClient historicalSource,
+      Clock clock) {
     this.owner = Objects.requireNonNull(owner);
     this.dsl = Objects.requireNonNull(dsl);
     this.capacity = new AccountTenantCapacityRepository(dsl);
     this.source = Objects.requireNonNull(source);
+    this.historicalSource = historicalSource;
     this.clock = Objects.requireNonNull(clock);
   }
 
@@ -123,10 +146,25 @@ public final class AccountTenantCapacityRecoveryWorker {
     Objects.requireNonNull(noCommitAction);
     request.requireCommittable();
     return withExclusiveOperation(
-        request.identity(), () -> reconcileClaim(request, noCommitAction));
+        request.identity(),
+        () -> reconcileClaim(request, noCommitAction, this::readCurrentEvidence));
   }
 
-  private Result reconcileClaim(Request request, NoCommitAction noCommitAction) {
+  /** Settles only an exact positive historical receipt for an existing held reservation. */
+  public Result reconcileHistoricalFinal(Request request) {
+    request.requireCommittable();
+    if (historicalSource == null
+        || request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION) {
+      throw unavailable();
+    }
+    return withExclusiveOperation(
+        request.identity(),
+        () ->
+            reconcileClaim(request, NoCommitAction.RETAIN_FOR_REARM, this::readHistoricalEvidence));
+  }
+
+  private Result reconcileClaim(
+      Request request, NoCommitAction noCommitAction, EvidenceReader reader) {
     Claim claim = claim(request);
     if (claim.reservation().state() != State.RESERVED) return claim.reservation();
     if (claim.noCommitProof() != null) {
@@ -157,8 +195,7 @@ public final class AccountTenantCapacityRecoveryWorker {
                 request, Objects.requireNonNull(capacity.find(request.identity())));
           });
     }
-    Observation candidate = null;
-    byte[] candidateProof = null;
+    RecoveryEvidence candidate = null;
     if (claim.attempts() < AccountCapacityOriginContinuation.MAX_OBSERVATIONS) {
       Instant started = clock.instant();
       boolean positiveOnly = !started.isBefore(claim.reconcileDeadline());
@@ -166,21 +203,18 @@ public final class AccountTenantCapacityRecoveryWorker {
       if (!positiveOnly && claim.reconcileDeadline().isBefore(deadline))
         deadline = claim.reconcileDeadline();
       try {
-        candidate = source.readExact(request, claim.reservation(), deadline);
+        candidate = reader.read(request, claim.reservation(), deadline);
         if (!clock.instant().isBefore(deadline)) throw unavailable();
-        requireExactSource(request, claim.reservation(), candidate);
         // A delayed first reconciliation must still recognize an exact committed effect. The
         // expired negative-evidence window never permits a late read to release the hold.
         if (positiveOnly && candidate.disposition() != Disposition.COMMITTED) throw unavailable();
-        candidateProof = proof(request, candidate);
       } catch (RuntimeException unavailableSource) {
         // Missing, malformed, late and failed reads are indeterminate, never no-commit proof.
         candidate = null;
-        candidateProof = null;
       }
     }
-    final Observation observed = candidate;
-    final byte[] exactProof = candidateProof;
+    final RecoveryEvidence observed = candidate;
+    final byte[] exactProof = observed == null ? null : observed.proof();
     return owner.inTransaction(
         () -> {
           Record row = capacity.find(request.identity());
@@ -371,32 +405,55 @@ public final class AccountTenantCapacityRecoveryWorker {
       throw unavailable();
   }
 
+  private RecoveryEvidence readCurrentEvidence(
+      Request request, Result reservation, Instant deadline) {
+    var observation = source.readExact(request, reservation, deadline);
+    requireExactSource(request, reservation, observation);
+    return new RecoveryEvidence(observation.disposition(), proof(request, observation));
+  }
+
+  private RecoveryEvidence readHistoricalEvidence(
+      Request request, Result reservation, Instant deadline) {
+    var observation = historicalSource.readHistoricalFinal(request, reservation, deadline);
+    String expectedOwner =
+        TenantCapacityAdmission.expectedWorkload(
+            request.targetNamespace(), request.context().owner());
+    if (observation == null || !expectedOwner.equals(observation.authenticatedOwnerWorkload())) {
+      throw unavailable();
+    }
+    var selector = new OriginalNewCapacityExecutionReadGrpcCodec.Selector(request, reservation);
+    byte[] receipt =
+        OriginalNewCapacityExecutionReadGrpcCodec.toHistoricalResponse(
+                selector, observation.receipt())
+            .toByteArray();
+    return new RecoveryEvidence(
+        Disposition.COMMITTED,
+        framedProof(
+            "account-capacity-historical-final/v1".getBytes(StandardCharsets.US_ASCII),
+            expectedOwner.getBytes(StandardCharsets.US_ASCII),
+            receipt));
+  }
+
   private static byte[] proof(Request request, Observation observed) {
     // Fixed content binding includes the entire attempt and exact owner readback, not a boolean.
+    return framedProof(
+        "account-capacity-owner-readback/v1".getBytes(StandardCharsets.US_ASCII),
+        CapacityAdmissionDigest.preimage(request),
+        observed.reservation().reservationId().toString().getBytes(StandardCharsets.US_ASCII),
+        Long.toString(observed.reservation().reservationFence())
+            .getBytes(StandardCharsets.US_ASCII),
+        observed.authenticatedOwnerWorkload().getBytes(StandardCharsets.US_ASCII),
+        observed.disposition().name().getBytes(StandardCharsets.US_ASCII),
+        observed.proofId().toString().getBytes(StandardCharsets.US_ASCII),
+        Long.toString(observed.currentOwnerFence()).getBytes(StandardCharsets.US_ASCII),
+        observed.authoritativeStateDigest().getBytes(StandardCharsets.US_ASCII),
+        observed.canonicalOwnerReadback());
+  }
+
+  private static byte[] framedProof(byte[]... fields) {
     var output = new java.io.ByteArrayOutputStream();
-    for (byte[] bytes :
-        new byte[][] {
-          "account-capacity-owner-readback/v1".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          CapacityAdmissionDigest.preimage(request),
-          observed
-              .reservation()
-              .reservationId()
-              .toString()
-              .getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          Long.toString(observed.reservation().reservationFence())
-              .getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          observed
-              .authenticatedOwnerWorkload()
-              .getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          observed.disposition().name().getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          observed.proofId().toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          Long.toString(observed.currentOwnerFence())
-              .getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          observed.authoritativeStateDigest().getBytes(java.nio.charset.StandardCharsets.US_ASCII),
-          observed.canonicalOwnerReadback()
-        }) {
-      output.writeBytes(
-          Integer.toString(bytes.length).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    for (byte[] bytes : fields) {
+      output.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
       output.write(':');
       output.writeBytes(bytes);
     }
@@ -410,6 +467,22 @@ public final class AccountTenantCapacityRecoveryWorker {
       return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException(unavailable);
+    }
+  }
+
+  @FunctionalInterface
+  private interface EvidenceReader {
+    RecoveryEvidence read(Request request, Result reservation, Instant deadline);
+  }
+
+  private record RecoveryEvidence(Disposition disposition, byte[] proof) {
+    private RecoveryEvidence {
+      proof = proof.clone();
+    }
+
+    @Override
+    public byte[] proof() {
+      return proof.clone();
     }
   }
 

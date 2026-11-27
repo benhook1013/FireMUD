@@ -588,8 +588,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       throw new ObservationRejectedException("Protected transfer observation source differs");
     }
     CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
-        regionOwnerTransferSource.readAssignment(
-            context.transitionId(), tenantTagRepository, deadline);
+        regionOwnerTransferSource.readAssignment(context, tenantTagRepository, deadline);
     if (assignment == null
         || !assignment.isBindingTransition()
         || !context.transitionId().equals(assignment.transitionId())
