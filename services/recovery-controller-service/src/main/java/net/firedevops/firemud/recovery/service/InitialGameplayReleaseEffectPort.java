@@ -16,6 +16,10 @@ public interface InitialGameplayReleaseEffectPort {
    * owner must not apply the rejected attempt later. NOT_DISPATCHED means the local adapter can
    * prove it never sent this attempt; it is retryable without owner evidence. A possibly
    * transmitted request must not be classified as NOT_DISPATCHED.
+   *
+   * <p>For COMMIT_OWNER_AUTHORIZED_HANDOFF, Game Session must verify that the definitive
+   * preparation fence is current as part of applying the mutation. The recovery journal's dispatch
+   * claim does not establish that the fence remained current through owner execution.
    */
   EffectApplyResult apply(TypedEffect effect, UUID attemptId, int attemptOrdinal);
 
@@ -27,10 +31,10 @@ public interface InitialGameplayReleaseEffectPort {
    * attempt so a delayed claimant can no longer apply it; absence alone is not proof.
    *
    * <p>AVAILABLE carries the owner's original observation timestamp. The adapter must establish
-   * that it is comparable with the recovery controller's UTC clock. The journal checks it against
-   * the persisted dispatch time and the controller's time after receiving the readback. If that
-   * clock relationship cannot be established, return UNAVAILABLE. Do not replace the observation
-   * with an adapter or controller receipt timestamp.
+   * that it is comparable with the recovery controller's UTC clock and preserve the receipt's time
+   * precision. The journal checks it against the persisted dispatch time and the controller's time
+   * after receiving the readback. If that clock relationship cannot be established, return
+   * UNAVAILABLE. Do not replace the observation with an adapter or controller receipt timestamp.
    *
    * <p>If a newer partial observation supersedes an older definitive receipt, advancing the
    * transition requires a fresh exact observation with a distinct authenticated readback identity.

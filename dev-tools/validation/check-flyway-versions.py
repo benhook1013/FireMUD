@@ -359,6 +359,15 @@ def is_recovery_sql_migration(item: MigrationFile) -> bool:
     return relative_path != item.path and "/" not in relative_path and relative_path.endswith(".sql")
 
 
+def recovery_loads_migration(item: MigrationFile, locations: set[str]) -> bool:
+    if item.location == RECOVERY_LOCATION:
+        return RECOVERY_LOCATION in locations and is_recovery_sql_migration(item)
+    # Flyway scans classpath locations recursively. A narrower legacy location
+    # includes files beneath that directory, including service-owned migrations.
+    classpath_path = "classpath:" + item.path.split("/", 5)[5]
+    return any(classpath_path.startswith(location + "/") for location in locations)
+
+
 def effective_sets(
     snapshot: Snapshot,
     migrations: list[MigrationFile],
@@ -368,10 +377,7 @@ def effective_sets(
 ) -> dict[str, list[MigrationFile]]:
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
-        if item.project == RECOVERY_PROJECT and (
-            item.location not in recovery_locations
-            or (item.location == RECOVERY_LOCATION and not is_recovery_sql_migration(item))
-        ):
+        if item.project == RECOVERY_PROJECT and not recovery_loads_migration(item, recovery_locations):
             continue
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
@@ -901,6 +907,31 @@ def run_self_test() -> None:
                   b'dependencies { testImplementation(project(":common-saga")) }',
               recovery_config.removesuffix(".yml") + ".properties": b"server.port=9000\n",
           }, None)
+    legacy_recovery_sql = f"{RECOVERY_RESOURCE_ROOT}/db/migration/"
+    sibling_migrations = {
+        legacy_recovery_sql + "V8__root.sql": b"-- root\n",
+        legacy_recovery_sql + "saga-other/V9__sibling.sql": b"-- sibling\n",
+    }
+    saga_only_recovery_parent = {
+        **sibling_migrations,
+        recovery_config: b"spring.flyway.locations: classpath:db/migration/saga\n",
+    }
+    owned_migration_path = legacy_recovery_sql + "saga/nested/V7__owned.sql"
+    owned_migration = {owned_migration_path: b"-- owned\n"}
+    parent_with_owned_migration = {**saga_only_recovery_parent, **owned_migration}
+    effective_parent = effective_sets(
+        parent_with_owned_migration,
+        discover_migration_files(parent_with_owned_migration),
+        {"classpath:db/migration/saga"},
+        require_placeholder_replacement_disabled=False,
+    )
+    if [item.path for item in effective_parent[RECOVERY_PROJECT]] != [owned_migration_path]:
+        raise AssertionError("legacy Saga-only location must load only the owned migration beneath it")
+    check("legacy Saga-only location preserves effective Recovery-owned history",
+          {**recovery_history, **sibling_migrations, **owned_migration}, parent_with_owned_migration,
+          "historical effective migration no longer applied")
+    check("legacy Saga-only location has no effective history from sibling migrations",
+          {**recovery_history, **sibling_migrations}, saga_only_recovery_parent, None)
     check("explicitly empty Flyway connection init SQL qualifies recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: []\n",

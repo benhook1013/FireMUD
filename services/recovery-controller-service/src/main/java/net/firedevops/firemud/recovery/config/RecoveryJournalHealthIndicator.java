@@ -77,6 +77,14 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   OR (a.attname = 'identity_digest'
                     AND a.atttypid = 'pg_catalog.bpchar'::regtype AND a.atttypmod = 68))
               ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_index i
+          JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
+             AND a.attnum = i.indkey[0] AND NOT a.attisdropped
+          WHERE i.indrelid = 'recovery_control.initial_gameplay_release_preparation_receipt'::regclass
+            AND i.indisunique AND i.indisready AND i.indnkeyatts = 1
+            AND a.attname = 'outbox_id')
         AND EXISTS (
           SELECT 1
           FROM pg_catalog.pg_constraint c
@@ -131,6 +139,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'effect_id' AND NOT attisdropped AND attnotnull
             AND atttypid = 'pg_catalog.uuid'::regtype)
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'readback_identity' AND NOT attisdropped AND NOT attnotnull
+            AND atttypid = 'pg_catalog.text'::regtype)
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass

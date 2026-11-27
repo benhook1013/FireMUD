@@ -26,7 +26,15 @@ The following tools are not strictly required to build or run the stack, but the
 
 Local `checkFlywayVersions` and the root `check` task that runs it require `python3` and PyYAML to read packaged Spring configuration. Local `:game-design-service:crossServiceTest` and `:game-design-service:check` use the same dependencies for the runtime installation inventory producer.
 
-From the repository root, activate a Python virtual environment and install the pinned YAML profile with `python3 -m pip install --require-hashes -r config/python/yaml-requirements.txt`. Keep that environment active when invoking the [canonical Gradle wrapper](design/developer-workflows/validation-and-runtime-proof.md#local-gradle-execution) so the checks can find `python3` and its dependencies. CI installs the same YAML dependencies through the repository setup action.
+From the repository root, create the virtual environment if needed, activate it, and install the pinned YAML profile:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --require-hashes -r config/python/yaml-requirements.txt
+```
+
+Keep that environment active when invoking the [canonical Gradle wrapper](design/developer-workflows/validation-and-runtime-proof.md#local-gradle-execution) so the checks can find `python3` and its dependencies. CI installs the same YAML dependencies through the repository setup action.
 
 ## Windows + WSL Tooling
 
