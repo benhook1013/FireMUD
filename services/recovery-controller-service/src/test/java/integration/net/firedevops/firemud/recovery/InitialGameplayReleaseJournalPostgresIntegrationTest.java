@@ -48,6 +48,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Partiti
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.ProofDisposition;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionResult;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.RegionLeaseProof;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
@@ -96,7 +97,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = false)
 @SuppressWarnings("resource")
 class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final String SCHEMA = "recovery_control";
@@ -435,10 +436,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           journal.bindVerifiedEvidence(
               scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), now);
       PublicTransitionTuple continuation = transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY);
-      Operation awaiting = journal.transition(continuation, now);
-      assertThat(unqualifiedJournal.transition(continuation, now)).isEqualTo(awaiting);
+      PublicTransitionResult continued = journal.transition(continuation, now);
+      assertThat(unqualifiedJournal.transition(continuation, now)).isEqualTo(continued);
 
-      PublicTransitionTuple resume = transitionTuple(awaiting, TransitionVerb.RESUME);
+      PublicTransitionTuple resume = transitionTuple(ready, TransitionVerb.RESUME);
       assertThatThrownBy(() -> unqualifiedJournal.transition(resume, now))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Recovery journal requires redacted PostgreSQL logs");
@@ -562,9 +563,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               proof,
               tupleCodec.digest(proof),
               base.plusSeconds(1));
-      Operation awaiting =
-          packagedJournal.transition(
-              transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
+      packagedJournal.transition(
+          transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
+      Operation awaiting = packagedJournal.find(operationId).orElseThrow();
       PublicTransitionTuple resume = transitionTuple(awaiting, TransitionVerb.RESUME);
       var transaction =
           new TransactionTemplate(application.getBean(PlatformTransactionManager.class));
@@ -608,8 +609,19 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(dispatched.state()).isEqualTo(EffectOutboxState.DISPATCHED);
       assertThat(dispatched.lastAttemptId()).isEqualTo(port.applied.attemptId());
       assertThat(dispatched.attemptCount()).isEqualTo(port.applied.attemptOrdinal());
-      assertThat(packagedJournal.find(operationId).orElseThrow().phase())
-          .isEqualTo(Phase.RESUME_AUTHORIZED);
+      Operation authorized = packagedJournal.find(operationId).orElseThrow();
+      assertThat(authorized.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+      transaction.executeWithoutResult(status -> {
+        assertThatThrownBy(
+                () -> packagedJournal.recordEffectReadback(dispatched, port.applied, Instant.now()))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("effect readback requires its own transaction");
+      });
+      assertThat(packagedJournal.find(operationId)).contains(authorized);
+      assertThat(packagedJournal.findNextEffect(operationId)).contains(dispatched);
+      assertThat(
+              packagedJournal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+          .isEmpty();
     }
 
     // Only the disposable owner survives the first controller context.
@@ -1059,10 +1071,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
+  @ValueSource(
+      strings = {
+        "operation_key",
+        "outbox_operation_kind_key",
+        "preparation_key",
+        "preparation_digest_width"
+      })
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void journalReadinessRequiresTheCompleteOperationAndPreparationKeys(boolean preparation)
-      throws Exception {
+  void journalReadinessRequiresCompleteTypedKeys(String drift) throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
@@ -1073,23 +1090,42 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
       var schema = DSL.using(connection, SQLDialect.POSTGRES);
-      if (preparation) {
-        schema.execute(
-            """
-            ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
-              DROP CONSTRAINT initial_gameplay_release_preparation_receipt_pkey,
-              ALTER COLUMN identity_digest TYPE CHAR(63),
-              ADD PRIMARY KEY (outbox_id)
-            """);
-      } else {
-        schema.execute(
-            """
-            ALTER TABLE recovery_control.initial_gameplay_release_operation
-              DROP CONSTRAINT initial_gameplay_release_operation_pkey CASCADE
-            """);
-      }
+      schema.execute(
+          switch (drift) {
+            case "operation_key" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_operation
+                  DROP CONSTRAINT initial_gameplay_release_operation_pkey CASCADE
+                """;
+            case "outbox_operation_kind_key" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_outbox
+                  DROP CONSTRAINT initial_gameplay_release_outbox_operation_id_effect_kind_key
+                """;
+            case "preparation_key" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
+                  DROP CONSTRAINT initial_gameplay_release_preparation_receipt_pkey,
+                  ADD PRIMARY KEY (outbox_id)
+                """;
+            case "preparation_digest_width" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
+                  ALTER COLUMN identity_digest TYPE CHAR(63)
+                """;
+            default -> throw new AssertionError("Unexpected test fixture key");
+          });
       assertCompletePackagedMigrationReceipts(packagedUrl);
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      var health = application.getBean(HealthEndpoint.class);
+      assertThat(health.healthForPath("readiness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.DOWN);
+      assertThat(health.healthForPath("liveness"))
+          .isNotNull()
+          .extracting(result -> result.getStatus())
+          .isEqualTo(Status.UP);
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
@@ -1240,14 +1276,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     PublicTransitionTuple continueTuple = transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY);
     assertThat(journal.findTransition(continueTuple)).isEmpty();
-    Operation awaitingResume = journal.transition(continueTuple, base.plusSeconds(2));
-    assertThat(awaitingResume.phase()).isEqualTo(Phase.AWAITING_RESUME);
-    assertThat(journal.findTransition(continueTuple)).contains(awaitingResume);
-    assertThat(journal.transition(continueTuple, base.plusSeconds(3))).isEqualTo(awaitingResume);
+    var continued = new PublicTransitionResult(scope.operationId(), Phase.AWAITING_RESUME);
+    assertThat(journal.transition(continueTuple, base.plusSeconds(2))).isEqualTo(continued);
+    assertThat(journal.findTransition(continueTuple)).contains(continued);
+    assertThat(journal.transition(continueTuple, base.plusSeconds(3))).isEqualTo(continued);
 
-    PublicTransitionTuple resumeTuple = transitionTuple(awaitingResume, TransitionVerb.RESUME);
-    Operation authorized = journal.transition(resumeTuple, base.plusSeconds(4));
-    assertThat(authorized.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    PublicTransitionTuple resumeTuple = transitionTuple(ready, TransitionVerb.RESUME);
+    var resumed = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
+    assertThat(journal.transition(resumeTuple, base.plusSeconds(4))).isEqualTo(resumed);
+    Operation authorized = journal.find(scope.operationId()).orElseThrow();
     OutboxEntry pendingPrepare =
         journal
             .findEffect(scope.operationId(), EffectKind.PREPARE_PLAYABLE_STATE_FENCED)
@@ -1256,6 +1293,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(pendingPrepare.attemptCount()).isZero();
     assertThat(pendingPrepare.lastAttemptId()).isNull();
     assertThat(journal.findNextEffect(scope.operationId())).contains(pendingPrepare);
+    String retainedPending = storedOutbox(scope.operationId(), pendingPrepare.effect().effectId());
+    assertThat(journal.findTransition(continueTuple)).contains(continued);
+    assertThat(journal.transition(continueTuple, base.plusSeconds(5))).isEqualTo(continued);
+    assertThat(journal.findTransition(resumeTuple)).contains(resumed);
+    assertThat(journal.transition(resumeTuple, base.plusSeconds(5))).isEqualTo(resumed);
+    assertThat(authorized.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.find(scope.operationId())).contains(authorized);
+    assertThat(storedOutbox(scope.operationId(), pendingPrepare.effect().effectId()))
+        .isEqualTo(retainedPending);
+    assertThat(journal.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isEmpty();
 
     UUID prepareAttempt = UUID.randomUUID();
     OutboxEntry prepare =
@@ -1657,11 +1705,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.find(operation.scope().operationId()).orElseThrow().phase())
         .isEqualTo(Phase.READY_TO_REOPEN);
 
-    Operation awaiting =
-        journal.transition(
-            transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(3));
-    Operation authorized =
-        journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(4));
+    journal.transition(
+        transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(3));
+    journal.transition(transitionTuple(ready, TransitionVerb.RESUME), base.plusSeconds(4));
+    Operation authorized = journal.find(scope.operationId()).orElseThrow();
     OutboxEntry prepare = journal.findNextEffect(scope.operationId()).orElseThrow();
     UUID attemptId = UUID.randomUUID();
     OutboxEntry dispatched =
@@ -1778,12 +1825,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     Operation ready =
         journal.bindVerifiedEvidence(
             scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base.plusSeconds(1));
-    Operation awaitingResume =
-        journal.transition(
-            transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
-    Operation authorized =
-        journal.transition(
-            transitionTuple(awaitingResume, TransitionVerb.RESUME), base.plusSeconds(3));
+    journal.transition(
+        transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
+    journal.transition(transitionTuple(ready, TransitionVerb.RESUME), base.plusSeconds(3));
+    Operation authorized = journal.find(scope.operationId()).orElseThrow();
     UUID effectId =
         journal
             .findEffect(scope.operationId(), EffectKind.PREPARE_PLAYABLE_STATE_FENCED)
@@ -2614,6 +2659,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             "terminal-handoff",
             base.plusSeconds(7));
     Operation finalized = journal.recordEffectReadback(handoff, receipt, base.plusSeconds(8));
+    var continuation = transitionTuple(finalized, TransitionVerb.CONTINUE_RECOVERY);
     var resume = transitionTuple(finalized, TransitionVerb.RESUME);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var controller =
@@ -2622,8 +2668,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     assertThat(journal.findNextEffect(operationId)).isEmpty();
     assertThat(controller.reconcileNextEffect(operationId)).isEqualTo(finalized);
-    assertThat(journal.findTransition(resume)).contains(finalized);
-    assertThat(journal.transition(resume, base.plusSeconds(9))).isEqualTo(finalized);
+    String retainedPrepare = storedOutbox(operationId, prepare.effect().effectId());
+    String retainedHandoff = storedOutbox(operationId, effectId);
+    var continued = new PublicTransitionResult(operationId, Phase.AWAITING_RESUME);
+    var resumed = new PublicTransitionResult(operationId, Phase.RESUME_AUTHORIZED);
+    assertThat(journal.findTransition(continuation)).contains(continued);
+    assertThat(journal.transition(continuation, base.plusSeconds(9))).isEqualTo(continued);
+    assertThat(journal.findTransition(resume)).contains(resumed);
+    assertThat(journal.transition(resume, base.plusSeconds(9))).isEqualTo(resumed);
+    assertThat(finalized.phase()).isEqualTo(Phase.FINALIZED);
+    assertThat(journal.find(operationId)).contains(finalized);
+    assertThat(storedOutbox(operationId, prepare.effect().effectId())).isEqualTo(retainedPrepare);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedHandoff);
     assertThat(journal.recordEffectReadback(original, closure, base.plusSeconds(9)))
         .isEqualTo(finalized);
     Scope scope = finalized.scope();
@@ -2644,8 +2700,6 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PREPARED_FENCED,
             prepared.readbackIdentity(),
             base.plusSeconds(9));
-    String retainedPrepare = storedOutbox(operationId, prepare.effect().effectId());
-    String retainedHandoff = storedOutbox(operationId, effectId);
     assertThat(journal.recordEffectReadback(prepare, prepared, base.plusSeconds(10)))
         .isEqualTo(finalized);
     assertThatThrownBy(
@@ -2667,12 +2721,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained handoff readback is incomplete");
-    assertThatThrownBy(() -> journal.findTransition(resume))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("retained handoff readback is incomplete");
-    assertThatThrownBy(() -> journal.transition(resume, base.plusSeconds(10)))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("retained handoff readback is incomplete");
+    for (PublicTransitionTuple replay : List.of(continuation, resume)) {
+      assertThatThrownBy(() -> journal.findTransition(replay))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("retained handoff readback is incomplete");
+      assertThatThrownBy(() -> journal.transition(replay, base.plusSeconds(10)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("retained handoff readback is incomplete");
+    }
     assertThatThrownBy(() -> journal.recordEffectReadback(original, closure, base.plusSeconds(10)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained handoff readback is incomplete");
@@ -2889,9 +2945,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         journal.bindVerifiedEvidence(
             scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base);
     PublicTransitionTuple continuing = transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY);
-    Operation awaiting = journal.transition(continuing, base.plusSeconds(1));
-    PublicTransitionTuple resuming = transitionTuple(awaiting, TransitionVerb.RESUME);
-    Operation authorized = journal.transition(resuming, base.plusSeconds(2));
+    journal.transition(continuing, base.plusSeconds(1));
+    PublicTransitionTuple resuming = transitionTuple(ready, TransitionVerb.RESUME);
+    journal.transition(resuming, base.plusSeconds(2));
+    Operation authorized = journal.find(scope.operationId()).orElseThrow();
     OutboxEntry pending = journal.findNextEffect(scope.operationId()).orElseThrow();
     String outbox = storedOutbox(scope.operationId(), pending.effect().effectId());
 
@@ -2899,8 +2956,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       var canonical = tupleCodec.toJson(tuple);
       var withExtra = canonical.substring(0, canonical.length() - 1) + ",\"unknownField\":true}";
 
-      assertThat(journal.findTransition(tuple)).contains(authorized);
-      assertThat(journal.transition(tuple, base.plusSeconds(3))).isEqualTo(authorized);
+      var expected = new PublicTransitionResult(scope.operationId(), tuple.verb().resultPhase());
+      assertThat(journal.findTransition(tuple)).contains(expected);
+      assertThat(journal.transition(tuple, base.plusSeconds(3))).isEqualTo(expected);
       for (String corruption :
           List.of(
               "tuple_payload=jsonb_set(tuple_payload, '{maintenanceLockIdentity}', to_jsonb(CAST(? AS text)))",
@@ -4149,8 +4207,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
           Operation upgraded = upgradedJournal.find(V1_OPERATION_ID).orElseThrow();
           PublicTransitionTuple v1Resume = v1ResumeTransition();
-          assertThat(upgradedJournal.findTransition(v1Resume)).contains(upgraded);
-          assertThat(upgradedJournal.transition(v1Resume, base.plusSeconds(1))).isEqualTo(upgraded);
+          var resumed = new PublicTransitionResult(V1_OPERATION_ID, Phase.RESUME_AUTHORIZED);
+          assertThat(upgradedJournal.findTransition(v1Resume)).contains(resumed);
+          assertThat(upgradedJournal.transition(v1Resume, base.plusSeconds(1))).isEqualTo(resumed);
           assertImmutableV1Payloads(
               legacyDsl,
               scopeBefore,
@@ -4788,10 +4847,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     Operation ready =
         journal.bindVerifiedEvidence(
             scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base.plusSeconds(1));
-    Operation awaiting =
-        journal.transition(
-            transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
-    journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(3));
+    journal.transition(
+        transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
+    journal.transition(transitionTuple(ready, TransitionVerb.RESUME), base.plusSeconds(3));
     return journal.findNextEffect(scope.operationId()).orElseThrow();
   }
 

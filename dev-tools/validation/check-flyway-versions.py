@@ -36,6 +36,7 @@ RUNTIME_DEPENDENCY_RE = re.compile(
 )
 PLUGIN_RE = re.compile(r'(?:\bid|pluginManager\.apply)\(\s*"([^\"]+)"\s*\)')
 Snapshot = dict[str, bytes]
+SYMLINK_SNAPSHOT = b"\0recovery-migration-symlink\0"
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -69,6 +70,19 @@ class UniqueKeyLoader(yaml.SafeLoader):
                     "found unhashable YAML key", key_node.start_mark,
                 ) from error
         super().flatten_mapping(node)
+
+
+class RuntimeLiteralLoader(UniqueKeyLoader):
+    """Use Spring-style lowercase YAML boolean literals for runtime guard checks."""
+
+
+RuntimeLiteralLoader.yaml_implicit_resolvers = {
+    initial: [(tag, pattern) for tag, pattern in resolvers if tag != "tag:yaml.org,2002:bool"]
+    for initial, resolvers in UniqueKeyLoader.yaml_implicit_resolvers.items()
+}
+RuntimeLiteralLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$"), list("tf"),
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -119,7 +133,36 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob(f"{RECOVERY_SQL_ROOT}**/*"),
              *repo_root.glob(f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
-    return {path.relative_to(repo_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
+    symlinks = current_recovery_migration_symlinks(repo_root)
+    snapshot = {}
+    for path in paths:
+        relative = path.relative_to(repo_root).as_posix()
+        if relative in symlinks:
+            snapshot[relative] = SYMLINK_SNAPSHOT
+        elif path.is_file():
+            snapshot[relative] = path.read_bytes()
+    snapshot.update({path: SYMLINK_SNAPSHOT for path in symlinks})
+    return snapshot
+
+
+def current_recovery_migration_symlinks(repo_root: Path) -> set[str]:
+    roots = [
+        repo_root / RECOVERY_SQL_ROOT.rstrip("/"),
+        repo_root / f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration",
+    ]
+    symlinks = set()
+    for root in roots:
+        if root.is_symlink():
+            symlinks.add(root.relative_to(repo_root).as_posix())
+            continue
+        if not root.is_dir():
+            continue
+        for directory, dirs, files in os.walk(root, followlinks=False):
+            for name in [*dirs, *files]:
+                path = Path(directory) / name
+                if path.is_symlink():
+                    symlinks.add(path.relative_to(repo_root).as_posix())
+    return symlinks
 
 
 def git(repo_root: Path, *args: str) -> bytes:
@@ -139,11 +182,21 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
         raise ValueError(f"immutable receiving parent commit is unavailable: {base_ref}; fetch that exact SHA") from error
     if commit.lower() != base_ref.lower():
         raise ValueError("--base-ref must identify a commit directly")
-    paths = git(repo_root, "ls-tree", "-r", "-z", "--name-only", commit, "services", "buildSrc")
+    entries = git(repo_root, "ls-tree", "-r", "-z", commit, "services", "buildSrc")
     # Git paths are arbitrary bytes. Keep them round-trippable until the scoped
     # policy filter has established whether the path is a supported input.
-    paths = [path.decode("utf-8", errors="surrogateescape") for path in paths.split(b"\0") if path]
-    return {path: git(repo_root, "show", f"{commit}:{path}") for path in paths if relevant_path(path)}
+    snapshot = {}
+    for entry in entries.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode = metadata.split(b" ", 1)[0]
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        if relevant_path(path):
+            snapshot[path] = SYMLINK_SNAPSHOT if mode == b"120000" else git(
+                repo_root, "show", f"{commit}:{path}"
+            )
+    return snapshot
 
 
 def recovery_input_issues(snapshot: Snapshot) -> list[str]:
@@ -153,6 +206,17 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
         "services/recovery-controller-service/src/main/java/db/recovery-control-migration/"
     )
     for path in sorted(snapshot):
+        if snapshot[path] == SYMLINK_SNAPSHOT and (
+            path.startswith((
+                RECOVERY_SQL_ROOT,
+                "services/recovery-controller-service/src/main/java/db/recovery-control-migration/",
+            ))
+            or path in {
+                RECOVERY_SQL_ROOT.rstrip("/"),
+                "services/recovery-controller-service/src/main/java/db/recovery-control-migration",
+            }
+        ):
+            issues.append(f"{path}: Recovery migration symlinks are unsupported")
         if path.startswith(recovery_java_root):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
         if not path.startswith(RECOVERY_SQL_ROOT):
@@ -344,7 +408,7 @@ def recovery_flyway_locations(
     effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
         try:
-            documents = list(yaml.load_all(snapshot.get(config_path, b""), Loader=UniqueKeyLoader))
+            documents = list(yaml.load_all(snapshot.get(config_path, b""), Loader=RuntimeLiteralLoader))
         except yaml.YAMLError as error:
             raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
 
@@ -461,7 +525,7 @@ def recovery_flyway_locations(
 
     flyway = {path.rsplit(".", 1)[-1]: value for path, value in effective_settings.items()}
     enabled = flyway.get("enabled", True)
-    if enabled is not True and not (isinstance(enabled, str) and enabled.lower() == "true"):
+    if enabled is not True and not (isinstance(enabled, str) and enabled == "true"):
         return None
     if flyway.get("target", "latest") != "latest":
         # Qualify the complete packaged history, not a pinned migration prefix.
@@ -475,8 +539,9 @@ def recovery_flyway_locations(
                 isinstance(detect_encoding, str) and detect_encoding.strip().lower() == "false"
             )):
         return None
-    if any(value not in ([], "") for key, value in flyway.items()
-           if key in {"initsqls", "callbacklocations"}):
+    if "callbacklocations" in flyway:
+        return None
+    if any(value not in ([], "") for key, value in flyway.items() if key == "initsqls"):
         return None
     if require_placeholder_replacement_disabled:
         replacement = flyway.get("placeholderreplacement")
@@ -497,9 +562,9 @@ def recovery_flyway_locations(
         schemas = flyway.get("schemas", [])
         if isinstance(schemas, str):
             schemas = [schema.strip() for schema in schemas.split(",")]
-        if schemas not in ([], [RECOVERY_SCHEMA]):
+        if schemas != [RECOVERY_SCHEMA]:
             return None
-        history_schema = flyway.get("defaultschema", schemas[0] if schemas else None)
+        history_schema = flyway.get("defaultschema")
         if history_schema != RECOVERY_SCHEMA or flyway.get("table") != RECOVERY_HISTORY_TABLE:
             return None
     suffixes = flyway.get("sqlmigrationsuffixes", [".sql"])
@@ -762,16 +827,16 @@ def run_self_test() -> None:
             **recovery_history,
             recovery_config: recovery_settings + f"    {setting}: [unsafe]\n".encode(),
             recovery_config_override: f"spring.flyway.{setting}: []\n".encode(),
-        }, recovery_history, None)
+        }, recovery_history, None if setting == "init-sqls" else "callback locations")
         check(f"effective non-empty Flyway {setting} remains unsupported", {
             **recovery_history,
             recovery_config: recovery_settings + f"    {setting}: []\n".encode(),
             recovery_config_override: f"spring.flyway.{setting}: [unsafe]\n".encode(),
-        }, recovery_history, "non-empty connection init SQL")
-    check("effective empty Flyway callback list qualifies recovery history", {
+        }, recovery_history, "non-empty connection init SQL" if setting == "init-sqls" else "callback locations")
+    check("explicitly empty Flyway callback list is unsupported", {
         **recovery_history,
         recovery_config: recovery_settings + b"    callback-locations: []\n",
-    }, recovery_history, None)
+    }, recovery_history, "callback locations")
     for override in (
         b"    init-sqls: [SET application_name = fixture]\n",
         b"    init-sqls: SET application_name = fixture\n",
@@ -1118,6 +1183,7 @@ def run_self_test() -> None:
         b"spring.flyway.enabled: true\n"
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
         b"spring.flyway.schemas: [recovery_control]\n"
+        b"spring.flyway.default-schema: recovery_control\n"
         b"spring.flyway.table: flyway_schema_history_recovery_control\n"
         b"spring.flyway.placeholder-replacement: false\n"
     )
@@ -1129,6 +1195,10 @@ def run_self_test() -> None:
     check("dotted Spring Flyway disable fails closed",
           {**recovery_history, recovery_config: dotted_disabled_settings}, recovery_history,
           "historical effective migration no longer applied")
+    for omitted in (b"    schemas: recovery_control\n", b"    default-schema: recovery_control\n"):
+        check("Recovery Flyway requires explicit recovery_control schema binding", {
+            **recovery_history, recovery_config: recovery_settings.replace(omitted, b""),
+        }, recovery_history, "historical effective migration no longer applied")
     try:
         collect_issues({**recovery_history, recovery_config:
                         recovery_settings + b"    enabled: true\n    enabled: true\n"}, recovery_history)
@@ -1139,9 +1209,13 @@ def run_self_test() -> None:
         raise AssertionError("duplicate packaged YAML key did not fail closed")
     check("explicit enablement can override across separate YAML documents",
           {**recovery_history, recovery_config: recovery_settings + (
-              b"    enabled: false\n---\nspring.flyway.enabled: 'TrUe'\n"
+              b"    enabled: false\n---\nspring.flyway.enabled: true\n"
           )}, recovery_history, None)
-    for nonmatching_value in (b"yes", b"on", b"1"):
+    check("quoted mixed-case Flyway enablement is not the runtime literal true", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    enabled: 'TrUe'\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    for nonmatching_value in (b"yes", b"on", b"1", b"TRUE", b"True"):
         check(f"quoted {nonmatching_value!r} is not Spring Boot true", {
             **recovery_history,
             recovery_config: recovery_settings + b"    enabled: '" + nonmatching_value + b"'\n",
@@ -1327,6 +1401,27 @@ def run_self_test() -> None:
         sidecar_issues, _, _ = collect_issues(combined_fixture, sidecar_parent)
         if not any("Recovery migration sidecars are unsupported" in issue for issue in sidecar_issues):
             raise AssertionError("receiving-parent Recovery sidecar was not rejected after removal")
+        symlink_target = root / "outside-migration.sql"
+        symlink_target.write_text("-- symlink target", encoding="utf-8")
+        symlink_path = root / (recovery + "V2__linked.sql")
+        symlink_path.symlink_to(symlink_target)
+        if current_snapshot(root).get(recovery + "V2__linked.sql") != SYMLINK_SNAPSHOT:
+            raise AssertionError("current Recovery migration symlink was read as a regular migration")
+        symlink_current_issues, _, _ = collect_issues(current_snapshot(root), parent)
+        if not any("Recovery migration symlinks are unsupported" in issue for issue in symlink_current_issues):
+            raise AssertionError("current Recovery migration symlink was not rejected")
+        symlink_path.unlink()
+        symlink_path.symlink_to(symlink_target)
+        git(root, "add", ".")
+        git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "-qm", "recovery symlink")
+        symlink_base = git(root, "rev-parse", "HEAD").decode().strip()
+        symlink_parent = parent_snapshot(root, symlink_base)
+        if symlink_parent.get(recovery + "V2__linked.sql") != SYMLINK_SNAPSHOT:
+            raise AssertionError("receiving-parent Recovery symlink was read as a regular migration")
+        symlink_parent_issues, _, _ = collect_issues(combined_fixture, symlink_parent)
+        if not any("Recovery migration symlinks are unsupported" in issue for issue in symlink_parent_issues):
+            raise AssertionError("receiving-parent Recovery migration symlink was not rejected")
         make_fixture(root, [local + "V2__new.sql"])
         check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")
         try:

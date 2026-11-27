@@ -34,6 +34,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxE
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionResult;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
@@ -462,7 +463,7 @@ class InitialGameplayReleaseControllerTest {
                 "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
             "evidence");
     var before = mock(Operation.class);
-    var after = mock(Operation.class);
+    var after = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
     var evidence = mock(InitialGameplayReleaseEvidence.class);
     var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
     when(before.scope()).thenReturn(scope);
@@ -482,7 +483,8 @@ class InitialGameplayReleaseControllerTest {
             scope.evidenceRef(),
             "proof",
             DIGEST);
-    var retainedTransition = new AtomicReference<>(java.util.Optional.<Operation>empty());
+    var retainedTransition =
+        new AtomicReference<>(java.util.Optional.<PublicTransitionResult>empty());
     when(journal.findTransition(tuple)).thenAnswer(invocation -> retainedTransition.get());
     InitialGameplayReleaseEvidence changedEvidence = null;
     if (status == ResolutionStatus.AVAILABLE) {

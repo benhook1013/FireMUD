@@ -144,6 +144,12 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     if (!List.of("recovery_control").equals(schemas)) {
       throw new SafeOverrideException("spring.flyway.schemas must contain only recovery_control");
     }
+    List<String> locations =
+        binder.bind("spring.flyway.locations", Bindable.listOf(String.class)).orElse(List.of());
+    if (!List.of("classpath:db/recovery-control-migration").equals(locations)) {
+      throw new SafeOverrideException(
+          "spring.flyway.locations must contain only classpath:db/recovery-control-migration");
+    }
   }
 
   private static void requireMatchingOverride(Binder binder, String property, String expected) {
