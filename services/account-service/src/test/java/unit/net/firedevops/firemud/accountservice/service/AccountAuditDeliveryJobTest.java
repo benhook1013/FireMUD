@@ -42,7 +42,7 @@ class AccountAuditDeliveryJobTest {
 
     job.deliverPending();
 
-    verify(outbox).markDelivered(envelope.auditEventId(), "receipt-1", "log-1", false);
+    verify(outbox).markDelivered(envelope, "receipt-1", "log-1", false);
     verify(outbox, never()).recordAttempt(envelope.auditEventId());
   }
 
@@ -55,7 +55,7 @@ class AccountAuditDeliveryJobTest {
 
     job.deliverPending();
 
-    verify(outbox).markDelivered(envelope.auditEventId(), "receipt-2", "log-2", true);
+    verify(outbox).markDelivered(envelope, "receipt-2", "log-2", true);
     verify(outbox, never()).recordAttempt(envelope.auditEventId());
   }
 
@@ -68,7 +68,7 @@ class AccountAuditDeliveryJobTest {
     job.deliverPending();
 
     verify(outbox).recordAttempt(envelope.auditEventId());
-    verify(outbox, never()).markDelivered(envelope.auditEventId(), "receipt-1", "log-1", false);
+    verify(outbox, never()).markDelivered(envelope, "receipt-1", "log-1", false);
   }
 
   @Test
@@ -87,10 +87,9 @@ class AccountAuditDeliveryJobTest {
 
     job.deliverPending();
 
-    verify(outbox, never())
-        .markDelivered(eq(failed.auditEventId()), anyString(), anyString(), anyBoolean());
+    verify(outbox, never()).markDelivered(eq(failed), anyString(), anyString(), anyBoolean());
     verify(client).deliverOrRecover(later);
-    verify(outbox).markDelivered(later.auditEventId(), "receipt-2", "log-2", false);
+    verify(outbox).markDelivered(later, "receipt-2", "log-2", false);
   }
 
   @Test
