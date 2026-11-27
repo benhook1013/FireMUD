@@ -113,7 +113,9 @@ class LogEventServiceImplTest {
     CreateLogEventRequest changed =
         new CreateLogEventRequest(
             original.scope(),
+            1,
             original.tenantId(),
+            null,
             original.auditEventId(),
             original.producerService(),
             "ACCOUNT_RECOVERY",
@@ -154,7 +156,7 @@ class LogEventServiceImplTest {
     CreateLogEventRequest original =
         request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"retained\":true}");
     CreateLogEventRequest digestOnly = withPayload(original, ByteString.EMPTY);
-    when(repository.findByIdentity(eq(digestOnly), eq(0L)))
+    when(repository.findByIdentity(eq(digestOnly)))
         .thenReturn(Optional.of(receipt(original, null, "MINIMIZED", "NON_REPLAYABLE")));
 
     var result = service.readLogEventReceipt(digestOnly);
@@ -162,7 +164,7 @@ class LogEventServiceImplTest {
     assertEquals(AccountAuditReceiptStatus.MINIMIZED, result.status());
     assertEquals(AccountAuditReceiptOutcome.NON_REPLAYABLE, result.outcome());
     assertEquals(RECEIPT_ID.toString(), result.receiptId());
-    verify(repository).findByIdentity(eq(digestOnly), eq(0L));
+    verify(repository).findByIdentity(eq(digestOnly));
   }
 
   @Test
@@ -177,9 +179,8 @@ class LogEventServiceImplTest {
     CreateLogEventRequest changedEventType =
         withEventType(withPayload(original, ByteString.EMPTY), "ACCOUNT_RECOVERY");
     AccountAuditReceipt minimized = receipt(original, null, "MINIMIZED", "NON_REPLAYABLE");
-    when(repository.findByIdentity(eq(changedDigest), eq(42L))).thenReturn(Optional.of(minimized));
-    when(repository.findByIdentity(eq(changedEventType), eq(42L)))
-        .thenReturn(Optional.of(minimized));
+    when(repository.findByIdentity(eq(changedDigest))).thenReturn(Optional.of(minimized));
+    when(repository.findByIdentity(eq(changedEventType))).thenReturn(Optional.of(minimized));
 
     var digestResult = service.readLogEventReceipt(changedDigest);
     var metadataResult = service.readLogEventReceipt(changedEventType);
@@ -228,8 +229,8 @@ class LogEventServiceImplTest {
         request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"changed\":true}");
     AccountAuditReceipt retained =
         receipt(original, original.payload().toByteArray(), "COMMITTED", "ACCEPTED");
-    when(repository.findByIdentity(eq(omitted), eq(0L))).thenReturn(Optional.of(retained));
-    when(repository.findByIdentity(eq(changed), eq(0L))).thenReturn(Optional.of(retained));
+    when(repository.findByIdentity(eq(omitted))).thenReturn(Optional.of(retained));
+    when(repository.findByIdentity(eq(changed))).thenReturn(Optional.of(retained));
 
     var omittedResult = service.readLogEventReceipt(omitted);
     var changedResult = service.readLogEventReceipt(changed);
@@ -246,7 +247,7 @@ class LogEventServiceImplTest {
         request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "");
     AccountAuditReceipt retained = receipt(emptyPayload, new byte[0], "COMMITTED", "ACCEPTED");
     AccountAuditReceipt minimized = receipt(emptyPayload, null, "MINIMIZED", "NON_REPLAYABLE");
-    when(repository.findByIdentity(eq(emptyPayload), eq(0L)))
+    when(repository.findByIdentity(eq(emptyPayload)))
         .thenReturn(Optional.of(retained), Optional.of(minimized));
 
     var retainedResult = service.readLogEventReceipt(emptyPayload);
@@ -261,7 +262,7 @@ class LogEventServiceImplTest {
   @Test
   void missingReadbackThrowsForCanonicalNotFoundMapping() {
     CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
-    when(repository.findByIdentity(request, 0L)).thenReturn(Optional.empty());
+    when(repository.findByIdentity(request)).thenReturn(Optional.empty());
 
     assertThrows(AuditReceiptNotFoundException.class, () -> service.readLogEventReceipt(request));
   }
@@ -294,7 +295,7 @@ class LogEventServiceImplTest {
   void jooqReadFailureMapsToAuditStorageUnavailableWithCause() {
     CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
     var cause = new org.jooq.exception.DataAccessException("jOOQ read failed");
-    when(repository.findByIdentity(eq(request), eq(0L))).thenThrow(cause);
+    when(repository.findByIdentity(eq(request))).thenThrow(cause);
 
     var exception =
         assertThrows(
@@ -307,7 +308,7 @@ class LogEventServiceImplTest {
   void springReadFailureMapsToAuditStorageUnavailableWithCause() {
     CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
     var cause = new DataAccessResourceFailureException("Spring read failed");
-    when(repository.findByIdentity(eq(request), eq(0L))).thenThrow(cause);
+    when(repository.findByIdentity(eq(request))).thenThrow(cause);
 
     var exception =
         assertThrows(
@@ -322,7 +323,9 @@ class LogEventServiceImplTest {
     CreateLogEventRequest unsupported =
         new CreateLogEventRequest(
             valid.scope(),
+            1,
             valid.tenantId(),
+            null,
             valid.auditEventId(),
             valid.producerService(),
             valid.eventType(),
@@ -342,7 +345,9 @@ class LogEventServiceImplTest {
     CreateLogEventRequest mismatched =
         new CreateLogEventRequest(
             valid.scope(),
+            1,
             valid.tenantId(),
+            null,
             valid.auditEventId(),
             valid.producerService(),
             valid.eventType(),
@@ -362,6 +367,8 @@ class LogEventServiceImplTest {
     CreateLogEventRequest request =
         new CreateLogEventRequest(
             AccountAuditScope.PLATFORM,
+            1,
+            null,
             null,
             AUDIT_EVENT_ID,
             "account-service",
@@ -381,7 +388,9 @@ class LogEventServiceImplTest {
     ByteString payload = ByteString.copyFrom(payloadText, StandardCharsets.UTF_8);
     return new CreateLogEventRequest(
         scope,
+        1,
         tenantId,
+        null,
         AUDIT_EVENT_ID,
         "account-service",
         "ACCOUNT_REGISTERED",
@@ -401,7 +410,9 @@ class LogEventServiceImplTest {
       CreateLogEventRequest request, ByteString payload, String payloadDigest) {
     return new CreateLogEventRequest(
         request.scope(),
+        1,
         request.tenantId(),
+        null,
         request.auditEventId(),
         request.producerService(),
         request.eventType(),
@@ -416,7 +427,9 @@ class LogEventServiceImplTest {
       CreateLogEventRequest request, String eventType) {
     return new CreateLogEventRequest(
         request.scope(),
+        1,
         request.tenantId(),
+        null,
         request.auditEventId(),
         request.producerService(),
         eventType,
@@ -431,7 +444,9 @@ class LogEventServiceImplTest {
       CreateLogEventRequest request, int payloadDigestVersion) {
     return new CreateLogEventRequest(
         request.scope(),
+        1,
         request.tenantId(),
+        null,
         request.auditEventId(),
         request.producerService(),
         request.eventType(),
@@ -449,7 +464,9 @@ class LogEventServiceImplTest {
         LOG_EVENT_ID,
         RECEIPT_ID,
         request.scope().databaseValue(),
+        1,
         request.tenantId(),
+        null,
         request.auditEventId(),
         request.producerService(),
         request.eventType(),

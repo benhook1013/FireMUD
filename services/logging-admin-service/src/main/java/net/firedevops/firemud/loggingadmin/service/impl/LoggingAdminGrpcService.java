@@ -265,6 +265,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     return toAuditRequest(
         request.getScope(),
         request.getTenantId(),
+        request.getTenantIdentityVersion(),
+        request.getTenantUuid(),
         request.getAuditEventId(),
         request.getProducerService(),
         request.getEventType(),
@@ -278,6 +280,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private static net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest toAuditRequest(
       net.firedevops.firemud.loggingadmin.v1.AccountAuditScope requestScope,
       String tenantIdText,
+      int identityVersion,
+      String tenantUuidText,
       String auditEventId,
       String producerService,
       String eventType,
@@ -292,14 +296,27 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
           case ACCOUNT_AUDIT_SCOPE_TENANT -> AccountAuditScope.TENANT;
           default -> throw new IllegalArgumentException("scope must be platform or tenant");
         };
-    Long tenantId;
-    if (scope == AccountAuditScope.TENANT) {
-      tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+    // Existing read callers predate an explicit identity version.
+    int tenantIdentityVersion = identityVersion == 0 ? 1 : identityVersion;
+    Long tenantId = null;
+    UUID tenantUuid = null;
+    if (tenantIdentityVersion == 2) {
+      if (scope != AccountAuditScope.TENANT || !tenantIdText.isEmpty()) {
+        throw new IllegalArgumentException("Tenant identity v2 requires only a tenant UUID");
+      }
+      tenantUuid = UUID.fromString(tenantUuidText);
+      if (!tenantUuid.toString().equals(tenantUuidText) || tenantUuid.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("tenantUuid must be a canonical non-nil UUID");
+      }
     } else {
-      if (!tenantIdText.isEmpty()) {
+      if (tenantIdentityVersion != 1 || !tenantUuidText.isEmpty()) {
+        throw new IllegalArgumentException("Tenant identity v1 cannot carry a tenant UUID");
+      }
+      if (scope == AccountAuditScope.TENANT) {
+        tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+      } else if (!tenantIdText.isEmpty()) {
         throw new IllegalArgumentException("tenantId must be absent for platform scope");
       }
-      tenantId = null;
     }
     if (!ACCOUNT_SERVICE.equals(producerService)) {
       throw new IllegalArgumentException(
@@ -316,7 +333,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     }
     return new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
         scope,
+        tenantIdentityVersion,
         tenantId,
+        tenantUuid,
         auditEventId,
         ACCOUNT_SERVICE,
         eventType,
@@ -330,7 +349,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   static CreateLogEventResponse toCreateLogEventResponse(AccountAuditReceiptDto receipt) {
     return CreateLogEventResponse.newBuilder()
         .setScope(toProtoScope(receipt.scope()))
+        .setTenantIdentityVersion(receipt.tenantIdentityVersion())
         .setTenantId(receipt.tenantId() == null ? "" : receipt.tenantId().toString())
+        .setTenantUuid(receipt.tenantUuid() == null ? "" : receipt.tenantUuid().toString())
         .setAuditEventId(receipt.auditEventId())
         .setReceiptId(receipt.receiptId())
         .setLogEventId(Long.toString(receipt.logEventId()))
@@ -346,7 +367,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       AccountAuditReceiptDto receipt) {
     return ReadLogEventReceiptResponse.newBuilder()
         .setScope(toProtoScope(receipt.scope()))
+        .setTenantIdentityVersion(receipt.tenantIdentityVersion())
         .setTenantId(receipt.tenantId() == null ? "" : receipt.tenantId().toString())
+        .setTenantUuid(receipt.tenantUuid() == null ? "" : receipt.tenantUuid().toString())
         .setAuditEventId(receipt.auditEventId())
         .setReceiptId(receipt.receiptId())
         .setLogEventId(Long.toString(receipt.logEventId()))
