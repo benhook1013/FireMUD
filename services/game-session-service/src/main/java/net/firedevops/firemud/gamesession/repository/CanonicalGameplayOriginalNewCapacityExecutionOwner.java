@@ -260,6 +260,32 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         });
   }
 
+  CanonicalGameplayCapacityEvidenceBudget.RetainedCharge requireExistingCharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      long deadline) {
+    return within(
+        deadline,
+        owner -> {
+          var candidate = source.candidate();
+          var assignment =
+              owner.scopedTags().assignmentForTransition(candidate.bindingDecisionId());
+          return owner
+              .sql()
+              .transactionResult(configuration -> {
+                var tx = DSL.using(configuration);
+                requireSelectedOwner(tx, candidate, selected);
+                return CanonicalGameplayCapacityEvidenceBudget.requireExistingCharge(
+                    tx,
+                    request,
+                    source.candidateDigest(),
+                    selected,
+                    assignment.tenantGameplayTag());
+              });
+        });
+  }
+
   void settleDeniedCharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,

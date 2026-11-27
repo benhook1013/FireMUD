@@ -751,7 +751,29 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         originalLoginJwt,
         deadline,
         capacityClient,
-        capacityRequest);
+        capacityRequest,
+        CLOCK);
+  }
+
+  public Receipt completeWithCoordinatorClock(
+      AccountGameplayAdmissionLeaseClient account,
+      AccountPublicJwksCache jwks,
+      String originalLoginJwt,
+      long deadline,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest,
+      Clock coordinatorClock) {
+    return complete(
+        decision,
+        regionInstallation,
+        account,
+        jwks,
+        originalLoginJwt,
+        deadline,
+        capacityClient,
+        capacityRequest,
+        coordinatorClock);
   }
 
   public Receipt complete(
@@ -771,7 +793,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         originalLoginJwt,
         deadline,
         capacityClient,
-        capacityRequest);
+        capacityRequest,
+        CLOCK);
   }
 
   private Receipt complete(
@@ -783,7 +806,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       long deadline,
       net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
-          capacityRequest) {
+          capacityRequest,
+      Clock coordinatorClock) {
     // Recreate the coordinator and its SQL/INITIAL/issuer/final owners on every invocation.
     var issuerSource = binding.currentIssuerSource();
     var issuer =
@@ -803,7 +827,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
             new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                 coordination, scripts, CLOCK, tags),
-            CLOCK,
+            coordinatorClock,
             capacityClient,
             new CanonicalGameplayOriginalNewCapacityExecutionOwner(
                 binding.dsl(), coordination, scripts, CLOCK, tags));

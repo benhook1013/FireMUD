@@ -805,11 +805,25 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
       assertProvisionalUnchanged(session, candidate);
 
+      // Only the coordinator's OPEN-window check sees the advanced clock. The retained
+      // charge, authenticated Account read and PostgreSQL settlement use their actual clocks.
+      Clock afterOpen = Clock.offset(CLOCK, Duration.ofSeconds(60));
       var exactRetry =
-          assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+          assertThrows(
+              CapacityRefusedException.class,
+              () ->
+                  session.gs.completeWithCoordinatorClock(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      afterOpen.millis() + 10_000L,
+                      session.capacityClient,
+                      request,
+                      afterOpen));
       assertThat(assertExactAccountQuotaDenial(session, request, exactRetry))
           .isEqualTo(committedId);
-      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(fault.calls.get()).isEqualTo(1);
+      assertThat(fault.denialReads.get()).isEqualTo(1);
       assertThat(session.capacityDecisionImage()).isEqualTo(decision);
       assertThat(
               session
@@ -833,9 +847,21 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           .isZero();
 
       session.stopCapacityServer();
-      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      var replay =
+          assertThrows(
+              CapacityRefusedException.class,
+              () ->
+                  session.gs.completeWithCoordinatorClock(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      afterOpen.millis() + 10_000L,
+                      session.capacityClient,
+                      request,
+                      afterOpen));
       assertThat(replay.durableDenialId()).isEqualTo(committedId);
-      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(fault.calls.get()).isEqualTo(1);
+      assertThat(fault.denialReads.get()).isEqualTo(1);
       assertThat(session.capacityDecisionImage()).isEqualTo(decision);
       assertThat(session.capacityImage()).isEqualTo(capacityBefore);
       assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
@@ -895,6 +921,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private final TenantCapacityAdmission.Request exact;
     final java.util.concurrent.atomic.AtomicInteger calls =
         new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger denialReads =
+        new java.util.concurrent.atomic.AtomicInteger();
     final java.util.concurrent.atomic.AtomicReference<UUID> observedDenial =
         new java.util.concurrent.atomic.AtomicReference<>();
     final java.util.concurrent.atomic.AtomicBoolean successfullyDropped =
@@ -908,6 +936,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
         MethodDescriptor<ReqT, RespT> method, CallOptions options, Channel next) {
       var delegate = next.newCall(method, options);
+      if (net.firedevops.firemud.account.v1.AccountServiceGrpc
+          .getReadTenantCapacityQuotaDenialMethod()
+          .getFullMethodName()
+          .equals(method.getFullMethodName())) {
+        denialReads.incrementAndGet();
+        return delegate;
+      }
       if (!net.firedevops.firemud.account.v1.AccountServiceGrpc
               .getCommitTenantCapacityAdmissionMethod()
               .getFullMethodName()

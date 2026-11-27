@@ -64,6 +64,19 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     }
   }
 
+  record RetainedCharge(UUID accountDenialId) {}
+
+  static RetainedCharge requireExistingCharge(
+      DSLContext tx,
+      Request request,
+      String candidateDigest,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
+      String tag) {
+    var charge = exactCharge(tx, request, candidateDigest, selected, tag);
+    if (charge == null) throw unavailable();
+    return new RetainedCharge(charge.get("account_denial_id", UUID.class));
+  }
+
   static void settleDenied(
       DSLContext tx,
       Request request,

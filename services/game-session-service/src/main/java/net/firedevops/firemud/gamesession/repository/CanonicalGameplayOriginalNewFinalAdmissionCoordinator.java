@@ -115,7 +115,19 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       requireOriginalSource(source, originalDecision);
       var selectedOwner =
           capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
-      Currentness beforeEffects = currentness(source, privateRegionInstallation);
+      var accountOpen = readAccountOpen(source);
+      if (clock.millis() >= accountOpen.expiresAtEpochMillis()
+          && source.transitionStatus()
+              == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+          && capacityRequest.evidence().permitsCreation()) {
+        throw reconcileQuotaDenial(
+            source,
+            privateRegionInstallation,
+            capacityRequest,
+            selectedOwner,
+            absoluteDeadlineMillis);
+      }
+      Currentness beforeEffects = currentness(source, privateRegionInstallation, accountOpen);
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
           readSameSource(source, originalDecision, false);
       source = currentSource;
@@ -311,11 +323,32 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private Currentness currentness(
+  private CapacityRefusedException reconcileQuotaDenial(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
-      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation) {
+      CanonicalGameplayRegionLeaseOwner.Installation installation,
+      TenantCapacityAdmission.Request request,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner,
+      long deadline) {
+    var candidate = source.candidate();
+    if (!candidate.bindingDecisionId().equals(installation.transitionId)
+        || !candidate.matchesProvisionalSources(installation.evidence)
+        || !selectedOwner.instanceId().equals(installation.status.ownerInstanceId())
+        || selectedOwner.fence() != installation.status.executorFence().longValueExact()) {
+      throw unavailable();
+    }
+    var charge = capacityExecution.requireExistingCharge(source, request, selectedOwner, deadline);
+    var denialId = charge.accountDenialId();
+    if (denialId == null) {
+      denialId = capacityClient.readRetainedQuotaDenial(request, deadline);
+      capacityExecution.settleDeniedCharge(source, request, selectedOwner, denialId, deadline);
+    }
+    return CapacityRefusedException.retainedQuotaDenial(denialId);
+  }
+
+  private CanonicalGameplayAccountInitialOpenProof.CurrentOpen readAccountOpen(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source) {
     requireNoAmbientSql();
-    CanonicalGameplayOriginalNewCandidate candidate = source.candidate();
+    var candidate = source.candidate();
     CanonicalGameplayBindingIdentity identity = candidate.bindingIdentity();
     CanonicalGameplayAccountInitialOpenProof proof =
         accountBarrier.verifyCurrentOpenForTarget(
@@ -327,7 +360,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         || !"OPEN".equals(accountOpen.exactFields().get("state"))) {
       throw unavailable();
     }
+    return accountOpen;
+  }
+
+  private Currentness currentness(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation) {
+    return currentness(source, privateRegionInstallation, readAccountOpen(source));
+  }
+
+  private Currentness currentness(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen) {
     requireCurrentOpenWindow(accountOpen);
+    var identity = source.candidate().bindingIdentity();
 
     CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement =
         source.issuerAcknowledgement();
