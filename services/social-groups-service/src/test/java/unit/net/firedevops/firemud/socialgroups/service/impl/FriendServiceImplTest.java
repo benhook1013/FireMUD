@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -31,6 +32,9 @@ import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.repository.AccountFriendLinkRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class FriendServiceImplTest {
@@ -447,6 +451,26 @@ class FriendServiceImplTest {
     Mockito.verify(accountRepository, Mockito.never())
         .findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
             Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(
+      strings = {
+        "42",
+        "invalid-account",
+        "00000000-0000-0000-0000-000000000000",
+        "ABCDEFAB-1234-4234-8234-ABCDEFABCDEF",
+        " 12345678-1234-4234-8234-123456789abc "
+      })
+  void rejectsInvalidAccountSelectorsBeforeReadingFriendRoster(String malformed) {
+    String valid = accountUuid(2L);
+    assertThrows(IllegalArgumentException.class, () -> service.getFriend(11L, malformed, valid));
+    assertThrows(IllegalArgumentException.class, () -> service.getFriend(11L, valid, malformed));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.listFriends(11L, malformed, FriendRosterFilter.ALL));
+    verifyNoInteractions(accountRepository, accountClient, gameSessionClient);
   }
 
   @Test
