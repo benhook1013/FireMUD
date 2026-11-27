@@ -2,6 +2,10 @@
 
 Player-facing controller binding and takeover are owned by [Session Behavior](../../system-architecture-session-behavior.md#namespace-scoped-controller-transfer-session-02), fresh-edge reconstruction is owned by [Reconnection](../../system-architecture-reconnection.md#client-reconnection-behaviour), and versioned output/late rendering are owned by [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). The APIs below record only Game Session's local control-plane and forwarding consequences; they do not duplicate those player-facing contracts.
 
+## Run-owned fixture initial-admission owner read
+
+`RunOwnedFixtureInitialAdmissionOwnerReadService` supports explicit fixture composition. It authenticates the fixed same-namespace World workload and retained recipient leaf before resolving any selected attempt. A read binds its correlation, `RUN_OWNED_FIXTURE` purpose, fixture policy seal and exact World hold identity to the configured source and actual Game Session allocation. The owner returns retained `PENDING` or independently verified `COMMITTED` evidence. `COMMITTED` binds the same attempt to its exact pointer and audit event. [Run-owned fixture proof](../../system-architecture-testing.md#run-owned-v1-launch-read-evidence) owns the cross-owner contract.
+
 ## Original NEW capacity execution read
 
 The manually composed original-NEW final coordinator requires the exact retained `PLAYER_ADMISSION` bundle and obtains the real Account capacity commitment immediately before its final owner CAS. Its supported boundary remains public `SHARED` / `PRESEEDED_ONLY`, one newly created player session. Issuer-partition reservation is a separate obligation and does not satisfy tenant `maxActiveSessions` capacity.

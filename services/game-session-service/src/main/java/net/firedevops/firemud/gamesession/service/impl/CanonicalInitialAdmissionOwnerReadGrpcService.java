@@ -109,7 +109,7 @@ public final class CanonicalInitialAdmissionOwnerReadGrpcService
     }
   }
 
-  private static GameSessionCanonicalInitialAdmissionOwnerProof toCanonicalProof(
+  static GameSessionCanonicalInitialAdmissionOwnerProof toCanonicalProof(
       HoldIdentity identity, CanonicalInitialAdmissionOwnerProof ownerProof) {
     Request request = identity.request();
     if (!request.initialAdmissionRequestId().equals(ownerProof.initialAdmissionRequestId())

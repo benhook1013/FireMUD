@@ -549,20 +549,41 @@ public class CanonicalInitialAdmissionRepository {
       String targetNamespace, String initialAdmissionRequestId) {
     requireOutsideTransaction();
     Record row = findAttemptRecord(targetNamespace, initialAdmissionRequestId);
+    return row == null ? Optional.empty() : Optional.of(readProof(toAttempt(row)));
+  }
+
+  /** Reads one fixture-owned attempt under its exact retained policy seal. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<CanonicalInitialAdmissionOwnerProof> readRunOwnedFixture(
+      String targetNamespace, String initialAdmissionRequestId, String expectedFixtureProvenance) {
+    Objects.requireNonNull(expectedFixtureProvenance, "expectedFixtureProvenance");
+    requireOutsideTransaction();
+    Record row = findAttemptRecord(targetNamespace, initialAdmissionRequestId);
     if (row == null) {
       return Optional.empty();
     }
     Attempt attempt = toAttempt(row);
+    if (!expectedFixtureProvenance.equals(attempt.fixtureProvenanceDigest())) {
+      return Optional.empty();
+    }
+    if (ABORTED.equals(attempt.status())) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Run-owned fixture attempt has an unsupported abort outcome");
+    }
+    return Optional.of(readProof(attempt));
+  }
+
+  private CanonicalInitialAdmissionOwnerProof readProof(Attempt attempt) {
     if (PENDING.equals(attempt.status())) {
-      return Optional.of(toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.PENDING));
+      return toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
     }
     if (COMMITTED.equals(attempt.status())) {
       verifyCommittedReadback(attempt);
-      return Optional.of(toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED));
+      return toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
     }
     if (ABORTED.equals(attempt.status())) {
       verifyAbortReadback(attempt);
-      return Optional.of(toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED));
+      return toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
     }
     throw new CanonicalInitialAdmissionReconciliationRequiredException(
         "Persisted initial-admission attempt has an unsupported owner outcome");
