@@ -52,6 +52,7 @@ import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmis
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
+import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.impl.RoomServiceImpl;
@@ -1043,6 +1044,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
 
     assertThat(state.isRunOwnedFixture()).isTrue();
     assertThat(state.isPendingAtExpectedActiveEpoch()).isTrue();
+    assertThat(new InitialAdmissionBindHoldRepository(dsl).findNonterminalLegacy(32)).isEmpty();
     assertThat(WorldCanonicalInitialAdmissionHoldState.fromStored(state.canonicalBytes()))
         .isEqualTo(state);
     assertSqlState(

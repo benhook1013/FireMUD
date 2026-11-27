@@ -4,13 +4,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import org.jooq.DSLContext;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -57,6 +60,53 @@ class WorldCanonicalInitialAdmissionHoldRepositoryTest {
     } finally {
       TransactionSynchronizationManager.clear();
     }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "13,15,Committed Game Session proof lacks the exact pointer and audit tuple",
+    Long.MAX_VALUE + ",1,Expected pointer version overflows"
+  })
+  void expectedClosedTerminalRequiresTheExactNextPointer(
+      long expectedPriorPointer, long committedPointer, String refusal) {
+    var sql = mock(DSLContext.class);
+    var manager = mock(PlatformTransactionManager.class);
+    var associations = mock(WorldCanonicalInstanceAssociationRepository.class);
+    var lifecycles = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var repository =
+        new WorldCanonicalInitialAdmissionHoldRepository(sql, manager, associations, lifecycles);
+    var request =
+        new Request(
+            "test",
+            TENANT,
+            "starter-world",
+            REALM,
+            PLAYABLE_NAMESPACE,
+            "SHARED",
+            GAME_INSTANCE,
+            VERSION,
+            7L,
+            "initial-admission-request",
+            "a".repeat(64),
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.EXPECT_CLOSED,
+            3L,
+            expectedPriorPointer);
+    var identity = identity(request);
+    var proof =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            identity,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            committedPointer,
+            120L,
+            "sha256:" + "a".repeat(64),
+            false,
+            Instant.parse("2026-10-08T00:00:00Z"));
+
+    assertThatThrownBy(() -> repository.settle(identity, proof))
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class)
+        .hasMessage(refusal);
+    verifyNoInteractions(sql, manager, associations, lifecycles);
   }
 
   private static Request request(String digestChar) {
