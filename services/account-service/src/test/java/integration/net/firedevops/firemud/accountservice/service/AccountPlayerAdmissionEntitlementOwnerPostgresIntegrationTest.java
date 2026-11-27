@@ -499,7 +499,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             NAMESPACE,
             f.clock)) {
       recovered.init();
-      assertThat(recovered.readRetainedQuotaDenial(request, f.clock.millis() + 5_000L))
+      assertThat(
+              recovered
+                  .readRetainedAdmissionDenial(request, f.clock.millis() + 5_000L)
+                  .durableDenialId())
           .isEqualTo(decision.get());
     } finally {
       server.shutdownNow();
@@ -535,6 +538,46 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
         .isEqualTo(Math.toIntExact(quota + 1));
     assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+  }
+
+  @Test
+  void expiredOriginalEvaluationRetainsOnlyTheExactDenial() {
+    Fixture f = fixture(true, true);
+    var request = capacityRequest(f);
+    var expiry = request.evidence().expiresAt();
+    f.clock.setInstant(expiry.plus(1, ChronoUnit.MICROS));
+    org.awaitility.Awaitility.await("PostgreSQL reaches the retained evaluation expiry")
+        .atMost(java.time.Duration.ofSeconds(20))
+        .until(() ->
+            !f.dsl
+                .fetchSingle("SELECT clock_timestamp()")
+                .get(0, OffsetDateTime.class)
+                .toInstant()
+                .isBefore(expiry));
+    String usage =
+        "SELECT held_units, used_units, usage_revision FROM account_tenant_capacity_usage"
+            + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
+    var originalUsage = f.dsl.fetchSingle(usage, f.tenantId).intoMap();
+    var decisionId = new AtomicReference<UUID>();
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+              assertThat(error.durableDenialId()).isNotNull();
+              decisionId.set(error.durableDenialId());
+            });
+
+    var retained = f.capacityOwner.readRetainedAdmissionDenial(request, PEER);
+    assertThat(retained.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+    assertThat(retained.durableDenialId()).isEqualTo(decisionId.get());
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> assertThat(error.durableDenialId()).isEqualTo(decisionId.get()));
+    assertThat(f.dsl.fetchSingle(usage, f.tenantId).intoMap()).isEqualTo(originalUsage);
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isOne();
   }
 
   private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {

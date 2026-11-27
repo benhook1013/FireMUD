@@ -22,6 +22,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -87,22 +88,50 @@ public final class AccountTenantCapacityClient
   /** Selects exactly one creating send only after its durable local claim has committed. */
   public Result commitWithSendBoundary(
       Request request, long absoluteDeadlineMillis, Supplier<SendDisposition> authorize) {
-    var response =
-        invoke(
-            request,
-            absoluteDeadlineMillis,
-            (stub, wire) -> {
-              SendDisposition disposition = authorize.get();
-              if (stub.getCallOptions().getDeadline().isExpired()) {
-                throw Status.DEADLINE_EXCEEDED.asRuntimeException();
-              }
-              return switch (disposition) {
-                case AUTHORIZE_NEW -> stub.commitTenantCapacityAdmission(wire);
-                case READ_RETAINED -> stub.readTenantCapacityAdmissionOutcome(wire);
-                case EXPIRED_UNSENT -> throw Status.DEADLINE_EXCEEDED.asRuntimeException();
-              };
-            });
-    return readCommitResult(request, response);
+    return invoke(
+        request,
+        absoluteDeadlineMillis,
+        (stub, wire) -> {
+          SendDisposition disposition = authorize.get();
+          if (stub.getCallOptions().getDeadline().isExpired()) {
+            throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+          }
+          return switch (disposition) {
+            case AUTHORIZE_NEW ->
+                readCommitResult(request, stub.commitTenantCapacityAdmission(wire));
+            case READ_RETAINED -> readRetainedReservationOrDenial(stub, wire, request);
+            case EXPIRED_UNSENT -> throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+          };
+        });
+  }
+
+  private static Result readRetainedReservationOrDenial(
+      AccountServiceBlockingStub stub, CommitTenantCapacityAdmissionRequest wire, Request request) {
+    final CommitTenantCapacityAdmissionResponse reservation;
+    try {
+      reservation = stub.readTenantCapacityAdmissionReservation(wire);
+    } catch (StatusRuntimeException unavailable) {
+      if (unavailable.getStatus().getCode() != Status.Code.UNAVAILABLE
+          || stub.getCallOptions().getDeadline().isExpired()) {
+        throw unavailable;
+      }
+      // The reservation read cannot return a denial. Only the same peer's typed exact read
+      // can supply one, under the same absolute deadline and without another creating send.
+      final Refusal denial;
+      try {
+        denial = requireRetainedDenial(request, stub.readTenantCapacityAdmissionDenial(wire));
+      } catch (StatusRuntimeException unproven) {
+        throw unavailable;
+      }
+      throw CapacityRefusedException.retainedAdmissionDenial(denial);
+    }
+    try {
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, reservation);
+    } catch (IllegalArgumentException inexactResponse) {
+      throw Status.UNKNOWN
+          .withDescription("Account retained reservation was not proven")
+          .asRuntimeException();
+    }
   }
 
   private static Result readCommitResult(
@@ -119,34 +148,33 @@ public final class AccountTenantCapacityClient
     }
   }
 
-  /** Recovers an exact quota denial while the caller still owns the original held attempt. */
-  public UUID readRetainedQuotaDenial(Request request, long absoluteDeadlineMillis) {
+  /** Recovers an exact immutable denial while the caller owns the original held attempt. */
+  public Refusal readRetainedAdmissionDenial(Request request, long absoluteDeadlineMillis) {
     var response =
         invoke(
             request,
             absoluteDeadlineMillis,
-            AccountServiceBlockingStub::readTenantCapacityQuotaDenial);
+            AccountServiceBlockingStub::readTenantCapacityAdmissionDenial);
+    return requireRetainedDenial(request, response);
+  }
+
+  private static Refusal requireRetainedDenial(
+      Request request, CommitTenantCapacityAdmissionResponse response) {
     try {
       return TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response)
-          .filter(refusal ->
-              refusal.code() == TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED)
-          .map(TenantCapacityAdmissionGrpcCodec.Refusal::durableDenialId)
+          .filter(refusal -> refusal.durableDenialId() != null)
           .orElseThrow(IllegalArgumentException::new);
     } catch (IllegalArgumentException inexactResponse) {
       throw Status.UNKNOWN
-          .withDescription("Account retained quota denial was not proven")
+          .withDescription("Account retained admission denial was not proven")
           .asRuntimeException();
     }
   }
 
-  private CommitTenantCapacityAdmissionResponse invoke(
+  private <T> T invoke(
       Request request,
       long absoluteDeadlineMillis,
-      BiFunction<
-              AccountServiceBlockingStub,
-              CommitTenantCapacityAdmissionRequest,
-              CommitTenantCapacityAdmissionResponse>
-          call) {
+      BiFunction<AccountServiceBlockingStub, CommitTenantCapacityAdmissionRequest, T> call) {
     long maximumMillis =
         TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
     Deadline maximum = Deadline.after(maximumMillis, TimeUnit.MILLISECONDS);
@@ -216,12 +244,12 @@ public final class AccountTenantCapacityClient
       this.durableDenialId = refusal.durableDenialId();
     }
 
-    /** Replays a durable quota denial after the local owner verifies its exact retained binding. */
-    public static CapacityRefusedException retainedQuotaDenial(UUID denialId) {
-      return new CapacityRefusedException(
-          new TenantCapacityAdmissionGrpcCodec.Refusal(
-              TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED,
-              TenantCapacityAdmission.uuid(denialId)));
+    /** Replays a denial after the local owner verifies its exact retained binding. */
+    public static CapacityRefusedException retainedAdmissionDenial(Refusal denial) {
+      if (denial == null || denial.durableDenialId() == null) {
+        throw new IllegalArgumentException("A retained capacity denial requires its decision ID");
+      }
+      return new CapacityRefusedException(denial);
     }
 
     public TenantCapacityAdmissionGrpcCodec.Failure code() {

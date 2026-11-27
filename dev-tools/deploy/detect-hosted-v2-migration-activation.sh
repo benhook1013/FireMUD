@@ -154,6 +154,7 @@ if [[ "$probe_account_origin" == true ]]; then
     "$origin_prefix" "$base_sha" "$namespace_uid"
 fi
 
+printf 'deployed_base_sha=%s\n' "$base_sha"
 if [[ "$migration_changed" == true ]]; then
   emit_mode true "$reason_source first adds a supported Account, Game Session, or Automation migration"
 else

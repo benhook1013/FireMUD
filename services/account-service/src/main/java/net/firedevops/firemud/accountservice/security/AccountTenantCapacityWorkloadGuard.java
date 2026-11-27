@@ -18,8 +18,10 @@ import net.firedevops.firemud.common.security.SessionContext;
 /** Sole producer of the receiver's private exact-method TLS caller assertion. */
 public final class AccountTenantCapacityWorkloadGuard implements ServerInterceptor {
   private final Context.Key<String> caller = Context.key("tenant-capacity-authenticated-peer");
-  private final Context.Key<String> quotaDenialReader =
+  private final Context.Key<String> admissionDenialReader =
       Context.key("tenant-capacity-denial-reader");
+  private final Context.Key<String> admissionReservationReader =
+      Context.key("tenant-capacity-reservation-reader");
   private final String gameSession;
   private final Set<String> allowed;
 
@@ -40,16 +42,14 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
     return value;
   }
 
-  public String requireQuotaDenialReader() {
-    return requireGameSessionOutcomeReader();
+  public String requireAdmissionDenialReader() {
+    String value = admissionDenialReader.get();
+    if (!gameSession.equals(value) || ambient()) throw Status.UNAUTHENTICATED.asRuntimeException();
+    return value;
   }
 
-  public String requireAdmissionOutcomeReader() {
-    return requireGameSessionOutcomeReader();
-  }
-
-  private String requireGameSessionOutcomeReader() {
-    String value = quotaDenialReader.get();
+  public String requireAdmissionReservationReader() {
+    String value = admissionReservationReader.get();
     if (!gameSession.equals(value) || ambient()) throw Status.UNAUTHENTICATED.asRuntimeException();
     return value;
   }
@@ -70,19 +70,19 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
       return Contexts.interceptCall(
           Context.current().withValue(caller, workload), call, headers, next);
     }
-    if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
+    if (AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod()
             .getFullMethodName()
             .equals(method)
         && gameSession.equals(workload)) {
       return Contexts.interceptCall(
-          Context.current().withValue(quotaDenialReader, workload), call, headers, next);
+          Context.current().withValue(admissionDenialReader, workload), call, headers, next);
     }
-    if (AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod()
+    if (AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod()
             .getFullMethodName()
             .equals(method)
         && gameSession.equals(workload)) {
       return Contexts.interceptCall(
-          Context.current().withValue(quotaDenialReader, workload), call, headers, next);
+          Context.current().withValue(admissionReservationReader, workload), call, headers, next);
     }
     return deny(call, Status.PERMISSION_DENIED);
   }

@@ -62,11 +62,13 @@ import sys
 import re
 from datetime import datetime, timezone
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
+wait_mode, image_tag, merge_sha, base_sha, head_sha, *native = sys.argv[1:]
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
     raise SystemExit(1)
+if native:
+    payload = {"workflow_runs": [payload]}
 pages = payload if isinstance(payload, list) else [payload]
 if not pages or any(
     not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list)
@@ -98,13 +100,9 @@ def is_matching_run(run):
     if run.get("event") not in {"pull_request", "repository_dispatch"}:
         return False
     display_title = run.get("display_title", "")
-    tokens = display_title.split()
-    return (
-        display_title.startswith("Build Runtime Images secure-pr-artifact ")
-        and f"base-{base_sha}" in tokens
-        and f"head-{head_sha}" in tokens
-        and f"merge-{merge_sha}" in tokens
-        and display_title.endswith(" mode-required")
+    return isinstance(display_title, str) and re.fullmatch(
+        rf"Build Runtime Images secure-pr-artifact pr-[1-9][0-9]* base-{base_sha}"
+        rf" head-{head_sha} merge-{merge_sha} mode-required", display_title
     )
 
 matching_runs = [run for run in workflow_runs if is_matching_run(run)]
@@ -117,6 +115,16 @@ run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse
 def clean_field(value):
     return isinstance(value, str) and bool(value) and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
 
+run_attempt = run.get("run_attempt") if wait_mode == "pull-request" else "-"
+workflow_id = run.get("workflow_id") if wait_mode == "pull-request" else "-"
+if wait_mode == "pull-request":
+    if any(type(value) is not int or value <= 0 for value in (run_attempt, workflow_id)):
+        raise SystemExit(1)
+    if native and (any(
+        not isinstance(run.get(field), dict) or run[field].get("full_name") != native[1]
+        for field in ("repository", "head_repository")
+    ) or (run.get("event") == "pull_request" and run.get("head_sha") != head_sha)):
+        raise SystemExit(1)
 run_id = run.get("id")
 if type(run_id) is not int or run_id <= 0:
     raise SystemExit(1)
@@ -139,16 +147,18 @@ except ValueError:
 if created > datetime.now(timezone.utc):
     raise SystemExit(1)
 print(
-    "found\t{}\t{}\t{}\t{}\t{}\t{}".format(
+    "found\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
         run_id,
         run["status"],
         conclusion,
         run["html_url"],
         run["event"],
         created_at,
+        run_attempt,
+        workflow_id,
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
 
 fetch_publisher_runs() {
@@ -219,8 +229,8 @@ import json
 import re
 import sys
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id = sys.argv[1:]
-if not re.fullmatch(r"[1-9][0-9]*", source_run_id):
+wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id, source_run_attempt = sys.argv[1:]
+if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (source_run_id, source_run_attempt)):
     raise SystemExit(1)
 try:
     payload = json.load(sys.stdin)
@@ -240,21 +250,23 @@ workflow_runs = [
 if any(not isinstance(run, dict) for run in workflow_runs):
     raise SystemExit(1)
 if wait_mode == "pull-request":
+    source_suffix = f"source-run-{source_run_id} attempt-{source_run_attempt}"
     matching_runs = [
         run for run in workflow_runs
         if (run.get("event") == "repository_dispatch" and
-            run.get("display_title") == f"Publish PR Runtime Images source-run-{source_run_id}")
+            run.get("display_title") == f"Publish PR Runtime Images {source_suffix}")
         or (run.get("event") == "workflow_run" and
         (tokens := run.get("display_title", "").split())[:8] == [
             "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
             "secure-pr-artifact",
         ]
-        and len(tokens) == 13
+        and len(tokens) == 15
         and re.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])
         and tokens[9] == f"base-{base_sha}"
         and tokens[10] == f"head-{head_sha}"
         and tokens[11] == f"merge-{merge_sha}"
-        and tokens[12] == "mode-required")
+        and tokens[12] == "mode-required"
+        and " ".join(tokens[13:]) == source_suffix)
     ]
 else:
     matching_runs = []
@@ -263,20 +275,196 @@ if not matching_runs:
     raise SystemExit(0)
 
 run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
+attempt, workflow_id = run.get("run_attempt"), run.get("workflow_id")
+if any(type(value) is not int or value <= 0 for value in (attempt, workflow_id)):
+    raise SystemExit(1)
+title = run["display_title"]
+if any(character in title for character in "\r\n\t"):
+    raise SystemExit(1)
+url = run.get("html_url") or "-"
 print(
-    "found\t{}\t{}\t{}\t{}".format(
-        run.get("id", ""),
-        run.get("status", ""),
-        run.get("conclusion", ""),
-        run.get("html_url", ""),
+    "found\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
+        run["id"], run.get("status"), run.get("conclusion"), url, attempt,
+        workflow_id, run["event"], title,
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1" "$2"
+}
+
+verify_publisher_attempt() {
+  python3 - "$GITHUB_REPOSITORY" "$base_sha" "$head_sha" "$merge_sha" "$@" <<'PY_PUBLICATION'
+import json
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+
+(repository, base_sha, head_sha, merge_sha, run_id, attempt, workflow_id, event, title,
+ source_id, source_attempt, source_workflow_id, source_event, remaining) = sys.argv[1:]
+deadline = time.monotonic() + int(remaining)
+
+def unavailable(reason):
+    print(f"PR runtime publication proof unavailable: {reason}.", file=sys.stderr)
+    raise SystemExit(1)
+
+def read_object(path):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        unavailable("API deadline elapsed")
+    try:
+        output = subprocess.check_output(["gh", "api", f"repos/{repository}/actions/{path}"],
+                                         text=True, timeout=remaining)
+        result = json.loads(output)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        unavailable("required GitHub API read failed")
+    if not isinstance(result, dict):
+        unavailable("required GitHub API record is malformed")
+    return result
+
+def positive_int(value):
+    return type(value) is int and value > 0
+
+def successful(record):
+    return record.get("status") == "completed" and record.get("conclusion") == "success"
+
+def verify_run(record, expected_id, expected_attempt, expected_workflow_id, expected_event, workflow_path):
+    branch, sha = record.get("head_branch"), record.get("head_sha")
+    paths = {workflow_path, f"{workflow_path}@{branch}", f"{workflow_path}@refs/heads/{branch}"}
+    if expected_event == "pull_request":
+        title = record.get("display_title")
+        if isinstance(title, str) and (match := re.match(r"Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) ", title)):
+            paths.add(f"{workflow_path}@refs/pull/{match[1]}/merge")
+    if (any(not positive_int(record.get(field)) or record[field] != int(expected)
+            for field, expected in (("id", expected_id), ("run_attempt", expected_attempt),
+                                    ("workflow_id", expected_workflow_id)))
+            or record.get("event") != expected_event or not successful(record)
+            or not isinstance(branch, str) or not branch or not isinstance(sha, str)
+            or not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or not isinstance(record.get("path"), str) or record["path"] not in paths
+            or any(not isinstance(record.get(field), dict) or record[field].get("full_name") != repository
+                   for field in ("repository", "head_repository"))):
+        unavailable("exact workflow attempt identity or outcome is inconsistent")
+
+def read_jobs(record, run_path):
+    evidence = read_object(f"{run_path}/jobs?per_page=100&page=1")
+    jobs, total = evidence.get("jobs"), evidence.get("total_count")
+    if not positive_int(total) or total > 100 or not isinstance(jobs, list) or len(jobs) != total:
+        unavailable("native job inventory is incomplete")
+    seen = set()
+    for job in jobs:
+        if (not isinstance(job, dict) or not positive_int(job.get("id")) or job["id"] in seen
+                or any(not positive_int(job.get(field)) or job[field] != expected
+                       for field, expected in (("run_id", record["id"]), ("run_attempt", record["run_attempt"])))):
+            unavailable("native job identity is inconsistent")
+        seen.add(job["id"])
+    return jobs
+
+def successful_job(record, run_path, names):
+    matching = [job for job in read_jobs(record, run_path) if job.get("name") in names]
+    if len(matching) != 1 or not successful(matching[0]) or matching[0].get("head_sha") != record["head_sha"]:
+        unavailable("successful native job is missing or ambiguous")
+    job = matching[0]
+    if not isinstance(job.get("steps"), list) or any(not isinstance(step, dict) for step in job["steps"]):
+        unavailable("native job step inventory is malformed")
+    return job
+
+def successful_step(job, name):
+    steps = [step for step in job["steps"] if step.get("name") == name]
+    if (len(steps) != 1 or not successful(steps[0]) or not positive_int(steps[0].get("number"))
+            or sum(step.get("number") == steps[0]["number"] for step in job["steps"]) != 1):
+        unavailable("successful native step is missing or ambiguous")
+    return steps[0]
+
+publisher_path = f"runs/{run_id}/attempts/{attempt}"
+publisher = read_object(publisher_path)
+verify_run(publisher, run_id, attempt, workflow_id, event, ".github/workflows/publish-pr-runtime-images.yml")
+if publisher.get("display_title") != title or publisher.get("name") not in ("Publish PR Runtime Images", title):
+    unavailable("native publisher title differs from the selected run")
+job = successful_job(publisher, publisher_path, ("Publish Fixed PR Merge Image Tags",))
+download = successful_step(job, "Download successful PR image artifacts")
+validate = successful_step(job, "Validate exact PR source and artifact before registry login")
+publish = successful_step(job, "Publish fixed PR image tags")
+if not download["number"] < validate["number"] < publish["number"]:
+    unavailable("publisher steps are out of order")
+
+receipt_prefix = "PR runtime publication receipt"
+receipts = [step for step in job["steps"] if isinstance(step.get("name"), str)
+            and step["name"].startswith(receipt_prefix)]
+if receipts:
+    if len(receipts) != 1:
+        unavailable("publication receipt is ambiguous")
+    receipt = successful_step(job, receipts[0]["name"])
+    match = re.fullmatch(
+        rf"{receipt_prefix} v1 source-{source_id}-{source_attempt} publisher-{run_id}-{attempt}"
+        r" artifact-([1-9][0-9]*) (sha256:[0-9a-f]{64})", receipt["name"],
+    )
+    if not match or receipt["number"] <= publish["number"]:
+        unavailable("publication receipt does not bind the successful producer and publisher attempts")
+    print(f"{match[1]}\t{match[2]}")
+    raise SystemExit(0)
+
+# Earlier publishers can still use the native artifact inventory while it
+# identifies the original, successful upload. An expired artifact cannot
+# establish that identity for a publication without a receipt.
+source_path = f"runs/{source_id}/attempts/{source_attempt}"
+source = read_object(source_path)
+verify_run(source, source_id, source_attempt, source_workflow_id, source_event,
+           ".github/workflows/runtime-images.yml")
+source_title = source.get("display_title")
+if (not isinstance(source_title, str) or not re.fullmatch(
+        rf"Build Runtime Images secure-pr-artifact pr-[1-9][0-9]* base-{base_sha}"
+        rf" head-{head_sha} merge-{merge_sha} mode-required", source_title)
+        or source.get("name") not in ("Build Runtime Images", source_title)
+        or (source_event == "pull_request" and source["head_sha"] != head_sha)):
+    unavailable("legacy source attempt title or head does not match the selected comparison")
+producer = successful_job(source, source_path, ("PR Full-Stack Smoke (runtime-required=true)",
+                                               "PR Full-Stack Smoke (runtime-required=false)"))
+upload = successful_step(producer, "Upload preview image artifact")
+
+def timestamp(record, field):
+    value = record.get(field)
+    if not isinstance(value, str) or not re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])", value):
+        unavailable("legacy upload timestamp is missing or malformed")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        unavailable("legacy upload timestamp is invalid")
+
+attempt_start = timestamp(source, "run_started_at").replace(microsecond=0)
+attempt_end = timestamp(source, "updated_at").replace(microsecond=0) + timedelta(seconds=1)
+job_start, job_end = timestamp(producer, "started_at"), timestamp(producer, "completed_at")
+upload_start, upload_end = timestamp(upload, "started_at"), timestamp(upload, "completed_at")
+if not attempt_start <= job_start <= upload_start <= upload_end <= job_end < attempt_end:
+    unavailable("legacy upload did not execute within the selected native source attempt")
+
+artifact_name = f"pr-runtime-images-pr-merge-{merge_sha}"
+inventory = read_object(f"runs/{source_id}/artifacts?name={artifact_name}&per_page=100&page=1")
+artifacts = inventory.get("artifacts")
+if (not positive_int(inventory.get("total_count")) or inventory["total_count"] != 1
+        or not isinstance(artifacts, list) or len(artifacts) != 1 or not isinstance(artifacts[0], dict)):
+    unavailable("legacy publication requires the original artifact in the complete inventory")
+artifact = artifacts[0]
+origin, digest = artifact.get("workflow_run"), artifact.get("digest")
+if (not positive_int(artifact.get("id")) or artifact.get("name") != artifact_name
+        or artifact.get("expired") is not False or not isinstance(origin, dict)
+        or not positive_int(origin.get("id")) or origin["id"] != source["id"] or origin.get("head_sha") != source["head_sha"]
+        or not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)):
+    unavailable("legacy artifact identity, digest, or retention is inconsistent")
+created = timestamp(artifact, "created_at")
+if not upload_start.replace(microsecond=0) <= created < upload_end.replace(microsecond=0) + timedelta(seconds=1):
+    unavailable("legacy artifact did not originate in the selected upload step")
+print(f"{artifact['id']}\t{digest}")
+PY_PUBLICATION
 }
 
 wait_for_pr_publisher() {
   local source_run_id="$1"
-  local source_created_at="$2"
+  local source_run_attempt="$2"
+  local source_created_at="$3"
+  local source_event="$4"
+  local source_workflow_id="$5"
   local coverage_unavailable=false
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
@@ -303,14 +491,15 @@ wait_for_pr_publisher() {
     fi
     coverage_unavailable=false
     publisher_payload="[${publisher_payload}]"
-    if ! publisher_state="$(read_publisher_state "${source_run_id}" <<<"${publisher_payload}")"; then
+    if ! publisher_state="$(read_publisher_state "${source_run_id}" "${source_run_attempt}" <<<"${publisher_payload}")"; then
       printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
       sleep "${sleep_seconds}"
       continue
     fi
 
-    local state run_id run_status run_conclusion run_url
-    IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
+    local state run_id run_status run_conclusion run_url publisher_attempt publisher_workflow_id publisher_event publisher_title
+    IFS=$'\t' read -r state run_id run_status run_conclusion run_url publisher_attempt \
+      publisher_workflow_id publisher_event publisher_title <<<"${publisher_state}"
 
     if [[ "${state}" == "missing" ]]; then
       local elapsed_seconds=$((SECONDS - publisher_start_epoch))
@@ -326,13 +515,45 @@ wait_for_pr_publisher() {
     fi
 
     if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
-      printf 'Trusted PR image publisher %s succeeded for %s.\n' "${run_id}" "${image_tag}"
+      local artifact_evidence
+      if ! artifact_evidence="$(verify_publisher_attempt "${run_id}" "${publisher_attempt}" \
+        "${publisher_workflow_id}" "${publisher_event}" "${publisher_title}" \
+        "${source_run_id}" "${source_run_attempt}" "${source_workflow_id}" "${source_event}" "$((publisher_deadline - SECONDS))")"; then
+        printf 'Exact PR image publication and artifact proof is unavailable for run %s attempt %s.\n' \
+          "${run_id}" "${publisher_attempt}" >&2
+        sleep "${sleep_seconds}"
+        continue
+      fi
+      local remaining=$((publisher_deadline - SECONDS)) current_payload current_state
+      local current_kind current_id current_status current_conclusion _current_url current_event _current_created_at
+      local current_attempt current_workflow_id artifact_id artifact_digest
+      if (( remaining <= 0 )) ||
+        ! current_payload="$(timeout "${remaining}s" gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}")" ||
+        ! current_state="$(read_run_state native "${GITHUB_REPOSITORY}" <<<"${current_payload}")"; then
+        printf 'Current runtime-image producer evidence is unavailable for run %s attempt %s.\n' \
+          "${source_run_id}" "${source_run_attempt}" >&2
+        return 1
+      fi
+      IFS=$'\t' read -r current_kind current_id current_status current_conclusion _current_url current_event \
+        _current_created_at current_attempt current_workflow_id <<<"${current_state}"
+      if (( SECONDS >= publisher_deadline )) ||
+        [[ "${current_kind}" != "found" || "${current_id}" != "${source_run_id}" ||
+        "${current_attempt}" != "${source_run_attempt}" || "${current_event}" != "${source_event}" ||
+        "${current_workflow_id}" != "${source_workflow_id}" || "${current_status}" != "completed" ||
+        "${current_conclusion}" != "success" ]]; then
+        printf 'Current runtime-image producer does not match the successful run %s attempt %s for %s.\n' \
+          "${source_run_id}" "${source_run_attempt}" "${image_tag}" >&2
+        return 1
+      fi
+      IFS=$'\t' read -r artifact_id artifact_digest <<<"${artifact_evidence}"
+      printf 'Trusted PR image publisher %s succeeded for %s using source artifact %s (%s).\n' \
+        "${run_id}" "${image_tag}" "${artifact_id}" "${artifact_digest}"
       return 0
     fi
     if [[ "${run_status}" == "completed" ]]; then
       printf 'Trusted PR image publisher %s completed with %s for %s.\n' \
         "${run_id}" "${run_conclusion}" "${image_tag}" >&2
-      [[ -z "${run_url}" ]] || printf 'Workflow URL: %s\n' "${run_url}" >&2
+      [[ -z "${run_url}" || "${run_url}" == "-" ]] || printf 'Workflow URL: %s\n' "${run_url}" >&2
       exit 1
     fi
 
@@ -364,7 +585,7 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  IFS=$'\t' read -r state run_id run_status run_conclusion run_url _run_event run_created_at <<<"${run_state}"
+  IFS=$'\t' read -r state run_id run_status run_conclusion run_url run_event run_created_at run_attempt run_workflow_id <<<"${run_state}"
 
   if [[ "${state}" == "missing" ]]; then
     elapsed_seconds=$((SECONDS - start_epoch))
@@ -390,7 +611,7 @@ while (( SECONDS < deadline )); do
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
     if [[ "${wait_mode}" == "pull-request" ]]; then
-      wait_for_pr_publisher "${run_id}" "${run_created_at}"
+      wait_for_pr_publisher "${run_id}" "${run_attempt}" "${run_created_at}" "${run_event}" "${run_workflow_id}"
     fi
     exit 0
   fi
