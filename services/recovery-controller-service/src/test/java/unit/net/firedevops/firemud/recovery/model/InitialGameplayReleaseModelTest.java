@@ -29,6 +29,9 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterI
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -57,6 +60,32 @@ class InitialGameplayReleaseModelTest {
     assertThatThrownBy(() -> InitialGameplayReleaseModel.requiredText(null, "owner"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("owner must not be null");
+  }
+
+  @Test
+  void ownerInitializationIdentityFitsTheStrictTupleStringLimit() {
+    String identity = "😀".repeat(10_000_000);
+    UUID operationId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    var proof =
+        new OwnerInitializationProof(
+            OwnerService.WORLD_MANAGEMENT,
+            operationId,
+            namespaceId,
+            ProofDisposition.VERIFIED,
+            identity,
+            DIGEST);
+    assertThat(proof.sourceIdentity()).isSameAs(identity);
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                operationId,
+                namespaceId,
+                ProofDisposition.VERIFIED,
+                identity + "x",
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("sourceIdentity must not exceed 20,000,000 UTF-16 code units");
   }
 
   @ParameterizedTest
@@ -377,8 +406,7 @@ class InitialGameplayReleaseModelTest {
             acknowledgements,
             capacities);
     InitialGameplayReleaseEvidence retained = withLayout(original, proof);
-    var codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    var codec = new InitialGameplayReleaseTupleCodec();
     var digest = codec.digest(retained);
 
     acknowledgements.clear();
@@ -450,7 +478,7 @@ class InitialGameplayReleaseModelTest {
   @Test
   void tenantAndUuidCoverageFenceSurviveCodecAndBindTheScopeDigest() {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     Scope original = scope(UUID.randomUUID());
     Scope otherTenant =
         new Scope(
@@ -522,8 +550,7 @@ class InitialGameplayReleaseModelTest {
                 reversed));
     original.validateFor(scope);
     reordered.validateFor(scope);
-    InitialGameplayReleaseTupleCodec codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     assertThat(codec.digest(reordered)).isEqualTo(codec.digest(original));
     assertThat(codec.digest(reversed)).isEqualTo(codec.digest(forward));
     assertThatThrownBy(() -> reordered.issuerLayout().capacityVector().put(2, 1))
@@ -587,8 +614,7 @@ class InitialGameplayReleaseModelTest {
 
   @Test
   void tupleDigestPreservesFullWidthExecutorGeneration() {
-    InitialGameplayReleaseTupleCodec codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     RegionLeaseProof first = new RegionLeaseProof("region", "lease", 9007199254740992L);
     RegionLeaseProof next = new RegionLeaseProof("region", "lease", 9007199254740993L);
     assertThat(codec.digest(first)).isNotEqualTo(codec.digest(next));
@@ -646,9 +672,37 @@ class InitialGameplayReleaseModelTest {
   }
 
   @Test
+  void journalEvidenceKeepsDefaultBytesWithSnakeCaseApplicationMapper() {
+    var original = evidence(scope(UUID.randomUUID()));
+    var runner =
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(JacksonAutoConfiguration.class))
+            .withUserConfiguration(InitialGameplayReleaseTupleCodec.class);
+    runner.run(defaults -> {
+      String defaultJson = defaults.getBean(JsonMapper.class).writeValueAsString(original);
+      String defaultDigest =
+          defaults.getBean(InitialGameplayReleaseTupleCodec.class).digest(original);
+      runner
+          .withPropertyValues("spring.jackson.property-naming-strategy=SNAKE_CASE")
+          .run(context -> {
+            var appJson = context.getBean(JsonMapper.class).writeValueAsString(original);
+            assertThat(appJson).contains("\"issuer_layout\"", "\"capacity_vector\"");
+
+            var journalCodec = context.getBean(InitialGameplayReleaseTupleCodec.class);
+            var journalJson = journalCodec.toJson(original);
+            assertThat(journalJson)
+                .contains("\"issuerLayout\"", "\"capacityVector\"")
+                .isEqualTo(defaultJson);
+            assertThat(journalCodec.readEvidence(journalJson)).isEqualTo(original);
+            assertThat(journalCodec.digest(original)).isEqualTo(defaultDigest);
+          });
+    });
+  }
+
+  @Test
   void persistedPartitionAcknowledgementRequiresExplicitNonNullPartitionId() {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     var original = evidence(scope(UUID.randomUUID()));
     String json = codec.toJson(original);
     assertThat(codec.readEvidence(json)).isEqualTo(original);
@@ -668,7 +722,7 @@ class InitialGameplayReleaseModelTest {
   @Test
   void persistedEvidenceRequiresAnIntegerOperationFence() {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     var original = evidence(scope(UUID.randomUUID()));
     String json = codec.toJson(original);
     assertThat(codec.readEvidence(json)).isEqualTo(original);
@@ -688,7 +742,7 @@ class InitialGameplayReleaseModelTest {
   @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
   void persistedEvidenceEnumsRequireNamesRatherThanOrdinals(String replacement) {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     var original = evidence(scope(UUID.randomUUID()));
     String json = codec.toJson(original);
     assertThat(codec.readEvidence(json)).isEqualTo(original);
@@ -715,7 +769,7 @@ class InitialGameplayReleaseModelTest {
   @Test
   void persistedEvidenceRejectsNoncanonicalAndDuplicateNormalizedCapacityKeys() {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
     String json = codec.toJson(evidence(scope(UUID.randomUUID())));
     ObjectNode noncanonical = (ObjectNode) mapper.readTree(json);
     ObjectNode noncanonicalCapacity = (ObjectNode) noncanonical.at("/issuerLayout/capacityVector");

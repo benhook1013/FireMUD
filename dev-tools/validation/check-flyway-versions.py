@@ -113,7 +113,11 @@ def migration_path(path: str) -> re.Match[str] | None:
 
 
 def relevant_path(path: str) -> bool:
-    return bool(migration_path(path)) or (
+    recovery_migration_roots = {
+        RECOVERY_SQL_ROOT.rstrip("/"),
+        f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration",
+    }
+    return path in recovery_migration_roots or bool(migration_path(path)) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
              or PACKAGED_CONFIG_RE.search(path))
@@ -227,7 +231,7 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
         elif relative.lower().endswith(".sql"):
             if not relative.endswith(".sql"):
                 issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
-            if "/" in relative:
+            if "/" in relative or "\\" in relative:
                 issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
             elif not VERSION_RE.fullmatch(relative):
                 issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
@@ -527,7 +531,8 @@ def recovery_flyway_locations(
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled == "true"):
         return None
-    if flyway.get("target", "latest") != "latest":
+    target = flyway.get("target", "latest")
+    if not isinstance(target, str) or target.casefold() != "latest":
         # Qualify the complete packaged history, not a pinned migration prefix.
         return None
     if "dryrunoutput" in flyway:
@@ -553,7 +558,13 @@ def recovery_flyway_locations(
         locations = locations.split(",")
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
         return None
-    normalized_locations = {location.strip() for location in locations}
+    normalized_location_list = [location.strip() for location in locations]
+    # Spring binds Flyway locations as an ordered collection. Preserve and
+    # validate that cardinality before using a set for membership checks: a
+    # duplicate recovery location makes the packaged service reject startup.
+    if len(normalized_location_list) != len(set(normalized_location_list)):
+        return None
+    normalized_locations = set(normalized_location_list)
     if RECOVERY_LOCATION in normalized_locations:
         create_schemas = flyway.get("createschemas", True)
         if create_schemas is not True and not (
@@ -967,6 +978,21 @@ def run_self_test() -> None:
     }, recovery_history, "historical effective migration no longer applied")
     check("equivalent enabled list recovery history",
           {**recovery_history, recovery_config: recovery_list_settings}, recovery_history, None)
+    check("duplicate recovery locations cannot qualify enabled history", {
+        **recovery_history,
+        recovery_config: recovery_list_settings.replace(
+            b"      - classpath:db/recovery-control-migration\n",
+            b"      - classpath:db/recovery-control-migration\n"
+            b"      - classpath:db/recovery-control-migration\n",
+        ),
+    }, recovery_history, "historical effective migration no longer applied")
+    check("duplicate comma-separated recovery locations cannot qualify enabled history", {
+        **recovery_history,
+        recovery_config: recovery_settings.replace(
+            b"locations: classpath:db/recovery-control-migration",
+            b"locations: classpath:db/recovery-control-migration, classpath:db/recovery-control-migration",
+        ),
+    }, recovery_history, "historical effective migration no longer applied")
     check("malformed late locations entry cannot be hidden by a matching entry", {
         **recovery_history,
         recovery_config: (
@@ -1236,6 +1262,12 @@ def run_self_test() -> None:
     check("nested uppercase SQL is detected and rejected as noncanonical", {
         **complete_recovery_history, recovery + "nested/V3__generation.SQL": b"-- generation",
     }, complete_recovery_history, "recovery migration SQL must use the canonical lowercase .sql suffix")
+    check("jOOQ-style backslash paths cannot hide flat Recovery migrations", {
+        **complete_recovery_history, recovery + r"V3__generation\nested.sql": b"-- generation",
+    }, complete_recovery_history, "recovery migration SQL must be flat")
+    check("ordinary flat underscore Recovery filenames remain supported", {
+        **complete_recovery_history, recovery + "V3__generation_notes.sql": b"-- generation",
+    }, complete_recovery_history, None)
     check("explicit mapping override of a merged default is not a duplicate", {
         **complete_recovery_history, recovery_config: (
             b"defaults: &fallback\n  enabled: false\n" + recovery_settings
@@ -1422,6 +1454,30 @@ def run_self_test() -> None:
         symlink_parent_issues, _, _ = collect_issues(combined_fixture, symlink_parent)
         if not any("Recovery migration symlinks are unsupported" in issue for issue in symlink_parent_issues):
             raise AssertionError("receiving-parent Recovery migration symlink was not rejected")
+        for migration_root in (
+            RECOVERY_SQL_ROOT.rstrip("/"),
+            f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration",
+        ):
+            with tempfile.TemporaryDirectory() as symlink_tmp:
+                symlink_repo = Path(symlink_tmp)
+                target = symlink_repo / "outside-root"
+                target.mkdir()
+                (target / "V1__journal.sql").write_text("-- target", encoding="utf-8")
+                root_link = symlink_repo / migration_root
+                root_link.parent.mkdir(parents=True, exist_ok=True)
+                root_link.symlink_to(target, target_is_directory=True)
+                git(symlink_repo, "init", "-q")
+                git(symlink_repo, "add", ".")
+                git(symlink_repo, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid",
+                    "commit", "-qm", "root symlink")
+                root_commit = git(symlink_repo, "rev-parse", "HEAD").decode().strip()
+                root_snapshot = parent_snapshot(symlink_repo, root_commit)
+                if root_snapshot.get(migration_root) != SYMLINK_SNAPSHOT:
+                    raise AssertionError(f"receiving-parent Recovery root symlink was omitted: {migration_root}")
+                if not any("Recovery migration symlinks are unsupported" in issue
+                           for issue in recovery_input_issues(root_snapshot)):
+                    raise AssertionError(f"receiving-parent Recovery root symlink was not rejected: {migration_root}")
+
         make_fixture(root, [local + "V2__new.sql"])
         check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")
         try:

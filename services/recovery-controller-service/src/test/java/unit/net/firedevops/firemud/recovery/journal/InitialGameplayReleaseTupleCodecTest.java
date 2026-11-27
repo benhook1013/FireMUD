@@ -18,8 +18,7 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 class InitialGameplayReleaseTupleCodecTest {
-  private final InitialGameplayReleaseTupleCodec codec =
-      new InitialGameplayReleaseTupleCodec(JsonMapper.builder().build());
+  private final InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
 
   @Test
   void proofTupleRedactsTheLockOnlyInDiagnosticOutput() {
@@ -50,7 +49,6 @@ class InitialGameplayReleaseTupleCodecTest {
   @Test
   void typedRetainedClosureRoundTripsWithoutChangingItsDigest() {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    var codec = new InitialGameplayReleaseTupleCodec(mapper);
     var closure =
         new EffectReadback(
             UUID.randomUUID(),
@@ -116,7 +114,6 @@ class InitialGameplayReleaseTupleCodecTest {
   @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
   void persistedReadbackEnumsRequireTextualNames(String replacement) {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
-    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
     for (EffectKind kind : EffectKind.values()) {
       for (EffectReadbackState state : EffectReadbackState.values()) {
         var original =

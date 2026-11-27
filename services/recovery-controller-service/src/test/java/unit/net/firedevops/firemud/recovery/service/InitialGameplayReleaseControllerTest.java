@@ -6,8 +6,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
@@ -49,7 +51,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import tools.jackson.databind.json.JsonMapper;
 
 class InitialGameplayReleaseControllerTest {
   private static final String DIGEST = "c".repeat(64);
@@ -66,10 +67,7 @@ class InitialGameplayReleaseControllerTest {
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var controller =
         new InitialGameplayReleaseController(
-            journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
-            evidence,
-            port);
+            journal, new InitialGameplayReleaseTupleCodec(), evidence, port);
 
     caller.executeWithoutResult(status -> {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
@@ -106,10 +104,7 @@ class InitialGameplayReleaseControllerTest {
     InitialGameplayReleaseEffectPort effectPort = mock(InitialGameplayReleaseEffectPort.class);
     InitialGameplayReleaseController controller =
         new InitialGameplayReleaseController(
-            journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
-            evidenceProvider,
-            effectPort);
+            journal, new InitialGameplayReleaseTupleCodec(), evidenceProvider, effectPort);
     // Valid selectors are deliberately insufficient to prove authority or acquire a lock.
     InitialGameplayRecoverRequest request =
         new InitialGameplayRecoverRequest(
@@ -171,7 +166,7 @@ class InitialGameplayReleaseControllerTest {
     var controller =
         new InitialGameplayReleaseController(
             journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            new InitialGameplayReleaseTupleCodec(),
             provider,
             new DeniedInitialGameplayReleaseEffectPort());
     assertThatThrownBy(() -> controller.refreshReadiness(scope.operationId(), lock))
@@ -378,7 +373,7 @@ class InitialGameplayReleaseControllerTest {
     var controller =
         new InitialGameplayReleaseController(
             journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            new InitialGameplayReleaseTupleCodec(),
             mock(InitialGameplayReleaseEvidenceProvider.class),
             port);
     assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
@@ -542,7 +537,7 @@ class InitialGameplayReleaseControllerTest {
     var controller =
         new InitialGameplayReleaseController(
             journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            new InitialGameplayReleaseTupleCodec(),
             mock(InitialGameplayReleaseEvidenceProvider.class),
             mock(InitialGameplayReleaseEffectPort.class));
     assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
@@ -584,8 +579,7 @@ class InitialGameplayReleaseControllerTest {
     var before = operationForReadback(scope);
     var after =
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
-    var codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    var codec = new InitialGameplayReleaseTupleCodec();
     var effect =
         new PreparePlayableStateFencedEffect(
             scope.operationId(),
@@ -599,7 +593,7 @@ class InitialGameplayReleaseControllerTest {
         new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
             UUID.randomUUID(),
             effect,
-            DIGEST,
+            codec.digest(effect),
             net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
                 .DISPATCHED,
             1,
@@ -636,7 +630,9 @@ class InitialGameplayReleaseControllerTest {
 
     assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(after);
     verify(effectPort).readback(effect, attempt, outbox.attemptCount());
-    verify(journal, never()).recordEffectReadback(any(), any(), any());
+    verify(journal).findNextEffect(scope.operationId());
+    verify(journal, times(2)).find(scope.operationId());
+    verifyNoMoreInteractions(effectPort, journal);
   }
 
   @Test
@@ -661,8 +657,7 @@ class InitialGameplayReleaseControllerTest {
             UUID.randomUUID(),
             scope.peerStorageBinding(),
             scope.evidenceRef());
-    var codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    var codec = new InitialGameplayReleaseTupleCodec();
     var effect =
         new PreparePlayableStateFencedEffect(
             scope.operationId(),
@@ -737,8 +732,7 @@ class InitialGameplayReleaseControllerTest {
                 "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
             "evidence");
     var operation = operationForReadback(scope);
-    var codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    var codec = new InitialGameplayReleaseTupleCodec();
     var effect =
         new PreparePlayableStateFencedEffect(
             scope.operationId(),
