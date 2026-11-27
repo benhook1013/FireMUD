@@ -34,9 +34,19 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
         }
       };
 
+  /**
+   * Package-private actor port. Production reads Entity's exact original actor reference; the
+   * pre-v1 run-owned fixture stand-in (ADR 0185 waiver) supplies its deterministic actor instead.
+   * Every read is repeated and compared around each bridge phase.
+   */
+  @FunctionalInterface
+  interface ActorSource {
+    CanonicalGameplayRuntimeActorReference read(
+        net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request);
+  }
+
   private final CanonicalGameplayRegionLeaseOwner regionLeaseOwner;
-  private final CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient;
-  private final CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient;
+  private final ActorSource actorSource;
 
   CanonicalGameplayRegionBindingBridgeOwner(
       CanonicalGameplayRegionLeaseOwner regionLeaseOwner,
@@ -48,10 +58,20 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
       CanonicalGameplayRegionLeaseOwner regionLeaseOwner,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient) {
+    this(regionLeaseOwner, entityActorSource(entityReferenceClient, createdReferenceClient));
+  }
+
+  CanonicalGameplayRegionBindingBridgeOwner(
+      CanonicalGameplayRegionLeaseOwner regionLeaseOwner, ActorSource actorSource) {
     this.regionLeaseOwner = Objects.requireNonNull(regionLeaseOwner, "regionLeaseOwner");
-    this.entityReferenceClient =
-        Objects.requireNonNull(entityReferenceClient, "entityReferenceClient");
-    this.createdReferenceClient = createdReferenceClient;
+    this.actorSource = Objects.requireNonNull(actorSource, "actorSource");
+  }
+
+  private static ActorSource entityActorSource(
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient) {
+    Objects.requireNonNull(entityReferenceClient, "entityReferenceClient");
+    return request -> readEntityReference(entityReferenceClient, createdReferenceClient, request);
   }
 
   /** Acquires the real region grant/fence, then performs the selected first-NEW bridge. */
@@ -186,6 +206,15 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
   }
 
   private CanonicalGameplayRuntimeActorReference readReference(
+      net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
+    CanonicalGameplayRuntimeActorReference reference = actorSource.read(request);
+    if (reference == null) throw unavailable();
+    return reference;
+  }
+
+  private static CanonicalGameplayRuntimeActorReference readEntityReference(
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
       net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
     var origin = CanonicalGameplayActorOrigins.fromWorldRequest(request);
     if (origin instanceof CanonicalGameplayRuntimeActorReference.CreationOrigin) {

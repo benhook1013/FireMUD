@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-/** Dedicated internal mTLS connector; the ordinary HTTP connector cannot produce TCP custody. */
+/** Dedicated mTLS connector for authenticated gameplay custody. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
     prefix = "firemud.gameplay.authenticated-listener",
@@ -36,7 +36,10 @@ public class AuthenticatedGameplayListenerConfiguration {
       protected void doFilterInternal(
           HttpServletRequest request, HttpServletResponse response, FilterChain chain)
           throws ServletException, IOException {
-        if (request.getLocalPort() == port && !"/ws/game/tcp".equals(request.getRequestURI())) {
+        if (request.getLocalPort() == port
+            && !AuthenticatedDirectTextIngress.TCP_PATH.equals(request.getRequestURI())
+            && !AuthenticatedDirectTextIngress.FIXTURE_WEBSOCKET_PATH.equals(
+                request.getRequestURI())) {
           response.sendError(HttpServletResponse.SC_NOT_FOUND);
           return;
         }

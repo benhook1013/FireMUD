@@ -352,7 +352,7 @@ services:
     env_file: *service-env-file
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
-      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ../config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis-coord-data:/data
     ports:
       - "6379:6379"
@@ -369,7 +369,7 @@ services:
     env_file: *service-env-file
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
-      - ./config/redis/redis-cache.conf:/usr/local/etc/redis/redis.conf:ro
+      - ../config/redis/redis-cache.conf:/usr/local/etc/redis/redis.conf:ro
     ports:
       - "6380:6379"
     healthcheck:

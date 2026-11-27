@@ -270,7 +270,8 @@ for service in "${services[@]}"; do
 done
 
 identity_services=(
-  account-service game-session-service entity-management-service world-management-service game-design-service
+  account-service game-session-service entity-management-service world-management-service
+  game-design-service game-logic-service
 )
 declare -A identity_fingerprints=()
 for service in "${identity_services[@]}"; do
@@ -301,6 +302,7 @@ for service in (
     "world-management-service",
     "game-session-service",
     "game-design-service",
+    "game-logic-service",
     "logging-admin-service",
 ):
     headers = [index for index, line in enumerate(lines) if line == f"  {service}:"]
@@ -367,7 +369,10 @@ fixture_keys = (
     "FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH",
     "FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH",
 )
-fixture_services = ("game-design-service", "game-session-service", "world-management-service")
+fixture_services = (
+    "account-service", "entity-management-service", "game-design-service",
+    "game-session-service", "world-management-service",
+)
 for service, block in service_blocks.items():
     if service in fixture_services:
         for key in fixture_keys:
@@ -408,7 +413,14 @@ for service, block in service_blocks.items():
             assert any(line == f"        target: {source_receipt_dir}" for line in block)
             assert any(line == "        read_only: true" for line in block)
     else:
-        assert not any(any(key in line for key in fixture_keys) for line in block), service
+        activation = fixture_keys[2]
+        if service == "game-logic-service":
+            assert any(line.startswith(f"      {activation}:") for line in block)
+        restricted_keys = (
+            tuple(key for key in fixture_keys if key != activation)
+            if service == "game-logic-service" else fixture_keys
+        )
+        assert not any(any(key in line for key in restricted_keys) for line in block), service
         assert not any(capability_path in line for line in block), service
         assert not any(source_receipt_dir in line for line in block), service
         assert not any(game_session_leaf_path in line for line in block), service
@@ -514,7 +526,10 @@ app_names = {
     "game-session-service", "logging-admin-service", "social-groups-service",
     "tcp-proxy-service", "world-management-service",
 }
-fixture_services = ("game-design-service", "game-session-service", "world-management-service")
+fixture_services = (
+    "account-service", "entity-management-service", "game-design-service",
+    "game-session-service", "world-management-service",
+)
 for name in app_names:
     service = services[name]
     environment = service.get("environment", {})
@@ -530,7 +545,7 @@ for name in app_names:
     assert service.get("build") is None, f"image-only proof must not build {name}"
 for name in (
     "account-service", "game-session-service", "entity-management-service",
-    "world-management-service", "game-design-service", "logging-admin-service",
+    "world-management-service", "game-design-service", "game-logic-service", "logging-admin-service",
 ):
     namespace = services[name]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
     assert namespace == "dev", (name, namespace)
@@ -597,6 +612,16 @@ world_management_receipt_mounts = [mount for mount in world_management.get("volu
 assert len(world_management_receipt_mounts) == 1, world_management_receipt_mounts
 assert world_management_receipt_mounts[0]["source"] == source_receipt_source, world_management_receipt_mounts[0]
 assert world_management_receipt_mounts[0].get("read_only") is True
+for name in ("account-service", "entity-management-service"):
+    service = services[name]
+    environment = service["environment"]
+    assert environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED") == "false", name
+    assert environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH") == capability_path, name
+    assert environment.get("FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH") == source_receipt_path, name
+    for target, source in ((capability_path, capability_source), (source_receipt_dir, source_receipt_source)):
+        mounts = [mount for mount in service.get("volumes", []) if mount.get("target") == target]
+        assert len(mounts) == 1 and mounts[0]["source"] == source and mounts[0].get("read_only") is True, (name, target)
+assert services["game-logic-service"]["environment"].get("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED") == "false"
 for name, service in services.items():
     if name not in fixture_services:
         assert not any(mount.get("target") == capability_path for mount in service.get("volumes", [])), name

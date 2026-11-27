@@ -137,8 +137,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   @Test
   void discoveryDoesNotHideMalformedPlayerCreatedAuthority() {
     var created = discoveryTarget("created", "World", "PLAYER_CREATED");
-    var malformed =
-        mock(CanonicalPlayableTarget.class, org.mockito.AdditionalAnswers.delegatesTo(created));
+    var malformed = org.mockito.Mockito.spy(created);
     org.mockito.Mockito.doReturn("not-a-proof-digest").when(malformed).ownerProofDigest();
     var routes = mock(CanonicalPlayerRouteReadService.class);
     when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(malformed));

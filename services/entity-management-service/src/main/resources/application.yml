@@ -74,6 +74,7 @@ firemud:
           path-pattern: /.well-known/**
     grpc:
       public-methods:
+        - entity_management.v1.RunOwnedFixtureLookEntityService/ReadRunOwnedFixtureGround
         - entity_management.v1.EntityManagementService/Ping
   grpc:
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}

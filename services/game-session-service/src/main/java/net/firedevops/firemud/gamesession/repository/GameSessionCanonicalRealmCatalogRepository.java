@@ -823,11 +823,18 @@ public class GameSessionCanonicalRealmCatalogRepository {
               null);
       byte[] policyBytes = record.get("complete_policy_set_evidence", byte[].class);
       byte[] fixtureBytes = record.get("fixture_policy_request_bytes", byte[].class);
+      CanonicalRealmCatalogSnapshot.FixturePolicy fixturePolicy = null;
       if (policyBytes != null && fixtureBytes == null) {
         validateCompleteCatalogPolicy(
             storedRequest, sourceReceipt, RealmPolicyPublishedEvidenceCodec.decode(policyBytes));
       } else if (policyBytes == null && fixtureBytes != null) {
         validateRetainedFixturePolicy(record, storedRequest, sourceReceipt, fixtureBytes);
+        fixturePolicy =
+            new CanonicalRealmCatalogSnapshot.FixturePolicy(
+                fixtureBytes,
+                required(record, "fixture_policy_seal_operation_id", UUID.class),
+                required(record, "fixture_policy_seal_request_digest", String.class),
+                required(record, "fixture_policy_seal_evidence_digest", String.class));
         policyBytes = fixtureBytes;
       } else {
         throw new InvalidCatalogEvidenceException(
@@ -877,7 +884,8 @@ public class GameSessionCanonicalRealmCatalogRepository {
           requestId,
           persistedRequestDigest,
           required(record, RECEIPT_DIGEST, "catalog receipt digest"),
-          sourceReceipt);
+          sourceReceipt,
+          fixturePolicy);
     } catch (InvalidCatalogEvidenceException | CatalogConflictException exception) {
       throw exception;
     } catch (RuntimeException exception) {

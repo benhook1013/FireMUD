@@ -33,16 +33,33 @@ public class AccountTenantMembershipRepository {
   private final AccountRepository accountRepository;
   private final FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository;
   private final AccountMembershipPairAuthorityRepository pairAuthorityRepository;
+  private final AccountAuthorityGenerationRepository authorityGenerationRepository;
 
   public AccountTenantMembershipRepository(
       DSLContext dsl,
       AccountRepository accountRepository,
       FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
       AccountMembershipPairAuthorityRepository pairAuthorityRepository) {
+    this(
+        dsl,
+        accountRepository,
+        freshTenantIdentityAssociationRepository,
+        pairAuthorityRepository,
+        new AccountAuthorityGenerationRepository(dsl));
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AccountTenantMembershipRepository(
+      DSLContext dsl,
+      AccountRepository accountRepository,
+      FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
+      AccountMembershipPairAuthorityRepository pairAuthorityRepository,
+      AccountAuthorityGenerationRepository authorityGenerationRepository) {
     this.dsl = dsl;
     this.accountRepository = accountRepository;
     this.freshTenantIdentityAssociationRepository = freshTenantIdentityAssociationRepository;
     this.pairAuthorityRepository = pairAuthorityRepository;
+    this.authorityGenerationRepository = authorityGenerationRepository;
   }
 
   public Optional<AccountTenantMembership> findByAccountIdAndTenantId(
@@ -229,6 +246,13 @@ public class AccountTenantMembershipRepository {
         pairAuthorityRepository.readForUpdate(accountUuid, tenantUuid);
     PairAuthority baseline;
     if (existingPair.isEmpty()) {
+      // A player who never joined has no membership scope yet; the first JOIN's authority event
+      // reads it, so establish the pristine scope with the never-joined pair, as creators do.
+      var generation =
+          authorityGenerationRepository.initializeMembershipIfAbsent(accountUuid, tenantUuid);
+      if (generation.generation() != 1L || generation.sourceVersion() != 1L) {
+        throw new IllegalStateException("Fresh first JOIN membership generation is not pristine");
+      }
       baseline = pairAuthorityRepository.enrollAbsence(accountUuid, tenantUuid, expectedProvenance);
       if (!absenceBaseline.equals(baseline)) {
         throw new IllegalStateException(

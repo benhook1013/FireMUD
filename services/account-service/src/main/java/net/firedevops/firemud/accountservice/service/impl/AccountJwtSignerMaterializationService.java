@@ -691,9 +691,10 @@ public class AccountJwtSignerMaterializationService
       return Status.ALREADY_EXISTS.withDescription(
           "JWT materialization operation or public result conflicts with retained Account evidence");
     }
-    if (exception instanceof BootstrapOperationException) {
+    if (exception instanceof BootstrapOperationException bootstrapFailure) {
       return Status.FAILED_PRECONDITION.withDescription(
-          "Account JWT signer bootstrap enrollment is quarantined");
+          "Account JWT signer bootstrap enrollment is quarantined: "
+              + bootstrapFailure.failureCode());
     }
     if (exception instanceof AccountJwtSignerDesiredStateRepository.NoPreparedPromotionException) {
       return Status.NOT_FOUND.withDescription("No Account-authorized signer promotion is pending");

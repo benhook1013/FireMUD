@@ -36,7 +36,7 @@ class AccountCharacterCreateStoragePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", "public"))
         .locations("classpath:db/migration", "classpath:db/migration/saga")
         .table("flyway_schema_history_account_service")
-        .target("1048")
+        .target("1048.1")
         .load()
         .migrate();
     String existing = "ACCOUNT:" + UUID.randomUUID();

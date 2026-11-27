@@ -1631,8 +1631,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
           inputs.canonicalRegionId(),
           inputs.lifecycleEpoch(),
           inputs.lifecycleRowVersion(),
-          inputs.captureId(),
-          inputs.graphSha256(),
+          CanonicalGameplayRegionRuntimeStatusRepository.captureParam(inputs.captureId()),
+          CanonicalGameplayRegionRuntimeStatusRepository.graphParam(inputs.graphSha256()),
+          inputs.captureId() == null
+              ? CanonicalGameplayRegionRuntimeStatusRepository.RUN_OWNED_FIXTURE_SOURCE_KIND
+              : CanonicalGameplayRegionRuntimeStatusRepository.HUMAN_CAPTURE_SOURCE_KIND,
           inputs.preparationInputDigest(),
           decimal(ownerStatus.executorFence()),
           ownerStatus.leaseTokenCorrelation(),
@@ -1650,7 +1653,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " assignment_intent_digest = ?, entity_created_origin = CAST(? AS jsonb), entity_reference_digest = ?,"
             + " world_source_digest = ?, canonical_region_id = ?,"
             + " world_lifecycle_epoch = ?, world_lifecycle_row_version = ?,"
-            + " world_capture_id = ?, world_graph_sha256 = ?,"
+            + " world_capture_id = ?, world_graph_sha256 = ?, world_source_kind = ?,"
             + " world_preparation_input_digest = ?, executor_fence = ?,"
             + " lease_token_correlation = ?, inventory_revision = ?"
             + " WHERE transition_id = ? AND "
@@ -1855,8 +1858,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         && obligation.canonicalRegionId().equals(inputs.canonicalRegionId())
         && obligation.worldLifecycleEpoch() == inputs.lifecycleEpoch()
         && obligation.worldLifecycleRowVersion() == inputs.lifecycleRowVersion()
-        && obligation.worldCaptureId().equals(inputs.captureId())
-        && obligation.worldGraphSha256().equals(inputs.graphSha256())
+        && Objects.equals(obligation.worldCaptureId(), inputs.captureId())
+        && Objects.equals(obligation.worldGraphSha256(), inputs.graphSha256())
         && obligation.worldPreparationInputDigest().equals(inputs.preparationInputDigest());
   }
 
@@ -1924,8 +1927,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !identity.gameInstanceId().equals(ownerStatus.gameInstanceId())
         || !resolvedRegion.canonicalRegionInstanceId().equals(ownerStatus.canonicalRegionId())
         || !resolvedRegion.operationalRegionId().equals(ownerStatus.regionId())
-        || !assignment.captureId().equals(ownerStatus.captureId())
-        || !assignment.graphSha256().equals(ownerStatus.graphSha256())
+        || !Objects.equals(assignment.captureId(), ownerStatus.captureId())
+        || !Objects.equals(assignment.graphSha256(), ownerStatus.graphSha256())
         || !assignment.preparationInputDigest().equals(ownerStatus.preparationInputDigest())
         || !CanonicalGameplayRegionRuntimeStatusRepository.sameLifecycleRequestExceptReadRequestId(
             assignment.request(), ownerStatus.lifecycleRequest())

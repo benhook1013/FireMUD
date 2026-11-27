@@ -1,0 +1,176 @@
+# Pre-v1 gate waivers (ADR 0185): Compose stand-ins for the authenticated Telnet LOGIN.
+# Listed in the player access tracker's "Pre-v1 gate waivers" section; owed before v1.
+# Requires FIREMUD_PRE_V1_SIGNER_FIXTURES (from dev-tools/smoke/pre-v1-signer-fixtures.py).
+
+# Coordination is plaintext with fixed ACL passwords here: a pre-v1 waiver; TLS is owed.
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          # Dynamic addresses come only from the upper half, so the fixed validator IP below
+          # (172.30.0.20) stays free even though Game Session now starts last.
+          ip_range: 172.30.0.128/25
+
+volumes:
+  pre-v1-jwt-secret:
+  pre-v1-jwks-projection:
+
+services:
+  # WAITAOF waits for the next fsync; everysec adds up to 1s per LOGIN write and overruns the
+  # Game Session 3s Account LOGIN budget, so local Coordination fsyncs every write.
+  redis-coord:
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+      - --appendfsync
+      - always
+      - --user
+      - account_coord_app
+      - "on"
+      - ">pre-v1-account-coordination"
+      - "~*"
+      - "&*"
+      - "+@all"
+      - --user
+      - gamesession_coord_app
+      - "on"
+      - ">pre-v1-game-session-coordination"
+      - "~*"
+      - "&*"
+      - "+@all"
+
+  # Account LOGIN requires one replica AOF acknowledgement (WAITAOF), so Compose runs a replica.
+  redis-coord-replica:
+    image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
+    command: ["redis-server", "--replicaof", "redis-coord", "6379", "--appendonly", "yes",
+              "--appendfsync", "always", "--save", ""]
+    depends_on:
+      redis-coord:
+        condition: service_healthy
+
+  pre-v1-kube-api:
+    image: python:3.12-slim@sha256:31a416db24bd8ade7dac5fd5999ba6c234d7fa79d4add8781e95f41b187f4c9a
+    command:
+      - python3
+      - /pre-v1/pre-v1-kube-api-standin.py
+      - --cert=/fixtures/kube/tls.crt
+      - --key=/fixtures/kube/tls.key
+      - --token-file=/fixtures/kube/token
+      - --username=system:serviceaccount:dev:account-service
+      - --namespace=dev
+      - --namespace-uid=${FIREMUD_PRE_V1_NAMESPACE_UID:?run the pre-v1 signer fixtures first}
+      - --cluster-uid=${FIREMUD_PRE_V1_CLUSTER_UID:?run the pre-v1 signer fixtures first}
+      - --config-map-uid=${FIREMUD_PRE_V1_CONFIG_MAP_UID:?run the pre-v1 signer fixtures first}
+      - --projection-dir=/projection
+      - --inventory=/fixtures/account-jwt-api/validator-inventory.json
+    volumes:
+      - ../dev-tools/smoke/pre-v1-kube-api-standin.py:/pre-v1/pre-v1-kube-api-standin.py:ro
+      - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}:/fixtures:ro
+      - pre-v1-jwks-projection:/projection
+    networks:
+      default:
+        aliases: [pre-v1-kube-api]
+
+  pre-v1-jwt-materializer:
+    image: python:3.12-slim@sha256:31a416db24bd8ade7dac5fd5999ba6c234d7fa79d4add8781e95f41b187f4c9a
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        pip install --quiet --no-cache-dir grpcio==1.68.1 grpcio-tools==1.68.1 cryptography==44.0.0
+        && exec python3 /pre-v1/pre-v1-jwt-materializer-standin.py
+        --account=account-service:6565 --protos=/protos
+        --cert=/fixtures/materializer/tls.crt --key=/fixtures/materializer/tls.key
+        --ca=/fixtures/materializer/ca.crt --secret-dir=/secret
+    volumes:
+      - ../dev-tools/smoke/pre-v1-jwt-materializer-standin.py:/pre-v1/pre-v1-jwt-materializer-standin.py:ro
+      - ../protos:/protos:ro
+      - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}:/fixtures:ro
+      - pre-v1-jwt-secret:/secret
+    depends_on:
+      account-service:
+        condition: service_healthy
+    # Healthy once the first signer is promoted; signer readiness first waits out the 300 s
+    # maximum validator JWKS cache age, so allow well beyond that.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/firemud-signer-promoted"]
+      interval: 5s
+      timeout: 3s
+      retries: 150
+      start_period: 30s
+
+  account-service:
+    # The first protected admission issues a credential and reserves capacity within a 15 s lease.
+    cpus: "1.0"
+    # The pre-v1 signer, readiness and gameplay-login owners exceed the 512m default; a CI run
+    # lost Account without an error on its first post-promotion LOGIN.
+    mem_limit: 1g
+    depends_on:
+      redis-coord-replica:
+        condition: service_started
+    user: "0:0"
+    entrypoint: ["/bin/bash", "/pre-v1/pre-v1-account-entrypoint.sh"]
+    environment:
+      FIREMUD_ACCOUNT_PUBLIC_JWKS_API_BINDING_PATH: /etc/firemud/account-jwt-api/binding.json
+      FIREMUD_ACCOUNT_PUBLIC_JWKS_READ_ENABLED: "true"
+      FIREMUD_ACCOUNT_JWT_SIGNER_MATERIALIZATION_ENABLED: "true"
+      FIREMUD_ACCOUNT_JWT_SIGNER_MATERIALIZATION_PROTECTED_BINDING_PATH: /etc/firemud/account-jwt-materializer/binding.properties
+      FIREMUD_ACCOUNT_JWT_READINESS_VALIDATION_ENABLED: "true"
+      FIREMUD_ACCOUNT_JWT_READINESS_VALIDATION_PROTECTED_BINDING_PATH: /etc/firemud/account-jwt-readiness/binding.properties
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_ENABLED: "true"
+      FIREMUD_ACCOUNT_CANONICAL_REALM_ADMISSION_ENABLED: "true"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_URI: redis://account_coord_app:pre-v1-account-coordination@redis-coord:6379/0
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_COMMAND_TIMEOUT_MILLIS: "2000"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_REQUIRED_LOCAL_AOF_COUNT: "1"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_REQUIRED_REPLICA_AOF_COUNT: "1"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_ACKNOWLEDGEMENT_TIMEOUT_MILLIS: "2000"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_REGISTRY_CLEANUP_MARGIN_MILLIS: "60000"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_REQUEST_DIGEST_KEYRING_PATH: /var/run/secrets/firemud/request-digest
+      FIREMUD_ACCOUNT_RESPONSE_ENVELOPE_KEYRING_PATH: /var/run/secrets/firemud/response-envelope
+      LOGGING_LEVEL_NET_FIREDEVOPS_FIREMUD_ACCOUNTSERVICE_CONFIG: DEBUG
+    volumes:
+      - ../dev-tools/smoke/pre-v1-account-entrypoint.sh:/pre-v1/pre-v1-account-entrypoint.sh:ro
+      - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}:/pre-v1-fixtures:ro
+      - pre-v1-jwt-secret:/var/run/secrets/firemud/jwt:ro
+      - pre-v1-jwks-projection:/var/run/secrets/firemud/jwks:ro
+
+  world-management-service:
+    environment:
+      FIREMUD_WORLD_RUNTIME_INSTALLATION_INVENTORY_PATH: /etc/firemud/world-runtime-installation/inventory.json
+    volumes:
+      # Pre-v1 waiver: read-only runtime installation inventory for the run-owned fixture.
+      - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}/world-runtime-installation:/etc/firemud/world-runtime-installation:ro
+
+  game-session-service:
+    # Candidate installation and final readback share the same admission lease.
+    cpus: "1.0"
+    # Authenticated LOGIN needs a promoted Account signer; start only once it is live.
+    depends_on:
+      pre-v1-jwt-materializer:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18444:8444"
+    environment:
+      FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256: ${FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256:-}
+      FIREMUD_GAME_SESSION_AUTHENTICATED_GAMEPLAY_ENABLED: "true"
+      FIREMUD_GAME_SESSION_CANONICAL_PLAY_PRE_V1_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_ENABLED: "true"
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_URI: redis://gamesession_coord_app:pre-v1-game-session-coordination@redis-coord:6379/0
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_COMMAND_TIMEOUT_MILLIS: "2000"
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_PROTECTED_BINDING_ID: compose-coordination
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_PROFILE: SINGLE_NODE_NO_FAILOVER
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_REQUIRED_LOCAL_AOF_COUNT: "1"
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_REQUIRED_REPLICA_AOF_COUNT: "0"
+      FIREMUD_GAME_SESSION_INITIAL_GAMEPLAY_LOGIN_PROTECTED_SOURCES_COORDINATION_ACKNOWLEDGEMENT_TIMEOUT_MILLIS: "2000"
+      FIREMUD_GAME_SESSION_ACCOUNT_PUBLIC_JWKS_ENABLED: "true"
+      # The public-JWKS read client requires an explicit Account endpoint (no implicit default).
+      FIREMUD_SERVICES_ACCOUNT_SERVICE: account-service:6565
+      FIREMUD_GAME_SESSION_ACCOUNT_PUBLIC_JWKS_MAXIMUM_CACHE_AGE_MILLIS: "60000"
+      FIREMUD_CANONICAL_GAMEPLAY_ROSTER_OWNER_READ_ENABLED: "true"
+    volumes:
+      # Same root-owned AtomicWriter projection Account publishes through the Kubernetes stand-in.
+      - pre-v1-jwks-projection:/var/run/secrets/firemud/jwks:ro
+    networks:
+      default:
+        ipv4_address: 172.30.0.20

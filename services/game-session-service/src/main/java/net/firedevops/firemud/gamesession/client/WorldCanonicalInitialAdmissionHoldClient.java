@@ -172,7 +172,7 @@ public final class WorldCanonicalInitialAdmissionHoldClient
         throw new IllegalArgumentException(
             "World initial-admission state changed the exact immutable hold identity");
       }
-      if (!lifecycleRequest.equals(state.lifecycleEvidence().request())) {
+      if (!lifecycleRequest.equals(state.lifecycleRequest())) {
         throw new IllegalArgumentException(
             "World initial-admission state changed the complete lifecycle read request");
       }

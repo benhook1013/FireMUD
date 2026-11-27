@@ -357,7 +357,7 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
 
   private static String validCapabilityJson() {
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":7,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
+        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":7,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"PRESEEDED_ONLY","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
         """
         .formatted(
             RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,

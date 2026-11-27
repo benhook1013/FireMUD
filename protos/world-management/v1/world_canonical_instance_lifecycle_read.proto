@@ -9,6 +9,9 @@ option java_multiple_files = true;
 service WorldCanonicalInstanceLifecycleReadService {
   rpc ReadWorldCanonicalInstanceLifecycle(ReadWorldCanonicalInstanceLifecycleRequest)
       returns (ReadWorldCanonicalInstanceLifecycleResponse);
+  // Read-only start room of the exact ACTIVE run-owned fixed fixture.
+  rpc ReadRunOwnedFixtureStartRoom(ReadRunOwnedFixtureStartRoomRequest)
+      returns (ReadRunOwnedFixtureStartRoomResponse);
 }
 
 message ReadWorldCanonicalInstanceLifecycleRequest {
@@ -19,4 +22,13 @@ message ReadWorldCanonicalInstanceLifecycleRequest {
 message ReadWorldCanonicalInstanceLifecycleResponse {
   // Complete closed evidence bytes, including the exact request echo and full launch binding.
   bytes canonical_response_bytes = 1;
+}
+
+message ReadRunOwnedFixtureStartRoomRequest {
+  ReadWorldCanonicalInstanceLifecycleRequest lifecycle = 1;
+}
+
+message ReadRunOwnedFixtureStartRoomResponse {
+  ReadWorldCanonicalInstanceLifecycleResponse lifecycle = 1;
+  string room_instance_key = 2;
 }

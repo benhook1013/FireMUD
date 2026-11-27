@@ -79,7 +79,7 @@ public interface AccountService {
 
   void revokeRealmAccess(Long accountId, Long tenantId, String worldSlug, String realmSlug);
 
-  RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId);
+  RuntimeEntitlementsDto getTenantEntitlementsForRuntime(UUID tenantId, String requestId);
 
   ProfileDto getProfile(Long tenantId, Long accountId);
 

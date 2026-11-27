@@ -81,8 +81,11 @@ docker() {
         local arguments=" $* "
         if [[ "$arguments" == *" up "* ]]; then
           touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
+          printf 'up\n' >>"$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.starts"
+          touch "$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH/source-receipt.json"
         elif [[ "$arguments" == *" down "* ]]; then
-          if [[ -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources" && "${SMOKE_TEST_CLEANUP_FAIL:-false}" == true ]]; then
+          if [[ -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources" && "${SMOKE_TEST_CLEANUP_FAIL:-false}" == true ]] \
+            && [[ -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.telnet-probed" || "${SMOKE_TEST_PROBE_STATUS:-0}" != 0 ]]; then
             return 92
           fi
           rm -f "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
@@ -131,6 +134,14 @@ python3() {
     printf 'MOCK_HELD_ADMISSION_PROBE\n'
     return "${SMOKE_TEST_HELD_ADMISSION_STATUS:-0}"
   fi
+  if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true \
+    && "${1:-}" == */pre-v1-signer-fixtures.py ]]; then
+    # The mock certificates cannot sign real pre-v1 signer leaves; only the identity is consumed.
+    mkdir -p "$2"
+    printf '%s\n' '{"expectedNamespaceUid":"mock-ns","expectedClusterIncarnationUid":"mock-cluster","configMapUid":"mock-cm"}' \
+      >"$2/identity.json"
+    return 0
+  fi
   command python3 "$@"
 }
 export -f python3
@@ -156,6 +167,10 @@ bash() {
         "$certificate_root/workloads/world-management-service/client.crt"
       cp "$certificate_root/workloads/game-session-service/ca.crt" \
         "$certificate_root/workloads/world-management-service/ca.crt"
+      (umask 077; mkdir -p "$certificate_root/websocket-client")
+      cp "$certificate_root/workloads/game-session-service/client.crt" \
+        "$certificate_root/websocket-client/client.crt"
+      (umask 077; : >"$certificate_root/websocket-client/client.key")
       ;;
     verify-compose-health.sh)
       return 0
@@ -165,6 +180,7 @@ bash() {
       return "${SMOKE_TEST_PROBE_STATUS:-0}"
       ;;
     telnet-login-look-smoke.sh)
+      touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.telnet-probed"
       printf 'MOCK_TELNET_PROBE\n'
       ;;
     *)
@@ -252,6 +268,7 @@ run_diagnostic_smoke_case() {
 run_failure_diagnostic_regressions() {
   run_diagnostic_smoke_case cleanup-success false 0 false 0
   [[ ! -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-cleanup-success.resources" ]]
+  [[ "$(wc -l <"$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-cleanup-success.starts")" -eq 2 ]]
   SMOKE_TEST_CLEANUP_FAIL=true run_diagnostic_smoke_case cleanup-failure false 0 false 1
   [[ -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-cleanup-failure.resources" ]]
   grep -Fq 'proof cleanup failed or remains unknown' "$ERR_FILE"

@@ -15,7 +15,7 @@ public record CanonicalInitialAdmissionLaunchTarget(
     if (gameInstanceId <= 0L || runtimeVersionId <= 0L) {
       throw new IllegalArgumentException("Canonical launch target identifiers must be positive");
     }
-    if (association.launchBindingEvidence().descriptor().versionId() != runtimeVersionId) {
+    if (association.descriptor().versionId() != runtimeVersionId) {
       throw new IllegalArgumentException(
           "Current runtime version does not match the canonical launch descriptor");
     }
@@ -23,6 +23,6 @@ public record CanonicalInitialAdmissionLaunchTarget(
 
   /** Canonical content version from retained publication evidence, never from the numeric row. */
   public UUID canonicalVersionId() {
-    return association.launchBindingEvidence().releaseAttestation().canonicalVersionId();
+    return association.canonicalVersionId();
   }
 }

@@ -200,6 +200,22 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
   }
 
   @Test
+  void runOwnedFixtureSourceShapeRoundTripsThroughTheResponse() {
+    var request = request(ACCOUNT, REQUEST);
+    Map<String, Object> fixtureSources = sources();
+    fixtureSources.remove("worldCaptureId");
+    fixtureSources.remove("publishedPolicySetDigest");
+    fixtureSources.remove("worldLifecycleDigest");
+    fixtureSources.put("fixturePolicySealDigest", "sha256:" + "c".repeat(64));
+    fixtureSources.put("fixtureLifecycleDigest", "sha256:" + "d".repeat(64));
+    var value = capture(target(), facts(), fixtureSources, NOW);
+    var response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, value);
+    var parsed = RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, response);
+    assertThat(parsed).isEqualTo(value);
+    assertThat(parsed.isRunOwnedFixtureSource()).isTrue();
+  }
+
+  @Test
   void changedCallerRequestOrScopeCannotBeReturnedAsCorrelatedEvidence() {
     var request = request(ACCOUNT, REQUEST);
     var value = capture(target(), facts(), sources(), NOW);

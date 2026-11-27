@@ -184,7 +184,7 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceTestFixtures {
             true,
             false,
             "SHARED",
-            "ALLOW_NEW",
+            "PRESEEDED_ONLY",
             gameSessionLeafSha256,
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
             caCertificateSha256,
