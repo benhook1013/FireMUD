@@ -145,7 +145,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
             accountClient.confirmOriginalNewGameplayAdmission(
                 originalLoginJwt,
                 originalLeaseBytes,
-                confirmationDeadline(absoluteDeadlineMillis),
+                admissionDeadline(absoluteDeadlineMillis),
                 committedCapacity.selector());
         requireDeadline(absoluteDeadlineMillis);
         requireConfirmation(source, recoveredConfirmation, null, originalDecision);
@@ -157,7 +157,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
       try (OriginalNewCredential credential =
           accountClient.issueOriginalNewBoundGameplayCredential(
-              originalLoginJwt, originalLeaseBytes)) {
+              originalLoginJwt, originalLeaseBytes, admissionDeadline(absoluteDeadlineMillis))) {
         requireCredentialLease(source, originalDecision, credential);
         try (CanonicalGameplayOriginalNewAuthenticatedSession.Template template =
             CanonicalGameplayOriginalNewAuthenticatedSession.template(
@@ -288,7 +288,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                   accountClient.confirmOriginalNewGameplayAdmission(
                       originalLoginJwt,
                       originalLeaseBytes,
-                      confirmationDeadline(absoluteDeadlineMillis),
+                      admissionDeadline(absoluteDeadlineMillis),
                       committedCapacity == null ? null : committedCapacity.selector());
               requireDeadline(absoluteDeadlineMillis);
               requireConfirmation(source, confirmation, credential, originalDecision);
@@ -669,7 +669,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private Deadline confirmationDeadline(long absoluteDeadlineMillis) {
+  private Deadline admissionDeadline(long absoluteDeadlineMillis) {
     long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
     if (remainingMillis <= 0L) throw unavailable();
     return Deadline.after(remainingMillis, TimeUnit.MILLISECONDS);
