@@ -1476,6 +1476,96 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void retainedDefinitivePreparationRequiresItsExactHistoricalIdentity() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry preparation = authorizedDispatch(base);
+    UUID operationId = preparation.effect().operationId();
+    UUID effectId = preparation.effect().effectId();
+    UUID attemptId = preparation.lastAttemptId();
+    EffectReadback initial =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "initial",
+            base.plusSeconds(5));
+    EffectReadback firstRefresh =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "first-refresh",
+            base.plusSeconds(6));
+    EffectReadback latest =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "latest",
+            base.plusSeconds(7));
+    journal.recordEffectReadback(preparation, initial, base.plusSeconds(5));
+    journal.recordEffectReadback(preparation, firstRefresh, base.plusSeconds(6));
+    Operation releasing = journal.recordEffectReadback(preparation, latest, base.plusSeconds(7));
+    String retained = storedOutbox(operationId, effectId);
+    OutboxEntry pending = journal.findNextEffect(operationId).orElseThrow();
+    String historyTable = "recovery_control.initial_gameplay_release_preparation_receipt";
+    String latestIdentity = tupleCodec.digest(latest.readbackIdentity());
+    String removeIdentity =
+        "DELETE FROM " + historyTable + " WHERE outbox_id = ? AND identity_digest = ?";
+
+    assertThat(dsl.execute(removeIdentity, preparation.outboxId(), latestIdentity)).isEqualTo(1);
+    assertThat(journal.recordEffectReadback(preparation, initial, base.plusSeconds(8)))
+        .isEqualTo(releasing);
+    var partial =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial",
+            base.plusSeconds(8));
+    for (EffectReadback observation : List.of(latest, partial)) {
+      assertThatThrownBy(
+              () -> journal.recordEffectReadback(preparation, observation, base.plusSeconds(8)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("retained preparation readback has no exact historical identity");
+    }
+    UUID handoffId = pending.effect().effectId();
+    UUID handoffAttempt = UUID.randomUUID();
+    assertThatThrownBy(
+            () -> journal.claimEffect(operationId, handoffId, handoffAttempt, base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained preparation readback has no exact historical identity");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(journal.findNextEffect(operationId)).contains(pending);
+
+    assertThat(
+            dsl.execute(
+                "INSERT INTO " + historyTable + " (outbox_id, identity_digest) VALUES (?, ?)",
+                preparation.outboxId(),
+                latestIdentity))
+        .isEqualTo(1);
+    var handoff = journal.claimEffect(operationId, handoffId, handoffAttempt, base.plusSeconds(8));
+    var applied =
+        readbackFor(
+            handoff,
+            handoffAttempt,
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "applied",
+            base.plusSeconds(9));
+    var finalized = journal.recordEffectReadback(handoff, applied, base.plusSeconds(9));
+    assertThat(finalized.phase()).isEqualTo(Phase.FINALIZED);
+    assertThat(journal.recordEffectReadback(preparation, latest, base.plusSeconds(10)))
+        .isEqualTo(finalized);
+
+    assertThat(dsl.execute(removeIdentity, preparation.outboxId(), latestIdentity)).isEqualTo(1);
+    assertThatThrownBy(
+            () -> journal.recordEffectReadback(preparation, latest, base.plusSeconds(10)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained preparation readback has no exact historical identity");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+  }
+
+  @Test
   void dispatchedHandoffFinalizesWhileNewerPartialPreparationRemainsCurrent() {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry prepare = authorizedDispatch(base);
@@ -3166,6 +3256,60 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasMessageContaining("retained local no-send proof does not match");
     }
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retainedPartialMustBeAtOrAfterItsStoredDispatch(boolean ownerRejected) {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    UUID attemptId = dispatch.lastAttemptId();
+    if (ownerRejected) {
+      assertThat(
+              journal.recordRetryableEffectForDispatch(
+                  dispatch, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(4)))
+          .isTrue();
+    }
+    var partial =
+        readbackFor(
+            dispatch,
+            attemptId,
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial",
+            base.plusSeconds(5));
+    var newerPartial =
+        readbackFor(
+            dispatch,
+            attemptId,
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "newer-partial",
+            base.plusSeconds(7));
+    Operation operation = journal.recordEffectReadback(dispatch, partial, base.plusSeconds(6));
+    String updateDispatch =
+        "UPDATE recovery_control.initial_gameplay_release_outbox"
+            + " SET last_dispatched_at = CAST(? AS timestamptz) WHERE outbox_id = ?";
+    assertThat(
+            dsl.execute(
+                updateDispatch, base.plusSeconds(6).atOffset(ZoneOffset.UTC), dispatch.outboxId()))
+        .isEqualTo(1);
+    String retained = storedOutbox(operationId, effectId);
+    assertThatThrownBy(
+            () -> journal.recordEffectReadback(dispatch, newerPartial, base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect readback is stale");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(journal.find(operationId)).contains(operation);
+
+    // An observation from the exact stored dispatch instant is a valid floor.
+    assertThat(
+            dsl.execute(
+                updateDispatch, partial.observedAt().atOffset(ZoneOffset.UTC), dispatch.outboxId()))
+        .isEqualTo(1);
+    assertThat(journal.recordEffectReadback(dispatch, newerPartial, base.plusSeconds(8)))
+        .isEqualTo(operation);
+    assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(newerPartial));
   }
 
   @ParameterizedTest

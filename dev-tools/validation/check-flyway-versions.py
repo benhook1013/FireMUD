@@ -155,17 +155,20 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     for path in sorted(snapshot):
         if path.startswith(recovery_java_root):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql"):
-            if not path.endswith(".sql"):
-                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
-            if "/" in path.removeprefix(RECOVERY_SQL_ROOT):
-                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
-            elif not VERSION_RE.fullmatch(Path(path).name):
-                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".java"):
-            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql.conf"):
+        if not path.startswith(RECOVERY_SQL_ROOT):
+            continue
+        relative = path.removeprefix(RECOVERY_SQL_ROOT)
+        if relative.lower().endswith(".sql.conf"):
             issues.append(f"{path}: Recovery migration sidecars are unsupported because jOOQ reads only the SQL")
+        elif relative.lower().endswith(".sql"):
+            if not relative.endswith(".sql"):
+                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
+            if "/" in relative:
+                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
+            elif not VERSION_RE.fullmatch(relative):
+                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+        else:
+            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
     return issues
 
 
@@ -295,8 +298,10 @@ def recovery_flyway_locations(
                 continue
             parts = tuple(re.sub(r"[-_]", "", part).lower() for part in key.split("."))
             path = ".".join((*prefix, *parts))
-            if path in properties and properties[path] != child:
-                ambiguous.add(path)
+            if path in properties:
+                previous = properties[path]
+                if type(previous) is not type(child) or previous != child:
+                    ambiguous.add(path)
             properties[path] = child
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
@@ -689,6 +694,15 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    invalid_recovery_root = {**recovery_history, recovery + "Vdraft__notes.txt": b"keep notes elsewhere"}
+    check("a non-SQL Recovery input can break jOOQ sort before filtering", invalid_recovery_root,
+          recovery_history, "Recovery migration sources must be SQL-only")
+    check("non-SQL entries in the receiving parent remain invalid", recovery_history,
+          invalid_recovery_root, "Recovery migration sources must be SQL-only")
+    check("conflicting YAML scalar types at the same normalized path are ambiguous", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    enabled: 1\n    ENABLED: true\n",
+    }, recovery_history, "historical effective migration no longer applied")
     check("explicitly disabled Flyway encoding detection preserves fixed UTF-8 migrations", {
         **recovery_history, recovery_config: recovery_settings + b"    detect-encoding: false\n",
     }, recovery_history, None)

@@ -46,6 +46,18 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void evidenceReferenceMustBeRepresentableInTheJournal() {
+    for (String noncharacter : List.of("\\uFDD0", "\\uD83F\\uDFFF")) {
+      assertThatThrownBy(
+              () -> decode(WIRE.replace("\"evidence\"", "\"owner-" + noncharacter + "\"")))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var valid = decode(WIRE.replace("\"evidence\"", "\"owner-\\uD83D\\uDE80\""));
+    assertThat(valid.target().evidenceRef()).isEqualTo("owner-" + Character.toString(0x1f680));
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(valid)).isNotEqualTo(DIGEST);
+  }
+
+  @Test
   void requestIdentityIsRetainedButExcludedFromMutationDigest() {
     var changed = decode(WIRE.replace("000000000001", "000000000009"));
     assertThat(changed.controlPlaneRequestId()).isNotEqualTo(decode(WIRE).controlPlaneRequestId());

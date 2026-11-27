@@ -634,7 +634,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               && stored != null
               && readback.equals(
                   latestPreparationObservation(
-                      stored, current, requireReadbackReceipt(stored, current)))) {
+                      tx, stored, current, requireReadbackReceipt(stored, current)))) {
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
@@ -850,7 +850,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       String readbackDigest,
       Instant now) {
     EffectReadback acknowledgement = requireReadbackReceipt(stored, preparation);
-    EffectReadback previous = latestPreparationObservation(stored, preparation, acknowledgement);
+    EffectReadback previous =
+        latestPreparationObservation(tx, stored, preparation, acknowledgement);
     requireTerminalReplayWithinAttempt(readback, stored, now);
     if (readback.equals(previous)) {
       return;
@@ -886,7 +887,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   private EffectReadback latestPreparationObservation(
-      Record stored, OutboxEntry preparation, EffectReadback acknowledgement) {
+      DSLContext context, Record stored, OutboxEntry preparation, EffectReadback acknowledgement) {
     JSONB payload = stored.get("preparation_observation_payload", JSONB.class);
     String digest = stored.get("preparation_observation_digest", String.class);
     if (payload == null && digest == null) {
@@ -908,6 +909,17 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     requireRetainedReadbackRecordingTime(observation, stored, "updated_at");
     if (observation.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       requireSuccessfulReadbackState(observation, preparation.effect().kind());
+      if (acknowledgement.readbackIdentity().equals(observation.readbackIdentity())
+          || context.fetchOne(
+                  """
+                  SELECT 1 FROM recovery_control.initial_gameplay_release_preparation_receipt
+                  WHERE outbox_id = ? AND identity_digest = ?
+                  """,
+                  preparation.outboxId(),
+                  tupleCodec.digest(observation.readbackIdentity()))
+              == null) {
+        throw conflict("retained preparation readback has no exact historical identity");
+      }
     }
     return observation;
   }
@@ -1201,7 +1213,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     EffectReadback acknowledgement = requireReadbackReceipt(stored, effect);
     if (kind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
-      EffectReadback observation = latestPreparationObservation(stored, effect, acknowledgement);
+      EffectReadback observation =
+          latestPreparationObservation(context, stored, effect, acknowledgement);
       if (observation.state() != EffectReadbackState.PREPARED_FENCED
           || observation.observedAt().isAfter(upperBound)) {
         throw conflict("retained preparation acknowledgement is unavailable");
@@ -1443,6 +1456,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     requireStoredReadbackIdentity(stored, previous);
     requireReadbackMatches(
         previous, current, current.effect().operationId(), current.effect().effectId());
+    requireTerminalReplayAfterDispatch(previous, stored);
     if (readback.observedAt().isBefore(previous.observedAt())) {
       throw conflict("effect readback predates the retained same-attempt observation");
     }
@@ -1468,6 +1482,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     requireStoredReadbackIdentity(stored, previous);
     requireReadbackMatches(
         previous, current, current.effect().operationId(), current.effect().effectId());
+    requireTerminalReplayAfterDispatch(previous, stored);
     return true;
   }
 
