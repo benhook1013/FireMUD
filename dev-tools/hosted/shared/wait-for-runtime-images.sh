@@ -62,11 +62,13 @@ import sys
 import re
 from datetime import datetime, timezone
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
+wait_mode, image_tag, merge_sha, base_sha, head_sha, *native = sys.argv[1:]
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
     raise SystemExit(1)
+if native:
+    payload = {"workflow_runs": [payload]}
 pages = payload if isinstance(payload, list) else [payload]
 if not pages or any(
     not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list)
@@ -117,6 +119,9 @@ run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse
 def clean_field(value):
     return isinstance(value, str) and bool(value) and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
 
+run_attempt = run.get("run_attempt") if wait_mode == "pull-request" else "-"
+if wait_mode == "pull-request" and (type(run_attempt) is not int or run_attempt <= 0):
+    raise SystemExit(1)
 run_id = run.get("id")
 if type(run_id) is not int or run_id <= 0:
     raise SystemExit(1)
@@ -139,16 +144,17 @@ except ValueError:
 if created > datetime.now(timezone.utc):
     raise SystemExit(1)
 print(
-    "found\t{}\t{}\t{}\t{}\t{}\t{}".format(
+    "found\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
         run_id,
         run["status"],
         conclusion,
         run["html_url"],
         run["event"],
         created_at,
+        run_attempt,
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
 
 fetch_publisher_runs() {
@@ -219,8 +225,8 @@ import json
 import re
 import sys
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id = sys.argv[1:]
-if not re.fullmatch(r"[1-9][0-9]*", source_run_id):
+wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id, source_run_attempt = sys.argv[1:]
+if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (source_run_id, source_run_attempt)):
     raise SystemExit(1)
 try:
     payload = json.load(sys.stdin)
@@ -240,21 +246,23 @@ workflow_runs = [
 if any(not isinstance(run, dict) for run in workflow_runs):
     raise SystemExit(1)
 if wait_mode == "pull-request":
+    source_suffix = f"source-run-{source_run_id} attempt-{source_run_attempt}"
     matching_runs = [
         run for run in workflow_runs
         if (run.get("event") == "repository_dispatch" and
-            run.get("display_title") == f"Publish PR Runtime Images source-run-{source_run_id}")
+            run.get("display_title") == f"Publish PR Runtime Images {source_suffix}")
         or (run.get("event") == "workflow_run" and
         (tokens := run.get("display_title", "").split())[:8] == [
             "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
             "secure-pr-artifact",
         ]
-        and len(tokens) == 13
+        and len(tokens) == 15
         and re.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])
         and tokens[9] == f"base-{base_sha}"
         and tokens[10] == f"head-{head_sha}"
         and tokens[11] == f"merge-{merge_sha}"
-        and tokens[12] == "mode-required")
+        and tokens[12] == "mode-required"
+        and " ".join(tokens[13:]) == source_suffix)
     ]
 else:
     matching_runs = []
@@ -263,20 +271,71 @@ if not matching_runs:
     raise SystemExit(0)
 
 run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
+attempt = run.get("run_attempt")
+if type(attempt) is not int or attempt <= 0:
+    raise SystemExit(1)
+url = run.get("html_url") or "-"
 print(
-    "found\t{}\t{}\t{}\t{}".format(
-        run.get("id", ""),
-        run.get("status", ""),
-        run.get("conclusion", ""),
-        run.get("html_url", ""),
+    "found\t{}\t{}\t{}\t{}\t{}".format(
+        run["id"], run.get("status"), run.get("conclusion"), url, attempt,
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1" "$2"
+}
+
+verify_publisher_attempt() {
+  local run_id="$1" run_attempt="$2" remaining="$3" jobs
+  (( remaining > 0 )) || return 1
+  if ! jobs="$(timeout "${remaining}s" gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${run_attempt}/jobs?per_page=100&page=1")"; then
+    return 1
+  fi
+  python3 -c '
+import json
+import sys
+
+run_id, attempt = map(int, sys.argv[1:])
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+jobs = payload.get("jobs")
+total = payload.get("total_count")
+if type(total) is not int or not 1 <= total <= 100 or not isinstance(jobs, list) or len(jobs) != total:
+    raise SystemExit(1)
+seen = set()
+publish = []
+for job in jobs:
+    if not isinstance(job, dict):
+        raise SystemExit(1)
+    job_id = job.get("id")
+    if (type(job_id) is not int or job_id <= 0 or job_id in seen
+            or type(job.get("run_id")) is not int or job["run_id"] != run_id
+            or type(job.get("run_attempt")) is not int or job["run_attempt"] != attempt):
+        raise SystemExit(1)
+    seen.add(job_id)
+    if job.get("name") == "Publish Fixed PR Merge Image Tags":
+        publish.append(job)
+if len(publish) != 1 or publish[0].get("status") != "completed" or publish[0].get("conclusion") != "success":
+    raise SystemExit(1)
+steps = publish[0].get("steps")
+if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+    raise SystemExit(1)
+for name in ("Download successful PR image artifacts",
+             "Validate exact PR source and artifact before registry login",
+             "Publish fixed PR image tags"):
+    matching = [step for step in steps if step.get("name") == name]
+    if len(matching) != 1 or matching[0].get("status") != "completed" or matching[0].get("conclusion") != "success":
+        raise SystemExit(1)
+' "${run_id}" "${run_attempt}" <<<"${jobs}"
 }
 
 wait_for_pr_publisher() {
   local source_run_id="$1"
-  local source_created_at="$2"
+  local source_run_attempt="$2"
+  local source_created_at="$3"
+  local source_event="$4"
   local coverage_unavailable=false
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
@@ -303,14 +362,14 @@ wait_for_pr_publisher() {
     fi
     coverage_unavailable=false
     publisher_payload="[${publisher_payload}]"
-    if ! publisher_state="$(read_publisher_state "${source_run_id}" <<<"${publisher_payload}")"; then
+    if ! publisher_state="$(read_publisher_state "${source_run_id}" "${source_run_attempt}" <<<"${publisher_payload}")"; then
       printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
       sleep "${sleep_seconds}"
       continue
     fi
 
-    local state run_id run_status run_conclusion run_url
-    IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${publisher_state}"
+    local state run_id run_status run_conclusion run_url publisher_attempt
+    IFS=$'\t' read -r state run_id run_status run_conclusion run_url publisher_attempt <<<"${publisher_state}"
 
     if [[ "${state}" == "missing" ]]; then
       local elapsed_seconds=$((SECONDS - publisher_start_epoch))
@@ -326,13 +385,37 @@ wait_for_pr_publisher() {
     fi
 
     if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+      if ! verify_publisher_attempt "${run_id}" "${publisher_attempt}" "$((publisher_deadline - SECONDS))"; then
+        printf 'Exact PR image publisher job and step success is unavailable for run %s attempt %s.\n' \
+          "${run_id}" "${publisher_attempt}" >&2
+        sleep "${sleep_seconds}"
+        continue
+      fi
+      local remaining=$((publisher_deadline - SECONDS)) current_payload current_state
+      local current_kind current_id current_status current_conclusion _current_url current_event _current_created_at current_attempt
+      if (( remaining <= 0 )) ||
+        ! current_payload="$(timeout "${remaining}s" gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}")" ||
+        ! current_state="$(read_run_state native <<<"${current_payload}")"; then
+        printf 'Current runtime-image producer evidence is unavailable for run %s attempt %s.\n' \
+          "${source_run_id}" "${source_run_attempt}" >&2
+        return 1
+      fi
+      IFS=$'\t' read -r current_kind current_id current_status current_conclusion _current_url current_event _current_created_at current_attempt <<<"${current_state}"
+      if (( SECONDS >= publisher_deadline )) ||
+        [[ "${current_kind}" != "found" || "${current_id}" != "${source_run_id}" ||
+        "${current_attempt}" != "${source_run_attempt}" || "${current_event}" != "${source_event}" ||
+        "${current_status}" != "completed" || "${current_conclusion}" != "success" ]]; then
+        printf 'Current runtime-image producer does not match the successful run %s attempt %s for %s.\n' \
+          "${source_run_id}" "${source_run_attempt}" "${image_tag}" >&2
+        return 1
+      fi
       printf 'Trusted PR image publisher %s succeeded for %s.\n' "${run_id}" "${image_tag}"
       return 0
     fi
     if [[ "${run_status}" == "completed" ]]; then
       printf 'Trusted PR image publisher %s completed with %s for %s.\n' \
         "${run_id}" "${run_conclusion}" "${image_tag}" >&2
-      [[ -z "${run_url}" ]] || printf 'Workflow URL: %s\n' "${run_url}" >&2
+      [[ -z "${run_url}" || "${run_url}" == "-" ]] || printf 'Workflow URL: %s\n' "${run_url}" >&2
       exit 1
     fi
 
@@ -364,7 +447,7 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  IFS=$'\t' read -r state run_id run_status run_conclusion run_url _run_event run_created_at <<<"${run_state}"
+  IFS=$'\t' read -r state run_id run_status run_conclusion run_url run_event run_created_at run_attempt <<<"${run_state}"
 
   if [[ "${state}" == "missing" ]]; then
     elapsed_seconds=$((SECONDS - start_epoch))
@@ -390,7 +473,7 @@ while (( SECONDS < deadline )); do
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
     if [[ "${wait_mode}" == "pull-request" ]]; then
-      wait_for_pr_publisher "${run_id}" "${run_created_at}"
+      wait_for_pr_publisher "${run_id}" "${run_attempt}" "${run_created_at}" "${run_event}"
     fi
     exit 0
   fi

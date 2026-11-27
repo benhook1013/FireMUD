@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "1d09fe191e67b07be1c4d01cd677a94b32871fd3640ebce2c96f7e696f08014a";
+            const canonicalRuntimeWorkflowSha256 = "e694c8ee926fd3021a5aba831509c584e8d239a1471de6300319f9d886b6bbd5";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
