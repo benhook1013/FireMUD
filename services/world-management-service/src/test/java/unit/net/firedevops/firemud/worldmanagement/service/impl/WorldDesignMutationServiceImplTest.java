@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
@@ -39,6 +41,8 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -93,12 +97,25 @@ class WorldDesignMutationServiceImplTest {
               region.setId(44L);
               return region;
             });
-    when(aggregateEpochRepository.save(any(WorldDesignAggregateEpoch.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(aggregateEpochRepository.compareAndAdvance(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(Long.class),
+            any(Long.class),
+            any(LocalDateTime.class)))
+        .thenReturn(true);
     when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
             any(Long.class), any(Long.class), any(String.class), any(String.class)))
         .thenReturn(Optional.empty());
-    when(scopeEpochRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(scopeEpochRepository.compareAndAdvance(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            any(Long.class),
+            any(LocalDateTime.class)))
+        .thenReturn(true);
     when(ledgerRepository.save(any(WorldDesignRevisionLedger.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
@@ -190,6 +207,23 @@ class WorldDesignMutationServiceImplTest {
 
     assertEquals(true, ex.getMessage().startsWith("DRAFT_WRITE_CONFLICT:"));
     verify(regionRepository, never()).save(any(Region.class));
+  }
+
+  @Test
+  void lateAggregateConflictDoesNotCreateScopeOrLedgerEvidence() {
+    when(aggregateEpochRepository.compareAndAdvance(
+            eq(1L), eq(7L), eq("REGION"), eq(44L), eq(0L), any(LocalDateTime.class)))
+        .thenReturn(false);
+
+    var failure =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.applyMutation(regionCreateRequest()));
+
+    assertEquals(
+        "DRAFT_WRITE_CONFLICT: expected Draft aggregate epoch 0 changed before the mutation could commit",
+        failure.getMessage());
+    verifyNoInteractions(scopeEpochRepository);
+    verify(ledgerRepository, never()).save(any(WorldDesignRevisionLedger.class));
   }
 
   @Test
@@ -767,8 +801,9 @@ class WorldDesignMutationServiceImplTest {
     verify(generationRuleRepository, never()).save(any(GenerationRule.class));
   }
 
-  @Test
-  void replaceScopeAppliesGeneratedSubtreeInOneScopedMutation() {
+  @ParameterizedTest
+  @ValueSource(longs = {0L, 4L})
+  void replaceScopeAppliesGeneratedSubtreeInOneScopedMutation(long expectedEpoch) {
     Zone zone = zone(12L, 99L);
     Room staleRoom = room(40L, zone);
     Room targetRoom = room(41L, zone);
@@ -812,15 +847,31 @@ class WorldDesignMutationServiceImplTest {
             .findByTenantIdAndVersionIdAndRoomIdAndEntityTemplateTypeAndEntityTemplateId(
                 1L, 7L, 90L, "NPC", 55L))
         .thenReturn(Optional.empty());
+    var aggregateEpoch = new WorldDesignAggregateEpoch();
+    aggregateEpoch.setDraftRevisionEpoch(expectedEpoch);
     when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
             1L, 7L, "WORLD_GENERATION_SUBTREE", 2_000_000_000_012L))
-        .thenReturn(Optional.empty());
+        .thenReturn(expectedEpoch == 0L ? Optional.empty() : Optional.of(aggregateEpoch));
+    var scopeEpoch = new WorldDesignScopeEpoch();
+    scopeEpoch.setDraftScopeRevisionEpoch(expectedEpoch);
+    when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
+            1L, 7L, "ZONE_SUBTREE", "12"))
+        .thenReturn(expectedEpoch == 0L ? Optional.empty() : Optional.of(scopeEpoch));
 
-    var result = service.applyMutation(generationSubtreeRequest("REPLACE_SCOPE"));
+    var result = service.applyMutation(generationSubtreeRequest("REPLACE_SCOPE", expectedEpoch));
 
     assertEquals("APPLIED", result.result());
     assertEquals(2_000_000_000_012L, result.aggregateId());
-    assertEquals(1L, result.draftScopeRevisionEpoch());
+    assertEquals(expectedEpoch + 1L, result.draftRevisionEpoch());
+    assertEquals(expectedEpoch + 1L, result.draftScopeRevisionEpoch());
+    verify(aggregateEpochRepository)
+        .compareAndAdvance(
+            eq(1L),
+            eq(7L),
+            eq("WORLD_GENERATION_SUBTREE"),
+            eq(2_000_000_000_012L),
+            eq(expectedEpoch),
+            any(LocalDateTime.class));
     verify(worldEntitySpawnBindingRepository).deleteAll(any());
     verify(roomExitRepository).deleteAll(any());
     verify(roomRepository).deleteAll(any());
@@ -1079,7 +1130,8 @@ class WorldDesignMutationServiceImplTest {
         null);
   }
 
-  private WorldDesignMutationRequestDto generationSubtreeRequest(String scopeMutationPolicy) {
+  private WorldDesignMutationRequestDto generationSubtreeRequest(
+      String scopeMutationPolicy, long expectedEpoch) {
     return new WorldDesignMutationRequestDto(
         1L,
         7L,
@@ -1088,10 +1140,10 @@ class WorldDesignMutationServiceImplTest {
         "UPSERT",
         "WORLD_GENERATION_SUBTREE",
         "",
-        0L,
+        expectedEpoch,
         "ZONE_SUBTREE",
         "12",
-        0L,
+        expectedEpoch,
         scopeMutationPolicy,
         null,
         null,
