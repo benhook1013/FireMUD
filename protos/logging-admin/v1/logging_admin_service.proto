@@ -85,9 +85,15 @@ message CreateLogEventRequest {
   bytes payload = 11;
   int32 payload_digest_version = 12;
   string payload_digest = 13;
+  // Version 1 represents platform or retained numeric tenant identity.
+  // Version 2 carries only the canonical tenant_uuid.
+  int32 tenant_identity_version = 14;
+  string tenant_uuid = 15;
 }
 
 message CreateLogEventResponse {
+  reserved 12;
+
   string log_event_id = 1;
   shared.v1.ErrorDetail error = 2;
   AccountAuditScope scope = 3;
@@ -99,6 +105,8 @@ message CreateLogEventResponse {
   string payload_digest = 9;
   AccountAuditReceiptStatus status = 10;
   AccountAuditReceiptOutcome outcome = 11;
+  int32 tenant_identity_version = 13;
+  string tenant_uuid = 14;
 }
 
 message ReadLogEventReceiptRequest {
@@ -112,9 +120,13 @@ message ReadLogEventReceiptRequest {
   bytes payload = 8;
   int32 payload_digest_version = 9;
   string payload_digest = 10;
+  int32 tenant_identity_version = 11;
+  string tenant_uuid = 12;
 }
 
 message ReadLogEventReceiptResponse {
+  reserved 12;
+
   AccountAuditScope scope = 1;
   string tenant_id = 2;
   string audit_event_id = 3;
@@ -126,6 +138,8 @@ message ReadLogEventReceiptResponse {
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
   shared.v1.ErrorDetail error = 11;
+  int32 tenant_identity_version = 13;
+  string tenant_uuid = 14;
 }
 
 enum AccountAuditScope {

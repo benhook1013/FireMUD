@@ -26,6 +26,8 @@ Target `CreateLogEventRequest` carries `scope` (`platform` or `tenant`), `tenant
 
 Local receiving preparation authenticates the exact same-namespace Account mTLS workload for both methods. `CreateLogEvent` then returns non-OK `UNAVAILABLE` before envelope validation or storage; its positive transactional receipt/projection owner remains callable only through offline fixtures. `ReadLogEventReceipt` implements the scope-qualified immutable-tuple readback above. Account has not integrated that separate readback or a guarded historical-evidence recorder. Live delivery remains disabled until the retention, cleanup and complete authenticated producer/receiver proof qualify; local implementation and proof status belong to [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md#logging-account-audit-receiving-preparation).
 
+Account audit RPCs carry the versioned tenant identity in the immutable tuple. Version 2 is tenant scope with only a canonical non-nil UUID in `tenant_uuid`, as defined by [ADR 0020](../../decisions/adr-0020-scoped-domain-and-operational-identifiers.md). Version 1 represents platform scope with neither tenant field or retained tenant evidence with only a positive numeric `tenant_id`. Receipt reads without a version retain the existing version 1 behavior when no UUID is supplied. The two tenant forms have separate deduplication identities. Responses return the stored identity version and its matching tenant field.
+
 The receipt retention class and cleanup owner are defined in [Logging & Admin Runtime and Data](./runtime-and-data.md#audit-envelope-and-receipt-retention).
 
 ## Script-transition read and audit consequences (target state; complete composition unavailable)

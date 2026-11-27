@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.dto;
 import com.google.protobuf.ByteString;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.UUID;
 
 /** The immutable Account audit envelope accepted by the existing CreateLogEvent RPC. */
 @SuppressFBWarnings(
@@ -11,7 +12,9 @@ import java.time.Instant;
         "Protobuf ByteString is immutable, so retaining and exposing the payload is safe.")
 public record CreateLogEventRequest(
     AccountAuditScope scope,
+    int tenantIdentityVersion,
     Long tenantId,
+    UUID tenantUuid,
     String auditEventId,
     String producerService,
     String eventType,

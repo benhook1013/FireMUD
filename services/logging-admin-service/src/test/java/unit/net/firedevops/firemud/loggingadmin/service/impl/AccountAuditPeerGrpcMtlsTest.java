@@ -30,6 +30,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -135,10 +136,13 @@ class AccountAuditPeerGrpcMtlsTest {
   @Test
   void exactAccountCertificateReadsCanonicalReceiptWithoutJwtFromMockedOwner() throws Exception {
     LogEventService owner = mock(LogEventService.class);
+    UUID tenantUuid = UUID.fromString("30000000-0000-4000-8000-000000000043");
     var expected =
         new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
             AccountAuditScope.TENANT,
-            42L,
+            2,
+            null,
+            tenantUuid,
             EVENT_ID,
             "account-service",
             "PUBLIC_PRODUCTION_JOINED",
@@ -155,7 +159,9 @@ class AccountAuditPeerGrpcMtlsTest {
               assertThat(invocation.getArgument(0, expected.getClass())).isEqualTo(expected);
               return new AccountAuditReceiptDto(
                   AccountAuditScope.TENANT,
-                  42L,
+                  2,
+                  null,
+                  tenantUuid,
                   EVENT_ID,
                   RECEIPT_ID,
                   77L,
@@ -169,12 +175,34 @@ class AccountAuditPeerGrpcMtlsTest {
         .readLogEventReceipt(expected);
     try (TransportServer server = startServer(owner);
         ClientTransport client = newClient(server.port(), "account")) {
-      var response = client.stub().readLogEventReceipt(readRequest());
+      var canonicalRequest =
+          readRequest().toBuilder()
+              .clearTenantId()
+              .setTenantIdentityVersion(2)
+              .setTenantUuid(tenantUuid.toString())
+              .build();
+      assertStatus(
+          Status.Code.INVALID_ARGUMENT,
+          () ->
+              client
+                  .stub()
+                  .readLogEventReceipt(canonicalRequest.toBuilder().setTenantId("42").build()));
+      assertStatus(
+          Status.Code.INVALID_ARGUMENT,
+          () ->
+              client
+                  .stub()
+                  .readLogEventReceipt(
+                      canonicalRequest.toBuilder().clearTenantIdentityVersion().build()));
+      verifyNoInteractions(owner);
+      var response = client.stub().readLogEventReceipt(canonicalRequest);
       assertThat(response.hasError()).isFalse();
       assertThat(response.getScope())
           .isEqualTo(
               net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT);
-      assertThat(response.getTenantId()).isEqualTo("42");
+      assertThat(response.getTenantIdentityVersion()).isEqualTo(2);
+      assertThat(response.getTenantId()).isEmpty();
+      assertThat(response.getTenantUuid()).isEqualTo(tenantUuid.toString());
       assertThat(response.getAuditEventId()).isEqualTo(EVENT_ID);
       assertThat(response.getReceiptId()).isEqualTo(RECEIPT_ID);
       assertThat(response.getLogEventId()).isEqualTo("77");

@@ -31,15 +31,16 @@ public class AccountAuditReceiptRepository {
 
   public AccountAuditReceiptInsertResult insertIfAbsent(
       CreateLogEventRequest request, UUID receiptId) {
-    long tenantKey = request.tenantId() == null ? 0L : request.tenantId();
     long logEventId = insertOrFindProjection(request);
     int inserted =
         dsl.insertInto(ACCOUNT_AUDIT_RECEIPTS)
             .set(ACCOUNT_AUDIT_RECEIPTS.LOG_EVENT_ID, logEventId)
             .set(ACCOUNT_AUDIT_RECEIPTS.RECEIPT_ID, receiptId)
             .set(ACCOUNT_AUDIT_RECEIPTS.SCOPE, request.scope().databaseValue())
+            .set(ACCOUNT_AUDIT_RECEIPTS.TENANT_IDENTITY_VERSION, request.tenantIdentityVersion())
             .set(ACCOUNT_AUDIT_RECEIPTS.TENANT_ID, request.tenantId())
-            .set(ACCOUNT_AUDIT_RECEIPTS.TENANT_KEY, tenantKey)
+            .set(ACCOUNT_AUDIT_RECEIPTS.TENANT_UUID, request.tenantUuid())
+            .set(ACCOUNT_AUDIT_RECEIPTS.TENANT_KEY, tenantKey(request))
             .set(ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID, request.auditEventId())
             .set(ACCOUNT_AUDIT_RECEIPTS.PRODUCER_SERVICE, request.producerService())
             .set(ACCOUNT_AUDIT_RECEIPTS.EVENT_TYPE, request.eventType())
@@ -54,7 +55,7 @@ public class AccountAuditReceiptRepository {
             .onConflictDoNothing()
             .execute();
     AccountAuditReceipt receipt =
-        findByIdentity(request, tenantKey)
+        findByIdentity(request)
             .orElseThrow(
                 () ->
                     new IllegalStateException(
@@ -63,11 +64,12 @@ public class AccountAuditReceiptRepository {
   }
 
   private long insertOrFindProjection(CreateLogEventRequest request) {
-    Long tenantKey = request.tenantId() == null ? Long.valueOf(0L) : request.tenantId();
     dsl.insertInto(LOG_EVENTS)
         .set(LOG_EVENTS.SCOPE, request.scope().databaseValue())
+        .set(LOG_EVENTS.TENANT_IDENTITY_VERSION, request.tenantIdentityVersion())
         .set(LOG_EVENTS.TENANT_ID, request.tenantId())
-        .set(LOG_EVENTS.TENANT_KEY, tenantKey)
+        .set(LOG_EVENTS.TENANT_UUID, request.tenantUuid())
+        .set(LOG_EVENTS.TENANT_KEY, tenantKey(request))
         .set(LOG_EVENTS.AUDIT_EVENT_ID, request.auditEventId())
         .set(LOG_EVENTS.TYPE, ACCOUNT_AUDIT_PROJECTION_TYPE)
         .set(LOG_EVENTS.MESSAGE, ACCOUNT_AUDIT_PROJECTION_MESSAGE_PREFIX + request.auditEventId())
@@ -76,7 +78,10 @@ public class AccountAuditReceiptRepository {
         .onConflictDoNothing()
         .execute();
 
-    var tenantKeyCondition = LOG_EVENTS.TENANT_KEY.eq(tenantKey);
+    var tenantKeyCondition =
+        request.tenantIdentityVersion() == 1
+            ? LOG_EVENTS.TENANT_KEY.eq(tenantKey(request))
+            : LOG_EVENTS.TENANT_UUID.eq(request.tenantUuid());
     Long logEventId =
         dsl.select(LOG_EVENTS.ID)
             .from(LOG_EVENTS)
@@ -84,6 +89,7 @@ public class AccountAuditReceiptRepository {
                 LOG_EVENTS
                     .SCOPE
                     .eq(request.scope().databaseValue())
+                    .and(LOG_EVENTS.TENANT_IDENTITY_VERSION.eq(request.tenantIdentityVersion()))
                     .and(tenantKeyCondition)
                     .and(LOG_EVENTS.AUDIT_EVENT_ID.eq(request.auditEventId())))
             .fetchOne(LOG_EVENTS.ID);
@@ -93,16 +99,29 @@ public class AccountAuditReceiptRepository {
     return logEventId;
   }
 
-  public Optional<AccountAuditReceipt> findByIdentity(
-      CreateLogEventRequest request, long tenantKey) {
+  public Optional<AccountAuditReceipt> findByIdentity(CreateLogEventRequest request) {
+    var tenantKeyCondition =
+        request.tenantIdentityVersion() == 1
+            ? ACCOUNT_AUDIT_RECEIPTS.TENANT_KEY.eq(tenantKey(request))
+            : ACCOUNT_AUDIT_RECEIPTS.TENANT_UUID.eq(request.tenantUuid());
     return dsl.selectFrom(ACCOUNT_AUDIT_RECEIPTS)
         .where(
             ACCOUNT_AUDIT_RECEIPTS
                 .SCOPE
                 .eq(request.scope().databaseValue())
-                .and(ACCOUNT_AUDIT_RECEIPTS.TENANT_KEY.eq(tenantKey))
+                .and(
+                    ACCOUNT_AUDIT_RECEIPTS.TENANT_IDENTITY_VERSION.eq(
+                        request.tenantIdentityVersion()))
+                .and(tenantKeyCondition)
                 .and(ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(request.auditEventId())))
         .fetchOptional(this::toEntity);
+  }
+
+  private static Long tenantKey(CreateLogEventRequest request) {
+    if (request.tenantIdentityVersion() == 2) {
+      return null;
+    }
+    return request.tenantId() == null ? Long.valueOf(0L) : request.tenantId();
   }
 
   private AccountAuditReceipt toEntity(Record record) {
@@ -112,7 +131,9 @@ public class AccountAuditReceiptRepository {
         receiptRecord.getLogEventId(),
         receiptRecord.getReceiptId(),
         receiptRecord.getScope(),
+        receiptRecord.getTenantIdentityVersion(),
         receiptRecord.getTenantId(),
+        receiptRecord.getTenantUuid(),
         receiptRecord.getAuditEventId(),
         receiptRecord.getProducerService(),
         receiptRecord.getEventType(),
