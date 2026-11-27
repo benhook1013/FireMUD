@@ -218,6 +218,8 @@ The generic `PrepareWorldInstance` and `ActivatePreparedWorldInstance` RPCs disp
 
 [V1076](../../../services/world-management-service/src/main/resources/db/migration/V1076__world_fixture_activation_execution_manifest.sql) stages an exact transaction-owned manifest for the original PREPARING row and consumes it during the ACTIVE transition. An unconsumed manifest fails the transaction. The manifest is catalogued as World control state, and established fixtures continue to replay from their retained activation receipts.
 
+[V1077](../../../services/world-management-service/src/main/resources/db/migration/V1077__world_fixture_initial_admission_terminal.sql) ties fixture hold settlement to the original World activation receipt and the exact Game Session fixture terminal. The fixture reconciler selects the configured run's pending hold and reads its owner over the fixed Game Session leaf. World retains the canonical hold selector, fixture seal, pointer, audit, and terminal digest. Fixture abort and the older donor's separate activation request envelope remain open.
+
 The lifecycle RPC boundary from `fe5289cfde` checks the exact same-namespace Game Session mTLS workload before any selector parsing or owner call. The receiving proof passes 31 World gRPC units and four loopback mTLS cases covering legitimate fixture dispatch and player-context refusal. The current fixture receives the same owner-local lifecycle checks after peer validation. Packaged proof of the combined source remains pending.
 
 ### Retained operational-region identity migration proof

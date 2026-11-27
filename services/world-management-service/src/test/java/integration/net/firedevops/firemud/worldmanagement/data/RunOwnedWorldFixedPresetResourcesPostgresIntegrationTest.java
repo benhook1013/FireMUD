@@ -15,6 +15,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -38,6 +40,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -48,6 +51,7 @@ import net.firedevops.firemud.worldmanagement.WorldManagementServiceApplication;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
@@ -63,6 +67,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRe
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwner;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
@@ -70,6 +75,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingR
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
+import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
@@ -1028,7 +1034,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             identity.canonicalGameInstanceId(),
             association.canonicalVersionId(),
             2L,
-            "fixture-initial-admission-1",
+            "run-owned-fixture-" + evidence.sourceReceipt().fixtureOperationId(),
             "a".repeat(64),
             WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
             identity.catalogRevision(),
@@ -1152,6 +1158,54 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 "UPDATE world_instance SET status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2 WHERE id = ?",
                 association.worldInstanceId()),
         "55000");
+
+    assertFixtureTerminalRecovery(holds, evidence, hold);
+    assertThat(holds.readState(hold, lifecycleRequest).orElseThrow().holdStatus())
+        .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.COMMITTED);
+  }
+
+  private void assertFixtureTerminalRecovery(
+      WorldCanonicalInitialAdmissionHoldRepository holds,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity hold) {
+    var pending = new GameSessionCanonicalInitialAdmissionOwnerProof(
+        hold, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
+        null, null, null, false, null);
+    var committed = new GameSessionCanonicalInitialAdmissionOwnerProof(
+        hold, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+        1L, 23L, "sha256:" + "b".repeat(64), false, Instant.now().truncatedTo(ChronoUnit.MICROS));
+    var receipt = evidence.sourceReceipt();
+    String provenance = receipt.fixturePolicySeal().evidenceDigest();
+    var source = mock(RunOwnedCanonicalWorldLaunchEvidenceProvider.class);
+    when(source.requireConfiguredFixtureReceipt()).thenReturn(receipt);
+    var gameSession = mock(GrpcGameSessionCanonicalInitialAdmissionOwnerClient.class);
+    when(gameSession.readFixture(hold, provenance, receipt.gameSessionLeafSha256()))
+        .thenReturn(pending, committed);
+    var fixtureReconciler = new RunOwnedFixtureInitialAdmissionHoldReconciler(holds, source, gameSession);
+
+    var original = allRows(dsl).get("initial_admission_bind_hold");
+    fixtureReconciler.reconcilePendingHold();
+    assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(original);
+    var genericOwner = new WorldCanonicalInitialAdmissionHoldOwner(holds, identity -> committed);
+    assertThatThrownBy(() -> genericOwner.settleFromAuthenticatedOwnerRead(hold))
+        .hasStackTraceContaining("World fixture hold requires its original activation and committed terminal");
+    assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(original);
+
+    fixtureReconciler.reconcilePendingHold();
+    var terminal = dsl.fetchSingle(
+        """
+        SELECT convert_from(canonical_owner_proof_bytes,'UTF8')::jsonb->>'authorityKind' AS kind,
+               convert_from(canonical_owner_proof_bytes,'UTF8')::jsonb->>'fixturePolicySealEvidenceDigest' AS seal,
+               owner_pointer_audit_id, owner_pointer_version
+        FROM initial_admission_bind_hold WHERE hold_id = ?
+        """, hold.holdId());
+    assertThat(terminal.get("kind", String.class)).isEqualTo("RUN_OWNED_FIXTURE");
+    assertThat(terminal.get("seal", String.class)).isEqualTo(provenance);
+    assertThat(terminal.get("owner_pointer_audit_id", String.class)).isEqualTo("23");
+    assertThat(terminal.get("owner_pointer_version", Long.class)).isEqualTo(1L);
+    var settled = allRows(dsl).get("initial_admission_bind_hold");
+    fixtureReconciler.reconcilePendingHold();
+    assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(settled);
   }
 
   @Test
@@ -1836,8 +1890,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 through V1076 install twelve catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L);
+          .as("V1046 through V1050 and V1070 through V1077 install thirteen catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -3637,6 +3691,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1074");
     versions.add("1075");
     versions.add("1076");
+    versions.add("1077");
     return List.copyOf(versions);
   }
 
