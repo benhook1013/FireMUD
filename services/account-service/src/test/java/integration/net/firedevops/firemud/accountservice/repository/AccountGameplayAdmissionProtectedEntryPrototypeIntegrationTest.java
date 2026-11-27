@@ -587,6 +587,79 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
+  void v144AndCurrentMigrationsPreservePreReceiptOperationsWithoutInventingAcknowledgement() {
+    var context = context("143");
+    var committed = pending(context, 15000);
+    UUID decision = UUID.randomUUID();
+    context
+        .transaction()
+        .execute(
+            status ->
+                new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                    .recordCommitted(committed, decision));
+    var pending = pending(context, 15000);
+    assertThat(operation(context, committed).get("status")).isEqualTo("COMMITTED");
+    assertThat(operation(context, pending).get("status")).isEqualTo("PENDING");
+    var committedBefore = admissionOperationImage(context, committed);
+    var pendingBefore = admissionOperationImage(context, pending);
+    Integer originalRank =
+        context
+            .dsl()
+            .fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+            .get(0, Integer.class);
+    String retainedMigrations =
+        "SELECT to_jsonb(h)::text FROM flyway_schema_history h "
+            + "WHERE installed_rank <= ? ORDER BY installed_rank";
+    var historyBefore =
+        context.dsl().fetch(retainedMigrations, originalRank).getValues(0, String.class);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("flyway_schema_history"), DSL.condition("version = '143'")))
+        .isOne();
+
+    Flyway.configure()
+        .dataSource(context.admin())
+        .schemas(context.schema())
+        .defaultSchema(context.schema())
+        .placeholders(Map.of("serviceSchema", context.schema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+
+    assertThat(context.dsl().fetch(retainedMigrations, originalRank).getValues(0, String.class))
+        .containsExactlyElementsOf(historyBefore);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("flyway_schema_history"), DSL.condition("version = '144'")))
+        .isOne();
+    assertThat(admissionOperationImage(context, committed)).isEqualTo(committedBefore);
+    assertThat(admissionOperationImage(context, pending)).isEqualTo(pendingBefore);
+    var receiptTable = DSL.table("account_gameplay_admission_original_commit_ack_receipts");
+    assertThat(context.dsl().fetchCount(receiptTable)).isZero();
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                    .read(committed, decision))
+        .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    assertThat(context.dsl().fetchCount(receiptTable)).isZero();
+    assertThat(admissionOperationImage(context, committed)).isEqualTo(committedBefore);
+    assertThat(admissionOperationImage(context, pending)).isEqualTo(pendingBefore);
+  }
+
+  private static String admissionOperationImage(
+      Context context, AccountGameplayAdmissionLeaseEvidence evidence) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT to_jsonb(o)::text || '|xmin=' || o.xmin::text "
+                + "FROM account_gameplay_admission_lease_operations o WHERE request_id = ?",
+            request(evidence))
+        .get(0, String.class);
+  }
+
+  @Test
   void v1013QualifiesRetainedPg18ReceiptWithoutChangingHistoricalStorage() {
     var context = context("1012");
     var ack = finalized(context, 15000);
