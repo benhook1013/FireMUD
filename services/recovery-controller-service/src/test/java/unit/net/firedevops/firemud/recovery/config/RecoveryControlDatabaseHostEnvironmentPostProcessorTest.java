@@ -431,7 +431,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
 
   @Test
   void acceptsMatchingDatasourceOverridesAndKeepsLocalFixtureSettings() {
-    String url = "jdbc:postgresql://localhost:5544/firemud_recovery_control";
+    String url =
+        "jdbc:postgresql://localhost:5544/firemud_recovery_control?logServerErrorDetail=false";
     var environment =
         fixtureEnvironment()
             .withProperty("FIREMUD_RECOVERY_CONTROL_DB_PORT", "5544")
@@ -455,7 +456,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     var environment =
         fixtureEnvironment()
             .withProperty(
-                "spring.flyway.url", "jdbc:postgresql://localhost:5432/firemud_recovery_control");
+                "spring.flyway.url",
+                "jdbc:postgresql://localhost:5432/firemud_recovery_control?logServerErrorDetail=false");
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
@@ -478,7 +480,11 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   }
 
   private static String recoveryUrl(String host, String port) {
-    return "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
+    return "jdbc:postgresql://"
+        + host
+        + ":"
+        + port
+        + "/firemud_recovery_control?logServerErrorDetail=false";
   }
 
   private static MockEnvironment fixtureEnvironment() {

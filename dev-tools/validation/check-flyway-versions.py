@@ -23,8 +23,10 @@ except ModuleNotFoundError as error:
     ) from None
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
-MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
-RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
+MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(migration|recovery-control-migration)/")
+RECOVERY_PROJECT = "recovery-controller-service"
+RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
+RECOVERY_SQL_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources/db/recovery-control-migration/"
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
@@ -75,6 +77,7 @@ class MigrationFile:
     project: str
     version_text: str
     version_key: tuple[int, ...]
+    location: str
 
 
 def normalize_version(version_text: str) -> tuple[int, ...]:
@@ -138,7 +141,8 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
         version_match = VERSION_RE.match(Path(path).name)
         if project_match and version_match:
             text = version_match.group("version")
-            discovered.append(MigrationFile(path, project_match.group(1), text, normalize_version(text)))
+            project, directory = project_match.groups()
+            discovered.append(MigrationFile(path, project, text, normalize_version(text), f"classpath:db/{directory}"))
     return discovered
 
 
@@ -189,23 +193,26 @@ def saga_adopters(snapshot: Snapshot) -> set[str]:
     return adopters
 
 
-def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], list[MigrationFile]]:
-    migrations = discover_migration_files(snapshot)
-    recovery_locations = recovery_flyway_locations(snapshot, "recovery-controller-service")
+def is_recovery_sql_migration(item: MigrationFile) -> bool:
+    relative_path = item.path.removeprefix(RECOVERY_SQL_ROOT)
+    return relative_path != item.path and "/" not in relative_path and relative_path.endswith(".sql")
+
+
+def effective_sets(
+    snapshot: Snapshot, migrations: list[MigrationFile], recovery_locations: set[str],
+) -> dict[str, list[MigrationFile]]:
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
-        if item.project == "recovery-controller-service":
-            if recovery_locations is None:
-                continue
-            if RECOVERY_MIGRATION_DIR in item.path and "classpath:db/recovery-control-migration" not in recovery_locations:
-                continue
-            if RECOVERY_MIGRATION_DIR not in item.path and "classpath:db/migration" not in recovery_locations:
-                continue
+        if item.project == RECOVERY_PROJECT and (
+            item.location not in recovery_locations
+            or (item.location == RECOVERY_LOCATION and not is_recovery_sql_migration(item))
+        ):
+            continue
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
     for adopter in saga_adopters(snapshot):
         grouped.setdefault(adopter, []).extend(shared)
-    return grouped, migrations
+    return grouped
 
 
 def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | None:
@@ -374,7 +381,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
         return None
     normalized_locations = {location.strip() for location in locations}
-    if "classpath:db/recovery-control-migration" in normalized_locations:
+    if RECOVERY_LOCATION in normalized_locations:
         create_schemas = flyway.get("createschemas", True)
         if create_schemas is not True and not (
                 isinstance(create_schemas, str) and create_schemas.strip().lower() in {"true", "on", "yes", "1"}):
@@ -411,29 +418,39 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     return normalized_locations
 
 
-def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
-    locations = recovery_flyway_locations(snapshot, project)
-    return locations == {"classpath:db/recovery-control-migration"}
-
-
 def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
-    grouped, migrations = effective_sets(current)
-    parent_grouped, parent_migrations = effective_sets(parent) if parent is not None else ({}, [])
+    migrations = discover_migration_files(current)
+    recovery_locations = recovery_flyway_locations(current, RECOVERY_PROJECT)
+    grouped = effective_sets(current, migrations, recovery_locations or set())
     issues = []
-    project = "recovery-controller-service"
-    project_root = f"services/{project}"
-    recovery_versioned = any(item.project == project and RECOVERY_MIGRATION_DIR in item.path for item in migrations)
-    if f"{project_root}/build.gradle.kts" in current or any(item.project == project for item in migrations):
-        if not recovery_location_configured(current, project):
+    project_root = f"services/{RECOVERY_PROJECT}"
+
+    parent_migrations = discover_migration_files(parent) if parent is not None else []
+    parent_grouped = {}
+    if parent is not None:
+        recovery_parent_migrations = [item for item in parent_migrations if item.project == RECOVERY_PROJECT]
+        parent_locations = recovery_flyway_locations(parent, RECOVERY_PROJECT) if recovery_parent_migrations else None
+        if recovery_parent_migrations and (
+            not parent_locations
+            or not parent_locations <= {RECOVERY_LOCATION, "classpath:db/migration"}
+            or any(
+                item.location == RECOVERY_LOCATION
+                and (RECOVERY_LOCATION not in parent_locations or not is_recovery_sql_migration(item))
+                for item in recovery_parent_migrations
+            )
+        ):
+            issues.append(f"{project_root}: cannot qualify the receiving parent's packaged Flyway configuration "
+                          "and effective versioned migration history")
+        parent_grouped = effective_sets(parent, parent_migrations, parent_locations or set())
+
+    if f"{project_root}/build.gradle.kts" in current or any(item.project == RECOVERY_PROJECT for item in migrations):
+        if recovery_locations != {RECOVERY_LOCATION}:
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
                           f"in {RECOVERY_SCHEMA}, allow schema creation, share the journal datasource, "
                           "and apply UTF-8 migrations without automatic baselining, dry-run output, or callback locations")
-        if not recovery_versioned:
+        if not any(is_recovery_sql_migration(item) for item in migrations):
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
-    recovery_sql_root = (
-        "services/recovery-controller-service/src/main/resources" + RECOVERY_MIGRATION_DIR
-    )
     recovery_java_root = (
         "services/recovery-controller-service/src/main/java/db/recovery-control-migration/"
     )
@@ -441,16 +458,16 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
         if path.startswith(recovery_java_root):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
     for path in sorted(current):
-        if path.startswith(recovery_sql_root) and path.lower().endswith(".sql"):
+        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql"):
             if not path.endswith(".sql"):
                 issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
-            if "/" in path.removeprefix(recovery_sql_root):
+            if "/" in path.removeprefix(RECOVERY_SQL_ROOT):
                 issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
             elif not VERSION_RE.fullmatch(Path(path).name):
                 issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
-        if path.startswith(recovery_sql_root) and path.lower().endswith(".java"):
+        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".java"):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-        if path.startswith(recovery_sql_root) and path.lower().endswith(".sql.conf"):
+        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql.conf"):
             issues.append(f"{path}: Recovery migration sidecars are unsupported because jOOQ reads only the SQL")
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
@@ -485,7 +502,11 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
             issues.append(f"historical migration removed or renamed: {item.path}")
         elif parent is not None and current[item.path] != parent[item.path]:
             issues.append(f"historical migration content changed: {item.path}")
-    return issues, len(grouped), len(migrations)
+    versioned_file_count = (
+        sum(item.project != RECOVERY_PROJECT for item in migrations)
+        + sum(item.project == RECOVERY_PROJECT for item in grouped.get(RECOVERY_PROJECT, []))
+    )
+    return issues, len(grouped), versioned_file_count
 
 
 def make_fixture(root: Path, relative_paths: list[str]) -> None:
@@ -564,7 +585,7 @@ def run_self_test() -> None:
     check("removed history", {path: data for path, data in history.items() if path != local + "V1__init.sql"}, history, "removed or renamed")
     check("java/sql duplicate", {**history, "services/example-service/src/main/java/db/migration/V1__dup.java": b"// dup"}, history, "duplicate version V1")
 
-    recovery = "services/recovery-controller-service/src/main/resources/db/recovery-control-migration/"
+    recovery = RECOVERY_SQL_ROOT
     recovery_config = "services/recovery-controller-service/src/main/resources/application.yml"
     recovery_table_setting = (
         b"    schemas: recovery_control\n"
@@ -608,6 +629,38 @@ def run_self_test() -> None:
     recovery_build = "services/recovery-controller-service/build.gradle.kts"
     first_recovery = {**recovery_history, recovery_build: b"plugins {}"}
     check("first introduction with isolated Recovery migration", first_recovery, {}, None)
+    check("first introduction does not require a parent config without migrations", first_recovery, {
+        recovery_config: b"spring.flyway.enabled: false\n",
+    }, None)
+    qualified_parent = {**first_recovery, recovery + "V3__prior.sql": b"-- prior"}
+    check("qualified Recovery parent sets the forward frontier", {
+        **qualified_parent, recovery + "V2__too_low.sql": b"-- too low",
+    }, qualified_parent, "must exceed effective parent frontier V3")
+    for unqualified_parent in (
+        {recovery + "V1__journal.sql": b"-- journal"},
+        {**recovery_history, recovery_config: recovery_settings + b"    enabled: false\n"},
+        {**recovery_history, recovery_config: recovery_settings + b"    target: '1'\n"},
+        {**recovery_history, recovery_config: recovery_settings + b"spring.config.import: classpath:extra.yml\n"},
+        {**recovery_history, recovery_config: recovery_settings.replace(
+            b"locations: classpath:db/recovery-control-migration",
+            b"locations: [classpath:db/recovery-control-migration, classpath:unknown]",
+        )},
+    ):
+        check("existing Recovery migrations require a qualified receiving parent", first_recovery,
+              unqualified_parent, "cannot qualify the receiving parent's packaged Flyway configuration")
+
+    archive = recovery.replace("db/recovery-control-migration/", "db/migration/archive/db/recovery-control-migration/")
+    archive_parent = {**first_recovery, archive + "V99__archived.sql": b"-- archive"}
+    check("lookalike archive cannot satisfy required Recovery migration", {
+        recovery_config: recovery_settings, archive + "V99__archived.sql": b"-- archive",
+    }, {}, "requires at least one versioned migration in the recovery-control location")
+    archive_candidate = {**archive_parent, recovery + "V2__next.sql": b"-- next"}
+    result = collect_issues(archive_candidate, archive_parent)
+    if result != ([], 1, 2):
+        raise AssertionError(f"lookalike archive must not affect effective Recovery history or count: {result}")
+    check("nested file inside the Recovery root cannot satisfy required migration", {
+        recovery_config: recovery_settings, recovery + "archive/V99__archived.sql": b"-- archive",
+    }, {}, "requires at least one versioned migration in the recovery-control location")
     check("first introduction with only an ignored default-location migration", {
         recovery_build: first_recovery[recovery_build],
         recovery_config: recovery_settings,

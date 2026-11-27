@@ -130,7 +130,7 @@ class RecoveryControllerOwnerConfigurationTest {
           HikariDataSource datasource = context.getBean(HikariDataSource.class);
           assertThat(datasource.getJdbcUrl())
               .isEqualTo(
-                  "jdbc:postgresql://recovery-control.invalid:5544/firemud_recovery_control");
+                  "jdbc:postgresql://recovery-control.invalid:5544/firemud_recovery_control?logServerErrorDetail=false");
           Flyway flyway = context.getBean(Flyway.class);
           assertThat(flyway.getConfiguration().getDataSource()).isSameAs(datasource);
           assertThat(flyway.getConfiguration().getLocations())
