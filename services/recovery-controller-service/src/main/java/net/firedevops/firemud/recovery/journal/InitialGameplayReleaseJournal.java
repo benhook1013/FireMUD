@@ -8,6 +8,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectR
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionResult;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 
@@ -24,9 +25,9 @@ public interface InitialGameplayReleaseJournal {
       String evidenceDigest,
       Instant now);
 
-  Optional<Operation> findTransition(PublicTransitionTuple tuple);
+  Optional<PublicTransitionResult> findTransition(PublicTransitionTuple tuple);
 
-  Operation transition(PublicTransitionTuple tuple, Instant now);
+  PublicTransitionResult transition(PublicTransitionTuple tuple, Instant now);
 
   Optional<OutboxEntry> findNextEffect(UUID operationId);
 

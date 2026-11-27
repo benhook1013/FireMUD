@@ -18,6 +18,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Initial
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionResult;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
 import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
@@ -88,7 +89,7 @@ public final class InitialGameplayReleaseController {
    * The only public continuation transition. It can move ready_to_reopen to awaiting_resume and
    * never releases the owner fence.
    */
-  public Operation continueRecovery(ContinueRecovery command) {
+  public PublicTransitionResult continueRecovery(ContinueRecovery command) {
     Objects.requireNonNull(command, "command must not be null");
     return transition(
         command.operationId(),
@@ -99,7 +100,7 @@ public final class InitialGameplayReleaseController {
   }
 
   /** Separately records explicit authorization from awaiting_resume to resume_authorized. */
-  public Operation resume(Resume command) {
+  public PublicTransitionResult resume(Resume command) {
     Objects.requireNonNull(command, "command must not be null");
     return transition(
         command.operationId(),
@@ -206,7 +207,7 @@ public final class InitialGameplayReleaseController {
     return journal.recordEffectReadback(outbox, readback, now);
   }
 
-  private Operation transition(
+  private PublicTransitionResult transition(
       UUID operationId,
       Phase expectedPhase,
       MaintenanceLockCredential maintenanceLock,
@@ -231,7 +232,7 @@ public final class InitialGameplayReleaseController {
             evidenceRef,
             operation.evidence().evidenceIdentity(),
             tupleCodec.digest(operation.evidence()));
-    Optional<Operation> prior = journal.findTransition(tuple);
+    Optional<PublicTransitionResult> prior = journal.findTransition(tuple);
     if (prior.isPresent()) {
       return prior.orElseThrow();
     }

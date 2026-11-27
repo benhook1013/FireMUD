@@ -10,6 +10,7 @@ import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
+import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionResult;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
@@ -32,6 +33,7 @@ import org.jooq.conf.StatementType;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * PostgreSQL compare-and-set journal and transactional outbox for initial gameplay release only.
@@ -187,12 +189,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   @Override
-  public Operation transition(PublicTransitionTuple tuple, Instant now) {
+  public PublicTransitionResult transition(PublicTransitionTuple tuple, Instant now) {
     Objects.requireNonNull(tuple, "tuple must not be null");
     Objects.requireNonNull(now, "now must not be null");
     requireIndependentTransaction("public transition");
     String tupleDigest = tupleCodec.digest(tuple);
     JSONB tuplePayload = JSONB.valueOf(tupleCodec.toJson(tuple));
+    var result = new PublicTransitionResult(tuple.operationId(), tuple.verb().resultPhase());
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
       Operation current = selectOperation(tx, tuple.operationId(), true);
@@ -206,7 +209,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               tuple.verb().wireValue());
       if (previous != null) {
         requireRetainedTransition(previous, tuple, tupleDigest);
-        return requireFinalizedHandoff(tx, current);
+        requireFinalizedHandoff(tx, current);
+        return result;
       }
       if (current.phase() != tuple.expectedPhase()) {
         throw conflict("public transition expected phase is stale");
@@ -243,12 +247,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       if (tuple.verb() == TransitionVerb.RESUME) {
         enqueueEffect(tx, prepareEffect(transitioned), now);
       }
-      return transitioned;
+      return result;
     });
   }
 
   @Override
-  public Optional<Operation> findTransition(PublicTransitionTuple tuple) {
+  public Optional<PublicTransitionResult> findTransition(PublicTransitionTuple tuple) {
     Objects.requireNonNull(tuple, "tuple must not be null");
     Record previous =
         dsl.fetchOne(
@@ -265,7 +269,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Operation operation = toOperation(previous);
     requireTransitionMatchesOperation(tuple, operation);
     requireRetainedTransition(previous, tuple, tupleCodec.digest(tuple));
-    return Optional.of(requireFinalizedHandoff(dsl, operation));
+    requireFinalizedHandoff(dsl, operation);
+    return Optional.of(new PublicTransitionResult(tuple.operationId(), tuple.verb().resultPhase()));
   }
 
   @Override
@@ -568,6 +573,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Objects.requireNonNull(dispatch, "dispatch must not be null");
     Objects.requireNonNull(readback, "readback must not be null");
     Objects.requireNonNull(now, "now must not be null");
+    requireIndependentTransaction("effect readback");
     UUID operationId = dispatch.effect().operationId();
     UUID effectId = dispatch.effect().effectId();
     return dsl.transactionResult(configuration -> {
@@ -926,8 +932,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   private void requireIndependentTransaction(String operation) {
     // A journal bound to a caller's transaction can release only a savepoint.
-    // These entry points report authorization or dispatch custody after commit.
-    if (!dsl.connectionResult(connection -> connection.getAutoCommit())) {
+    // These entry points report authorization, dispatch custody, or a phase after commit.
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || !dsl.connectionResult(connection -> connection.getAutoCommit())) {
       throw conflict(operation + " requires its own transaction");
     }
   }

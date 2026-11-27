@@ -406,7 +406,10 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     "spring.flyway.table, fixture_other_history",
     "spring.flyway.default-schema, fixture_other_schema",
     "spring.flyway.schemas, fixture_other_schema",
-    "spring.flyway.schemas, 'recovery_control,fixture_other_schema'"
+    "spring.flyway.schemas, 'recovery_control,fixture_other_schema'",
+    "spring.flyway.locations, ''",
+    "spring.flyway.locations, classpath:db/fixture_other",
+    "spring.flyway.locations, 'classpath:db/recovery-control-migration,classpath:db/fixture_other'"
   })
   void rejectsDivergentFlywayMigrationIdentity(String property, String value) {
     var environment = fixtureEnvironment().withProperty(property, value);
@@ -596,6 +599,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
 
   private static MockEnvironment fixtureEnvironment() {
     return endpointFixture()
+        .withProperty("spring.flyway.locations", "classpath:db/recovery-control-migration")
         .withProperty("spring.flyway.schemas", "recovery_control")
         .withProperty("spring.flyway.default-schema", "recovery_control")
         .withProperty("spring.flyway.table", "flyway_schema_history_recovery_control");

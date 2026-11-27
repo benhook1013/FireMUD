@@ -119,7 +119,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
     classifyChangeScope() {
       return {runAll: false, affectedServices: [], lightweightOnly: true,
-        docsChanged: false, frontendChanged: false, pythonChanged: false,
+        docsChanged: true, frontendChanged: false, pythonChanged: false,
         validationPythonChanged: false, designDocsChanged: false, postgresRuntimeProofChanged: false};
     },
   };
@@ -156,6 +156,9 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.equal(outputs.postgres_runtime_proof_changed, String(expectsPostgresProof),
       "PostgreSQL proof must follow the exact path set and default to on without verified scope");
   }
+  const legacyMarkdown = await runPullRequest({entries: [{filename: "README.md"}], scopeClassifier: legacyClassifier});
+  assert.equal(legacyMarkdown.docs_changed, "true",
+    "legacy lightweight Markdown classification must preserve docs_changed");
   for (const scopeClassifier of [classifier, legacyClassifier]) {
     const docs = [{filename: "design/README.md"}];
     const diverged = await runPullRequest({entries: docs, scopeClassifier,

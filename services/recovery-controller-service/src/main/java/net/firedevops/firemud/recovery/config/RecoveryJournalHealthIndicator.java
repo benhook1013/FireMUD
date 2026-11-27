@@ -112,6 +112,20 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND a.atttypid = 'pg_catalog.uuid'::regtype AND a.attnotnull
             AND a.attname IN ('operation_id', 'maintenance_lock_identity'))
         AND EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_index i
+          JOIN pg_catalog.pg_attribute op ON op.attrelid = i.indrelid
+             AND op.attnum = i.indkey[0] AND NOT op.attisdropped
+          JOIN pg_catalog.pg_attribute kind ON kind.attrelid = i.indrelid
+             AND kind.attnum = i.indkey[1] AND NOT kind.attisdropped
+          WHERE i.indrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND i.indisunique AND i.indisvalid AND i.indimmediate
+            AND i.indpred IS NULL AND i.indnkeyatts = 2
+            AND op.attname = 'operation_id' AND op.attnotnull
+            AND op.atttypid = 'pg_catalog.uuid'::regtype
+            AND kind.attname = 'effect_kind' AND kind.attnotnull
+            AND kind.atttypid = 'pg_catalog.varchar'::regtype AND kind.atttypmod = 52)
+        AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'payload_digest' AND NOT attisdropped AND attnotnull

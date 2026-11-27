@@ -207,6 +207,14 @@ public final class InitialGameplayReleaseModel {
     }
   }
 
+  /** The recorded outcome of one public transition, independent of later operation phases. */
+  public record PublicTransitionResult(UUID operationId, Phase phase) {
+    public PublicTransitionResult {
+      Objects.requireNonNull(operationId, "operationId must not be null");
+      Objects.requireNonNull(phase, "phase must not be null");
+    }
+  }
+
   public record Operation(
       Scope scope,
       UUID maintenanceLockIdentity,
